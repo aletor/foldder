@@ -41,11 +41,13 @@ export function PopulateStudioEntityCanvas({
   entityLabels,
   selectedEntityId,
   onSelectEntity,
+  suppressEntityAnimations = false,
 }: {
   page: DesignerPageState;
   entityLabels: Map<string, string>;
   selectedEntityId: string | null;
   onSelectEntity: (entityId: string | null) => void;
+  suppressEntityAnimations?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
@@ -76,6 +78,10 @@ export function PopulateStudioEntityCanvas({
 
   useEffect(() => {
     const next = collectPopulateObjectContentFingerprints(objects);
+    if (suppressEntityAnimations) {
+      contentFpRef.current = next;
+      return;
+    }
     if (contentFpReadyRef.current) {
       const changed = diffPopulateContentFingerprints(contentFpRef.current, next);
       if (changed.size > 0) {
@@ -91,13 +97,14 @@ export function PopulateStudioEntityCanvas({
     }
     contentFpRef.current = next;
     return undefined;
-  }, [entityLabels, objects]);
+  }, [entityLabels, objects, suppressEntityAnimations]);
 
   useEffect(() => {
+    if (suppressEntityAnimations) return;
     if (selectedEntityId != null) {
       setSelectionAnimKey((k) => k + 1);
     }
-  }, [selectedEntityId]);
+  }, [selectedEntityId, suppressEntityAnimations]);
 
   const pickTargets = useMemo(
     () => collectPopulateEntityPickTargets(objects, entityLabels),
@@ -110,8 +117,11 @@ export function PopulateStudioEntityCanvas({
   );
 
   const stackWrapRenderedObject = useMemo(
-    () => buildPopulateStackWrap(pulseObjectIds, selectionAnimKey, blinkObjectIds, blinkGeneration),
-    [blinkGeneration, blinkObjectIds, pulseObjectIds, selectionAnimKey],
+    () =>
+      suppressEntityAnimations
+        ? undefined
+        : buildPopulateStackWrap(pulseObjectIds, selectionAnimKey, blinkObjectIds, blinkGeneration),
+    [blinkGeneration, blinkObjectIds, pulseObjectIds, selectionAnimKey, suppressEntityAnimations],
   );
 
   const handlePointerDown = useCallback(

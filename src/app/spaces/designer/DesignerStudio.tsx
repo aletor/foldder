@@ -110,6 +110,8 @@ export type HeadlessPdfExportRequest = {
 export type HeadlessImageExportRequest = {
   requestId: number;
   targetPageIds?: string[] | null;
+  maxSide?: number;
+  fullResolution?: boolean;
   onPage: (pageId: string, dataUrl: string) => void;
   onDone: () => void;
   onError: (err: Error) => void;
@@ -2134,14 +2136,16 @@ export default function DesignerStudio({
   useEffect(() => {
     if (!headlessImageExport) return;
     let cancelled = false;
-    const { requestId: _rid, targetPageIds, onPage, onDone, onError } = headlessImageExport;
+    const { requestId: _rid, targetPageIds, maxSide, fullResolution, onPage, onDone, onError } =
+      headlessImageExport;
     void (async () => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
       if (cancelled) return;
       try {
         await renderPagesToPng({
           targetPageIds: targetPageIds ?? null,
-          fullResolution: true,
+          fullResolution: fullResolution ?? !maxSide,
+          maxSide,
           onPage: (pageId, dataUrl) => {
             if (!cancelled) onPage(pageId, dataUrl);
           },

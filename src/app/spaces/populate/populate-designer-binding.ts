@@ -167,6 +167,7 @@ export function syncPopulateTemplateBinding(args: {
     slotColumns,
     entityPoseColumnFieldId:
       Object.keys(entityPoseColumnFieldId).length > 0 ? entityPoseColumnFieldId : undefined,
+    slotLayoutOverrides: args.prev?.slotLayoutOverrides,
     pagesSnapshot: template.pages,
   };
 }

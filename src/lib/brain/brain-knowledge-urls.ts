@@ -1,13 +1,21 @@
 import type { KnowledgeDocumentEntry } from "@/app/spaces/project-assets-metadata";
 
-function normUrl(u: string): string {
+export function normalizeKnowledgeUrlKey(u: string): string {
   try {
     const x = new URL(u.trim());
     x.hash = "";
+    if (x.pathname.length > 1 && x.pathname.endsWith("/")) {
+      x.pathname = x.pathname.replace(/\/+$/, "");
+    }
     return x.toString();
   } catch {
     return u.trim().toLowerCase();
   }
+}
+
+/** @deprecated internal alias */
+function normUrl(u: string): string {
+  return normalizeKnowledgeUrlKey(u);
 }
 
 /**
@@ -28,4 +36,18 @@ export function normalizeKnowledgeUrlsFromDocuments(documents: KnowledgeDocument
     out.push(raw);
   }
   return out;
+}
+
+/** True si la URL ya está en el pozo (lista auxiliar o documento format=url). */
+export function isKnowledgeUrlAlreadyIngested(
+  url: string,
+  documents: KnowledgeDocumentEntry[],
+  legacyUrls: string[],
+): boolean {
+  const key = normalizeKnowledgeUrlKey(url);
+  if (!key) return false;
+  for (const raw of normalizeKnowledgeUrlsFromDocuments(documents, legacyUrls)) {
+    if (normalizeKnowledgeUrlKey(raw) === key) return true;
+  }
+  return false;
 }

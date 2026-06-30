@@ -6,6 +6,14 @@ import { derivePopulateForm } from "./populate-designer-form";
 import type { PopulateTemplateBinding } from "./populate-types";
 import type { PopulateSharePayload, PopulateShareTemplateEntry } from "@/lib/populate-share-types";
 import { bindingForTemplate } from "./populate-designer-binding";
+import type { PopulateShareTemplateDefaults } from "@/lib/populate-share-types";
+import { buildPopulateShareDefaults } from "./populate-share-defaults";
+
+export type PopulateShareTemplatePreview = {
+  defaults: PopulateShareTemplateDefaults;
+  previewThumbUrl?: string;
+  previewHeroUrl?: string;
+};
 
 function rowsSnapshotForList(dataset: Dataset, listId: string) {
   const list = dataset.lists.find((l) => l.id === listId);
@@ -22,6 +30,7 @@ function templateEntry(args: {
   binding: PopulateTemplateBinding;
   dataset: Dataset;
   listId: string;
+  sharePreview?: PopulateShareTemplatePreview;
 }): PopulateShareTemplateEntry {
   const formModel = derivePopulateForm({
     binding: args.binding,
@@ -37,6 +46,13 @@ function templateEntry(args: {
     formModel,
     pages: args.template.pages,
     slideCount: args.template.pages.length,
+    ...(args.sharePreview
+      ? {
+          defaults: args.sharePreview.defaults,
+          previewThumbUrl: args.sharePreview.previewThumbUrl,
+          previewHeroUrl: args.sharePreview.previewHeroUrl,
+        }
+      : {}),
   };
 }
 
@@ -46,16 +62,35 @@ export function buildPopulateSharePayload(args: {
   listId: string;
   templates: PopulateDesignerTemplateConfig[];
   bindings: PopulateTemplateBinding[];
+  /** Por templateNodeId — defaults congelados y URLs de preview al compartir. */
+  sharePreviewsByTemplateId?: Record<string, PopulateShareTemplatePreview>;
+  /** Defaults del Studio para la plantilla activa (si no hay entrada en sharePreviewsByTemplateId). */
+  studioPreview?: PopulateShareTemplateDefaults | null;
+  studioPreviewTemplateNodeId?: string;
 }): PopulateSharePayload {
   const entries = args.templates
     .map((template) => {
       const binding = bindingForTemplate(args.bindings, template.templateNodeId);
       if (!binding) return null;
+      const frozen = args.sharePreviewsByTemplateId?.[template.templateNodeId];
+      const sharePreview =
+        frozen ??
+        ({
+          defaults: buildPopulateShareDefaults({
+            binding,
+            template,
+            dataset: args.dataset,
+            listId: args.listId,
+            studioPreview: args.studioPreview,
+            useStudioPreview: args.studioPreviewTemplateNodeId === template.templateNodeId,
+          }),
+        } satisfies PopulateShareTemplatePreview);
       return templateEntry({
         template,
         binding,
         dataset: args.dataset,
         listId: args.listId,
+        sharePreview,
       });
     })
     .filter((e): e is PopulateShareTemplateEntry => e != null);

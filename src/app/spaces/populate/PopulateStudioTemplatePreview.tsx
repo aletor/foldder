@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { freezeDesignerPagesForForm } from "@/app/spaces/loop/loop-designer-form";
+import { freezePopulateTemplatePages } from "./populate-slot-layout";
 import { resolvePopulateSlotValues } from "./populate-designer-form";
 import type { PopulateDesignerTemplateConfig } from "./populate-designer-template";
 import type { PopulateTemplateBinding } from "./populate-types";
@@ -26,6 +26,7 @@ export function PopulateStudioTemplatePreview({
   selectedEntityId,
   onSelectEntity,
   entityLabels,
+  suppressEntityAnimations = false,
 }: {
   template: PopulateDesignerTemplateConfig;
   binding: PopulateTemplateBinding;
@@ -38,6 +39,7 @@ export function PopulateStudioTemplatePreview({
   selectedEntityId: string | null;
   onSelectEntity: (entityId: string | null) => void;
   entityLabels: Map<string, string>;
+  suppressEntityAnimations?: boolean;
 }) {
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
 
@@ -50,7 +52,11 @@ export function PopulateStudioTemplatePreview({
       manualValues,
       pickedPoses: previewPickedPoses,
     });
-    return freezeDesignerPagesForForm(template.pages, slotValues);
+    return freezePopulateTemplatePages(
+      template.pages,
+      slotValues,
+      binding.slotLayoutOverrides,
+    );
   }, [
     binding,
     dataset,
@@ -72,20 +78,20 @@ export function PopulateStudioTemplatePreview({
 
   if (slideCount === 0) {
     return (
-      <div className="populate-studio-preview-stage">
-        <p className="populate-studio-preview-stage__empty">La plantilla no tiene slides.</p>
+      <div className="populate-studio-preview">
+        <p className="populate-studio-center__empty">La plantilla no tiene slides.</p>
       </div>
     );
   }
 
   return (
-    <div className="populate-studio-preview-stage nodrag" onPointerDown={(e) => e.stopPropagation()}>
-      <div className="populate-studio-preview-stage__head">
+    <div className="populate-studio-preview nodrag" onPointerDown={(e) => e.stopPropagation()}>
+      <div className="populate-studio-col__head populate-studio-preview__head">
         <div>
-          <h2 className="populate-studio-preview-stage__title">{template.templateLabel}</h2>
-          <p className="populate-studio-preview-stage__subtitle">
-            Haz clic en una carpeta de jugador de la plantilla para editarla
-          </p>
+          <span className="populate-studio-col__title">{template.templateLabel}</span>
+          <span className="populate-studio-col__hint">
+            Haz clic en una carpeta de la plantilla para editarla
+          </span>
         </div>
         {slideCount > 1 ? (
           <div className="populate-studio-preview-stage__pager">
@@ -114,16 +120,17 @@ export function PopulateStudioTemplatePreview({
         ) : null}
       </div>
 
-      <div className="populate-studio-preview-stage__canvas populate-studio-preview-stage__canvas--interactive">
+      <div className="populate-studio-preview__canvas populate-studio-preview__canvas--interactive">
         {activePage ? (
           <PopulateStudioEntityCanvas
             page={activePage}
             entityLabels={entityLabels}
             selectedEntityId={selectedEntityId}
             onSelectEntity={onSelectEntity}
+            suppressEntityAnimations={suppressEntityAnimations}
           />
         ) : (
-          <p className="populate-studio-preview-stage__empty">
+          <p className="populate-studio-center__empty">
             Elige un jugador en el panel derecho para ver la plantilla.
           </p>
         )}

@@ -26,6 +26,7 @@ export function DatasetSheetTabBar({
   canDeleteLists = false,
   onRenameList,
   sharedFieldCount,
+  className,
 }: {
   lists: Array<{ id: string; name: string; cards: unknown[] }>;
   activeSheetId: string;
@@ -43,6 +44,7 @@ export function DatasetSheetTabBar({
   canDeleteLists?: boolean;
   onRenameList?: (listId: string, name: string) => void;
   sharedFieldCount: number;
+  className?: string;
 }) {
   const [renamingListId, setRenamingListId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -73,7 +75,7 @@ export function DatasetSheetTabBar({
 
   return (
     <nav
-      className="flex h-10 shrink-0 border-b border-white/10 bg-white/[0.06]"
+      className={cx("flex h-10 shrink-0 border-b border-white/10 bg-white/[0.06]", className)}
       aria-label="Pestañas del Dataset"
     >
       <div className="custom-scrollbar flex min-w-0 flex-1 overflow-x-auto divide-x divide-white/10">

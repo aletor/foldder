@@ -32,6 +32,14 @@ import { DatasetCanvasContext } from "./dataset/dataset-canvas-context";
 import { SpacesMapCanvasContext } from "./spaces-map-canvas-context";
 import { registerProjectDatasetConsumers } from "./dataset/dataset-api";
 import { collectGlobalDatasetIdsFromSpaces } from "./dataset/dataset-project";
+import { createDataset, normalizeDataset } from "./dataset/dataset-logic";
+import type { DatasetNodeData } from "./dataset/dataset-types";
+import {
+  brandKitAssetsSignature,
+  brandKitDatasetContentSignature,
+  patchDatasetNodeWithBrandKit,
+  syncBrandKitAssetsToDataset,
+} from "./brandkit/brandkit-dataset-sync";
 
 import {
   applyCanvasGroupCollapse,
@@ -1046,8 +1054,6 @@ export function SpacesContent() {
     [metadata.assets, projectScopeId, brainFlowNodes, brainFlowEdges],
   );
 
-  const datasetCanvasValue = useMemo(() => ({ projectScopeId }), [projectScopeId]);
-
   const reconciledFoldderLibrary = useMemo(
     () =>
       reconcileFoldderLibraryRegistry({
@@ -1125,6 +1131,66 @@ export function SpacesContent() {
     },
     [projectBrainOpen, setNodes],
   );
+
+  const datasetCanvasValue = useMemo(
+    () => ({
+      projectScopeId,
+      assetsMetadata: metadata.assets,
+      onAssetsMetadataChange: onBrainAssetsMetadataChange,
+      openProjectBrain: () => {
+        setBrainInitialSection(null);
+        setProjectBrainOpen(true);
+      },
+    }),
+    [metadata.assets, onBrainAssetsMetadataChange, projectScopeId],
+  );
+
+  const brandKitAssetsSyncSigRef = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    setNodes((nds) => {
+      let changed = false;
+      const nextNodes = nds.map((node) => {
+        if (node.type !== "dataset") return node;
+        const data = (node.data ?? {}) as DatasetNodeData;
+        const link = data.brandKitLink;
+        if (!link?.brainNodeId) return node;
+        const connected = edges.some(
+          (edge) =>
+            edge.target === node.id &&
+            edge.targetHandle === "brandkit" &&
+            edge.source === link.brainNodeId,
+        );
+        if (!connected || data.datasetRef?.datasetId) return node;
+
+        const assetsSig = brandKitAssetsSignature(metadata.assets, link.brainNodeId);
+        if (brandKitAssetsSyncSigRef.current.get(node.id) === assetsSig) return node;
+
+        const base = data.dataset
+          ? normalizeDataset(data.dataset)
+          : createDataset(data.label?.trim() || "Dataset", "local", projectScopeId);
+        const currentSig = brandKitDatasetContentSignature(base, link);
+        if (currentSig === assetsSig) {
+          brandKitAssetsSyncSigRef.current.set(node.id, assetsSig);
+          return node;
+        }
+
+        const synced = syncBrandKitAssetsToDataset(base, link.brainNodeId, metadata.assets);
+        brandKitAssetsSyncSigRef.current.set(node.id, assetsSig);
+        changed = true;
+        return {
+          ...node,
+          data: {
+            ...data,
+            dataset: { ...synced.dataset, scope: "local", projectId: projectScopeId },
+            brandKitLink: synced.link,
+            label: synced.dataset.name,
+          },
+        };
+      });
+      return changed ? nextNodes : nds;
+    });
+  }, [edges, metadata.assets, projectScopeId, setNodes]);
 
   useEffect(() => {
     const onOpenBrain = () => {
@@ -4964,6 +5030,29 @@ export function SpacesContent() {
       setEdges((eds) => addEdge({ ...params, targetHandle, id: edgeId, type: 'buttonEdge' }, eds));
       const srcNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.source);
       if (
+        srcNode?.type === "projectBrain" &&
+        targetNode?.type === "dataset" &&
+        targetHandle === "brandkit"
+      ) {
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== params.target) return n;
+            return {
+              ...n,
+              data: {
+                ...(n.data as Record<string, unknown>),
+                ...patchDatasetNodeWithBrandKit(
+                  (n.data ?? {}) as DatasetNodeData,
+                  params.source,
+                  metadata.assets,
+                  projectScopeId,
+                ),
+              },
+            };
+          }),
+        );
+      }
+      if (
         srcNode?.type === "nanoBanana" &&
         (params.sourceHandle === "image" || params.sourceHandle == null || params.sourceHandle === "")
       ) {
@@ -4990,7 +5079,7 @@ export function SpacesContent() {
       }, 50);
       fitViewToNodeIds([params.target], 600);
     },
-    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, liveNodesRef, resetConnectDrag]
+    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, liveNodesRef, resetConnectDrag, setNodes, metadata.assets, projectScopeId]
   );
 
   useEffect(() => {

@@ -112,6 +112,12 @@ export function buildVisualStyleFromVisionAnalyses(
       prompt: "",
       source: "auto",
     },
+    objects: {
+      ...base.objects,
+      description: slot("", base.objects.description),
+      prompt: "",
+      source: "auto",
+    },
   };
 }
 
@@ -120,7 +126,7 @@ export function mergeVisualStyleWithVisionDerivedDescriptions(
   prev: BrainVisualStyle,
   derived: BrainVisualStyle,
 ): BrainVisualStyle {
-  const keys: BrainVisualStyleSlotKey[] = ["protagonist", "environment", "textures", "people"];
+  const keys: BrainVisualStyleSlotKey[] = ["protagonist", "environment", "textures", "people", "objects"];
   const out = { ...prev };
   for (const k of keys) {
     const p = prev[k];

@@ -37,7 +37,16 @@ export interface PopulateTemplateBinding {
    * (poses en la misma fila). entityId → fieldId.
    */
   entityPoseColumnFieldId?: Record<string, string>;
+  /** Ajustes de posición/tamaño por hueco (Studio Populate). */
+  slotLayoutOverrides?: Record<string, PopulateSlotLayoutOverride>;
   pagesSnapshot?: DesignerPageState[];
+}
+
+/** Desplazamiento en px respecto a la plantilla; fontSize absoluto para texto. */
+export interface PopulateSlotLayoutOverride {
+  offsetX?: number;
+  offsetY?: number;
+  fontSize?: number;
 }
 
 export interface PopulateNodeData {

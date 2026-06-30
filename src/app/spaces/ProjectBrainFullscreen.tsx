@@ -125,6 +125,7 @@ import {
   getBrainScopeWriteBlockReason,
   resolveLearningCandidateBrainScope,
 } from "@/lib/brain/brain-scope-policy";
+import { isKnowledgeUrlAlreadyIngested } from "@/lib/brain/brain-knowledge-urls";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import {
   appendKnowledgeImageVisualDnaSlots,
@@ -1553,7 +1554,7 @@ export function ProjectBrainFullscreen({
   const brainAtmosphereBackdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    assetsMetadataRef.current = assetsMetadata;
+    assetsMetadataRef.current = normalizeProjectAssets(assetsMetadata);
   }, [assetsMetadata]);
 
   const handleBrainAtmosphereMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -3556,10 +3557,22 @@ export function ProjectBrainFullscreen({
               setKnowledgePipelineDetail("Subida completada: no hay documentos nuevos que analizar.");
             }
           } else if (job.kind === "url") {
+            const semanticScope = job.brainSourceScope ?? (job.scope === "core" ? "brand" : "project");
+            const blocked = getBrainScopeWriteBlockReason(
+              semanticScope,
+              normalizeProjectAssets(assetsMetadataRef.current),
+            );
+            if (blocked) {
+              setKnowledgePipelineDetail(blocked);
+              showToast(blocked, "info");
+              continue;
+            }
             const snap = normalizeProjectAssets(assetsMetadataRef.current);
-            if (snap.knowledge.urls.includes(job.url)) {
+            if (isKnowledgeUrlAlreadyIngested(job.url, snap.knowledge.documents, snap.knowledge.urls)) {
               setKnowledgePipelineDetail("Esa URL ya está en el pozo; se omite.");
               showToast("Esa URL ya está en la lista.", "info");
+              if (job.scope === "core") setUrlDraftCore("");
+              else setUrlDraftContext("");
               continue;
             }
             const host = (() => {
@@ -3572,13 +3585,6 @@ export function ProjectBrainFullscreen({
             setKnowledgePipelineDetail(
               `Extrayendo contenido de ${host} (${job.scope === "core" ? "Marca" : "Proyecto"})…`,
             );
-            const semanticScope = job.brainSourceScope ?? (job.scope === "core" ? "brand" : "project");
-            const blocked = getBrainScopeWriteBlockReason(semanticScope, normalizeProjectAssets(assetsMetadataRef.current));
-            if (blocked) {
-              setKnowledgePipelineDetail(blocked);
-              showToast(blocked, "info");
-              continue;
-            }
             const response = await fetch("/api/spaces/brain/knowledge/url", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -3608,10 +3614,11 @@ export function ProjectBrainFullscreen({
                 doc.format === "image" ||
                 doc.type === "image",
               );
+            const live = normalizeProjectAssets(assetsMetadataRef.current);
             setKnowledge(
               {
-                urls: [...snap.knowledge.urls, job.url],
-                documents: urlDocs.length ? [...snap.knowledge.documents, ...urlDocs] : snap.knowledge.documents,
+                urls: [...live.knowledge.urls, job.url],
+                documents: urlDocs.length ? [...live.knowledge.documents, ...urlDocs] : live.knowledge.documents,
               },
               [
                 BRAIN_STALE_REASON.URL_ADDED,
@@ -3788,17 +3795,40 @@ export function ProjectBrainFullscreen({
 
   const handleAddUrl = useCallback(
     (scope: "core" | "context", brainSourceScope?: KnowledgeDocumentEntry["brainSourceScope"]) => {
+      if (knowledgeIngestLocked) {
+        showToast("Espera a que termine la ingesta en curso.", "info");
+        return;
+      }
+      const semanticScope = brainSourceScope ?? (scope === "core" ? "brand" : "project");
+      if (semanticScope === "brand" && brandLocked) {
+        showToast("Marca bloqueada. Puedes usarla, pero no añadir fuentes.", "info");
+        return;
+      }
       const draft = scope === "core" ? urlDraftCore : urlDraftContext;
       const normalized = tryNormalizeUrl(draft);
       if (!normalized) {
         showToast("Introduce una URL válida (https://…)", "error");
         return;
       }
+      const snap = normalizeProjectAssets(assetsMetadataRef.current);
+      if (isKnowledgeUrlAlreadyIngested(normalized, snap.knowledge.documents, snap.knowledge.urls)) {
+        showToast("Esa URL ya está en la lista.", "info");
+        if (scope === "core") setUrlDraftCore("");
+        else setUrlDraftContext("");
+        return;
+      }
       knowledgeIngestQueueRef.current.push({ kind: "url", scope, url: normalized, brainSourceScope });
       setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
       void runKnowledgeIngestPump();
     },
-    [runKnowledgeIngestPump, showToast, urlDraftContext, urlDraftCore],
+    [
+      brandLocked,
+      knowledgeIngestLocked,
+      runKnowledgeIngestPump,
+      showToast,
+      urlDraftContext,
+      urlDraftCore,
+    ],
   );
 
   /** Encola análisis del pozo (p. ej. tras borrar o vaciar); la UI ya no expone botón manual. */

@@ -2,17 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-
-export type CarouselItem = {
-  id: string;
-  label: string;
-  hue: number;
-};
-
-type VerticalCarousel3DProps = {
-  items: CarouselItem[];
-  intervalMs?: number;
-};
+import type { VerticalCarouselContainerProps } from "./types";
+import "./vertical-carousel-3d.css";
 
 const CAROUSEL_RADIUS = 278;
 const MIN_DEPTH = 0.18;
@@ -51,17 +42,21 @@ function layoutForAngle(angleDeg: number) {
   };
 }
 
-export function VerticalCarousel3D({ items, intervalMs = 2000 }: VerticalCarousel3DProps) {
+export function VerticalCarousel3DContainer({
+  slides,
+  intervalMs = 2000,
+  defaultAutoplay = true,
+}: VerticalCarouselContainerProps) {
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const itemsRef = useRef(items);
+  const slidesRef = useRef(slides);
   const drumRef = useRef({ rotation: 0 });
   const tweenRef = useRef<gsap.core.Tween | null>(null);
   const activeIndexRef = useRef(0);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [autoplay, setAutoplay] = useState(true);
-  const itemsSignature = items.map((item) => item.id).join("|");
+  const [autoplay, setAutoplay] = useState(defaultAutoplay);
+  const slidesSignature = slides.map((slide) => slide.id).join("|");
 
-  itemsRef.current = items;
+  slidesRef.current = slides;
   activeIndexRef.current = activeIndex;
 
   const indexAtRotation = useCallback((rotation: number, total: number) => {
@@ -70,14 +65,14 @@ export function VerticalCarousel3D({ items, intervalMs = 2000 }: VerticalCarouse
   }, []);
 
   const applyDrumRotation = useCallback((drumRotation: number) => {
-    const list = itemsRef.current;
+    const list = slidesRef.current;
     const total = list.length;
     if (total === 0) return;
 
     const stepDeg = 360 / total;
 
-    list.forEach((item, index) => {
-      const node = cardRefs.current.get(item.id);
+    list.forEach((slide, index) => {
+      const node = cardRefs.current.get(slide.id);
       if (!node) return;
 
       const angleDeg = index * stepDeg - drumRotation;
@@ -99,7 +94,7 @@ export function VerticalCarousel3D({ items, intervalMs = 2000 }: VerticalCarouse
     if (!tweenRef.current) return;
     tweenRef.current.kill();
     tweenRef.current = null;
-    const total = itemsRef.current.length;
+    const total = slidesRef.current.length;
     if (total > 0) {
       const synced = indexAtRotation(drumRef.current.rotation, total);
       const snapped = exactRotationForIndex(synced, drumRef.current.rotation, total);
@@ -112,7 +107,7 @@ export function VerticalCarousel3D({ items, intervalMs = 2000 }: VerticalCarouse
 
   const rotateDrumBySteps = useCallback(
     (steps: number, duration: number, targetIndex?: number) => {
-      const total = itemsRef.current.length;
+      const total = slidesRef.current.length;
       if (total <= 1 || steps === 0) return;
 
       killTween();
@@ -147,7 +142,7 @@ export function VerticalCarousel3D({ items, intervalMs = 2000 }: VerticalCarouse
 
   const goToIndex = useCallback(
     (targetIndex: number) => {
-      const total = itemsRef.current.length;
+      const total = slidesRef.current.length;
       if (total <= 1) return;
 
       setAutoplay(false);
@@ -177,81 +172,56 @@ export function VerticalCarousel3D({ items, intervalMs = 2000 }: VerticalCarouse
     activeIndexRef.current = 0;
     setActiveIndex(0);
     requestAnimationFrame(() => applyDrumRotation(0));
-  }, [itemsSignature, applyDrumRotation, killTween]);
+  }, [slidesSignature, applyDrumRotation, killTween]);
 
   useEffect(() => {
-    if (!autoplay || items.length <= 1) return undefined;
+    if (!autoplay || slides.length <= 1) return undefined;
 
     const timer = window.setInterval(advanceDrum, intervalMs);
     return () => window.clearInterval(timer);
-  }, [autoplay, items.length, intervalMs, advanceDrum]);
+  }, [autoplay, slides.length, intervalMs, advanceDrum]);
 
   useEffect(() => killTween, [killTween]);
 
-  if (items.length === 0) {
+  if (slides.length === 0) {
     return (
-      <div className="lab-carousel lab-carousel--empty">
-        <p className="lab-hint">Añade bloques en el escenario.</p>
+      <div className="vc3d vc3d--empty">
+        <p className="vc3d-hint">Sin slides.</p>
       </div>
     );
   }
 
   return (
-    <div className="lab-carousel">
-      <div className="lab-carousel-head">
-        <span>Carrusel 3D vertical</span>
-        <span className="lab-carousel-timer">{autoplay ? "auto · 2s" : "manual"}</span>
-      </div>
-
-      <div className="lab-carousel-controls">
-        <button
-          type="button"
-          className={`lab-carousel-play ${autoplay ? "is-paused" : ""}`}
-          onClick={() => setAutoplay((current) => !current)}
-          aria-pressed={autoplay}
-        >
-          {autoplay ? "Pausar" : "Autoplay"}
-        </button>
-
-        <div className="lab-carousel-items" role="tablist" aria-label="Ir a elemento">
-          {items.map((item, index) => (
+    <div className="vc3d">
+      <div className="vc3d-controls">
+        <div className="vc3d-items" role="tablist" aria-label="Ir a slide">
+          {slides.map((slide, index) => (
             <button
-              key={item.id}
+              key={slide.id}
               type="button"
               role="tab"
               aria-selected={index === activeIndex}
-              className={`lab-carousel-item-btn ${index === activeIndex ? "is-active" : ""}`}
+              className={`vc3d-item-btn ${index === activeIndex ? "is-active" : ""}`}
               onClick={() => goToIndex(index)}
-              style={
-                index === activeIndex
-                  ? { borderColor: `hsl(${item.hue} 45% 42%)` }
-                  : undefined
-              }
             >
-              {item.label}
+              {slide.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="lab-carousel-viewport">
-        <div className="lab-carousel-stage">
-          {items.map((item, index) => (
+      <div className="vc3d-viewport">
+        <div className="vc3d-stage">
+          {slides.map((slide, index) => (
             <div
-              key={item.id}
+              key={slide.id}
               ref={(node) => {
-                if (node) cardRefs.current.set(item.id, node);
-                else cardRefs.current.delete(item.id);
+                if (node) cardRefs.current.set(slide.id, node);
+                else cardRefs.current.delete(slide.id);
               }}
-              className={`lab-carousel-card ${index === activeIndex ? "is-active" : ""}`}
-              style={{
-                background: `linear-gradient(155deg, hsl(${item.hue} 32% 34%), hsl(${item.hue} 24% 18%))`,
-              }}
+              className={`vc3d-card ${index === activeIndex ? "is-active" : ""}`}
             >
-              <span className="lab-carousel-card-label">{item.label}</span>
-              <span className="lab-carousel-card-index">
-                {String(index + 1).padStart(2, "0")}
-              </span>
+              <div className="vc3d-card-surface">{slide.content}</div>
             </div>
           ))}
         </div>

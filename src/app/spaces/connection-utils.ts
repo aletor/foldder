@@ -185,6 +185,11 @@ export function areNodesConnectable(
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'image') return true;
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'url') return true;
 
+  // BrandKit → Dataset (input dedicado en Dataset).
+  if (targetNode.type === "dataset" && connection.targetHandle === "brandkit") {
+    return sourceNode.type === "projectBrain" && connection.sourceHandle === "brain";
+  }
+
   // Brain handle should only connect to brain-compatible inputs.
   if (connection.sourceHandle === 'brain' || connection.targetHandle === 'brain') {
     return sourceHandleType === 'brain' && targetHandleType === 'brain';

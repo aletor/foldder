@@ -46,6 +46,10 @@ export function recordThumbFromValues(
     const u = fieldImageUrl(values[f.id]);
     if (u) return u;
   }
+  for (const v of Object.values(values)) {
+    const u = fieldImageUrl(v);
+    if (u) return u;
+  }
   return undefined;
 }
 

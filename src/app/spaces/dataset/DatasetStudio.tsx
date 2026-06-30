@@ -49,6 +49,14 @@ import {
 } from "./dataset-scope-copy";
 import { exportDatasetFolddataFile, FOLDDER_FOLDDATA_EXTENSION } from "./dataset-folddata";
 import { DatasetAssistantPanel } from "./DatasetAssistantPanel";
+import { BrandKitDatasetPanel } from "../brandkit/BrandKitDatasetPanel";
+import { BRANDKIT_DATASET_SHEET_ID } from "../brandkit/brandkit-dataset-schema";
+import type { BrandKitDatasetLink } from "../brandkit/brandkit-dataset-schema";
+import {
+  filterUserFacingLists,
+  isBrandKitManagedList,
+} from "../brandkit/brandkit-dataset-sync";
+import type { ProjectAssetsMetadata } from "../project-assets-metadata";
 
 export const SHARED_SHEET_ID = "__shared__";
 
@@ -69,6 +77,10 @@ type DatasetStudioProps = {
   onCreateNewLocal?: () => void;
   onRequestImportFolddata?: () => void;
   onClose: () => void;
+  brandKitLink?: BrandKitDatasetLink | null;
+  assetsMetadata?: unknown;
+  onBrandKitApply?: (payload: { dataset: Dataset; assets: ProjectAssetsMetadata }) => void;
+  onOpenBrandKit?: () => void;
 };
 
 type ScopeConfirmDirection = "promote" | "demote";
@@ -85,9 +97,19 @@ export function DatasetStudio({
   onRequestImportFolddata,
   onClose,
   projectScopeId = null,
+  brandKitLink = null,
+  assetsMetadata,
+  onBrandKitApply,
+  onOpenBrandKit,
 }: DatasetStudioProps) {
   const dataset = useMemo(() => normalizeDataset(rawDataset), [rawDataset]);
-  const [activeSheetId, setActiveSheetId] = useState(dataset.lists[0]?.id ?? SHARED_SHEET_ID);
+  const userLists = useMemo(
+    () => filterUserFacingLists(dataset, brandKitLink),
+    [dataset, brandKitLink],
+  );
+  const [activeSheetId, setActiveSheetId] = useState(
+    brandKitLink ? BRANDKIT_DATASET_SHEET_ID : userLists[0]?.id ?? SHARED_SHEET_ID,
+  );
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(true);
   const [assistantUndo, setAssistantUndo] = useState<Dataset | null>(null);
@@ -108,13 +130,14 @@ export function DatasetStudio({
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; right: number } | null>(null);
 
   const isShared = activeSheetId === SHARED_SHEET_ID;
-  const activeList = dataset.lists.find((l) => l.id === activeSheetId);
+  const isBrandKit = Boolean(brandKitLink) && activeSheetId === BRANDKIT_DATASET_SHEET_ID;
+  const activeList = userLists.find((l) => l.id === activeSheetId);
 
   useEffect(() => {
-    if (isShared) return;
-    if (dataset.lists.some((l) => l.id === activeSheetId)) return;
-    setActiveSheetId(dataset.lists[0]?.id ?? SHARED_SHEET_ID);
-  }, [activeSheetId, dataset.lists, isShared]);
+    if (isBrandKit || isShared) return;
+    if (userLists.some((l) => l.id === activeSheetId)) return;
+    setActiveSheetId(brandKitLink ? BRANDKIT_DATASET_SHEET_ID : userLists[0]?.id ?? SHARED_SHEET_ID);
+  }, [activeSheetId, brandKitLink, isBrandKit, isShared, userLists]);
 
   const validation = useMemo(() => validate(dataset), [dataset]);
   const listValidation = useMemo(
@@ -261,7 +284,8 @@ export function DatasetStudio({
 
   const deleteListById = useCallback(
     (listId: string) => {
-      if (dataset.lists.length <= 1) return;
+      if (brandKitLink && isBrandKitManagedList(listId, brandKitLink)) return;
+      if (userLists.length <= 1) return;
       const list = dataset.lists.find((l) => l.id === listId);
       if (!list) return;
       const rowCount = list.cards.length;
@@ -276,10 +300,15 @@ export function DatasetStudio({
         setActiveSheetId(next.lists[0]?.id ?? SHARED_SHEET_ID);
       }
     },
-    [activeSheetId, apply, dataset],
+    [activeSheetId, apply, brandKitLink, dataset, userLists.length],
   );
 
-  const totalRows = dataset.lists.reduce((s, l) => s + l.cards.length, 0);
+  const totalRows = userLists.reduce((s, l) => s + l.cards.length, 0);
+  const sharedFieldCount = brandKitLink
+    ? dataset.constants.fields.filter(
+        (field) => !field.id.startsWith(`bk:${brandKitLink.brainNodeId}:`),
+      ).length
+    : dataset.constants.fields.length;
   const scopeLabel = datasetScopeMetricLabel(dataset.scope);
 
   return (
@@ -428,38 +457,55 @@ export function DatasetStudio({
           )
         : null}
 
-      <DatasetSheetTabBar
-        lists={dataset.lists}
-        activeSheetId={activeSheetId}
-        sharedSheetId={SHARED_SHEET_ID}
-        isShared={isShared}
-        addingTab={addingTab}
-        newTabName={newTabName}
-        onSelectList={(id) => {
-          setActiveSheetId(id);
-          setColumnsOpen(false);
-        }}
-        onSelectShared={() => {
-          setActiveSheetId(SHARED_SHEET_ID);
-          setColumnsOpen(true);
-        }}
-        onStartAddTab={() => setAddingTab(true)}
-        onNewTabNameChange={setNewTabName}
-        onConfirmNewTab={confirmNewTab}
-        onCancelNewTab={() => {
-          setAddingTab(false);
-          setNewTabName("");
-        }}
-        canDeleteLists={dataset.lists.length > 1}
-        onDeleteList={deleteListById}
-        onRenameList={(listId, name) => apply(renameList(dataset, listId, name))}
-        sharedFieldCount={dataset.constants.fields.length}
-      />
+      <div className="flex h-10 shrink-0 border-b border-white/10 bg-white/[0.06]">
+        {brandKitLink && onBrandKitApply ? (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveSheetId(BRANDKIT_DATASET_SHEET_ID);
+              setColumnsOpen(false);
+            }}
+            className={`shrink-0 border-r border-white/10 px-4 text-[9px] font-black uppercase tracking-[0.08em] ${
+              isBrandKit ? "bg-white text-slate-950" : "text-white/45 hover:bg-white/[0.08] hover:text-white/78"
+            }`}
+          >
+            Marca · BrandKit
+          </button>
+        ) : null}
+        <DatasetSheetTabBar
+          lists={userLists}
+          activeSheetId={activeSheetId}
+          sharedSheetId={SHARED_SHEET_ID}
+          isShared={isShared}
+          addingTab={addingTab}
+          newTabName={newTabName}
+          onSelectList={(id) => {
+            setActiveSheetId(id);
+            setColumnsOpen(false);
+          }}
+          onSelectShared={() => {
+            setActiveSheetId(SHARED_SHEET_ID);
+            setColumnsOpen(true);
+          }}
+          onStartAddTab={() => setAddingTab(true)}
+          onNewTabNameChange={setNewTabName}
+          onConfirmNewTab={confirmNewTab}
+          onCancelNewTab={() => {
+            setAddingTab(false);
+            setNewTabName("");
+          }}
+          canDeleteLists={userLists.length > 1}
+          onDeleteList={deleteListById}
+          onRenameList={(listId, name) => apply(renameList(dataset, listId, name))}
+          sharedFieldCount={sharedFieldCount}
+          className="min-w-0 flex-1 border-b-0"
+        />
+      </div>
 
       <DatasetStudioMetricsBar
         rowCount={totalRows}
-        tabCount={dataset.lists.length}
-        sharedCount={dataset.constants.fields.length}
+        tabCount={userLists.length}
+        sharedCount={sharedFieldCount}
         complete={validation.complete}
         gapCount={validation.gaps.length}
         scopeLabel={scopeLabel}
@@ -503,9 +549,17 @@ export function DatasetStudio({
           />
         ) : null}
 
-        <main className="custom-scrollbar min-w-0 flex-1 overflow-auto px-4 py-4 md:px-6 md:py-5">
-          {isShared ? (
-            <SharedSheet dataset={dataset} gaps={gaps} apply={apply} />
+        <main className={`custom-scrollbar min-w-0 flex-1 ${isBrandKit ? "overflow-hidden p-0" : "overflow-auto px-4 py-4 md:px-6 md:py-5"}`}>
+          {isBrandKit && brandKitLink && onBrandKitApply ? (
+            <BrandKitDatasetPanel
+              dataset={dataset}
+              link={brandKitLink}
+              assetsMetadata={assetsMetadata}
+              onApply={onBrandKitApply}
+              onOpenBrandKit={onOpenBrandKit}
+            />
+          ) : isShared ? (
+            <SharedSheet dataset={dataset} gaps={gaps} apply={apply} brandKitLink={brandKitLink} />
           ) : activeList ? (
             activeList.schema.length === 0 ? (
               <EmptySchemaView
@@ -693,11 +747,17 @@ function SharedSheet({
   dataset,
   gaps,
   apply,
+  brandKitLink = null,
 }: {
   dataset: Dataset;
   gaps: Gap[];
   apply: (next: Dataset) => void;
+  brandKitLink?: BrandKitDatasetLink | null;
 }) {
+  const sharedFields = dataset.constants.fields.filter((field) => {
+    if (!brandKitLink) return true;
+    return !field.id.startsWith(`bk:${brandKitLink.brainNodeId}:`);
+  });
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-4 flex items-start gap-2 border border-[var(--foldder-studio-accent,#14b8a6)]/20 bg-[var(--foldder-studio-accent,#14b8a6)]/[0.06] px-4 py-3">
@@ -708,13 +768,13 @@ function SharedSheet({
         </p>
       </div>
 
-      {dataset.constants.fields.length === 0 ? (
+      {sharedFields.length === 0 ? (
         <p className="py-8 text-center text-[12px] text-white/45">
           Aún no hay campos compartidos. Abre <strong className="text-white/65">Columnas</strong> para añadir uno.
         </p>
       ) : (
         <div className="divide-y divide-white/10 border border-white/10">
-          {dataset.constants.fields.map((field) => {
+          {sharedFields.map((field) => {
             const gap = cellHasGap(gaps, null, null, field.id);
             return (
               <div

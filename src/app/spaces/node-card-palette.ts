@@ -48,3 +48,11 @@ export function getNodeCardBackgroundColor(nodeType: string | undefined): string
   if (!nodeType) return PROMPT_DEFAULT_CARD_BG;
   return FOLDDER_NODE_CARD_BG[nodeType] ?? "#3F3C58";
 }
+
+/** Acento de resalte en Studio mode: color de tarjeta del nodo o fallback neutro. */
+export const FOLDDER_STUDIO_ACCENT_FALLBACK = "#336699";
+
+export function getStudioAccentColor(nodeType: string | undefined): string {
+  if (!nodeType) return FOLDDER_STUDIO_ACCENT_FALLBACK;
+  return FOLDDER_NODE_CARD_BG[nodeType] ?? FOLDDER_STUDIO_ACCENT_FALLBACK;
+}

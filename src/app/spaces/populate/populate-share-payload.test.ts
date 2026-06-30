@@ -130,6 +130,37 @@ describe("buildPopulateSharePayload", () => {
     const formModel = payload.templates[0]?.formModel;
     expect(formModel?.entities).toHaveLength(1);
     expect(formModel?.entities[0]?.facets).toHaveLength(2);
-    expect(formModel?.entities[0]?.poseOptions.length).toBeGreaterThan(1);
+    expect(payload.templates[0]?.formModel.entities[0]?.poseOptions.length).toBeGreaterThan(1);
+  });
+
+  it("incluye defaults congelados cuando se pasan sharePreviewsByTemplateId", () => {
+    const payload = buildPopulateSharePayload({
+      title: "Form",
+      dataset,
+      listId: "list1",
+      templates: [
+        {
+          templateNodeId: "d1",
+          templateType: "designer",
+          templateLabel: "Hero",
+          pages: [{ id: "pg1", name: "1", layers: [] }],
+          dynamicFields: [],
+        },
+      ],
+      bindings: [binding],
+      sharePreviewsByTemplateId: {
+        d1: {
+          defaults: {
+            pickedRows: { pick1: "c1" },
+            pickedPoses: { jugador: "f_pose" },
+            manualValues: { "slot::x": "txt" },
+          },
+          previewThumbUrl: "data:image/png;base64,abc",
+          previewHeroUrl: "data:image/png;base64,abc",
+        },
+      },
+    });
+    expect(payload.templates[0]?.defaults?.pickedRows).toEqual({ pick1: "c1" });
+    expect(payload.templates[0]?.previewThumbUrl).toContain("data:image");
   });
 });

@@ -117,6 +117,10 @@ import {
 } from './foldder-icons';
 import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
 import { SPACE_NODE_GHOST_STACK_PX } from "./space-node-drag";
+import { SpaceNodeTemplatePreview } from "./SpaceNodeTemplatePreview";
+import { listPopulateDesignerTemplatesFromSpacePortal } from "./populate/populate-space-template";
+import { reconcileSpacePortalNode } from "./space-media-list";
+import { useSpacesMapCanvas } from "./spaces-map-canvas-context";
 import { hasFoldderStudioTouched, hasGeminiVideoStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
 import { DescriberNodeAnalysisOverlay, DESCRIBER_ICON_REVEAL_MS } from "./describer-node-analysis-grid";
@@ -3654,7 +3658,18 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   const mediaListItems = nodeData.mediaListOutput?.items ?? [];
   const previewThumb = mediaListItems.find((item) => item.url)?.url;
 
-  const hasMediaPreview = Boolean(
+  const spacesMap = useSpacesMapCanvas();
+  const templateOutputCount = useMemo(() => {
+    const portal = reconcileSpacePortalNode(
+      { id, data: nodeData, type: "space", position: { x: 0, y: 0 } } as Node,
+      spacesMap,
+    );
+    return listPopulateDesignerTemplatesFromSpacePortal(portal, spacesMap).length;
+  }, [id, nodeData, spacesMap]);
+
+  const hasTemplateOutput = templateOutputCount > 0;
+
+  const hasMediaPreview = !hasTemplateOutput && Boolean(
     (nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video')) ||
     (isMediaListOutput && previewThumb),
   );
@@ -3662,49 +3677,60 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   return (
     <div
       className="space-node-root relative cursor-grab active:cursor-grabbing"
-      style={{
-        isolation: "isolate",
-        paddingRight: SPACE_NODE_GHOST_STACK_PX,
-        paddingBottom: SPACE_NODE_GHOST_STACK_PX,
-      }}
+      style={
+        hasTemplateOutput
+          ? { isolation: "isolate" }
+          : {
+              isolation: "isolate",
+              paddingRight: SPACE_NODE_GHOST_STACK_PX,
+              paddingBottom: SPACE_NODE_GHOST_STACK_PX,
+            }
+      }
     >
       <div className="relative z-[2] pointer-events-none">
-        {/* Capas fantasma — solo decoración; no capturan puntero */}
-        <div
-          className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
-          aria-hidden
-          style={{
-            transform: "translate(20px, 20px) rotate(3deg)",
-            background: "#f5b91b",
-            zIndex: 0,
-          }}
-        />
-        <div
-          className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
-          aria-hidden
-          style={{
-            transform: "translate(13px, 13px) rotate(2deg)",
-            background: "#abbc14",
-            zIndex: 1,
-          }}
-        />
-        <div
-          className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
-          aria-hidden
-          style={{
-            transform: "translate(6px, 6px) rotate(1deg)",
-            background: "#71449f",
-            zIndex: 2,
-          }}
-        />
+        {!hasTemplateOutput ? (
+          <>
+            <div
+              className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
+              aria-hidden
+              style={{
+                transform: "translate(20px, 20px) rotate(3deg)",
+                background: "#f5b91b",
+                zIndex: 0,
+              }}
+            />
+            <div
+              className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
+              aria-hidden
+              style={{
+                transform: "translate(13px, 13px) rotate(2deg)",
+                background: "#abbc14",
+                zIndex: 1,
+              }}
+            />
+            <div
+              className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
+              aria-hidden
+              style={{
+                transform: "translate(6px, 6px) rotate(1deg)",
+                background: "#71449f",
+                zIndex: 2,
+              }}
+            />
+          </>
+        ) : null}
 
-        {/* Main node card — patrón canónico frameless media (como Inspiration/NanoBanana) */}
         <div
-          className={`custom-node space-node foldder-node--frameless node--media group/node pointer-events-none relative z-[4] ${hasMediaPreview ? "space-node--has-preview" : "space-node--empty"}`}
+          className={`custom-node space-node foldder-node--frameless node--media group/node pointer-events-none relative z-[4] ${hasTemplateOutput ? "space-node--template-grid space-node--connected" : hasMediaPreview ? "space-node--has-preview" : "space-node--empty"}`}
           style={{ "--foldder-frameless-accent": "#8A5755" } as React.CSSProperties}
         >
           <FoldderNodeResizer minWidth={280} minHeight={180} isVisible={selected} />
           <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
+
+          <div className="node-header pointer-events-none">
+            <NodeIcon type="space" selected={selected} size={16} />
+            <FoldderNodeHeaderTitle className="sr-only">Space</FoldderNodeHeaderTitle>
+          </div>
 
           {/* Input handle only if space has an internal InputNode */}
           {nodeData.hasInput !== false && (
@@ -3715,8 +3741,9 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
           )}
 
           <div className="node-content foldder-frameless-main pointer-events-none">
-            {/* Media a sangre (ocupa todo el nodo) */}
-            {hasMediaPreview ? (
+            {hasTemplateOutput ? (
+              <SpaceNodeTemplatePreview nodeId={id} nodeData={nodeData as Record<string, unknown>} />
+            ) : hasMediaPreview ? (
               isMediaListOutput && previewThumb ? (
                 <>
                   <img src={previewThumb} className="pointer-events-none absolute inset-0 h-full w-full object-cover" alt="Space collection" draggable={false} />
@@ -3733,19 +3760,19 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
               )
             ) : null}
 
-            {/* Chip de blueprint interno (overlay abajo-izquierda) */}
-            <div className="pointer-events-auto absolute bottom-3 left-3.5 z-[9] flex items-center gap-2 bg-black/45 px-2 py-1 text-white nodrag">
-              <span className="text-[7px] font-black uppercase tracking-[0.18em] text-white/55">Blueprint</span>
-              <div className="flex items-center gap-2.5 [&_svg]:text-white">
-                {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
-                  nodeData.internalCategories.map((cat) => renderInternalIcon(cat))
-                ) : (
-                  <NodeIcon type="space" iconKey="layout" size={12} />
-                )}
+            {!hasTemplateOutput ? (
+              <div className="pointer-events-auto absolute bottom-3 left-3.5 z-[9] flex items-center gap-2 bg-black/45 px-2 py-1 text-white nodrag">
+                <span className="text-[7px] font-black uppercase tracking-[0.18em] text-white/55">Blueprint</span>
+                <div className="flex items-center gap-2.5 [&_svg]:text-white">
+                  {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
+                    nodeData.internalCategories.map((cat) => renderInternalIcon(cat))
+                  ) : (
+                    <NodeIcon type="space" iconKey="layout" size={12} />
+                  )}
+                </div>
               </div>
-            </div>
+            ) : null}
 
-            {/* Botón "Enter Space" — chip blanco cuadrado abajo-derecha (CTA canónico) */}
             <button
               onClick={onEnterSpace}
               className="execute-btn pointer-events-auto nodrag"

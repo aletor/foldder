@@ -44,6 +44,8 @@ import {
 } from "./dataset-api";
 import { buildDatasetPreview } from "./dataset-project";
 import { isFoldderLibraryPreviewData } from "../library-drag-preview";
+import { patchDatasetNodeAfterBrandKitEdit } from "../brandkit/brandkit-dataset-sync";
+import type { ProjectAssetsMetadata } from "../project-assets-metadata";
 
 const DATASET_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("dataset");
 
@@ -96,6 +98,15 @@ function selectDatasetConsumers(state: ReactFlowState<Node, Edge>, datasetNodeId
 }
 
 const DATASET_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
+  {
+    side: "left",
+    top: "42%",
+    style: { transform: "translateY(-50%)" },
+    type: "target",
+    id: "brandkit",
+    dataType: "brain",
+    label: "BrandKit",
+  },
   {
     side: "right",
     top: "50%",
@@ -209,7 +220,8 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useFoldderRenderMetric("DatasetNode", id);
   const nodeData = (data ?? {}) as DatasetNodeData;
   const isLibraryPreview = isFoldderLibraryPreviewData(nodeData);
-  const { projectScopeId } = useDatasetCanvasContext();
+  const { projectScopeId, assetsMetadata, onAssetsMetadataChange, openProjectBrain } =
+    useDatasetCanvasContext();
   const { setNodes } = useReactFlow();
   const { isStudioOpen, openStudio, closeStudio } = useStudioNodeController({
     nodeId: id,
@@ -402,6 +414,30 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
       applyLocalInline({ ...next, scope: "local", projectId: projectScopeId });
     },
     [applyLocalInline, nodeData.datasetRef?.datasetId, patchNodeData, projectScopeId, queueGlobalSave],
+  );
+
+  const commitBrandKit = useCallback(
+    (payload: { dataset: Dataset; assets: ProjectAssetsMetadata }) => {
+      setStudioDataset(payload.dataset);
+      onAssetsMetadataChange?.(payload.assets);
+      const link = nodeData.brandKitLink;
+      if (!link) return;
+
+      if (nodeData.datasetRef?.datasetId) {
+        queueGlobalSave(payload.dataset);
+        patchNodeData({
+          datasetPreview: previewFromDataset(payload.dataset),
+          brandKitLink: link,
+          label: payload.dataset.name,
+        });
+        return;
+      }
+
+      patchNodeData(
+        patchDatasetNodeAfterBrandKitEdit(nodeData, payload.dataset, link, projectScopeId),
+      );
+    },
+    [nodeData, onAssetsMetadataChange, patchNodeData, projectScopeId, queueGlobalSave],
   );
 
   const handleScopeChange = useCallback(
@@ -752,6 +788,10 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
               saveError={studioError}
               isGlobalRef={Boolean(nodeData.datasetRef)}
               projectScopeId={projectScopeId}
+              brandKitLink={nodeData.brandKitLink ?? null}
+              assetsMetadata={assetsMetadata}
+              onBrandKitApply={nodeData.brandKitLink ? commitBrandKit : undefined}
+              onOpenBrandKit={openProjectBrain}
               onChange={commitDataset}
               onScopeChange={handleScopeChange}
               onSelectGlobalDataset={handleSelectGlobalFromStudio}

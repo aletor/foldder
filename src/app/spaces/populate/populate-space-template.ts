@@ -5,6 +5,7 @@ import { isNodeCloneTemplateType } from "@/app/spaces/loop/loop-designer-templat
 import type { SpaceMapEntryLike } from "@/app/spaces/space-portal-loop-link";
 import type { PopulateDesignerTemplateConfig } from "./populate-designer-template";
 import { POPULATE_TEMPLATE_TARGET_HANDLE } from "./populate-template-link";
+import { resolveDesignerTemplatePreviewThumb } from "../studio-node/foldder-template-preview-grid";
 
 const DESIGNER_DOCUMENT_SOURCE_HANDLES = new Set(["document", "template"]);
 
@@ -110,7 +111,12 @@ export function listPopulateDesignerTemplatesFromSpacePortal(
   if (!graph) return [];
 
   return findDesignerNodesFeedingSpaceOutput(graph.nodes, graph.edges).map((designer) => {
-    const data = (designer.data ?? {}) as { label?: string; pages?: DesignerPageState[] };
+    const data = (designer.data ?? {}) as {
+      label?: string;
+      pages?: DesignerPageState[];
+      pageThumbnails?: Record<string, string>;
+      value?: string;
+    };
     const pages = Array.isArray(data.pages) ? data.pages : [];
     return {
       templateNodeId: populateSpaceTemplateNodeId(spacePortal.id, designer.id),
@@ -119,6 +125,7 @@ export function listPopulateDesignerTemplatesFromSpacePortal(
         typeof data.label === "string" && data.label.trim() ? data.label.trim() : "Designer",
       pages,
       dynamicFields: extractDesignerDynamicFields(pages),
+      previewThumbUrl: resolveDesignerTemplatePreviewThumb(pages, data),
     };
   });
 }

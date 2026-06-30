@@ -11,6 +11,7 @@ const VISUAL_STYLE_SLOT_KEYS: readonly BrainVisualStyleSlotKey[] = [
   "environment",
   "textures",
   "people",
+  "objects",
 ];
 
 function isKnowledgeImageDoc(d: KnowledgeDocumentEntry): boolean {
@@ -46,6 +47,7 @@ export async function hydrateProjectAssetsForBrainVision(
     environment: { ...vs.environment },
     textures: { ...vs.textures },
     people: { ...vs.people },
+    objects: { ...vs.objects },
   };
   for (const key of VISUAL_STYLE_SLOT_KEYS) {
     const slot = nextStyle[key];

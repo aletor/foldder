@@ -119,10 +119,14 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
         hasPreview ? "project-brain-node--has-preview" : "project-brain-node--empty foldder-frameless-label-dark"
       } ${selected ? "ring-2 ring-violet-400/45" : ""} ${introActive ? "ring-2 ring-cyan-300/60" : ""}`}
       style={{
+        width: "100%",
+        height: "100%",
         minWidth: 200,
         minHeight: 280,
         padding: 0,
         overflow: "visible",
+        display: "flex",
+        flexDirection: "column",
         "--foldder-node-card-bg": "#b8bec8",
         "--foldder-frameless-accent": "#1f2328",
         "--foldder-node-header-tint-color": primaryColor,
@@ -135,7 +139,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       ) : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="BrandKit" />
 
-      <div className="node-content project-brain-node-content relative min-h-0 flex-1 overflow-hidden">
+      <div className="node-content project-brain-node-content foldder-frameless-main relative overflow-hidden">
         {hasPreview ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -150,7 +154,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
             <img
               src={BRAIN_EMPTY_BACKGROUND_SRC}
               alt=""
-              className="h-full w-full object-cover object-center"
+              className="brain-empty-background__img h-full w-full object-cover object-center"
               draggable={false}
             />
           </div>

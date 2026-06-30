@@ -12,6 +12,7 @@ import {
   listPopulateDesignerTemplatesFromSpacePortal,
 } from "./populate-space-template";
 import { findPopulateTemplateLinkEdges } from "./populate-template-link";
+import { resolveDesignerTemplatePreviewThumb } from "../studio-node/foldder-template-preview-grid";
 
 export interface PopulateDesignerTemplateConfig {
   templateNodeId: string;
@@ -19,6 +20,17 @@ export interface PopulateDesignerTemplateConfig {
   templateLabel: string;
   pages: DesignerPageState[];
   dynamicFields: DesignerDynamicField[];
+  /** Miniatura ya rasterizada en el Designer (sin portal headless en canvas). */
+  previewThumbUrl?: string;
+}
+
+/** Etiqueta del panel izquierdo del Studio: `Template 1 (Nombre del nodo)`. */
+export function populateStudioTemplateMenuLabel(
+  index: number,
+  template: Pick<PopulateDesignerTemplateConfig, "templateLabel">,
+): string {
+  const nodeName = template.templateLabel?.trim() || "Designer";
+  return `Template ${index + 1} (${nodeName})`;
 }
 
 function configFromLinkEdge(
@@ -28,7 +40,12 @@ function configFromLinkEdge(
   const tpl = nodes.find((n) => n.id === linkEdge.source);
   if (!tpl || !isNodeCloneTemplateType(tpl.type)) return null;
 
-  const data = (tpl.data ?? {}) as { label?: string; pages?: DesignerPageState[] };
+  const data = (tpl.data ?? {}) as {
+    label?: string;
+    pages?: DesignerPageState[];
+    pageThumbnails?: Record<string, string>;
+    value?: string;
+  };
   const pages = Array.isArray(data.pages) ? data.pages : [];
 
   return {
@@ -37,6 +54,7 @@ function configFromLinkEdge(
     templateLabel: typeof data.label === "string" && data.label.trim() ? data.label : "Designer",
     pages,
     dynamicFields: extractDesignerDynamicFields(pages),
+    previewThumbUrl: resolveDesignerTemplatePreviewThumb(pages, data),
   };
 }
 

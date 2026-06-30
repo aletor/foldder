@@ -9,6 +9,8 @@ export type DesignerHeadlessRasterRequest = {
   instanceKey: string;
   pages: DesignerPageState[];
   targetPageIds: string[];
+  maxSide?: number;
+  fullResolution?: boolean;
 };
 
 /**
@@ -47,6 +49,8 @@ export function DesignerHeadlessRasterPortal({
       headlessImageExport={{
         requestId: request.requestId,
         targetPageIds: request.targetPageIds,
+        maxSide: request.maxSide,
+        fullResolution: request.fullResolution,
         onPage,
         onDone,
         onError,

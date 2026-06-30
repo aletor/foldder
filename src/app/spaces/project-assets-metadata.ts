@@ -192,7 +192,7 @@ export type BrainGeneratedPiece = {
   notes?: string;
 };
 
-export type BrainVisualStyleSlotKey = "protagonist" | "environment" | "textures" | "people";
+export type BrainVisualStyleSlotKey = "protagonist" | "environment" | "textures" | "people" | "objects";
 
 export type BrainVisualStyleSlot = {
   key: BrainVisualStyleSlotKey;
@@ -467,8 +467,24 @@ export function defaultBrainVisualStyle(): BrainVisualStyle {
       prompt: "",
       source: "auto",
     },
+    objects: {
+      key: "objects",
+      title: "Objetos",
+      description: "",
+      imageUrl: null,
+      imageS3Key: undefined,
+      prompt: "",
+      source: "auto",
+    },
   };
 }
+
+export type BrandPublicGalleryImage = {
+  id: string;
+  category: BrainVisualStyleSlotKey;
+  imageUrl: string;
+  label?: string;
+};
 
 export type BrainStrategy = {
   voiceExamples: BrainVoiceExample[];
@@ -503,6 +519,8 @@ export type BrainStrategy = {
    * No sustituyen ni contaminan automáticamente `brandVisualDna`, `contentDna` ni `visualReferenceAnalysis`.
    */
   visualCapsules?: VisualCapsule[];
+  /** Galería pública exportable al Dataset (máx. 5 imágenes de ejemplo). */
+  brandPublicGallery?: BrandPublicGalleryImage[];
   /** Capa editable del LOOK general: referencias globales + marca descubierta. */
   visualGeneralLook?: BrainVisualGeneralLook;
   /**
@@ -1393,6 +1411,7 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
         environment: parseSlot("environment", "Entorno"),
         textures: parseSlot("textures", "Texturas"),
         people: parseSlot("people", "Personas"),
+        objects: parseSlot("objects", "Objetos"),
       };
     }
     if (s.visualReferenceAnalysis && typeof s.visualReferenceAnalysis === "object") {
@@ -1667,6 +1686,31 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
       const capsules = normalizeVisualCapsules(s.visualCapsules);
       if (capsules.length) strategy.visualCapsules = capsules;
       else delete strategy.visualCapsules;
+    }
+    if (Array.isArray(s.brandPublicGallery)) {
+      const gallery: BrandPublicGalleryImage[] = s.brandPublicGallery
+        .filter((x): x is Record<string, unknown> => Boolean(x && typeof x === "object"))
+        .map((x) => {
+          const categoryRaw = x.category;
+          const category: BrainVisualStyleSlotKey =
+            categoryRaw === "environment" ||
+            categoryRaw === "textures" ||
+            categoryRaw === "people" ||
+            categoryRaw === "objects" ||
+            categoryRaw === "protagonist"
+              ? categoryRaw
+              : "environment";
+          return {
+            id: typeof x.id === "string" ? x.id : crypto.randomUUID(),
+            category,
+            imageUrl: typeof x.imageUrl === "string" ? x.imageUrl : "",
+            label: typeof x.label === "string" ? x.label : undefined,
+          };
+        })
+        .filter((x) => x.imageUrl.trim().length > 0)
+        .slice(0, 5);
+      if (gallery.length) strategy.brandPublicGallery = gallery;
+      else delete strategy.brandPublicGallery;
     }
     {
       const visualGeneralLook = normalizeVisualGeneralLook(s.visualGeneralLook);

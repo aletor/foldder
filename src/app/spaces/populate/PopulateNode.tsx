@@ -10,7 +10,7 @@ import {
   type NodeProps,
   type ReactFlowState,
 } from "@xyflow/react";
-import { Copy, Link2, Loader2, Sparkles } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { useConnectedDatasetForNode } from "@/app/spaces/loop/use-loop-context";
 import {
@@ -18,7 +18,7 @@ import {
   populateDesignerTemplatesSignature,
   type PopulateDesignerTemplateConfig,
 } from "./populate-designer-template";
-import { freezeDesignerPagesForForm } from "@/app/spaces/loop/loop-designer-form";
+import { freezePopulateTemplatePages } from "./populate-slot-layout";
 import {
   DesignerHeadlessRasterPortal,
   type DesignerHeadlessRasterRequest,
@@ -28,12 +28,18 @@ import {
   bindingForTemplate,
   syncPopulateTemplateBinding,
   patchPopulateBinding,
-  groupPendingFieldsIntoEntities,
 } from "./populate-designer-binding";
 import { derivePopulateForm, resolvePopulateSlotValues } from "./populate-designer-form";
 import type { PopulateNodeData, PopulateTemplateBinding } from "./populate-types";
 import { PopulateStudio } from "./PopulateStudio";
+import type { PopulateStudioGeneratePreview } from "./PopulateStudio";
+import { PopulateNodeBackgroundGrid } from "./PopulateNodeBackgroundGrid";
 import { buildPopulateSharePayload } from "./populate-share-payload";
+import {
+  buildPopulateShareDefaults,
+  POPULATE_SHARE_PREVIEW_MAX_SIDE,
+} from "./populate-share-defaults";
+import type { PopulateShareTemplatePreview } from "./populate-share-payload";
 import { buildPopulateMultiTemplateRunOutput, buildPopulateRunOutput } from "./populate-output";
 import { dispatchPopulateDesignerCommit } from "./populate-designer-commit";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
@@ -72,6 +78,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     reject: (e: Error) => void;
     collected: Record<string, string>;
     onPageDone?: () => void;
+    requestId: number;
   } | null>(null);
 
   const projectAssetsCtx = useProjectAssetsCanvas();
@@ -176,11 +183,6 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     return bindingForTemplate(nodeData.templateBindings ?? [], activeDesignerTemplate.templateNodeId) ?? null;
   }, [activeDesignerTemplate, nodeData.templateBindings]);
 
-  const onSelectList = useCallback(
-    (nextListId: string) => patchSelf({ listId: nextListId }),
-    [patchSelf],
-  );
-
   const onSelectTemplate = useCallback(
     (templateNodeId: string) => patchSelf({ activeTemplateNodeId: templateNodeId }),
     [patchSelf],
@@ -204,15 +206,22 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       pages: DesignerHeadlessRasterRequest["pages"],
       pageIds: string[],
       instanceKey: string,
-      onPageDone?: () => void,
+      opts?: { maxSide?: number; fullResolution?: boolean; onPageDone?: () => void },
     ) =>
       new Promise<Record<string, string>>((resolve, reject) => {
-        rasterRef.current = { resolve, reject, collected: {}, onPageDone };
+        if (rasterRef.current) {
+          rasterRef.current.reject(new Error("Raster superseded"));
+          rasterRef.current = null;
+        }
+        const requestId = Date.now();
+        rasterRef.current = { resolve, reject, collected: {}, onPageDone: opts?.onPageDone, requestId };
         setRasterReq({
-          requestId: Date.now(),
+          requestId,
           instanceKey,
           pages,
           targetPageIds: pageIds,
+          maxSide: opts?.maxSide,
+          fullResolution: opts?.fullResolution,
         });
       }),
     [],
@@ -252,7 +261,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       try {
         const instances: Array<{
           label: string;
-          pages: ReturnType<typeof freezeDesignerPagesForForm>;
+          pages: ReturnType<typeof freezePopulateTemplatePages>;
           cardId?: string;
         }> = [];
         const packs: Array<{ templateLabel: string; slideUrls: string[] }> = [];
@@ -287,7 +296,11 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
             manualValues,
             pickedPoses,
           });
-          const pages = freezeDesignerPagesForForm(template.pages, slotValues);
+          const pages = freezePopulateTemplatePages(
+            template.pages,
+            slotValues,
+            binding.slotLayoutOverrides,
+          );
           const firstCardId = Object.values(pickedRows)[0];
           if (createEditables) {
             instances.push({
@@ -302,9 +315,12 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
             pages,
             pageIds,
             `pop_${id}_gen_${template.templateNodeId}`,
-            () => {
-              doneSlides += 1;
-              setProgress({ done: doneSlides, total: totalSlides });
+            {
+              fullResolution: true,
+              onPageDone: () => {
+                doneSlides += 1;
+                setProgress({ done: doneSlides, total: totalSlides });
+              },
             },
           );
           const slideUrls = pageIds.map((pid) => urls[pid]).filter((u): u is string => Boolean(u));
@@ -371,66 +387,124 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     ],
   );
 
-  const onShare = useCallback(async () => {
-    if (!connectedDataset || !listId || designerTemplates.length === 0) return;
-    const bindings = nodeData.templateBindings ?? [];
-    if (bindings.length === 0) return;
-    if (!projectScopeId || projectScopeId === "__local__") {
-      setShareError("Guarda el proyecto antes de compartir el formulario.");
-      return;
-    }
-    setShareBusy(true);
-    setShareError(null);
-    try {
-      const payload = buildPopulateSharePayload({
-        title: nodeData.label || "Populate",
-        dataset: connectedDataset,
-        listId,
-        templates: designerTemplates,
-        bindings,
-      });
-      const matchLabel =
-        nodeData.shareMatchLabel?.trim() || nodeData.label?.trim() || "Partido";
-      const r = await fetch("/api/populate-share", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shareKey: id,
-          populateNodeId: id,
-          name: nodeData.label || "Populate",
-          projectId: projectScopeId,
-          matchLabel,
-          payload,
-          existingToken: nodeData.publicShareToken,
-        }),
-      });
-      const j = (await r.json()) as { token?: string; error?: string };
-      if (!r.ok) {
-        setShareError(j.error?.trim() || `Error ${r.status}`);
+  const onShare = useCallback(
+    async (studioPreview?: PopulateStudioGeneratePreview) => {
+      if (!connectedDataset || !listId || designerTemplates.length === 0) return;
+      const bindings = nodeData.templateBindings ?? [];
+      if (bindings.length === 0) return;
+      if (!projectScopeId || projectScopeId === "__local__") {
+        setShareError("Guarda el proyecto antes de compartir el formulario.");
         return;
       }
-      if (j.token) {
-        patchSelf({ publicShareToken: j.token });
-        const url = `${window.location.origin}/f/${j.token}`;
-        void navigator.clipboard.writeText(url).catch(() => undefined);
+      setShareBusy(true);
+      setShareError(null);
+      try {
+        const sharePreviewsByTemplateId: Record<string, PopulateShareTemplatePreview> = {};
+
+        for (const template of designerTemplates) {
+          const binding = bindingForTemplate(bindings, template.templateNodeId);
+          if (!binding || template.pages.length === 0) continue;
+
+          const defaults = buildPopulateShareDefaults({
+            binding,
+            template,
+            dataset: connectedDataset,
+            listId,
+            studioPreview: studioPreview
+              ? {
+                  pickedRows: studioPreview.pickedRows,
+                  pickedPoses: studioPreview.pickedPoses,
+                  manualValues: studioPreview.manualValues,
+                }
+              : null,
+            useStudioPreview: studioPreview?.templateNodeId === template.templateNodeId,
+          });
+
+          const slotValues = resolvePopulateSlotValues({
+            binding,
+            dataset: connectedDataset,
+            listId,
+            pickedRows: defaults.pickedRows,
+            manualValues: defaults.manualValues,
+            pickedPoses: defaults.pickedPoses,
+          });
+          const pages = freezePopulateTemplatePages(
+            template.pages,
+            slotValues,
+            binding.slotLayoutOverrides,
+          );
+          const firstPageId = pages[0]?.id;
+          let previewUrl: string | undefined;
+          if (firstPageId) {
+            const urls = await rasterize(
+              pages,
+              [firstPageId],
+              `pop_share_${template.templateNodeId}`,
+              { maxSide: POPULATE_SHARE_PREVIEW_MAX_SIDE },
+            );
+            previewUrl = urls[firstPageId];
+          }
+
+          sharePreviewsByTemplateId[template.templateNodeId] = {
+            defaults,
+            previewThumbUrl: previewUrl,
+            previewHeroUrl: previewUrl,
+          };
+        }
+
+        const payload = buildPopulateSharePayload({
+          title: nodeData.label || "Populate",
+          dataset: connectedDataset,
+          listId,
+          templates: designerTemplates,
+          bindings,
+          sharePreviewsByTemplateId,
+        });
+        const matchLabel =
+          nodeData.shareMatchLabel?.trim() || nodeData.label?.trim() || "Partido";
+        const r = await fetch("/api/populate-share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shareKey: id,
+            populateNodeId: id,
+            name: nodeData.label || "Populate",
+            projectId: projectScopeId,
+            matchLabel,
+            payload,
+            existingToken: nodeData.publicShareToken,
+          }),
+        });
+        const j = (await r.json()) as { token?: string; error?: string };
+        if (!r.ok) {
+          setShareError(j.error?.trim() || `Error ${r.status}`);
+          return;
+        }
+        if (j.token) {
+          patchSelf({ publicShareToken: j.token });
+          const url = `${window.location.origin}/f/${j.token}`;
+          void navigator.clipboard.writeText(url).catch(() => undefined);
+        }
+      } catch (e) {
+        setShareError(e instanceof Error ? e.message : "No se pudo compartir");
+      } finally {
+        setShareBusy(false);
       }
-    } catch (e) {
-      setShareError(e instanceof Error ? e.message : "No se pudo compartir");
-    } finally {
-      setShareBusy(false);
-    }
-  }, [
-    connectedDataset,
-    designerTemplates,
-    id,
-    listId,
-    nodeData.label,
-    nodeData.publicShareToken,
-    nodeData.shareMatchLabel,
-    nodeData.templateBindings,
-    patchSelf,
-    projectScopeId,
-  ]);
+    },
+    [
+      connectedDataset,
+      designerTemplates,
+      id,
+      listId,
+      nodeData.label,
+      nodeData.publicShareToken,
+      nodeData.shareMatchLabel,
+      nodeData.templateBindings,
+      patchSelf,
+      projectScopeId,
+      rasterize,
+    ],
+  );
 
   const onCopyShareUrl = useCallback(() => {
     if (!nodeData.publicShareToken) return;
@@ -441,15 +515,10 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     );
   }, [nodeData.publicShareToken]);
 
-  const rowCount = lists.find((l) => l.id === listId)?.cards.length ?? 0;
-  const entityCount = activeDesignerTemplate
-    ? groupPendingFieldsIntoEntities(
-        activeDesignerTemplate.dynamicFields.filter((f) => f.status === "pending"),
-      ).length
-    : 0;
-  const pendingCount =
-    activeDesignerTemplate?.dynamicFields.filter((f) => f.status === "pending").length ?? 0;
   const templateCount = designerTemplates.length;
+  const canOpenStudio = Boolean(
+    connectedDataset && listId && activeDesignerTemplate && activeBinding && templateCount > 0,
+  );
   const canGenerate = useMemo(
     () =>
       Boolean(
@@ -469,7 +538,6 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
   const lastRunOutputs = nodeData.lastRunOutputs ?? [];
   const generateResults = previewUrls.length > 0 ? previewUrls : lastRunOutputs;
-  const displayPreview = previewUrls[0] ?? lastRunOutputs[0];
   const shareUrl = nodeData.publicShareToken
     ? `${typeof window !== "undefined" ? window.location.origin : ""}/f/${nodeData.publicShareToken}`
     : null;
@@ -486,18 +554,22 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         handles={HANDLES}
         variant="frameless"
         material="media"
-        className="populate-node"
+        className={`populate-node${templateCount > 0 && connectedDataset ? " populate-node--connected" : ""}`}
       >
         <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="populate-empty-background absolute inset-0 overflow-hidden" aria-hidden>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={BG} alt="" className="h-full w-full object-cover object-center" draggable={false} />
-          </div>
+          {templateCount === 0 ? (
+            <div className="populate-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={BG} alt="" className="h-full w-full object-cover object-center" draggable={false} />
+            </div>
+          ) : (
+            <PopulateNodeBackgroundGrid templates={designerTemplates} />
+          )}
 
           <div className="populate-node-summary nodrag relative z-10">
             {!connectedDataset ? (
               <p className="populate-node-summary__text populate-node-summary__text--muted">
-                Conecta un Dataset y un Designer (Document → Plantilla).
+                Conecta un Dataset y plantillas Designer.
               </p>
             ) : datasetLoading ? (
               <p className="populate-node-summary__text populate-node-summary__text--muted">
@@ -505,116 +577,42 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               </p>
             ) : templateCount === 0 ? (
               <p className="populate-node-summary__text populate-node-summary__text--muted">
-                Conecta Designers (Document → Plantilla) o un Space con plantillas (Out → Plantilla).
+                Conecta plantillas Designer (Document → Plantilla).
               </p>
             ) : (
-              <>
-                <p className="populate-node-summary__text">
-                  {templateCount} plantilla{templateCount === 1 ? "" : "s"}
-                  {activeDesignerTemplate ? ` · ${activeDesignerTemplate.templateLabel}` : ""} ·{" "}
-                  {entityCount} entidad{entityCount === 1 ? "" : "es"} ·{" "}
-                  {lists.find((l) => l.id === listId)?.name ?? "—"} · {rowCount} fila
-                  {rowCount === 1 ? "" : "s"}
-                  {pendingCount > entityCount
-                    ? ` · ${pendingCount} huecos`
-                    : ""}
-                </p>
-                {templateCount > 1 ? (
-                  <select
-                    className="populate-node-list-select nodrag"
-                    value={activeTemplateNodeId}
-                    onChange={(e) => onSelectTemplate(e.target.value)}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    {designerTemplates.map((t) => (
-                      <option key={t.templateNodeId} value={t.templateNodeId}>
-                        {t.templateLabel}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-                {lists.length > 1 ? (
-                  <select
-                    className="populate-node-list-select nodrag"
-                    value={listId}
-                    onChange={(e) => onSelectList(e.target.value)}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    {lists.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.name} · {l.cards.length}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-                {nodeData.publicShareToken ? (
-                  <p className="populate-node-summary__meta flex items-center gap-1">
-                    <Link2 size={11} />
-                    Formulario compartido
-                  </p>
-                ) : null}
-                {(error ?? shareError ?? nodeData.error) ? (
-                  <p className="populate-node-summary__meta text-rose-200">
-                    {error ?? shareError ?? nodeData.error}
-                  </p>
-                ) : null}
-                {lastRunOutputs.length > 0 && !busy ? (
-                  <p className="populate-node-summary__meta">
-                    {lastRunOutputs.length} imagen{lastRunOutputs.length === 1 ? "" : "es"} en salida
-                  </p>
-                ) : null}
-              </>
+              <p className="populate-node-summary__text">
+                {templateCount} template{templateCount === 1 ? "" : "s"} conectado
+                {templateCount === 1 ? "" : "s"}
+              </p>
             )}
           </div>
 
-          <div className="populate-node-footer nodrag relative z-10">
+          {(error ?? shareError ?? nodeData.error) ? (
+            <div className="foldder-frameless-error nodrag relative z-10 flex items-start gap-1.5 px-2 py-1 text-[10px]">
+              <span>{error ?? shareError ?? nodeData.error}</span>
+            </div>
+          ) : null}
+
+          <div className="foldder-frameless-footer-action nodrag populate-node-footer relative z-10">
             <button
               type="button"
-              className="populate-open-studio"
+              className="populate-open-studio nodrag"
+              disabled={!canOpenStudio}
+              title={
+                canOpenStudio
+                  ? "Abrir Studio para mapear y generar"
+                  : "Conecta Dataset y al menos una plantilla"
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 setStudioOpen(true);
               }}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <Sparkles size={14} />
-              Open Studio
+              <Sparkles size={14} strokeWidth={2.2} />
+              Abrir Studio
             </button>
-            {canGenerate ? (
-              <button
-                type="button"
-                className="populate-run-button"
-                disabled={busy}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void onGenerate();
-                }}
-              >
-                {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                Generar
-              </button>
-            ) : null}
-            {nodeData.publicShareToken ? (
-              <button
-                type="button"
-                className="populate-run-button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCopyShareUrl();
-                }}
-                title="Copiar enlace del formulario"
-              >
-                <Copy size={14} />
-              </button>
-            ) : null}
           </div>
-
-          {displayPreview ? (
-            <div className="populate-node-preview">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={displayPreview} alt="Vista previa" />
-            </div>
-          ) : null}
         </div>
       </StudioCanvasNodeShell>
 
@@ -633,7 +631,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               onClose={() => setStudioOpen(false)}
               onChangeBinding={onChangeBinding}
               rasterizePages={rasterize}
-              onShare={() => void onShare()}
+              onShare={(preview) => void onShare(preview)}
               shareBusy={shareBusy}
               shareError={shareError}
               shareUrl={shareUrl}
@@ -661,22 +659,24 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         <DesignerHeadlessRasterPortal
           request={rasterReq}
           onPage={(pageId, dataUrl) => {
-            if (rasterRef.current) {
-              rasterRef.current.collected[pageId] = dataUrl;
-              rasterRef.current.onPageDone?.();
-            }
+            const ref = rasterRef.current;
+            if (!ref || ref.requestId !== rasterReq.requestId) return;
+            ref.collected[pageId] = dataUrl;
+            ref.onPageDone?.();
           }}
           onDone={() => {
             const ref = rasterRef.current;
+            if (!ref || ref.requestId !== rasterReq.requestId) return;
             rasterRef.current = null;
             setRasterReq(null);
-            ref?.resolve(ref.collected);
+            ref.resolve(ref.collected);
           }}
           onError={(err) => {
             const ref = rasterRef.current;
+            if (!ref || ref.requestId !== rasterReq.requestId) return;
             rasterRef.current = null;
             setRasterReq(null);
-            ref?.reject(err);
+            ref.reject(err);
           }}
         />
       ) : null}

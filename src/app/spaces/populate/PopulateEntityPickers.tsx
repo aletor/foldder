@@ -1,10 +1,21 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { Check, Type } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, Type } from "lucide-react";
 import type { FieldDef } from "@/app/spaces/dataset/dataset-types";
 import type { PopulatePickOption } from "./populate-designer-form";
 import type { PopulatePoseOptionVisual } from "./populate-row-preview";
+
+function useCloseOnOutside(open: boolean, onClose: () => void, rootRef: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open, onClose, rootRef]);
+}
 
 export function PopulateRecordGrid({
   label,
@@ -21,21 +32,115 @@ export function PopulateRecordGrid({
   onChange: (cardId: string) => void;
   thumbForOption?: (cardId: string) => string | undefined;
   variant?: "studio" | "public";
-  /** `compact`: fila horizontal con miniatura a la izquierda. */
-  layout?: "grid" | "compact";
+  /** `compact`: lista vertical. `dropdown`: desplegable con foto + nombre. */
+  layout?: "grid" | "compact" | "dropdown";
 }) {
   const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
     return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, query]);
 
+  useCloseOnOutside(open, () => setOpen(false), rootRef);
+
+  const selected = options.find((o) => o.cardId === value) ?? options[0];
+  const selectedThumb = selected ? thumbForOption?.(selected.cardId) : undefined;
+
   const root =
     variant === "public"
       ? "populate-record-grid populate-record-grid--public"
       : "populate-record-grid";
-  const layoutClass = layout === "compact" ? " populate-record-grid--compact" : "";
+  const layoutClass =
+    layout === "compact"
+      ? " populate-record-grid--compact"
+      : layout === "dropdown"
+        ? " populate-record-grid--dropdown"
+        : "";
+
+  if (layout === "dropdown") {
+    return (
+      <div className={`${root}${layoutClass}`} ref={rootRef}>
+        <span className="populate-record-grid__label">{label}</span>
+        <div className="populate-record-dropdown nodrag">
+          <button
+            type="button"
+            className={`populate-record-dropdown__trigger${open ? " is-open" : ""}`}
+            aria-expanded={open}
+            aria-haspopup="listbox"
+            onClick={() => setOpen((o) => !o)}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <span className="populate-record-dropdown__value">
+              {selectedThumb ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={selectedThumb}
+                  alt=""
+                  className="populate-record-dropdown__thumb"
+                  draggable={false}
+                />
+              ) : (
+                <span className="populate-record-dropdown__thumb populate-record-dropdown__thumb--empty" />
+              )}
+              <span className="populate-record-dropdown__name">{selected?.label ?? "Elegir…"}</span>
+            </span>
+            <ChevronDown size={14} className="populate-record-dropdown__chevron" aria-hidden />
+          </button>
+          {open ? (
+            <div className="populate-record-dropdown__panel nodrag" onPointerDown={(e) => e.stopPropagation()}>
+              {options.length > 8 ? (
+                <input
+                  type="search"
+                  className="populate-record-dropdown__search"
+                  placeholder="Buscar…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              ) : null}
+              <ul className="populate-record-dropdown__list" role="listbox">
+                {filtered.map((o) => {
+                  const thumb = thumbForOption?.(o.cardId);
+                  const isSelected = value === o.cardId;
+                  return (
+                    <li key={o.cardId} role="option" aria-selected={isSelected}>
+                      <button
+                        type="button"
+                        className={`populate-record-dropdown__option${isSelected ? " is-selected" : ""}`}
+                        onClick={() => {
+                          onChange(o.cardId);
+                          setOpen(false);
+                          setQuery("");
+                        }}
+                      >
+                        {thumb ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={thumb}
+                            alt=""
+                            className="populate-record-dropdown__thumb"
+                            draggable={false}
+                          />
+                        ) : (
+                          <span className="populate-record-dropdown__thumb populate-record-dropdown__thumb--empty" />
+                        )}
+                        <span className="populate-record-dropdown__name">{o.label}</span>
+                        {isSelected ? (
+                          <Check size={12} className="populate-record-dropdown__check" aria-hidden />
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`${root}${layoutClass}`}>
@@ -53,12 +158,12 @@ export function PopulateRecordGrid({
       <ul className="populate-record-grid__list nodrag" onPointerDown={(e) => e.stopPropagation()}>
         {filtered.map((o) => {
           const thumb = thumbForOption?.(o.cardId);
-          const selected = value === o.cardId;
+          const isSelected = value === o.cardId;
           return (
             <li key={o.cardId}>
               <button
                 type="button"
-                className={`populate-record-grid__item${selected ? " is-selected" : ""}`}
+                className={`populate-record-grid__item${isSelected ? " is-selected" : ""}`}
                 onClick={() => onChange(o.cardId)}
                 title={o.label}
               >
@@ -69,7 +174,7 @@ export function PopulateRecordGrid({
                   <span className="populate-record-grid__thumb populate-record-grid__thumb--empty" />
                 )}
                 <span className="populate-record-grid__name">{o.label}</span>
-                {selected ? <Check size={12} className="populate-record-grid__check" aria-hidden /> : null}
+                {isSelected ? <Check size={12} className="populate-record-grid__check" aria-hidden /> : null}
               </button>
             </li>
           );

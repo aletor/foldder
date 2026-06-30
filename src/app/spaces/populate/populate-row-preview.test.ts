@@ -62,4 +62,9 @@ describe("populate-row-preview", () => {
       "https://x/front.png",
     );
   });
+
+  it("encuentra miniatura sin schema (formulario público)", () => {
+    const values = dataset.lists[0]!.cards[0]!.values;
+    expect(recordThumbFromValues(values, [])).toBe("https://x/front.png");
+  });
 });

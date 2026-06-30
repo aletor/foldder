@@ -70,7 +70,7 @@ export function groupPendingFieldsIntoEntities(
   return Array.from(byEntity.values());
 }
 
-function normalizeSchemaToken(value: string): string {
+export function normalizeSchemaToken(value: string): string {
   return value
     .trim()
     .toLowerCase()

@@ -41,6 +41,7 @@ function assetsMetadataForTests(): ProjectAssetsMetadata {
         environment: fill("environment"),
         textures: fill("textures"),
         people: fill("people"),
+        objects: fill("objects"),
       },
     },
   };

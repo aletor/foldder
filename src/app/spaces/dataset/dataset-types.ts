@@ -6,6 +6,7 @@
  */
 
 import type { ImageGenerationHistoryEntry } from "./dataset-image-history";
+import type { BrandKitDatasetLink } from "../brandkit/brandkit-dataset-schema";
 
 export type FieldType =
   | "text"
@@ -205,6 +206,7 @@ export interface DesignerDatasetPropertyBinding {
 
 export interface DatasetNodeData {
   label?: string;
+  brandKitLink?: BrandKitDatasetLink;
   dataset?: Dataset;
   datasetRef?: { datasetId: string; version: number };
   datasetPreview?: DatasetPreview;

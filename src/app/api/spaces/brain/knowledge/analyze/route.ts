@@ -754,6 +754,7 @@ function sanitizeVisualStyle(raw: unknown, docs: BrainDoc[]): BrainVisualStyle {
     environment: read("environment", "Entorno"),
     textures: read("textures", "Texturas"),
     people: read("people", "Personas"),
+    objects: read("objects", "Objetos"),
   };
 }
 
@@ -1042,6 +1043,7 @@ function mergeStrategy(existing: BrainStrategy | undefined, autofill: StrategyAu
     environment: mergeSlot("environment"),
     textures: mergeSlot("textures"),
     people: mergeSlot("people"),
+    objects: mergeSlot("objects"),
   };
 
   const channelMerged = [...previous.channelIntensity, ...autofill.channelIntensity]

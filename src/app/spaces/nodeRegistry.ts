@@ -619,7 +619,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     label: 'Dataset',
     description:
       'Tabla tipada y persistente: cards iterables (una pieza por card en el destino) + constantes compartidas que se inyectan en todas las piezas. Fuente de verdad reutilizable; expone filas tipadas + constantes a cualquier nodo de materialización (Designer, Cine, Animate).',
-    inputs: [],
+    inputs: [{ id: 'brandkit', label: 'BrandKit', type: 'brain' as HandleType }],
     outputs: [{ id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType }],
     dataSchema: {
       label: 'string (nombre del Dataset)',

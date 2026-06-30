@@ -2,9 +2,10 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { freezeDesignerPagesForForm } from "@/app/spaces/loop/loop-designer-form";
+import { freezePopulateTemplatePages } from "./populate-slot-layout";
 import { bindingForTemplate } from "./populate-designer-binding";
 import type { PopulateDesignerTemplateConfig } from "./populate-designer-template";
+import { populateStudioTemplateMenuLabel } from "./populate-designer-template";
 import { derivePopulateForm, resolvePopulateSlotValues } from "./populate-designer-form";
 import type { PopulateTemplateBinding } from "./populate-types";
 import type { Dataset } from "@/app/spaces/dataset/dataset-types";
@@ -115,7 +116,11 @@ export function PopulateStudioTemplateList({
             manualValues: {},
             pickedPoses: binding.entityPoseColumnFieldId,
           });
-          const pages = freezeDesignerPagesForForm(template.pages, slotValues);
+          const pages = freezePopulateTemplatePages(
+            template.pages,
+            slotValues,
+            binding.slotLayoutOverrides,
+          );
           const rasterAllSlides = template.templateNodeId === activeTemplateNodeId;
           const pageIds = rasterAllSlides
             ? pages.map((p) => p.id)
@@ -155,11 +160,12 @@ export function PopulateStudioTemplateList({
 
   return (
     <ul className="populate-studio-template-list">
-      {templates.map((t) => {
+      {templates.map((t, index) => {
         const active = t.templateNodeId === activeTemplateNodeId;
         const slides = slideUrlsByTemplate[t.templateNodeId] ?? [];
         const loading = loadingIds.has(t.templateNodeId);
         const slideCount = Math.max(1, t.pages.length);
+        const menuLabel = populateStudioTemplateMenuLabel(index, t);
 
         return (
           <li key={t.templateNodeId}>
@@ -167,7 +173,7 @@ export function PopulateStudioTemplateList({
               type="button"
               className={`populate-studio-template-chip nodrag${active ? " is-active" : ""}`}
               onClick={() => onSelectTemplate(t.templateNodeId)}
-              title={t.templateLabel}
+              title={menuLabel}
             >
               <span className="populate-studio-template-chip__preview" aria-hidden>
                 {loading && slides.length === 0 ? (
@@ -191,10 +197,12 @@ export function PopulateStudioTemplateList({
                   ))
                 )}
               </span>
-              <span className="populate-studio-template-chip__label">{t.templateLabel}</span>
-              {t.pages.length > 1 ? (
-                <span className="populate-studio-template-chip__count">{t.pages.length} slides</span>
-              ) : null}
+              <span className="populate-studio-template-chip__body">
+                <span className="populate-studio-template-chip__label">{menuLabel}</span>
+                {t.pages.length > 1 ? (
+                  <span className="populate-studio-template-chip__count">{t.pages.length} slides</span>
+                ) : null}
+              </span>
             </button>
           </li>
         );

@@ -1,0 +1,125 @@
+.vc3d {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-height: 100%;
+}
+
+.vc3d--empty {
+  justify-content: center;
+}
+
+.vc3d-controls {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.vc3d-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.vc3d-item-btn {
+  appearance: none;
+  border: 1px solid var(--lab-border);
+  background: var(--lab-surface);
+  color: var(--lab-text);
+  border-radius: 0.5rem;
+  padding: 0.38rem 0.62rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.vc3d-item-btn:hover {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(26, 27, 30, 0.16);
+}
+
+.vc3d-item-btn:active {
+  transform: scale(0.97);
+}
+
+.vc3d-item-btn.is-active {
+  background: #1a1b1e;
+  border-color: #1a1b1e;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.14);
+}
+
+.vc3d-viewport {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: min(62vh, 460px);
+  overflow: hidden;
+  perspective: 1100px;
+  perspective-origin: 50% 50%;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 8%,
+    #000 92%,
+    transparent 100%
+  );
+}
+
+.vc3d-stage {
+  position: relative;
+  width: min(100%, 280px);
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.vc3d-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 268px;
+  height: 420px;
+  margin-left: -134px;
+  margin-top: -210px;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+.vc3d-card.is-active {
+  pointer-events: auto;
+}
+
+.vc3d-card-surface {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 22px 44px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.vc3d-card.is-active .vc3d-card-surface {
+  box-shadow: 0 28px 56px rgba(0, 0, 0, 0.14);
+}
+
+.vc3d-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--lab-muted);
+}

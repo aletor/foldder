@@ -12,6 +12,12 @@ export const DEFAULT_POPULATE_SHARE_OPTIONS: PopulateShareOptions = {
   autoDisableAt: null,
 };
 
+export type PopulateShareTemplateDefaults = {
+  pickedRows: Record<string, string>;
+  pickedPoses: Record<string, string>;
+  manualValues: Record<string, string>;
+};
+
 export type PopulateShareTemplateEntry = {
   templateNodeId: string;
   templateLabel: string;
@@ -19,6 +25,12 @@ export type PopulateShareTemplateEntry = {
   formModel: PopulateFormModel;
   pages: DesignerPageState[];
   slideCount: number;
+  /** Selecciones del Studio al publicar — hidratan el formulario público. */
+  defaults?: PopulateShareTemplateDefaults;
+  /** Miniatura congelada (defaults) para pantalla A e instant load. */
+  previewThumbUrl?: string;
+  /** Hero inicial en pantalla B (~720px); opcional si coincide con thumb. */
+  previewHeroUrl?: string;
 };
 
 export type PopulateSharePayload = {

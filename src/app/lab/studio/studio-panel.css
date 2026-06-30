@@ -1,0 +1,237 @@
+.studio-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  height: 100%;
+  padding: 0.85rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: #1a1b1e;
+}
+
+.studio-panel__hint {
+  margin: 0;
+  color: rgba(26, 27, 30, 0.52);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.studio-panel__section-title {
+  margin: 0;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(26, 27, 30, 0.42);
+}
+
+.studio-panel__tabs {
+  display: flex;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.studio-panel__tab {
+  appearance: none;
+  border: 1px solid rgba(26, 27, 30, 0.12);
+  background: #f8f6f2;
+  color: rgba(26, 27, 30, 0.72);
+  border-radius: 0.45rem;
+  padding: 0.32rem 0.55rem;
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.studio-panel__tab.is-active {
+  background: #1a1b1e;
+  border-color: #1a1b1e;
+  color: #fff;
+}
+
+.studio-panel__card {
+  border: 1px solid rgba(26, 27, 30, 0.1);
+  border-radius: 0.65rem;
+  background: #faf8f5;
+  padding: 0.65rem;
+}
+
+.studio-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.studio-panel__avatar {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.35rem;
+  background: rgba(26, 27, 30, 0.08);
+  display: grid;
+  place-items: center;
+  color: rgba(26, 27, 30, 0.45);
+  flex-shrink: 0;
+}
+
+.studio-panel__name {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(26, 27, 30, 0.1);
+  border-radius: 0.4rem;
+  background: #fff;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #1a1b1e;
+}
+
+.studio-panel__manual {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.6rem;
+  color: rgba(26, 27, 30, 0.55);
+  white-space: nowrap;
+}
+
+.studio-panel__manual input {
+  accent-color: #1a1b1e;
+}
+
+.studio-panel__mosaic {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem;
+}
+
+.studio-panel__thumb {
+  appearance: none;
+  border: 1px solid rgba(26, 27, 30, 0.1);
+  border-radius: 0.45rem;
+  background: #ece8e2;
+  padding: 0;
+  overflow: hidden;
+  cursor: default;
+  text-align: left;
+}
+
+.studio-panel__thumb.is-active {
+  border-color: #ffbd1b;
+  box-shadow: 0 0 0 1px rgba(255, 189, 27, 0.45);
+}
+
+.studio-panel__thumb-photo {
+  height: 3.2rem;
+  background: linear-gradient(160deg, #d8d2c8 0%, #b8b0a4 100%);
+}
+
+.studio-panel__thumb-photo--pose1 {
+  background: linear-gradient(160deg, #c9c3b8 0%, #9a9288 100%);
+}
+
+.studio-panel__thumb-photo--pose2 {
+  background: linear-gradient(160deg, #ddd7cc 0%, #a8a095 100%);
+}
+
+.studio-panel__thumb-photo--pose3 {
+  background: linear-gradient(160deg, #cfc9be 0%, #8f877c 100%);
+}
+
+.studio-panel__thumb-label {
+  display: block;
+  padding: 0.28rem 0.35rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: rgba(26, 27, 30, 0.62);
+}
+
+.studio-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.studio-panel__field-key {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: rgba(26, 27, 30, 0.48);
+}
+
+.studio-panel__field-key code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.56rem;
+}
+
+.studio-panel__select {
+  width: 100%;
+  border: 1px solid rgba(26, 27, 30, 0.12);
+  border-radius: 0.4rem;
+  background: #fff;
+  padding: 0.38rem 0.45rem;
+  font-size: 0.64rem;
+  color: #1a1b1e;
+}
+
+.studio-panel__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.studio-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(26, 27, 30, 0.1);
+  border-radius: 0.5rem;
+  background: #fff;
+  padding: 0.4rem 0.45rem;
+}
+
+.studio-panel__row.is-active {
+  border-color: #ffbd1b;
+  box-shadow: 0 0 0 1px rgba(255, 189, 27, 0.35);
+}
+
+.studio-panel__row-photo {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 0.35rem;
+  background: linear-gradient(145deg, #d4cec4, #a39a8e);
+  flex-shrink: 0;
+}
+
+.studio-panel__row-photo--alt {
+  background: linear-gradient(145deg, #c8c2b8, #8e867a);
+}
+
+.studio-panel__row-name {
+  flex: 1;
+  font-size: 0.64rem;
+  font-weight: 600;
+}
+
+.studio-panel__row-check {
+  font-size: 0.72rem;
+  color: #1a1b1e;
+  font-weight: 700;
+}
+
+.studio-panel__facet-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: rgba(26, 27, 30, 0.55);
+}
+
+.studio-panel__facet-label code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
