@@ -10557,11 +10557,14 @@ export function FreehandStudioCanvas({
   const snapEnabledRef = useRef(snapEnabled);
   snapEnabledRef.current = snapEnabled;
   const [snapGuides, setSnapGuides] = useState<SnapVisual[]>([]);
+  const clearSnapGuides = useCallback(() => {
+    setSnapGuides((prev) => (prev.length === 0 ? prev : []));
+  }, []);
   const isSelectionSnapDrag = dragState?.type === "move" || dragState?.type === "resize";
   useEffect(() => {
     if (isSelectionSnapDrag) return;
-    setSnapGuides([]);
-  }, [isSelectionSnapDrag]);
+    clearSnapGuides();
+  }, [clearSnapGuides, isSelectionSnapDrag]);
   /** Popover de color en la barra de herramientas izquierda (fill / stroke). */
   const [leftToolbarColorTarget, setLeftToolbarColorTarget] = useState<null | "fill" | "stroke">(null);
   const [leftToolbarColorPos, setLeftToolbarColorPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -11297,7 +11300,7 @@ export function FreehandStudioCanvas({
 
   const finishGuideGesture = useCallback(
     (clientX: number, clientY: number) => {
-      setSnapGuides([]);
+      clearSnapGuides();
       const gg = guideGestureRef.current;
       const draftSnapshot = guidePullDraftRef.current;
 
@@ -11331,7 +11334,7 @@ export function FreehandStudioCanvas({
       }
       setDragState(null);
     },
-    [designerMode, isClientInDesignerRulerZones, teardownGuideWindowListeners],
+    [designerMode, isClientInDesignerRulerZones, teardownGuideWindowListeners, clearSnapGuides],
   );
 
   const setupGuideWindowListeners = useCallback(() => {
@@ -21196,7 +21199,7 @@ export function FreehandStudioCanvas({
 
     if (dragState.type === "move" && dragState.positions) {
       if (Math.hypot(dx, dy) < OBJECT_MOVE_DRAG_THRESHOLD_PX) {
-        setSnapGuides([]);
+        clearSnapGuides();
         return;
       }
       const scale = canvasScaleFromPointer(viewport.zoom);
@@ -21239,7 +21242,7 @@ export function FreehandStudioCanvas({
           setSnapGuides(snap.guides);
         }
       } else {
-        setSnapGuides([]);
+        clearSnapGuides();
       }
 
       setObjects((prev) => recomputeContainerBoundsTree(mapTree(prev, (o) => {
@@ -21552,7 +21555,7 @@ export function FreehandStudioCanvas({
         ncy = rectY + rectH / 2;
         setSnapGuides(sn.guides);
       } else {
-        setSnapGuides([]);
+        clearSnapGuides();
       }
 
       const sx = signedW / b.w;
@@ -21765,7 +21768,7 @@ export function FreehandStudioCanvas({
         })),
       );
     }
-  }, [setSnapGuides, setObjects]);
+  }, [clearSnapGuides, setObjects]);
 
   flushSelectionGeometryGestureRef.current = flushSelectionGeometryGesture;
 
@@ -22780,7 +22783,7 @@ export function FreehandStudioCanvas({
         dragState.positions &&
         Math.hypot(dx, dy) < OBJECT_MOVE_DRAG_THRESHOLD_PX
       ) {
-        setSnapGuides([]);
+        clearSnapGuides();
         return;
       }
       selectionPointerTailRef.current = {
@@ -23639,7 +23642,7 @@ export function FreehandStudioCanvas({
     }
 
     if (ds.type === "move" && !moveDragCommitted) {
-      setSnapGuides([]);
+      clearSnapGuides();
       setDragState(null);
       return;
     }
@@ -23707,7 +23710,7 @@ export function FreehandStudioCanvas({
       pushHistory(snapshot, selectedIds);
     }
 
-    setSnapGuides([]);
+    clearSnapGuides();
     setDragState(null);
   }, [
     dragState,
@@ -23733,6 +23736,7 @@ export function FreehandStudioCanvas({
     studioCaps.toolPhotoGradient,
     studioCaps.layerMask,
     applyPhotoRasterGradientSession,
+    clearSnapGuides,
   ]);
 
   const clearCanvasHoverState = useCallback(() => {
