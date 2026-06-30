@@ -13,6 +13,7 @@ import { gradientDefId, migrateFill, renderFillDef } from "../freehand/fill";
 import {
   AdjustmentLayerFilterDef,
 } from "../freehand/adjustment-layer-render";
+import type { AdjustmentLayerLike } from "../freehand/adjustment-layer-types";
 import { collectAdjustmentLayersInTree } from "../freehand/group-container";
 import type { PresenterGroupEnterId, PresenterRevealStep } from "./presenter-group-animations";
 import { getEnterForObject, isObjectRevealed, revealTargetKey } from "./presenter-group-animations";
@@ -583,7 +584,10 @@ export function DesignerPageCanvasView({
         ))}
         {useLayerStackRender
           ? adjustmentLayersForDefs.map((layer) => (
-              <AdjustmentLayerFilterDef key={`adj-filter-${layer.id}`} layer={layer} />
+              <AdjustmentLayerFilterDef
+                key={`adj-filter-${layer.id}`}
+                layer={layer as AdjustmentLayerLike}
+              />
             ))
           : null}
         <clipPath id={pageClipPathId} clipPathUnits="userSpaceOnUse">

@@ -1,5 +1,5 @@
 import React from "react";
-import type { FreehandObject, ImageObject, RectObject, TextObject } from "@/app/spaces/FreehandStudio";
+import type { FreehandObject, RectObject, TextObject } from "@/app/spaces/FreehandStudio";
 import {
   bindingKind,
   isPendingDesignerBinding,
@@ -56,7 +56,8 @@ function populateObjectContentFingerprint(obj: FreehandObject): string | null {
     return `t:${(obj as TextObject).text ?? ""}`;
   }
   if (obj.type === "image") {
-    return `i:${(obj as ImageObject).src ?? ""}`;
+    const src = (obj as FreehandObject & { src?: string }).src;
+    return `i:${src ?? ""}`;
   }
   if (obj.type === "rect" && (obj as RectObject).isImageFrame) {
     const src = (obj as RectObject).imageFrameContent?.src;

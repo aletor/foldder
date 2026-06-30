@@ -500,7 +500,7 @@ export function PopulateStudio({
                           textCols={textCols}
                           imageCols={imageCols}
                           onPatchColumn={patchFacetColumn}
-                          dataset={dataset}
+                          dataset={dataset ?? undefined}
                           listId={listId}
                           pickedCardId={pickedCardId}
                         />
