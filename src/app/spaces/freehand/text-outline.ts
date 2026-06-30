@@ -2,6 +2,7 @@ import opentype from "opentype.js";
 import type { SpanStyle } from "../indesign/text-model";
 import { sanitizeStoryLinkHref } from "../indesign/text-model";
 import { sanitizeSvgNamedEntitiesForXml } from "./freehand-export";
+import { textForeignObjectLineBaselineY } from "./text-foreign-object-baseline";
 
 export type VectorPdfTextRun = { text: string; style?: SpanStyle };
 
@@ -795,7 +796,7 @@ export async function richTextToGlyphPaintOps(
   let gIdx = 0;
   for (let li = 0; li < physicalLines.length; li++) {
     const { text: line, globalTextStart, isLastInParagraph } = physicalLines[li]!;
-    const baselineY = t.y + pad + t.fontSize + li * lhPx;
+    const baselineY = textForeignObjectLineBaselineY(t, li);
     const lineW = measureLineWidthMixed(
       line,
       globalTextStart,
@@ -996,7 +997,7 @@ export async function textToGlyphPathPayloads(
 
   for (let li = 0; li < physicalLines.length; li++) {
     const { text: line, isLastInParagraph } = physicalLines[li]!;
-    const baselineY = t.y + pad + t.fontSize + li * lhPx;
+    const baselineY = textForeignObjectLineBaselineY(t, li);
     const lineW = measureLineWidth(font, line, t.fontSize, t.letterSpacing, useKern);
     const leftInset = pad + indent;
 
@@ -1111,7 +1112,7 @@ async function appendInvisibleSelectableTextLayerAsync(
 
   for (let li = 0; li < physicalLines.length; li++) {
     const { text: line, globalTextStart, isLastInParagraph } = physicalLines[li]!;
-    const baselineY = conv.y + pad + conv.fontSize + li * lhPx;
+    const baselineY = textForeignObjectLineBaselineY(conv, li);
     const lineW = measureLineWidthMixed(
       line,
       globalTextStart,

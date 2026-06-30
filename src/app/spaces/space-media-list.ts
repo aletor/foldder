@@ -12,6 +12,7 @@ import {
   spacePortalTemplateDataPatch,
   type SpaceMapEntryLike,
 } from "./space-portal-loop-link";
+import { findDesignerNodesFeedingSpaceOutput } from "./populate/populate-space-template";
 
 const PORTAL_NODE_TYPES = new Set(["spaceInput", "spaceOutput"]);
 
@@ -328,7 +329,11 @@ export function analyzeNestedSpaceStructure(
   const inputNode = nodes.find((n) => n.type === "spaceInput");
   const outputNode = nodes.find((n) => n.type === "spaceOutput");
   const mediaSinkInfos = collectMediaSinkInfos(nodes, edges);
-  const outputMode = detectSpaceOutputMode(mediaSinkInfos);
+  const designerTemplateSinks = findDesignerNodesFeedingSpaceOutput(nodes, edges);
+  const outputMode =
+    designerTemplateSinks.length >= 2
+      ? "collection"
+      : detectSpaceOutputMode(mediaSinkInfos);
   const spaceId = options?.spaceId ?? "space";
   const spaceName = options?.spaceName ?? "Space";
 
@@ -348,6 +353,18 @@ export function analyzeNestedSpaceStructure(
   };
 
   if (outputMode === "collection") {
+    if (designerTemplateSinks.length >= 2) {
+      return {
+        ...base,
+        type: "json",
+        label: "Template Space",
+        outputMode,
+        mediaSinks: designerTemplateSinks.map((n) => ({
+          nodeId: n.id,
+          sourceHandle: "document",
+        })),
+      };
+    }
     const mediaListOutput = buildMediaListFromSinkInfos(mediaSinkInfos, spaceId, spaceName);
     const firstItem = mediaListOutput.items.find((i) => i.url || i.s3Key);
     const firstUrl = firstItem?.url ?? null;
@@ -423,7 +440,7 @@ export function reconcileSpacePortalNode(
   const innerNodes = (entry.nodes ?? []).filter(
     (n) => n.type !== "spaceInput" && n.type !== "spaceOutput",
   );
-  const innerEdges = (entry.edges ?? []).filter((e) => e.target !== "out" && e.source !== "in");
+  const innerEdges = (entry.edges ?? []).filter((e) => e.source !== "in");
 
   return {
     ...portalNode,

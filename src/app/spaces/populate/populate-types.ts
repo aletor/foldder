@@ -51,6 +51,11 @@ export interface PopulateNodeData {
   publicShareToken?: string;
   /** Etiqueta del partido al compartir formulario (matchLabel en el share). */
   shareMatchLabel?: string;
+  /**
+   * Si es true, al generar se inyecta el nested space con nodos Designer editables además de las PNG.
+   * Si es false (por defecto), solo se rasterizan las imágenes.
+   */
+  createEditablesOnGenerate?: boolean;
   value?: string;
   lastRunOutputs?: string[];
   mediaListOutput?: MediaListOutput;

@@ -13,6 +13,7 @@ export function PopulateRecordGrid({
   onChange,
   thumbForOption,
   variant = "studio",
+  layout = "grid",
 }: {
   label: string;
   options: PopulatePickOption[];
@@ -20,6 +21,8 @@ export function PopulateRecordGrid({
   onChange: (cardId: string) => void;
   thumbForOption?: (cardId: string) => string | undefined;
   variant?: "studio" | "public";
+  /** `compact`: fila horizontal con miniatura a la izquierda. */
+  layout?: "grid" | "compact";
 }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -28,10 +31,14 @@ export function PopulateRecordGrid({
     return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, query]);
 
-  const root = variant === "public" ? "populate-record-grid populate-record-grid--public" : "populate-record-grid";
+  const root =
+    variant === "public"
+      ? "populate-record-grid populate-record-grid--public"
+      : "populate-record-grid";
+  const layoutClass = layout === "compact" ? " populate-record-grid--compact" : "";
 
   return (
-    <div className={root}>
+    <div className={`${root}${layoutClass}`}>
       <span className="populate-record-grid__label">{label}</span>
       {options.length > 6 ? (
         <input

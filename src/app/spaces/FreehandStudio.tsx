@@ -347,6 +347,7 @@ import {
 } from "./freehand/adjustment-layer-types";
 import {
   AdjustmentLayerFilterDef,
+  buildDesignerLayerEffectMaps,
   buildLayerStackRenderSegments,
   filterRootStackObjects,
   renderSegmentStackChildren,
@@ -421,6 +422,7 @@ import {
   textToGlyphPathPayloads,
   type VectorPdfExportOptions,
 } from "./freehand/text-outline";
+import { textForeignObjectLineBaselineY } from "./freehand/text-foreign-object-baseline";
 import {
   DEFAULT_DOCUMENT_FONT_FAMILY,
   DEFAULT_DOCUMENT_FONT_WEIGHT,
@@ -3944,6 +3946,22 @@ export function flattenObjectsForGradientDefs(list: FreehandObject[]): FreehandO
   return out;
 }
 
+/** Textos visibles del árbol (clips, grupos, carpetas) para export raster/PDF con tipografías embebidas. */
+export function collectVisibleTextObjectsDeep(list: FreehandObject[]): TextObject[] {
+  const out: TextObject[] = [];
+  for (const o of list) {
+    if (o.type === "text" && o.visible && !o.isClipMask) out.push(o as TextObject);
+    if (o.type === "clippingContainer") {
+      out.push(...collectVisibleTextObjectsDeep((o as ClippingContainerObject).content));
+    } else if (o.type === "booleanGroup") {
+      out.push(...collectVisibleTextObjectsDeep((o as BooleanGroupObject).children));
+    } else if (o.type === "groupContainer") {
+      out.push(...collectVisibleTextObjectsDeep((o as GroupContainerObject).children));
+    }
+  }
+  return out;
+}
+
 function mapMaskShapeWithWorldMap(m: ClipMaskShape, mapWorld: (p: Point) => Point): ClipMaskShape {
   if (m.type === "image") {
     const im = m as ImageObject;
@@ -6097,6 +6115,79 @@ function wrapWithSelectedLayerEffect(
   return wrapped;
 }
 
+export type DesignerPageStackRenderExtras = {
+  shouldPaint?: (obj: FreehandObject) => boolean;
+  wrapRenderedObject?: (obj: FreehandObject, node: React.ReactNode) => React.ReactNode;
+};
+
+/** Stack de capas con capas de efecto (preview Populate/Presenter, export DOM). */
+export function renderDesignerPageObjectStack(
+  objects: FreehandObject[],
+  opts: RenderObjOpts,
+  selectedIds: Set<string> = new Set(),
+  extras?: DesignerPageStackRenderExtras,
+): React.ReactNode {
+  const segments = buildLayerStackRenderSegments(objects);
+  const fullOpts: RenderObjOpts = { ...opts, ...buildDesignerLayerEffectMaps(objects) };
+
+  const renderStackObjectInner = (obj: FreehandObject) => {
+    if (extras?.shouldPaint && !extras.shouldPaint(obj)) return null;
+    const painted = wrapWithSelectedLayerEffect(
+      renderObj(obj, objects, selectedIds, fullOpts),
+      obj,
+      fullOpts,
+    );
+    const node = (
+      <g
+        key={obj.id}
+        data-fh-obj={obj.id}
+        style={layerMixBlendStyle((obj as FreehandObjectBase).blendMode)}
+      >
+        {painted}
+      </g>
+    );
+    return extras?.wrapRenderedObject ? extras.wrapRenderedObject(obj, node) : node;
+  };
+
+  return segments.map((seg, segIdx) => {
+    if (seg.kind === "filtered") {
+      const clipRendered = new Set<string>();
+      let inner: React.ReactNode = (
+        <React.Fragment key={`seg-inner-${seg.layer.id}`}>
+          {renderSegmentStackChildren(seg.children, renderStackObjectInner, clipRendered)}
+        </React.Fragment>
+      );
+      if (seg.effectsActive && seg.layer.layerEffects) {
+        const contentBounds = getGroupBounds(seg.children);
+        const bounds = resolveEffectLayerFxBounds(seg.layer as AdjustmentLayerObject, contentBounds, undefined);
+        inner = (
+          <StackSegmentWithLayerEffects
+            key={`adj-fx-${seg.layer.id}`}
+            layerId={seg.layer.id}
+            bounds={bounds}
+            effects={seg.layer.layerEffects}
+          >
+            {inner}
+          </StackSegmentWithLayerEffects>
+        );
+      }
+      if (seg.toneActive) {
+        inner = (
+          <g key={`adj-tone-${seg.layer.id}`} filter={`url(#${adjustmentLayerFilterId(seg.layer.id)})`}>
+            {inner}
+          </g>
+        );
+      }
+      return <React.Fragment key={`adj-seg-${seg.layer.id}`}>{inner}</React.Fragment>;
+    }
+    return (
+      <React.Fragment key={`plain-seg-${segIdx}`}>
+        {renderSegmentStackChildren(seg.children, renderStackObjectInner, new Set())}
+      </React.Fragment>
+    );
+  });
+}
+
 /** Imagen raster + overlays + outer glow.
  * Color: `feMerge` solo del halo sobre una copia de la imagen (Chromium suele ignorar filtros dentro de `<mask>`).
  * Gradiente: rect enmascarado (misma cadena de filtro → blanco en alfa).
@@ -7542,7 +7633,7 @@ function textObjectToNativeSvgMarkup(t: TextObject): string {
   } else {
     baseX = t.x + pad + indent;
   }
-  const firstY = t.y + pad + t.fontSize;
+  const firstY = textForeignObjectLineBaselineY(t, 0);
   const sp = t.strokePosition ?? "over";
   // TODO: validar paint-order en canvas raster cross-browser;
   // si el orden no coincide con la vista en vivo, sustituir
@@ -7622,7 +7713,7 @@ function textForeignObjectStaticInnerXml(t: TextObject, fillAp: FillAppearance):
 }
 
 function substituteNativeTextForRasterExport(svgXml: string, objects: FreehandObject[]): string {
-  const texts = objects.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+  const texts = collectVisibleTextObjectsDeep(objects);
   if (texts.length === 0) return svgXml;
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgXml, "image/svg+xml");
@@ -7655,7 +7746,7 @@ function substituteNativeTextForRasterExport(svgXml: string, objects: FreehandOb
 
 /** Raster PNG: convierte texto a trazados para que las tipografías se respeten al rasterizar el SVG (blob). */
 async function substituteTextForRasterExport(svgXml: string, objects: FreehandObject[]): Promise<string> {
-  const textObjs = objects.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+  const textObjs = collectVisibleTextObjectsDeep(objects);
   if (textObjs.length === 0) return svgXml;
   try {
     return await substituteTextWithOutlinedPathsInSvg(
@@ -11093,7 +11184,7 @@ export function FreehandStudioCanvas({
           scale: 1,
           background: bg,
         });
-        const textObjs = objs.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+        const textObjs = collectVisibleTextObjectsDeep(objs);
         if (textObjs.length > 0) {
           strRaw = await substituteTextWithOutlinedPathsInSvg(
             strRaw,
@@ -18538,7 +18629,7 @@ export function FreehandStudioCanvas({
         } else if (opts.format === "pdf") {
           const { downloadSvgAsVectorPdf } = await import("./freehand/download-vector-pdf");
           let pdfMarkup = strRaw;
-          const textObjs = objs.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+          const textObjs = collectVisibleTextObjectsDeep(objs);
           if (textObjs.length > 0) {
             pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
               strRaw,
@@ -18600,7 +18691,7 @@ export function FreehandStudioCanvas({
               entries.push({ fname, blob: new Blob([strRaw], { type: "image/svg+xml;charset=utf-8" }) });
             } else if (opts.format === "pdf") {
               let pdfMarkup = strRaw;
-              const textObjs = objs.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+              const textObjs = collectVisibleTextObjectsDeep(objs);
               if (textObjs.length > 0) {
                 pdfMarkup = await substituteTextWithOutlinedPathsInSvg(strRaw, textObjs.map(mapTextForPdf), {
                   selectableText: opts.pdfSelectableText !== false,

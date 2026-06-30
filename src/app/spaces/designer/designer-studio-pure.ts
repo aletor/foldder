@@ -110,7 +110,7 @@ export function resolveSlideKey(page: DesignerPageState): string {
 
 function collectIdsFromFreehandObject(o: FreehandObject, ids: Set<string>): void {
   ids.add(o.id);
-  if (o.type === "booleanGroup") {
+  if (o.type === "booleanGroup" || o.type === "groupContainer") {
     for (const c of o.children) collectIdsFromFreehandObject(c, ids);
   } else if (o.type === "clippingContainer") {
     collectIdsFromFreehandObject(o.mask as FreehandObject, ids);
@@ -179,7 +179,21 @@ export function duplicateDesignerPageState(page: DesignerPageState): DesignerPag
       const gid = remap(o.guidePathId);
       if (gid != null) o.guidePathId = gid;
     }
-    if (o.type === "booleanGroup") {
+    if (o.type === "adjustmentLayer") {
+      const adj = o as FreehandObject & {
+        effectTargetFolderId?: string;
+        effectTargetLayerId?: string;
+      };
+      if (adj.effectTargetFolderId) {
+        const fid = remap(adj.effectTargetFolderId);
+        if (fid != null) adj.effectTargetFolderId = fid;
+      }
+      if (adj.effectTargetLayerId) {
+        const lid = remap(adj.effectTargetLayerId);
+        if (lid != null) adj.effectTargetLayerId = lid;
+      }
+    }
+    if (o.type === "booleanGroup" || o.type === "groupContainer") {
       for (const c of o.children) applyFreehandObject(c);
     } else if (o.type === "clippingContainer") {
       applyFreehandObject(o.mask as FreehandObject);

@@ -222,20 +222,24 @@ export function areNodesConnectable(
     });
   }
 
-  // Bloqueo duro: un nested Space NO puede actuar como plantilla de Populate.
-  if (
-    targetNode.type === "populate" &&
-    connection.targetHandle === "template" &&
-    sourceNode.type === "space"
-  ) {
-    return false;
-  }
-
-  // Populate plantilla: solo Designer (Document → template).
+  // Populate plantilla: Designer directo (Document → template) o Space (out → template).
   if (targetNode.type === "populate" && connection.targetHandle === "template") {
-    if (sourceNode.type === "space") return false;
+    if (sourceNode.type === "space") {
+      const sh = connection.sourceHandle ?? "out";
+      return sh === "out" || sh === "media_list";
+    }
     const sh = connection.sourceHandle ?? "document";
     return sourceNode.type === "designer" && (sh === "document" || sh === "template");
+  }
+
+  // Space interno: varios Designers (Document) → spaceOutput en paralelo (Populate / colección).
+  if (
+    targetNode.type === "spaceOutput" &&
+    connection.targetHandle === "in" &&
+    sourceNode.type === "designer"
+  ) {
+    const sh = connection.sourceHandle ?? "document";
+    if (sh === "document" || sh === "template") return true;
   }
 
   // Template handle legacy (proyectos con salida template dedicada).

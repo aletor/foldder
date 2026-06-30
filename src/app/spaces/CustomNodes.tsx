@@ -3862,8 +3862,12 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
   const isVisual = !isCollection && (sourceType === 'image' || sourceType === 'video');
   const collectionThumbs = isCollection
     ? sourceNodes
-        .map((node) => (typeof node.data?.value === 'string' ? node.data.value : undefined))
-        .filter((url): url is string => Boolean(url))
+        .map((node) => {
+          const url = typeof node.data?.value === "string" ? node.data.value : undefined;
+          if (!url) return null;
+          return { id: node.id, url };
+        })
+        .filter((thumb): thumb is { id: string; url: string } => thumb != null)
         .slice(0, 4)
     : [];
 
@@ -3914,8 +3918,8 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
         <div className="relative w-full overflow-hidden" style={{ background: '#0a0a0a', minHeight: 120 }}>
           {collectionThumbs.length > 0 ? (
             <div className="grid grid-cols-2 gap-px p-px">
-              {collectionThumbs.map((url) => (
-                <img key={url} src={url} className="aspect-video w-full object-cover" alt="" />
+              {collectionThumbs.map((thumb) => (
+                <img key={thumb.id} src={thumb.url} className="aspect-video w-full object-cover" alt="" />
               ))}
             </div>
           ) : (

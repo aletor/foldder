@@ -11,6 +11,10 @@ import { applyDesignerDatasetPropertyBindings } from "./designer-dataset-propert
 import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { patchStoryContentPlain } from "../indesign/text-threading";
 import type { DesignerPageState } from "./DesignerNode";
+import {
+  mapDesignerObjectTree,
+  type DesignerFolderContext,
+} from "./designer-object-tree";
 
 /**
  * Fila del Dataset asociada a una página. Es una propiedad EXPLÍCITA de la página,
@@ -170,39 +174,33 @@ export function applyDatasetRowToDesignerObject(
  */
 export function transformDesignerPageObjectsDeep(
   page: DesignerPageState,
-  transformOne: (obj: FreehandObject) => FreehandObject,
+  transformOne: (obj: FreehandObject, ctx: DesignerFolderContext) => FreehandObject,
 ): DesignerPageState {
   let stories = page.stories ?? [];
   let pageChanged = false;
 
-  const walk = (obj: FreehandObject): FreehandObject => {
-    let next = transformOne(obj);
+  const objects = mapDesignerObjectTree(page.objects ?? [], (obj, ctx) => {
+    const next = transformOne(obj, ctx);
     let changed = next !== obj;
-    if (changed && next.type === "text" && next.isTextFrame && typeof next.storyId === "string" && next.storyId) {
+    if (
+      changed &&
+      next.type === "text" &&
+      next.isTextFrame &&
+      typeof next.storyId === "string" &&
+      next.storyId
+    ) {
       stories = patchStoryContentPlain(stories, next.storyId, next.text ?? "");
-    }
-    if (next.type === "booleanGroup" || next.type === "groupContainer") {
-      const grp = next;
-      const children = grp.children.map(walk);
-      if (children.some((c, i) => c !== grp.children[i])) {
-        next = { ...grp, children };
-        changed = true;
-      }
-    } else if (next.type === "clippingContainer") {
-      const clip = next;
-      const mask = walk(clip.mask as unknown as FreehandObject) as unknown as typeof clip.mask;
-      const content = clip.content.map(walk);
-      if (mask !== clip.mask || content.some((c, i) => c !== clip.content[i])) {
-        next = { ...clip, mask, content };
-        changed = true;
-      }
     }
     if (changed) pageChanged = true;
     return next;
-  };
+  });
 
-  const objects = (page.objects ?? []).map(walk);
-  if (!pageChanged) return page;
+  if (!pageChanged && objects === page.objects) return page;
+  if (!pageChanged) {
+    const sameTop = objects.length === (page.objects?.length ?? 0) &&
+      objects.every((o, i) => o === page.objects![i]);
+    if (sameTop) return page;
+  }
   return { ...page, objects, stories };
 }
 
@@ -212,8 +210,8 @@ export function applyDatasetRowToDesignerPage(
   dataset: Dataset,
   rowIndex: number,
 ): DesignerPageState {
-  const transformed = transformDesignerPageObjectsDeep(page, (obj) =>
-    applyDatasetRowToDesignerObject(obj, dataset, rowIndex),
+  const transformed = transformDesignerPageObjectsDeep(page, (_obj, _ctx) =>
+    applyDatasetRowToDesignerObject(_obj, dataset, rowIndex),
   );
   if (transformed === page && page.datasetRowIndex === rowIndex) return page;
   return { ...transformed, datasetRowIndex: rowIndex };

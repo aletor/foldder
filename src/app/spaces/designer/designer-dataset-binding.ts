@@ -62,6 +62,29 @@ export function designerSlotKey(binding: DesignerDatasetFieldBinding | undefined
   return "";
 }
 
+/** Nombre de carpeta (groupContainer) → id de entidad Populate (fila compartida). */
+export function normalizeDesignerFolderEntityId(name: string | undefined | null): string {
+  const t = (name ?? "").trim().toLowerCase();
+  return t || "carpeta";
+}
+
+/**
+ * Clave de hueco pendiente para Populate/Loop.
+ * Con carpeta: `folder::jugador1::slot::nombre::text`; sin carpeta: `slot::jugador::text`.
+ */
+export function populatePendingSlotKey(
+  binding: DesignerDatasetFieldBinding,
+  kind: DesignerDatasetFieldKind,
+  folderEntityId?: string | null,
+): string {
+  const slot = designerSlotKey(binding);
+  if (!slot) return "";
+  const base = `${slot}::${kind}`;
+  const fid = folderEntityId?.trim();
+  if (fid) return `folder::${fid}::${base}`;
+  return base;
+}
+
 /** Crea un binding PENDIENTE (Modo 2) con su tipo, etiqueta e id estable. */
 export function makePendingDesignerBinding(
   kind: DesignerDatasetFieldKind,

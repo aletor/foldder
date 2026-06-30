@@ -2,11 +2,11 @@ import type { Dataset } from "@/app/spaces/dataset/dataset-types";
 import type { DesignerDynamicField } from "@/app/spaces/loop/loop-designer-fields";
 import type { DesignerTemplateConfig } from "@/app/spaces/loop/loop-designer-template";
 import {
-  defaultColumnForFacetKind,
   entityPickLabel,
   groupPendingFieldsIntoEntities,
   imageColumnsInSchema,
   normalizePopulateEntityId,
+  resolveSchemaColumnForFacet,
   slotKeyForDynamicField,
 } from "./populate-entity-groups";
 import type {
@@ -75,7 +75,7 @@ export function syncPopulateTemplateBinding(args: {
       const autoCol =
         prevCol?.fieldId
           ? schema.find((f) => f.id === prevCol.fieldId)
-          : defaultColumnForFacetKind(schema, facet.kind, usedColumnIds);
+          : resolveSchemaColumnForFacet(schema, facet, usedColumnIds);
 
       if (autoCol) usedColumnIds.add(autoCol.id);
 
@@ -103,7 +103,13 @@ export function syncPopulateTemplateBinding(args: {
     }
 
     const imageFacets = entity.facets.filter((f) => f.kind === "image");
-    if (imageFacets.length > 0 && imageCols.length > 1) {
+    /** Pose compartida solo en modo legacy (un facet imagen, sin carpeta, ≤2 huecos). */
+    if (
+      imageFacets.length === 1 &&
+      imageCols.length > 1 &&
+      !entity.folderLabel &&
+      entity.facets.length <= 2
+    ) {
       const current =
         entityPoseColumnFieldId[entity.entityId] ??
         slotColumns[imageFacets[0]!.slotKey]?.fieldId ??
@@ -130,11 +136,26 @@ export function syncPopulateTemplateBinding(args: {
           }
         }
       }
+    } else if (entity.folderLabel) {
+      delete entityPoseColumnFieldId[entity.entityId];
     }
   }
 
   const activeEntityIds = new Set(entities.map((e) => e.entityId));
   picks = picks.filter((p) => !p.entityId || activeEntityIds.has(p.entityId));
+
+  const activeSlotKeys = new Set(
+    entities.flatMap((e) => e.facets.map((f) => slotKeyForDynamicField(f.field))),
+  );
+  for (const key of Object.keys(sources)) {
+    if (!activeSlotKeys.has(key)) delete sources[key];
+  }
+  for (const key of Object.keys(slotColumns)) {
+    if (!activeSlotKeys.has(key)) delete slotColumns[key];
+  }
+  for (const eid of Object.keys(entityPoseColumnFieldId)) {
+    if (!activeEntityIds.has(eid)) delete entityPoseColumnFieldId[eid];
+  }
 
   return {
     templateNodeId: template.templateNodeId,

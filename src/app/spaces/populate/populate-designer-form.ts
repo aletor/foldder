@@ -8,8 +8,11 @@ import { datasetListRowLabel } from "@/app/spaces/loop/loop-row-label";
 import type { DesignerSlotValueMap } from "@/app/spaces/loop/loop-designer-form";
 import type { DesignerDynamicField } from "@/app/spaces/loop/loop-designer-fields";
 import {
+  datasetPickFacetCount,
   groupPendingFieldsIntoEntities,
   imageColumnsInSchema,
+  populateEntityUsesLegacyPosePicker,
+  populateImagePoseOverrideFieldId,
   slotKeyForDynamicField,
 } from "./populate-entity-groups";
 import type { PopulateTemplateBinding } from "./populate-types";
@@ -85,7 +88,7 @@ export function derivePopulateForm(args: {
     const poseFieldId = binding.entityPoseColumnFieldId?.[group.entityId];
     const hasImage = group.facets.some((f) => f.kind === "image");
     const poseOptions =
-      hasImage && imageCols.length > 1
+      hasImage && imageCols.length > 1 && populateEntityUsesLegacyPosePicker(group, imageCols.length)
         ? imageCols.map((c) => ({ fieldId: c.id, label: c.label }))
         : [];
 
@@ -231,9 +234,13 @@ export function resolvePopulateSlotValues(args: {
 
     const pick = binding.picks.find((p) => p.id === src.pickId);
     const entityId = pick?.entityId;
-    const poseFieldId =
-      (entityId && pickedPoses?.[entityId]) ||
-      (entityId ? binding.entityPoseColumnFieldId?.[entityId] : undefined);
+    const poseFieldId = populateImagePoseOverrideFieldId({
+      slotKey,
+      entityId,
+      pickedPoses,
+      entityPoseColumnFieldId: binding.entityPoseColumnFieldId,
+      pickFacetCount: datasetPickFacetCount(binding, src.pickId),
+    });
 
     const resolved = resolveSlotFromRow({
       slotKey,
@@ -241,7 +248,7 @@ export function resolvePopulateSlotValues(args: {
       rowIndex,
       listId,
       dataset,
-      poseFieldId: slotKey.endsWith("::image") ? poseFieldId : undefined,
+      poseFieldId,
     });
     if (resolved) out[slotKey] = resolved;
   }
@@ -281,11 +288,15 @@ export function resolvePopulateSlotValuesFromSnapshot(args: {
     const pick = binding.picks.find((p) => p.id === src.pickId);
     const entityId = pick?.entityId;
     let fieldId = binding.slotColumns[slotKey]?.fieldId || src.columnFieldId;
-    if (slotKey.endsWith("::image") && entityId) {
-      fieldId =
-        pickedPoses?.[entityId] ||
-        binding.entityPoseColumnFieldId?.[entityId] ||
-        fieldId;
+    const poseOverride = populateImagePoseOverrideFieldId({
+      slotKey,
+      entityId,
+      pickedPoses,
+      entityPoseColumnFieldId: binding.entityPoseColumnFieldId,
+      pickFacetCount: datasetPickFacetCount(binding, src.pickId),
+    });
+    if (poseOverride) {
+      fieldId = poseOverride;
     }
     if (!fieldId) continue;
 
@@ -293,8 +304,9 @@ export function resolvePopulateSlotValuesFromSnapshot(args: {
     if (!val) continue;
     if (val.type === "image" && val.url) {
       out[slotKey] = { kind: "image", url: val.url, w: val.w, h: val.h };
-    } else if (val.type === "text") {
-      out[slotKey] = { kind: "text", text: val.value };
+    } else if (val.type === "text" || val.type === "number") {
+      const text = val.type === "text" ? val.value : String(val.value);
+      if (text.trim()) out[slotKey] = { kind: "text", text: text.trim() };
     } else {
       const text = fieldValueAsText(val);
       if (text.trim()) out[slotKey] = { kind: "text", text: text.trim() };

@@ -29,6 +29,7 @@ import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { ProjectBrainCanvasContext } from "./project-brain-canvas-context";
 import { ProjectAssetsCanvasContext } from "./project-assets-canvas-context";
 import { DatasetCanvasContext } from "./dataset/dataset-canvas-context";
+import { SpacesMapCanvasContext } from "./spaces-map-canvas-context";
 import { registerProjectDatasetConsumers } from "./dataset/dataset-api";
 import { collectGlobalDatasetIdsFromSpaces } from "./dataset/dataset-project";
 
@@ -168,6 +169,7 @@ import {
 } from "./loop/loop-space-portal";
 import { normalizeLegacyPopulateNodes } from "./populate/normalize-legacy-node-type";
 import { POPULATE_MAX_TEMPLATES } from "./populate/populate-types";
+import { listPopulateDesignerTemplateConfigs } from "./populate/populate-designer-template";
 import {
   analyzeNestedSpaceStructure,
   buildMediaSinkToSpaceOutputEdges,
@@ -5763,12 +5765,28 @@ export function SpacesContent() {
           e.targetHandle === "template" &&
           e.source === connection.source,
       );
-      if (!duplicate) {
-        const linked = edges.filter(
-          (e) => e.target === targetNode.id && e.targetHandle === "template",
-        ).length;
-        if (linked >= POPULATE_MAX_TEMPLATES) return false;
-      }
+      if (duplicate) return false;
+
+      const resolvedNodes = nodes.map((n) =>
+        n.type === "space" ? reconcileSpacePortalNode(n, spacesMap) : n,
+      );
+      const nextEdges = [
+        ...edges,
+        {
+          id: "__pending__",
+          source: connection.source,
+          target: connection.target,
+          sourceHandle: connection.sourceHandle ?? null,
+          targetHandle: connection.targetHandle ?? null,
+        },
+      ];
+      const resolvedCount = listPopulateDesignerTemplateConfigs(
+        targetNode.id,
+        resolvedNodes,
+        nextEdges,
+        spacesMap,
+      ).length;
+      if (resolvedCount > POPULATE_MAX_TEMPLATES) return false;
     }
     if (targetNode.type === "export_multimedia" || targetNode.type === "exportMultiple") {
       if (isExportMultimediaDatasetTargetHandle(connection.targetHandle)) {
@@ -6359,6 +6377,7 @@ export function SpacesContent() {
         <ProjectAssetsCanvasContext.Provider value={projectAssetsCanvasValue}>
         <ProjectBrainCanvasContext.Provider value={projectBrainCanvasValue}>
         <DatasetCanvasContext.Provider value={datasetCanvasValue}>
+        <SpacesMapCanvasContext.Provider value={spacesMap}>
         <DesignerSpaceIdContext.Provider value={activeSpaceId === "root" ? null : activeSpaceId}>
         <ReactFlow
           onInit={onCanvasInit}
@@ -6443,6 +6462,7 @@ export function SpacesContent() {
           {fileDragPreviewElement}
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
+        </SpacesMapCanvasContext.Provider>
         </DatasetCanvasContext.Provider>
         </ProjectBrainCanvasContext.Provider>
         </ProjectAssetsCanvasContext.Provider>

@@ -11,6 +11,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const isSpaces =
     pathname === "/spaces" || pathname?.startsWith("/spaces/");
+  const isLab = pathname === "/lab" || pathname?.startsWith("/lab/");
+  const isFullViewport = isSpaces || isLab;
 
   useEffect(() => {
     cleanupLegacyUnscopedBrainSuggestionStorageOnce();
@@ -20,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <LanguageProvider>
-      {isSpaces ? (
+      {isFullViewport ? (
         <main className="h-screen w-screen overflow-hidden">{children}</main>
       ) : (
         <div
@@ -29,8 +31,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </div>
       )}
-      {!isSpaces && pathname !== "/" ? <LanguageSwitcher /> : null}
-      {pathname !== "/" ? <BackgroundRadioPlayer /> : null}
+      {!isFullViewport && pathname !== "/" ? <LanguageSwitcher /> : null}
+      {pathname !== "/" && !isLab ? <BackgroundRadioPlayer /> : null}
     </LanguageProvider>
   );
 }

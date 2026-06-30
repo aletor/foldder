@@ -1,16 +1,16 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
-import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { freezeDesignerPagesForForm } from "@/app/spaces/loop/loop-designer-form";
 import { resolvePopulateSlotValues } from "./populate-designer-form";
 import type { PopulateDesignerTemplateConfig } from "./populate-designer-template";
 import type { PopulateTemplateBinding } from "./populate-types";
 import type { Dataset } from "@/app/spaces/dataset/dataset-types";
+import { PopulateStudioEntityCanvas } from "./PopulateStudioEntityCanvas";
 
 export type PopulateRasterizePagesFn = (
-  pages: DesignerPageState[],
+  pages: import("@/app/spaces/designer/DesignerNode").DesignerPageState[],
   pageIds: string[],
   instanceKey: string,
 ) => Promise<Record<string, string>>;
@@ -23,7 +23,9 @@ export function PopulateStudioTemplatePreview({
   previewPickedRows,
   previewPickedPoses,
   manualValues,
-  rasterizePages,
+  selectedEntityId,
+  onSelectEntity,
+  entityLabels,
 }: {
   template: PopulateDesignerTemplateConfig;
   binding: PopulateTemplateBinding;
@@ -32,12 +34,12 @@ export function PopulateStudioTemplatePreview({
   previewPickedRows: Record<string, string>;
   previewPickedPoses: Record<string, string>;
   manualValues: Record<string, string>;
-  rasterizePages: PopulateRasterizePagesFn;
+  rasterizePages?: PopulateRasterizePagesFn;
+  selectedEntityId: string | null;
+  onSelectEntity: (entityId: string | null) => void;
+  entityLabels: Map<string, string>;
 }) {
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const frozenPages = useMemo(() => {
     const slotValues = resolvePopulateSlotValues({
@@ -62,77 +64,11 @@ export function PopulateStudioTemplatePreview({
   const slideCount = frozenPages.length;
   const activePage = frozenPages[activeSlideIndex] ?? frozenPages[0];
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (activeSlideIndex >= slideCount && slideCount > 0) {
       setActiveSlideIndex(0);
     }
   }, [activeSlideIndex, slideCount, template.templateNodeId]);
-
-  const previewRevision = useMemo(
-    () =>
-      JSON.stringify({
-        templateNodeId: template.templateNodeId,
-        previewPickedRows,
-        previewPickedPoses,
-        manualValues,
-        slotColumns: binding.slotColumns,
-        sources: binding.sources,
-        labelColumnFieldId: binding.labelColumnFieldId,
-        entityPoseColumnFieldId: binding.entityPoseColumnFieldId,
-      }),
-    [
-      binding.entityPoseColumnFieldId,
-      binding.labelColumnFieldId,
-      binding.slotColumns,
-      binding.sources,
-      manualValues,
-      previewPickedPoses,
-      previewPickedRows,
-      template.templateNodeId,
-    ],
-  );
-
-  useEffect(() => {
-    if (!activePage) {
-      setPreviewUrl(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      setLoading(true);
-      setError(null);
-      void rasterizePages(
-        frozenPages,
-        [activePage.id],
-        `populate-studio-preview:${template.templateNodeId}:${activeSlideIndex}:${previewRevision}`,
-      )
-        .then((urls) => {
-          if (cancelled) return;
-          setPreviewUrl(urls[activePage.id] ?? null);
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setPreviewUrl(null);
-          setError(err instanceof Error ? err.message : "No se pudo rasterizar la vista previa");
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    }, 320);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-      setLoading(false);
-    };
-  }, [
-    activePage,
-    activeSlideIndex,
-    frozenPages,
-    previewRevision,
-    rasterizePages,
-    template.templateNodeId,
-  ]);
 
   if (slideCount === 0) {
     return (
@@ -148,7 +84,7 @@ export function PopulateStudioTemplatePreview({
         <div>
           <h2 className="populate-studio-preview-stage__title">{template.templateLabel}</h2>
           <p className="populate-studio-preview-stage__subtitle">
-            Vista previa en vivo · cambia jugador o pose a la derecha
+            Haz clic en una carpeta de jugador de la plantilla para editarla
           </p>
         </div>
         {slideCount > 1 ? (
@@ -178,30 +114,17 @@ export function PopulateStudioTemplatePreview({
         ) : null}
       </div>
 
-      <div className="populate-studio-preview-stage__canvas">
-        {loading && !previewUrl ? (
-          <div className="populate-studio-preview-stage__loading">
-            <Loader2 size={32} className="animate-spin" aria-hidden />
-            <span>Actualizando plantilla…</span>
-          </div>
-        ) : previewUrl ? (
-          <>
-            {loading ? (
-              <div className="populate-studio-preview-stage__loading populate-studio-preview-stage__loading--overlay">
-                <Loader2 size={24} className="animate-spin" aria-hidden />
-              </div>
-            ) : null}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={previewUrl}
-              alt={`${template.templateLabel} slide ${activeSlideIndex + 1}`}
-              className="populate-studio-preview-stage__img"
-              draggable={false}
-            />
-          </>
+      <div className="populate-studio-preview-stage__canvas populate-studio-preview-stage__canvas--interactive">
+        {activePage ? (
+          <PopulateStudioEntityCanvas
+            page={activePage}
+            entityLabels={entityLabels}
+            selectedEntityId={selectedEntityId}
+            onSelectEntity={onSelectEntity}
+          />
         ) : (
           <p className="populate-studio-preview-stage__empty">
-            {error ?? "Elige un jugador en el panel derecho para ver la plantilla."}
+            Elige un jugador en el panel derecho para ver la plantilla.
           </p>
         )}
       </div>

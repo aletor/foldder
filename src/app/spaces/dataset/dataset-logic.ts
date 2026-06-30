@@ -369,7 +369,7 @@ export function getListFieldTextAtRow(
   const list = normalized.lists.find((row) => row.id === listId);
   if (!list) return null;
   const field = list.schema.find((f) => f.id === fieldId);
-  if (!field || field.type !== "text") return null;
+  if (!field || (field.type !== "text" && field.type !== "number")) return null;
   const value = getListFieldValueAtRow(dataset, listId, fieldId, rowIndex);
   if (!value) return "";
   return fieldValueAsText(value);

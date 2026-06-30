@@ -3,6 +3,7 @@ import {
   designerEntityId,
   designerSlotKey,
   makePendingDesignerBinding,
+  populatePendingSlotKey,
 } from "./designer-dataset-binding";
 
 describe("designerSlotKey", () => {
@@ -29,5 +30,15 @@ describe("designerSlotKey", () => {
     const binding = makePendingDesignerBinding("image", "Foto");
     expect(binding.slotId).toBeTruthy();
     expect(binding.slotId).toMatch(/^slot_/);
+  });
+});
+
+describe("populatePendingSlotKey", () => {
+  it("prefija carpeta cuando hay folderEntityId", () => {
+    const binding = makePendingDesignerBinding("text", "nombre");
+    expect(populatePendingSlotKey(binding, "text", "jugador1")).toBe(
+      "folder::jugador1::slot::nombre::text",
+    );
+    expect(populatePendingSlotKey(binding, "text")).toBe("slot::nombre::text");
   });
 });

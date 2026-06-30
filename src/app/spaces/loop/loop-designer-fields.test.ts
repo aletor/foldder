@@ -194,4 +194,31 @@ describe("extractDesignerDynamicFields", () => {
       "slot::jugador::text",
     ]);
   });
+
+  it("campos en carpetas distintas generan claves y entidades separadas", () => {
+    const folder = (name: string, content: FreehandObject[]): FreehandObject =>
+      ({
+        id: `folder_${name}`,
+        type: "groupContainer",
+        name,
+        children: content,
+      }) as unknown as FreehandObject;
+
+    const pages = [
+      page("p1", [
+        folder("Jugador1", [pendingText("t1", "Nombre", "nombre"), pendingText("t2", "Dorsal", "dorsal")]),
+        folder("Jugador2", [pendingText("t3", "Nombre", "nombre")]),
+      ]),
+    ];
+    const fields = extractDesignerDynamicFields(pages);
+    expect(fields).toHaveLength(3);
+    expect(fields.map((f) => f.key).sort()).toEqual([
+      "folder::jugador1::slot::dorsal::text",
+      "folder::jugador1::slot::nombre::text",
+      "folder::jugador2::slot::nombre::text",
+    ]);
+    expect(fields.filter((f) => f.folderEntityId === "jugador1")).toHaveLength(2);
+    expect(fields.filter((f) => f.folderEntityId === "jugador2")).toHaveLength(1);
+  });
 });
+

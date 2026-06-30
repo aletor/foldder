@@ -1,28 +1,20 @@
-/**
- * Loop — descubrimiento de campos dinámicos de un Designer (modo `node-clone`).
- *
- * A diferencia de Image Creation (inputs orquestables estáticos y declarados en el registro), los
- * campos dinámicos de un Designer son POR INSTANCIA: dependen de qué objetos marcó el usuario.
- *
- * Cada campo puede estar en dos estados:
- * - `bound` (Modo 1): el objeto ya apunta a una columna concreta (Dataset conectado al Designer).
- * - `pending` (Modo 2): el objeto está marcado como dinámico (con su tipo) pero SIN columna; Loop
- *   debe ofrecer asignarle una columna de SU Dataset.
- */
-
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import {
   bindingKind,
-  designerSlotKey,
   isPendingDesignerBinding,
+  populatePendingSlotKey,
   type DesignerDatasetFieldKind,
 } from "@/app/spaces/designer/designer-dataset-binding";
+import {
+  type DesignerFolderContext,
+  walkDesignerObjectTree,
+} from "@/app/spaces/designer/designer-object-tree";
 
 export type DesignerDynamicFieldKind = DesignerDatasetFieldKind;
 
 export interface DesignerDynamicField {
-  /** Clave de dedup/mapeo: bound → `${listId}::${fieldId}`; pending → `designerSlotKey`. */
+  /** Clave de dedup/mapeo: bound → `${listId}::${fieldId}`; pending → populatePendingSlotKey. */
   key: string;
   /** Estado del campo: ya enlazado a columna, o pendiente de asignación en Loop. */
   status: "bound" | "pending";
@@ -38,6 +30,9 @@ export interface DesignerDynamicField {
   slotLabel?: string;
   /** Solo `pending`: id estable del hueco (agrupa texto+imagen aunque cambie el nombre). */
   slotId?: string;
+  /** Carpeta contenedora con nombre (`groupContainer`): agrupa fila en Populate. */
+  folderLabel?: string;
+  folderEntityId?: string;
   /** Nº de objetos que usan este campo (informativo). */
   usageCount: number;
   /** Nombre representativo (primer objeto) para la UI. */
@@ -45,42 +40,23 @@ export interface DesignerDynamicField {
 }
 
 /**
- * Recorre el árbol de objetos en profundidad, incluidos los anidados dentro de `booleanGroup`
- * (children), `groupContainer` (carpetas) y `clippingContainer` (mask + content, el "pegar dentro").
- * Debe ir en sincronía con la resolución congelada (`transformDesignerPageObjectsDeep`), que recorre
- * exactamente igual.
- */
-function visitObjects(objects: FreehandObject[] | undefined, visit: (o: FreehandObject) => void): void {
-  for (const o of objects ?? []) {
-    visit(o);
-    if (o.type === "booleanGroup" || o.type === "groupContainer") {
-      visitObjects(o.children, visit);
-    } else if (o.type === "clippingContainer") {
-      visit(o.mask as unknown as FreehandObject);
-      visitObjects(o.content, visit);
-    }
-  }
-}
-
-/**
  * Extrae los campos dinámicos de un conjunto de páginas Designer, deduplicados (bound por columna,
- * pending por slot+tipo — mismo ID puede ser texto e imagen). Orden: primera aparición en el documento.
+ * pending por carpeta+slot+tipo). Orden: primera aparición en el documento.
  */
 export function extractDesignerDynamicFields(
   pages: DesignerPageState[] | undefined,
 ): DesignerDynamicField[] {
   const byKey = new Map<string, DesignerDynamicField>();
   for (const page of pages ?? []) {
-    visitObjects(page.objects, (obj) => {
+    walkDesignerObjectTree(page.objects, (obj, ctx) => {
       const binding = obj._designerDatasetBinding;
       if (!binding) return;
       const kind = bindingKind(binding, obj);
       if (!kind) return;
 
       if (isPendingDesignerBinding(binding)) {
-        const slot = designerSlotKey(binding);
-        if (!slot) return;
-        const key = `${slot}::${kind}`;
+        const key = populatePendingSlotKey(binding, kind, ctx.folderEntityId);
+        if (!key) return;
         const existing = byKey.get(key);
         if (existing) {
           existing.usageCount += 1;
@@ -93,6 +69,8 @@ export function extractDesignerDynamicFields(
           label: binding.slotLabel?.trim() || "Campo",
           slotLabel: binding.slotLabel?.trim() || "Campo",
           slotId: binding.slotId?.trim() || undefined,
+          folderLabel: ctx.folderLabel,
+          folderEntityId: ctx.folderEntityId,
           usageCount: 1,
           sampleObjectName: obj.name?.trim() || undefined,
         });
@@ -114,6 +92,8 @@ export function extractDesignerDynamicFields(
         listKey: binding.listKey,
         fieldId: binding.fieldId,
         fieldKey: binding.fieldKey,
+        folderLabel: ctx.folderLabel,
+        folderEntityId: ctx.folderEntityId,
         usageCount: 1,
         sampleObjectName: obj.name?.trim() || undefined,
       });
@@ -126,7 +106,7 @@ export function extractDesignerDynamicFields(
 export function designerHasDynamicFields(pages: DesignerPageState[] | undefined): boolean {
   for (const page of pages ?? []) {
     let found = false;
-    visitObjects(page.objects, (obj) => {
+    walkDesignerObjectTree(page.objects, (obj) => {
       if (found) return;
       const binding = obj._designerDatasetBinding;
       if (binding && bindingKind(binding, obj)) found = true;
@@ -142,3 +122,5 @@ export function pendingDesignerFields(
 ): DesignerDynamicField[] {
   return extractDesignerDynamicFields(pages).filter((f) => f.status === "pending");
 }
+
+export type { DesignerFolderContext };

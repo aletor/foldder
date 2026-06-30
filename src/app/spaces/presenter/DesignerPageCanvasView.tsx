@@ -1,14 +1,19 @@
 "use client";
 
-import React, { Fragment, useId, useMemo, useRef, useState } from "react";
+import React, { Fragment, useCallback, useId, useMemo, useRef, useState } from "react";
 import type { FreehandObject } from "../FreehandStudio";
 import {
   flattenObjectsForGradientDefs,
   renderClipDef,
+  renderDesignerPageObjectStack,
   renderObj,
   type RenderObjOpts,
 } from "../FreehandStudio";
 import { gradientDefId, migrateFill, renderFillDef } from "../freehand/fill";
+import {
+  AdjustmentLayerFilterDef,
+} from "../freehand/adjustment-layer-render";
+import { collectAdjustmentLayersInTree } from "../freehand/group-container";
 import type { PresenterGroupEnterId, PresenterRevealStep } from "./presenter-group-animations";
 import { getEnterForObject, isObjectRevealed, revealTargetKey } from "./presenter-group-animations";
 import { isObjectVisibleAtProTime, type PlayProTimingState } from "./presenter-pro-timing";
@@ -309,6 +314,7 @@ export function DesignerPageCanvasView({
   pickInteraction = null,
   allowPickDuringReveal = false,
   presenterImageVideo = null,
+  stackWrapRenderedObject = undefined,
 }: {
   objects: FreehandObject[];
   pageWidth: number;
@@ -324,6 +330,8 @@ export function DesignerPageCanvasView({
   allowPickDuringReveal?: boolean;
   /** Vídeos anclados a imágenes (solo nodo Presenter). */
   presenterImageVideo?: PresenterImageVideoCanvasBinding | null;
+  /** Envoltorio opcional por objeto en el stack (p. ej. pulso Populate). */
+  stackWrapRenderedObject?: (obj: FreehandObject, node: React.ReactNode) => React.ReactNode;
 }) {
   const pw = Math.max(1, pageWidth);
   const ph = Math.max(1, pageHeight);
@@ -416,6 +424,19 @@ export function DesignerPageCanvasView({
     }
     return m;
   }, [presenterImageTargets]);
+
+  const useLayerStackRender =
+    !pickInteraction && !playProTiming && !(playReveal?.steps && playReveal.steps.length > 0);
+
+  const stackPaintFilter = useCallback(
+    (obj: FreehandObject) => shouldPaintObject(obj, playReveal, playProTiming),
+    [playReveal, playProTiming],
+  );
+
+  const adjustmentLayersForDefs = useMemo(
+    () => collectAdjustmentLayersInTree(objects),
+    [objects],
+  );
 
   /** Misma lógica que antes (intercalada en el mapa), pero se pinta al final del SVG encima del marco de selección. */
   const presenterVideoOverlayTargets = useMemo((): PresenterImageTarget[] => {
@@ -552,9 +573,19 @@ export function DesignerPageCanvasView({
       <defs>
         {flattenObjectsForGradientDefs(objects).map((o) => {
           const f = migrateFill(o.fill);
-          return f.type === "solid" ? null : renderFillDef(f, gradientDefId(o.id));
+          if (f.type === "solid") return null;
+          return (
+            <Fragment key={`grad-${o.id}`}>{renderFillDef(f, gradientDefId(o.id))}</Fragment>
+          );
         })}
-        {clipObjects.map((co) => renderClipDef(co))}
+        {clipObjects.map((co) => (
+          <Fragment key={`clip-def-${co.id}`}>{renderClipDef(co)}</Fragment>
+        ))}
+        {useLayerStackRender
+          ? adjustmentLayersForDefs.map((layer) => (
+              <AdjustmentLayerFilterDef key={`adj-filter-${layer.id}`} layer={layer} />
+            ))
+          : null}
         <clipPath id={pageClipPathId} clipPathUnits="userSpaceOnUse">
           <rect x={0} y={0} width={pw} height={ph} />
         </clipPath>
@@ -571,7 +602,16 @@ export function DesignerPageCanvasView({
             : undefined
         }
       />
-      {objects.map((obj) => {
+      {useLayerStackRender ? (
+        <g clipPath={pageClipUrl} style={{ pointerEvents: "none" }}>
+          {renderDesignerPageObjectStack(objects, presenterRenderOpts, new Set(), {
+            shouldPaint: stackPaintFilter,
+            wrapRenderedObject: stackWrapRenderedObject,
+          })}
+        </g>
+      ) : null}
+      {!useLayerStackRender
+        ? objects.map((obj) => {
         if (obj.isClipMask) return null;
         if (obj.clipMaskId) return null;
         if (!shouldPaintObject(obj, playReveal, playProTiming)) return null;
@@ -605,8 +645,10 @@ export function DesignerPageCanvasView({
             </g>
           </Fragment>
         );
-      })}
-      {Array.from(clippedGroups.entries()).map(([clipId, members]) => {
+      })
+        : null}
+      {!useLayerStackRender
+        ? Array.from(clippedGroups.entries()).map(([clipId, members]) => {
         const mask = clipObjects.find((c) => c.id === clipId);
         if (!mask) return null;
         if (!shouldPaintObject(mask, playReveal, playProTiming)) return null;
@@ -643,7 +685,8 @@ export function DesignerPageCanvasView({
             </g>
           </Fragment>
         );
-      })}
+      })
+        : null}
       <g clipPath={pageClipUrl} style={{ pointerEvents: "none" }}>
         {selectionOverlayRects.map((r) => (
           <SelectionCornerFrame key={`sel-${r.key}`} x={r.x} y={r.y} width={r.width} height={r.height} pad={3} />

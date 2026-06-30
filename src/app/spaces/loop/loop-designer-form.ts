@@ -24,8 +24,11 @@ import {
   bindingKind,
   designerSlotKey,
   isPendingDesignerBinding,
+  populatePendingSlotKey,
 } from "@/app/spaces/designer/designer-dataset-binding";
+import type { DesignerFolderContext } from "@/app/spaces/designer/designer-object-tree";
 import { duplicateDesignerPageState, resolveSlideKey } from "@/app/spaces/designer/designer-studio-pure";
+import { syncDesignerPageTextFrameLayouts } from "@/app/spaces/designer/designer-page-text-frame-sync";
 import { transformDesignerPageObjectsDeep } from "@/app/spaces/designer/designer-dataset-page";
 import { computeFittingLayout } from "@/app/spaces/indesign/image-frame-layout";
 import { stripDatasetBindingsFromObject } from "./loop-designer-materialize";
@@ -297,14 +300,19 @@ function slotValueForBinding(
   obj: FreehandObject,
   binding: DesignerDatasetFieldBinding,
   slotValues: DesignerSlotValueMap,
+  folderEntityId?: string,
 ) {
-  const baseKey = designerSlotKey(binding);
-  if (!baseKey) return undefined;
   const kind = bindingKind(binding, obj);
   if (kind) {
-    const withKind = slotValues[`${baseKey}::${kind}`];
+    const folderKey = populatePendingSlotKey(binding, kind, folderEntityId);
+    if (folderKey && slotValues[folderKey]) return slotValues[folderKey];
+    const withKind = kind
+      ? slotValues[`${designerSlotKey(binding)}::${kind}`]
+      : undefined;
     if (withKind) return withKind;
   }
+  const baseKey = designerSlotKey(binding);
+  if (!baseKey) return undefined;
   return slotValues[baseKey];
 }
 
@@ -316,10 +324,11 @@ function slotValueForBinding(
 function applyDesignerSlotValueToObject(
   obj: FreehandObject,
   slotValues: DesignerSlotValueMap,
+  ctx: DesignerFolderContext = {},
 ): FreehandObject {
   const binding = obj._designerDatasetBinding;
   if (!binding || !isPendingDesignerBinding(binding)) return obj;
-  const val = slotValueForBinding(obj, binding, slotValues);
+  const val = slotValueForBinding(obj, binding, slotValues, ctx.folderEntityId);
   if (!val) return obj;
 
   if (val.kind === "text" && (obj.type === "text" || obj.type === "textOnPath")) {
@@ -365,8 +374,8 @@ export function applyDesignerSlotValuesToPage(
   page: DesignerPageState,
   slotValues: DesignerSlotValueMap,
 ): DesignerPageState {
-  return transformDesignerPageObjectsDeep(page, (obj) =>
-    applyDesignerSlotValueToObject(obj, slotValues),
+  return transformDesignerPageObjectsDeep(page, (obj, ctx) =>
+    applyDesignerSlotValueToObject(obj, slotValues, ctx),
   );
 }
 
@@ -393,6 +402,6 @@ export function freezeDesignerPagesForForm(
     };
     delete frozen.datasetLoopListId;
     delete frozen.datasetLoopCardId;
-    return frozen;
+    return syncDesignerPageTextFrameLayouts(frozen);
   });
 }

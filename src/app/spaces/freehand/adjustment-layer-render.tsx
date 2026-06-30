@@ -12,6 +12,7 @@ import {
   isEffectLayerActive,
   type AdjustmentLayerLike,
 } from "./adjustment-layer-types";
+import { collectAdjustmentLayersInTree } from "./group-container";
 
 export type LayerStackSegment =
   | { kind: "plain"; children: FreehandObject[] }
@@ -86,7 +87,9 @@ export function renderSegmentStackChildren(
       const members = children.filter((c) => c.clipMaskId === clipId);
       nodes.push(
         <g key={`clip-${clipId}`} data-fh-clip-root={clipId} clipPath={`url(#clip-${clipId})`}>
-          {members.map((m) => renderPlain(m))}
+          {members.map((m) => (
+            <React.Fragment key={m.id}>{renderPlain(m)}</React.Fragment>
+          ))}
         </g>,
       );
       continue;
@@ -125,4 +128,28 @@ export function AdjustmentLayerFilterDef({ layer }: { layer: AdjustmentLayerLike
 
 export function collectAdjustmentLayers(objects: FreehandObject[]): AdjustmentLayerLike[] {
   return objects.filter((o): o is FreehandObject & AdjustmentLayerLike => isAdjustmentLayerObject(o));
+}
+
+/** Mapas de capas fx con alcance carpeta/capa (mismo criterio que el lienzo del Designer). */
+export function buildDesignerLayerEffectMaps(objects: FreehandObject[]): {
+  folderEffectLayerByFolderId?: ReadonlyMap<string, AdjustmentLayerLike>;
+  layerEffectLayerByLayerId?: ReadonlyMap<string, AdjustmentLayerLike>;
+} {
+  const folderMap = new Map<string, AdjustmentLayerLike>();
+  const layerMap = new Map<string, AdjustmentLayerLike>();
+  for (const o of collectAdjustmentLayersInTree(objects)) {
+    if (!isAdjustmentLayerObject(o)) continue;
+    const adj = o as AdjustmentLayerLike;
+    if (!adj.visible || !isEffectLayerActive(adj)) continue;
+    if (adj.effectScope === "selectedFolder" && adj.effectTargetFolderId) {
+      folderMap.set(adj.effectTargetFolderId, adj);
+    }
+    if (adj.effectScope === "selectedLayer" && adj.effectTargetLayerId) {
+      layerMap.set(adj.effectTargetLayerId, adj);
+    }
+  }
+  return {
+    folderEffectLayerByFolderId: folderMap.size > 0 ? folderMap : undefined,
+    layerEffectLayerByLayerId: layerMap.size > 0 ? layerMap : undefined,
+  };
 }

@@ -223,6 +223,176 @@ describe("resolvePopulateSlotValues", () => {
     });
     expect(resolved["slot::extra::text"]).toEqual({ kind: "text", text: "Manual" });
   });
+
+  it("lee columnas number como texto para huecos de texto", () => {
+    const ds: Dataset = {
+      ...dataset,
+      lists: [
+        {
+          ...dataset.lists[0]!,
+          schema: [
+            { id: "f_name", key: "name", label: "Nombre", type: "text", required: false },
+            { id: "f_dorsal", key: "dorsal", label: "Dorsal", type: "number", required: false },
+          ],
+          cards: [
+            {
+              id: "c1",
+              values: {
+                f_name: { type: "text", value: "Messi" },
+                f_dorsal: { type: "number", value: 10 },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const binding = syncPopulateTemplateBinding({
+      prev: undefined,
+      template: {
+        templateNodeId: "d1",
+        templateType: "designer",
+        templateLabel: "Card",
+        pages: [],
+        dynamicFields: [
+          {
+            key: "folder::j1::slot::dorsal::text",
+            status: "pending",
+            kind: "text",
+            label: "dorsal",
+            slotLabel: "dorsal",
+            folderLabel: "Jugador1",
+            folderEntityId: "j1",
+            usageCount: 1,
+          },
+        ],
+      },
+      dataset: ds,
+      listId: "list1",
+    });
+
+    const pickId = binding.picks[0]!.id;
+    const resolved = resolvePopulateSlotValues({
+      binding,
+      dataset: ds,
+      listId: "list1",
+      pickedRows: { [pickId]: "c1" },
+      manualValues: {},
+    });
+
+    expect(binding.slotColumns["folder::j1::slot::dorsal::text"]?.fieldId).toBe("f_dorsal");
+    expect(resolved["folder::j1::slot::dorsal::text"]).toEqual({ kind: "text", text: "10" });
+  });
+
+  it("ignora entityPoseColumnFieldId stale en carpeta con varios huecos", () => {
+    const ds = {
+      ...dataset,
+      lists: [
+        {
+          ...dataset.lists[0]!,
+          schema: [
+            { id: "f_name", key: "nombre", label: "Nombre", type: "text" },
+            { id: "f_age", key: "edad", label: "Edad", type: "number" },
+            { id: "f_front", key: "foto1", label: "Foto 1", type: "image" },
+            { id: "f_side", key: "foto2", label: "Foto 2", type: "image" },
+          ],
+          cards: [
+            {
+              id: "c1",
+              values: {
+                f_name: { type: "text", value: "Messi" },
+                f_age: { type: "number", value: 36 },
+                f_front: { type: "image", url: "https://cdn/front.png" },
+                f_side: { type: "image", url: "https://cdn/side.png" },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const binding = syncPopulateTemplateBinding({
+      prev: {
+        templateNodeId: "d1",
+        templateLabel: "Card",
+        labelColumnFieldId: "f_name",
+        picks: [],
+        sources: {},
+        slotColumns: {},
+        entityPoseColumnFieldId: { jugador1: "f_front" },
+      },
+      template: {
+        templateNodeId: "d1",
+        templateType: "designer",
+        templateLabel: "Card",
+        pages: [],
+        dynamicFields: [
+          {
+            key: "folder::jugador1::slot::nombre::text",
+            status: "pending",
+            kind: "text",
+            label: "nombre",
+            slotLabel: "nombre",
+            folderLabel: "Jugador1",
+            folderEntityId: "jugador1",
+            usageCount: 1,
+          },
+          {
+            key: "folder::jugador1::slot::edad::text",
+            status: "pending",
+            kind: "text",
+            label: "edad",
+            slotLabel: "edad",
+            folderLabel: "Jugador1",
+            folderEntityId: "jugador1",
+            usageCount: 1,
+          },
+          {
+            key: "folder::jugador1::slot::foto::image",
+            status: "pending",
+            kind: "image",
+            label: "foto",
+            slotLabel: "foto",
+            folderLabel: "Jugador1",
+            folderEntityId: "jugador1",
+            usageCount: 1,
+          },
+        ],
+      },
+      dataset: ds,
+      listId: "list1",
+    });
+
+    binding.slotColumns["folder::jugador1::slot::foto::image"] = {
+      listId: "list1",
+      listKey: "players",
+      fieldId: "f_side",
+      fieldKey: "foto2",
+    };
+    const fotoSrc = binding.sources["folder::jugador1::slot::foto::image"];
+    if (fotoSrc?.kind === "dataset") {
+      binding.sources["folder::jugador1::slot::foto::image"] = {
+        ...fotoSrc,
+        columnFieldId: "f_side",
+        columnFieldKey: "foto2",
+      };
+    }
+
+    const pickId = binding.picks[0]!.id;
+    const resolved = resolvePopulateSlotValues({
+      binding,
+      dataset: ds,
+      listId: "list1",
+      pickedRows: { [pickId]: "c1" },
+      manualValues: {},
+      pickedPoses: { jugador1: "f_front" },
+    });
+
+    expect(resolved["folder::jugador1::slot::foto::image"]).toEqual({
+      kind: "image",
+      url: "https://cdn/side.png",
+    });
+  });
 });
 
 describe("resolvePopulateSlotValuesFromSnapshot", () => {
@@ -324,5 +494,130 @@ describe("legacy formModel compat", () => {
 
     expect(entities).toHaveLength(1);
     expect(entities[0]!.facets).toHaveLength(2);
+  });
+
+  it("congela campos dentro de una carpeta con claves folder::…", () => {
+    const folderFields: DesignerDynamicField[] = [
+      {
+        key: "folder::jugador1::slot::nombre::text",
+        status: "pending",
+        kind: "text",
+        label: "nombre",
+        slotLabel: "nombre",
+        folderLabel: "Jugador1",
+        folderEntityId: "jugador1",
+        usageCount: 1,
+      },
+      {
+        key: "folder::jugador1::slot::dorsal::text",
+        status: "pending",
+        kind: "text",
+        label: "dorsal",
+        slotLabel: "dorsal",
+        folderLabel: "Jugador1",
+        folderEntityId: "jugador1",
+        usageCount: 1,
+      },
+    ];
+
+    const binding = syncPopulateTemplateBinding({
+      prev: undefined,
+      template: {
+        templateNodeId: "d1",
+        templateType: "designer",
+        templateLabel: "Card",
+        pages: [],
+        dynamicFields: folderFields,
+      },
+      dataset: {
+        ...dataset,
+        lists: [
+          {
+            ...dataset.lists[0]!,
+            schema: [
+              { id: "f_name", key: "nombre", label: "Nombre", type: "text" },
+              { id: "f_num", key: "dorsal", label: "Dorsal", type: "text" },
+            ],
+          },
+        ],
+      },
+      listId: "list1",
+    });
+
+    const pickId = binding.picks[0]!.id;
+    const resolved = resolvePopulateSlotValues({
+      binding,
+      dataset: {
+        ...dataset,
+        lists: [
+          {
+            ...dataset.lists[0]!,
+            schema: [
+              { id: "f_name", key: "nombre", label: "Nombre", type: "text" },
+              { id: "f_num", key: "dorsal", label: "Dorsal", type: "text" },
+            ],
+            cards: [
+              {
+                id: "c_messi",
+                values: {
+                  f_name: { type: "text", value: "Messi" },
+                  f_num: { type: "text", value: "10" },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      listId: "list1",
+      pickedRows: { [pickId]: "c_messi" },
+      manualValues: {},
+    });
+
+    const folder = {
+      id: "fold1",
+      type: "groupContainer",
+      name: "Jugador1",
+      children: [
+        {
+          id: "t1",
+          type: "text",
+          text: "—",
+          _designerDatasetBinding: {
+            listId: "",
+            listKey: "",
+            fieldId: "",
+            fieldKey: "",
+            kind: "text",
+            slotLabel: "nombre",
+          },
+        },
+        {
+          id: "t2",
+          type: "text",
+          text: "—",
+          _designerDatasetBinding: {
+            listId: "",
+            listKey: "",
+            fieldId: "",
+            fieldKey: "",
+            kind: "text",
+            slotLabel: "dorsal",
+          },
+        },
+      ],
+    } as unknown as FreehandObject;
+
+    const page: DesignerPageState = {
+      id: "p1",
+      slideKey: "slk",
+      format: "a4v",
+      objects: [folder],
+    } as unknown as DesignerPageState;
+
+    const frozen = freezeDesignerPagesForForm([page], resolved);
+    const children = (frozen[0]!.objects[0] as FreehandObject & { children?: FreehandObject[] })
+      .children!;
+    expect((children[0] as { text?: string }).text).toBe("Messi");
+    expect((children[1] as { text?: string }).text).toBe("10");
   });
 });

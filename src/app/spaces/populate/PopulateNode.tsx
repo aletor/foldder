@@ -2,12 +2,20 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { useReactFlow, type NodeProps } from "@xyflow/react";
+import {
+  useReactFlow,
+  useStore,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowState,
+} from "@xyflow/react";
 import { Copy, Link2, Loader2, Sparkles } from "lucide-react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { useConnectedDatasetForNode } from "@/app/spaces/loop/use-loop-context";
 import {
   listPopulateDesignerTemplateConfigs,
+  populateDesignerTemplatesSignature,
   type PopulateDesignerTemplateConfig,
 } from "./populate-designer-template";
 import { freezeDesignerPagesForForm } from "@/app/spaces/loop/loop-designer-form";
@@ -29,8 +37,17 @@ import { buildPopulateSharePayload } from "./populate-share-payload";
 import { buildPopulateMultiTemplateRunOutput, buildPopulateRunOutput } from "./populate-output";
 import { dispatchPopulateDesignerCommit } from "./populate-designer-commit";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
+import { reconcileSpacePortalNode } from "../space-media-list";
+import { useSpacesMapCanvas } from "../spaces-map-canvas-context";
 
 const BG = "/assets/nodes/populate-empty-pink.png";
+
+function reconcilePopulateCanvasNodes(
+  nodes: Node[],
+  spacesMap: ReturnType<typeof useSpacesMapCanvas>,
+): Node[] {
+  return nodes.map((n) => (n.type === "space" ? reconcileSpacePortalNode(n, spacesMap) : n));
+}
 
 const HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "40%", type: "target", id: "dataset", dataType: "dataset", label: "Dataset" },
@@ -47,16 +64,19 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const [shareError, setShareError] = useState<string | null>(null);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rasterReq, setRasterReq] = useState<DesignerHeadlessRasterRequest | null>(null);
   const rasterRef = React.useRef<{
     resolve: (m: Record<string, string>) => void;
     reject: (e: Error) => void;
     collected: Record<string, string>;
+    onPageDone?: () => void;
   } | null>(null);
 
   const projectAssetsCtx = useProjectAssetsCanvas();
   const projectScopeId = projectAssetsCtx?.projectScopeId ?? "__local__";
+  const spacesMap = useSpacesMapCanvas();
 
   const { connectedDataset, datasetLoading } = useConnectedDatasetForNode(id);
   const lists = connectedDataset?.lists ?? [];
@@ -80,11 +100,25 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     return findPopulateTemplateLinkEdges(id, nodes, edges).slice(0, 8);
   }, [getEdges, getNodes, id, studioOpen]);
 
+  /** Re-suscribir cuando cambian páginas/campos del Designer (incl. huecos dentro de clips). */
+  const designerTemplatesSignature = useStore(
+    useCallback(
+      (s: ReactFlowState<Node, Edge>) =>
+        populateDesignerTemplatesSignature(
+          id,
+          reconcilePopulateCanvasNodes(s.nodes, spacesMap),
+          s.edges,
+          spacesMap,
+        ),
+      [id, spacesMap],
+    ),
+  );
+
   const designerTemplates = useMemo(() => {
-    const nodes = getNodes();
+    const nodes = reconcilePopulateCanvasNodes(getNodes(), spacesMap);
     const edges = getEdges();
-    return listPopulateDesignerTemplateConfigs(id, nodes, edges);
-  }, [getEdges, getNodes, id, templateEdges]);
+    return listPopulateDesignerTemplateConfigs(id, nodes, edges, spacesMap);
+  }, [designerTemplatesSignature, getEdges, getNodes, id, spacesMap]);
 
   const activeTemplateNodeId = useMemo(() => {
     if (
@@ -166,9 +200,14 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   );
 
   const rasterize = useCallback(
-    (pages: DesignerHeadlessRasterRequest["pages"], pageIds: string[], instanceKey: string) =>
+    (
+      pages: DesignerHeadlessRasterRequest["pages"],
+      pageIds: string[],
+      instanceKey: string,
+      onPageDone?: () => void,
+    ) =>
       new Promise<Record<string, string>>((resolve, reject) => {
-        rasterRef.current = { resolve, reject, collected: {} };
+        rasterRef.current = { resolve, reject, collected: {}, onPageDone };
         setRasterReq({
           requestId: Date.now(),
           instanceKey,
@@ -179,121 +218,158 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     [],
   );
 
-  const canGenerate = useMemo(
-    () =>
-      Boolean(
-        connectedDataset &&
-          listId &&
-          designerTemplates.some((t) =>
-            bindingForTemplate(nodeData.templateBindings ?? [], t.templateNodeId),
-          ),
-      ),
-    [connectedDataset, designerTemplates, listId, nodeData.templateBindings],
+  const defaultPickedRowsForForm = useCallback(
+    (form: ReturnType<typeof derivePopulateForm>) => {
+      const pickedRows: Record<string, string> = {};
+      for (const entity of form.entities) {
+        const cardId = entity.options[0]?.cardId;
+        if (cardId && entity.pickId) pickedRows[entity.pickId] = cardId;
+      }
+      return pickedRows;
+    },
+    [],
   );
 
-  const onGenerate = useCallback(async () => {
-    if (!connectedDataset || !listId || designerTemplates.length === 0) return;
-    const bindings = nodeData.templateBindings ?? [];
-    setBusy(true);
-    setError(null);
-    patchSelf({ status: "running", error: undefined });
-    try {
-      const instances: Array<{ label: string; pages: ReturnType<typeof freezeDesignerPagesForForm>; cardId?: string }> =
-        [];
-      const packs: Array<{ templateLabel: string; slideUrls: string[] }> = [];
-      const allUrls: string[] = [];
+  const onGenerate = useCallback(
+    async (studioPreview?: {
+      templateNodeId: string;
+      pickedRows: Record<string, string>;
+      pickedPoses: Record<string, string>;
+      manualValues: Record<string, string>;
+      createEditables?: boolean;
+    }) => {
+      if (!connectedDataset || !listId || designerTemplates.length === 0) return;
+      const createEditables =
+        studioPreview?.createEditables ?? nodeData.createEditablesOnGenerate ?? false;
+      const bindings = nodeData.templateBindings ?? [];
+      const totalSlides = designerTemplates.reduce((n, t) => n + t.pages.length, 0);
+      setBusy(true);
+      setProgress({ done: 0, total: totalSlides });
+      setError(null);
+      setPreviewUrls([]);
+      patchSelf({ status: "running", error: undefined });
+      let doneSlides = 0;
+      try {
+        const instances: Array<{
+          label: string;
+          pages: ReturnType<typeof freezeDesignerPagesForForm>;
+          cardId?: string;
+        }> = [];
+        const packs: Array<{ templateLabel: string; slideUrls: string[] }> = [];
+        const allUrls: string[] = [];
 
-      for (const template of designerTemplates) {
-        const binding = bindingForTemplate(bindings, template.templateNodeId);
-        if (!binding) continue;
+        for (const template of designerTemplates) {
+          const binding = bindingForTemplate(bindings, template.templateNodeId);
+          if (!binding) continue;
 
-        const form = derivePopulateForm({
-          binding,
-          dynamicFields: template.dynamicFields,
-          dataset: connectedDataset,
-          listId,
-          slideCount: template.pages.length,
-        });
-        const pickedRows: Record<string, string> = {};
-        for (const entity of form.entities) {
-          const cardId = entity.options[0]?.cardId;
-          if (cardId && entity.pickId) pickedRows[entity.pickId] = cardId;
+          const form = derivePopulateForm({
+            binding,
+            dynamicFields: template.dynamicFields,
+            dataset: connectedDataset,
+            listId,
+            slideCount: template.pages.length,
+          });
+
+          const useStudioPreview = studioPreview?.templateNodeId === template.templateNodeId;
+          const pickedRows = useStudioPreview
+            ? studioPreview.pickedRows
+            : defaultPickedRowsForForm(form);
+          const pickedPoses = useStudioPreview
+            ? studioPreview.pickedPoses
+            : binding.entityPoseColumnFieldId;
+          const manualValues = useStudioPreview ? studioPreview.manualValues : {};
+
+          const slotValues = resolvePopulateSlotValues({
+            binding,
+            dataset: connectedDataset,
+            listId,
+            pickedRows,
+            manualValues,
+            pickedPoses,
+          });
+          const pages = freezeDesignerPagesForForm(template.pages, slotValues);
+          const firstCardId = Object.values(pickedRows)[0];
+          if (createEditables) {
+            instances.push({
+              label: template.templateLabel,
+              pages,
+              cardId: firstCardId,
+            });
+          }
+
+          const pageIds = pages.map((p) => p.id);
+          const urls = await rasterize(
+            pages,
+            pageIds,
+            `pop_${id}_gen_${template.templateNodeId}`,
+            () => {
+              doneSlides += 1;
+              setProgress({ done: doneSlides, total: totalSlides });
+            },
+          );
+          const slideUrls = pageIds.map((pid) => urls[pid]).filter((u): u is string => Boolean(u));
+          packs.push({ templateLabel: template.templateLabel, slideUrls });
+          allUrls.push(...slideUrls);
         }
 
-        const slotValues = resolvePopulateSlotValues({
-          binding,
-          dataset: connectedDataset,
-          listId,
-          pickedRows,
-          manualValues: {},
-          pickedPoses: binding.entityPoseColumnFieldId,
+        if (instances.length === 0 && !createEditables && allUrls.length === 0) {
+          throw new Error("Configura al menos una plantilla en Populate Studio.");
+        }
+        if (createEditables && instances.length === 0) {
+          throw new Error("Configura al menos una plantilla en Populate Studio.");
+        }
+
+        if (createEditables) {
+          dispatchPopulateDesignerCommit({
+            populateNodeId: id,
+            spaceName: nodeData.label?.trim() || "Populate",
+            instances,
+          });
+        }
+
+        setPreviewUrls(allUrls);
+        const out =
+          packs.length > 1
+            ? buildPopulateMultiTemplateRunOutput({
+                nodeId: id,
+                label: nodeData.label || "Populate",
+                packs,
+              })
+            : buildPopulateRunOutput({
+                nodeId: id,
+                label: nodeData.label || "Populate",
+                slideUrls: allUrls,
+                templateLabel: packs[0]?.templateLabel,
+              });
+        patchSelf({
+          status: "done",
+          error: undefined,
+          value: out.value,
+          lastRunOutputs: out.lastRunOutputs,
+          mediaListOutput: out.mediaListOutput,
         });
-        const pages = freezeDesignerPagesForForm(template.pages, slotValues);
-        const firstCardId = Object.values(pickedRows)[0];
-        instances.push({
-          label: template.templateLabel,
-          pages,
-          cardId: firstCardId,
-        });
-
-        const urls = await rasterize(
-          pages,
-          pages.map((p) => p.id),
-          `pop_${id}_gen_${template.templateNodeId}`,
-        );
-        const slideUrls = Object.values(urls);
-        packs.push({ templateLabel: template.templateLabel, slideUrls });
-        allUrls.push(...slideUrls);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Error al generar";
+        setError(msg);
+        patchSelf({ status: "error", error: msg });
+      } finally {
+        setBusy(false);
+        setProgress(null);
       }
-
-      if (instances.length === 0) {
-        throw new Error("Configura al menos una plantilla en Populate Studio.");
-      }
-
-      dispatchPopulateDesignerCommit({
-        populateNodeId: id,
-        spaceName: nodeData.label?.trim() || "Populate",
-        instances,
-      });
-
-      setPreviewUrls(allUrls);
-      const out =
-        packs.length > 1
-          ? buildPopulateMultiTemplateRunOutput({
-              nodeId: id,
-              label: nodeData.label || "Populate",
-              packs,
-            })
-          : buildPopulateRunOutput({
-              nodeId: id,
-              label: nodeData.label || "Populate",
-              slideUrls: allUrls,
-              templateLabel: packs[0]?.templateLabel,
-            });
-      patchSelf({
-        status: "done",
-        error: undefined,
-        value: out.value,
-        lastRunOutputs: out.lastRunOutputs,
-        mediaListOutput: out.mediaListOutput,
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Error al generar";
-      setError(msg);
-      patchSelf({ status: "error", error: msg });
-    } finally {
-      setBusy(false);
-    }
-  }, [
-    connectedDataset,
-    designerTemplates,
-    id,
-    listId,
-    nodeData.label,
-    nodeData.templateBindings,
-    patchSelf,
-    rasterize,
-  ]);
+    },
+    [
+      connectedDataset,
+      designerTemplates,
+      defaultPickedRowsForForm,
+      id,
+      listId,
+      nodeData.label,
+      nodeData.createEditablesOnGenerate,
+      nodeData.templateBindings,
+      patchSelf,
+      rasterize,
+    ],
+  );
 
   const onShare = useCallback(async () => {
     if (!connectedDataset || !listId || designerTemplates.length === 0) return;
@@ -374,7 +450,25 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const pendingCount =
     activeDesignerTemplate?.dynamicFields.filter((f) => f.status === "pending").length ?? 0;
   const templateCount = designerTemplates.length;
+  const canGenerate = useMemo(
+    () =>
+      Boolean(
+        connectedDataset &&
+          listId &&
+          designerTemplates.some((t) =>
+            bindingForTemplate(nodeData.templateBindings ?? [], t.templateNodeId),
+          ),
+      ),
+    [connectedDataset, designerTemplates, listId, nodeData.templateBindings],
+  );
+
+  const totalSlideCount = useMemo(
+    () => designerTemplates.reduce((n, t) => n + t.pages.length, 0),
+    [designerTemplates],
+  );
+
   const lastRunOutputs = nodeData.lastRunOutputs ?? [];
+  const generateResults = previewUrls.length > 0 ? previewUrls : lastRunOutputs;
   const displayPreview = previewUrls[0] ?? lastRunOutputs[0];
   const shareUrl = nodeData.publicShareToken
     ? `${typeof window !== "undefined" ? window.location.origin : ""}/f/${nodeData.publicShareToken}`
@@ -411,7 +505,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               </p>
             ) : templateCount === 0 ? (
               <p className="populate-node-summary__text populate-node-summary__text--muted">
-                Conecta la salida Document de un Designer al handle Plantilla (hasta 8).
+                Conecta Designers (Document → Plantilla) o un Space con plantillas (Out → Plantilla).
               </p>
             ) : (
               <>
@@ -535,6 +629,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               activeTemplateNodeId={activeTemplateNodeId}
               onSelectTemplate={onSelectTemplate}
               binding={activeBinding}
+              templateBindings={nodeData.templateBindings ?? []}
               onClose={() => setStudioOpen(false)}
               onChangeBinding={onChangeBinding}
               rasterizePages={rasterize}
@@ -546,6 +641,17 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               shareMatchLabel={nodeData.shareMatchLabel ?? nodeData.label ?? ""}
               onShareMatchLabelChange={(value) => patchSelf({ shareMatchLabel: value })}
               projectSaved={projectScopeId !== "__local__"}
+              canGenerate={canGenerate}
+              busy={busy}
+              progress={progress}
+              generateError={error ?? nodeData.error ?? null}
+              generateResults={generateResults}
+              totalSlideCount={totalSlideCount}
+              createEditablesOnGenerate={nodeData.createEditablesOnGenerate ?? false}
+              onCreateEditablesOnGenerateChange={(value) =>
+                patchSelf({ createEditablesOnGenerate: value })
+              }
+              onGenerate={(preview) => void onGenerate(preview)}
             />,
             document.body,
           )
@@ -555,7 +661,10 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         <DesignerHeadlessRasterPortal
           request={rasterReq}
           onPage={(pageId, dataUrl) => {
-            if (rasterRef.current) rasterRef.current.collected[pageId] = dataUrl;
+            if (rasterRef.current) {
+              rasterRef.current.collected[pageId] = dataUrl;
+              rasterRef.current.onPageDone?.();
+            }
           }}
           onDone={() => {
             const ref = rasterRef.current;
