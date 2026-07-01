@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { duplicateDesignerPageState } from "./designer-studio-pure";
+import { designerPagesSnapshotForDeExport, duplicateDesignerPageState } from "./designer-studio-pure";
 import type { DesignerPageState } from "./DesignerNode";
 
 describe("duplicateDesignerPageState", () => {
@@ -85,5 +85,20 @@ describe("duplicateDesignerPageState", () => {
     expect(nestedText?.id).not.toBe(textId);
     expect(folderFx && "effectTargetFolderId" in folderFx ? folderFx.effectTargetFolderId : undefined).toBe(folder?.id);
     expect(layerFx && "effectTargetLayerId" in layerFx ? layerFx.effectTargetLayerId : undefined).toBe(nestedText?.id);
+  });
+});
+
+describe("designerPagesSnapshotForDeExport", () => {
+  it("fusiona objetos vivos de la página activa antes de exportar", () => {
+    const pages: DesignerPageState[] = [
+      {
+        id: "p1",
+        format: "web169",
+        objects: [{ id: "old", type: "text", text: "stale" } as never],
+      },
+    ];
+    const live = [{ id: "brush-layer", type: "image", src: "data:image/png;base64,abc" } as never];
+    const snap = designerPagesSnapshotForDeExport(pages, 0, live);
+    expect(snap[0]?.objects[0]?.id).toBe("brush-layer");
   });
 });

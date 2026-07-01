@@ -262,3 +262,21 @@ export function buildRichSpansForFrame(
   }
   return spans;
 }
+
+/** Snapshot de páginas para export `.de`, fusionando el lienzo vivo de la página activa. */
+export function designerPagesSnapshotForDeExport(
+  pages: DesignerPageState[],
+  activePageIndex: number,
+  liveObjects: FreehandObject[] | null | undefined,
+): DesignerPageState[] {
+  const clone = JSON.parse(JSON.stringify(pages)) as DesignerPageState[];
+  if (!liveObjects?.length) return clone;
+  const idx = Math.max(0, Math.min(activePageIndex, clone.length - 1));
+  const page = clone[idx];
+  if (!page) return clone;
+  clone[idx] = {
+    ...page,
+    objects: JSON.parse(JSON.stringify(liveObjects)) as FreehandObject[],
+  };
+  return clone;
+}

@@ -18,6 +18,10 @@ function isBlobUrl(s: string): boolean {
 }
 
 function collectBlobUrlsFromObject(o: FreehandObject, out: Set<string>): void {
+  const lm = (o as { layerMask?: { src?: string } }).layerMask;
+  const maskSrc = lm?.src?.trim();
+  if (maskSrc && isBlobUrl(maskSrc)) out.add(maskSrc);
+
   if (o.type === "image") {
     const src = (o as { src?: string }).src?.trim();
     if (src && isBlobUrl(src)) out.add(src);
@@ -34,6 +38,9 @@ function collectBlobUrlsFromObject(o: FreehandObject, out: Set<string>): void {
   if (o.type === "clippingContainer") {
     collectBlobUrlsFromObject(o.mask as FreehandObject, out);
     for (const c of o.content) collectBlobUrlsFromObject(c, out);
+  }
+  if (o.type === "groupContainer") {
+    for (const c of o.children) collectBlobUrlsFromObject(c, out);
   }
 }
 
@@ -89,33 +96,45 @@ function revokeBlobUrls(urls: Iterable<string>): void {
   }
 }
 
+function patchLayerMaskBlob(o: FreehandObject, map: Map<string, UploadedMeta>): FreehandObject {
+  const lm = (o as { layerMask?: { src?: string } & Record<string, unknown> }).layerMask;
+  if (!lm?.src) return o;
+  const src = lm.src.trim();
+  const m = map.get(src) ?? map.get(lm.src);
+  if (!m) return o;
+  return { ...o, layerMask: { ...lm, src: m.url } } as FreehandObject;
+}
+
 function patchObjectBlobs(o: FreehandObject, map: Map<string, UploadedMeta>): FreehandObject {
   if (o.type === "image") {
     const im = o as { src: string };
     const src = im.src?.trim();
     const m = src ? map.get(src) ?? map.get(im.src) : undefined;
-    if (m) return { ...o, src: m.url } as FreehandObject;
-    return o;
+    if (m) return patchLayerMaskBlob({ ...o, src: m.url } as FreehandObject, map);
+    return patchLayerMaskBlob(o, map);
   }
   if (o.type === "rect" && o.isImageFrame && o.imageFrameContent) {
     const c = o.imageFrameContent;
     const src = c.src?.trim();
     const m = src ? map.get(src) ?? map.get(c.src) : undefined;
     if (m) {
-      return {
-        ...o,
-        imageFrameContent: {
-          ...c,
-          src: m.url,
-          s3Key: m.s3Key,
-          s3KeyOpt: m.s3Key,
-          designerAssetId: m.assetId,
-          s3KeyHr: undefined,
-          designerHrSourceMissing: false,
-        },
-      } as FreehandObject;
+      return patchLayerMaskBlob(
+        {
+          ...o,
+          imageFrameContent: {
+            ...c,
+            src: m.url,
+            s3Key: m.s3Key,
+            s3KeyOpt: m.s3Key,
+            designerAssetId: m.assetId,
+            s3KeyHr: undefined,
+            designerHrSourceMissing: false,
+          },
+        } as FreehandObject,
+        map,
+      );
     }
-    return o;
+    return patchLayerMaskBlob(o, map);
   }
   if (o.type === "booleanGroup") {
     let cachedResult = o.cachedResult;
@@ -123,20 +142,42 @@ function patchObjectBlobs(o: FreehandObject, map: Map<string, UploadedMeta>): Fr
       const m = map.get(cachedResult.trim()) ?? map.get(cachedResult);
       if (m) cachedResult = m.url;
     }
-    return {
-      ...o,
-      cachedResult,
-      children: o.children.map((c) => patchObjectBlobs(c, map)),
-    } as FreehandObject;
+    return patchLayerMaskBlob(
+      {
+        ...o,
+        cachedResult,
+        children: o.children.map((c) => patchObjectBlobs(c, map)),
+      } as FreehandObject,
+      map,
+    );
   }
   if (o.type === "clippingContainer") {
-    return {
-      ...o,
-      mask: patchObjectBlobs(o.mask as FreehandObject, map),
-      content: o.content.map((c) => patchObjectBlobs(c, map)),
-    } as FreehandObject;
+    return patchLayerMaskBlob(
+      {
+        ...o,
+        mask: patchObjectBlobs(o.mask as FreehandObject, map),
+        content: o.content.map((c) => patchObjectBlobs(c, map)),
+      } as FreehandObject,
+      map,
+    );
   }
-  return o;
+  if (o.type === "groupContainer") {
+    return patchLayerMaskBlob(
+      {
+        ...o,
+        children: o.children.map((c) => patchObjectBlobs(c, map)),
+      } as FreehandObject,
+      map,
+    );
+  }
+  return patchLayerMaskBlob(o, map);
+}
+
+export function applyDesignerBlobUploadMap(
+  pages: DesignerPageState[],
+  map: Map<string, UploadedMeta>,
+): DesignerPageState[] {
+  return patchPagesWithUploadedBlobs(pages, map);
 }
 
 function patchPagesWithUploadedBlobs(
@@ -193,7 +234,7 @@ export async function uploadImportedDesignerBlobUrlsToS3(
     if (t !== blobUrl) map.set(t, meta);
   }
 
-  const next = patchPagesWithUploadedBlobs(JSON.parse(JSON.stringify(pages)) as DesignerPageState[], map);
+  const next = applyDesignerBlobUploadMap(JSON.parse(JSON.stringify(pages)) as DesignerPageState[], map);
   revokeBlobUrls(blobUrls);
   return next;
 }

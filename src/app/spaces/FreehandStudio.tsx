@@ -8693,6 +8693,11 @@ function designerRasterUrlNeedsPreload(href: string): boolean {
 
 function collectDesignerRasterPreloadHrefsFromObject(o: FreehandObject, out: Set<string>): void {
   if (!o.visible) return;
+  const lm = (o as FreehandObjectBase).layerMask;
+  if (lm?.src) {
+    const ms = lm.src.trim();
+    if (designerRasterUrlNeedsPreload(ms)) out.add(ms);
+  }
   switch (o.type) {
     case "rect": {
       const r = o as RectObject;
@@ -8720,6 +8725,11 @@ function collectDesignerRasterPreloadHrefsFromObject(o: FreehandObject, out: Set
       const cc = o as ClippingContainerObject;
       collectDesignerRasterPreloadHrefsFromObject(cc.mask as FreehandObject, out);
       for (const c of cc.content) collectDesignerRasterPreloadHrefsFromObject(c, out);
+      break;
+    }
+    case "groupContainer": {
+      const gc = o as GroupContainerObject;
+      for (const c of gc.children) collectDesignerRasterPreloadHrefsFromObject(c, out);
       break;
     }
     default:
@@ -8971,6 +8981,7 @@ export function FreehandStudioCanvas({
   designerPagesRail,
   onDesignerNavigatePage,
   designerPageEnterDirection = null,
+  designerPageHydrateNonce = 0,
   designerMultipageVectorPdfExport,
   designerDeDocument = null,
   designerSaveToInspiration = null,
@@ -11125,7 +11136,7 @@ export function FreehandStudioCanvas({
     return () => {
       cancelled = true;
     };
-  }, [designerMode, designerActivePageId, designerHistoryBridge]);
+  }, [designerMode, designerActivePageId, designerPageHydrateNonce, designerHistoryBridge]);
 
   useEffect(() => {
     if (!studioApiRef) return;

@@ -33,6 +33,7 @@ import {
   importDatasetFolddataFile,
   prepareImportedDataset,
 } from "./dataset-folddata";
+import { uploadImportedDatasetMediaToS3 } from "./dataset-folddata-hydrate";
 import { useDatasetCanvasContext } from "./dataset-canvas-context";
 import {
   createGlobalDataset,
@@ -556,7 +557,19 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
       setStudioError(null);
       try {
         const { dataset: raw } = await importDatasetFolddataFile(pendingImportFile);
-        const imported = prepareImportedDataset(raw, scope, projectScopeId);
+        let hydrated = raw;
+        try {
+          hydrated = await uploadImportedDatasetMediaToS3(raw, { projectId: projectScopeId });
+        } catch (uploadErr) {
+          console.error("[Dataset] import .folddata → S3", uploadErr);
+          setStudioError(
+            uploadErr instanceof Error
+              ? `Las imágenes no se pudieron subir a la nube: ${uploadErr.message}`
+              : String(uploadErr),
+          );
+          return;
+        }
+        const imported = prepareImportedDataset(hydrated, scope, projectScopeId);
         cancelPendingGlobalSave();
         if (scope === "global") {
           const response = await createGlobalDataset(imported.name, imported);

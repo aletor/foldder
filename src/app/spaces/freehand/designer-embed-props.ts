@@ -66,6 +66,8 @@ export type DesignerEmbedProps = {
   designerPageEnterDirection?: "next" | "prev" | null;
   /** Designer: bump to request fit-to-viewport after the active page canvas is shown (e.g. user picked a page). */
   designerFitToViewNonce?: number;
+  /** Designer: bump para re-hidratar el lienzo con `initialObjects` sin cambiar de página (p. ej. import .de). */
+  designerPageHydrateNonce?: number;
   /** Designer: modo P (lienzo a pantalla completa) vive en el padre para sobrevivir al remount al cambiar de página. */
   designerCanvasZenMode?: boolean;
   onDesignerCanvasZenModeChange?: (zen: boolean) => void;

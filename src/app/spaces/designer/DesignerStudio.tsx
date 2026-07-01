@@ -61,6 +61,7 @@ import {
   dpgUid,
   duplicateDesignerPageState,
   readImageFilePixelSize,
+  designerPagesSnapshotForDeExport,
 } from "./designer-studio-pure";
 import {
   applyDatasetRowToDesignerPage,
@@ -335,6 +336,7 @@ export default function DesignerStudio({
   const deImportInputRef = useRef<HTMLInputElement>(null);
   const [deExportBusy, setDeExportBusy] = useState(false);
   const [deImportHydrating, setDeImportHydrating] = useState(false);
+  const [designerPageHydrateNonce, setDesignerPageHydrateNonce] = useState(0);
 
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const designerClipboardRef = useRef<FreehandObject[] | null>(null);
@@ -2168,13 +2170,18 @@ export default function DesignerStudio({
     deExportLockRef.current = true;
     setDeExportBusy(true);
     try {
+      const pagesForExport = designerPagesSnapshotForDeExport(
+        pagesRef.current,
+        activeIdxRef.current,
+        studioApiRef.current?.getObjects(),
+      );
       await exportDesignerDeFile({
-        pages: JSON.parse(JSON.stringify(pagesRef.current)) as DesignerPageState[],
+        pages: pagesForExport,
         activePageIndex: activeIdxRef.current,
         autoImageOptimization: autoImageOptimization !== false,
         filenameBase: "diseno-foldder",
       });
-      const imgSnapDe = countDesignerImagesInPages(pagesRef.current);
+      const imgSnapDe = countDesignerImagesInPages(pagesForExport);
       logDesignerExportImagesSummary({
         exportFormat: "de",
         pages: pagesRef.current.length,
@@ -2222,14 +2229,38 @@ export default function DesignerStudio({
         } finally {
           setDeImportHydrating(false);
         }
-        setPages(finalPages);
+        let pagesToSet = finalPages;
+        if (designerConnectedDataset) {
+          const loopListId = collectDatasetLoopListId(finalPages);
+          const loopActive =
+            !!loopListId && designerConnectedDataset.lists.some((list) => list.id === loopListId);
+          pagesToSet = loopActive
+            ? reconcileDatasetLoopPages(
+                finalPages,
+                designerConnectedDataset,
+                loopListId!,
+                result.activePageIndex,
+                duplicateDesignerPageState,
+              )
+            : applyDatasetToAllPages(finalPages, designerConnectedDataset);
+          lastDatasetSyncVersionRef.current = `${designerConnectedDataset.id}:${designerConnectedDataset.version}`;
+        }
+        setPages(pagesToSet);
         setActivePageIndex(result.activePageIndex);
+        setDesignerPageHydrateNonce((n) => n + 1);
         setPageThumbnails({});
         setPageThumbnailContentKeys({});
         onAutoImageOptimizationChange?.(result.autoImageOptimization);
         queueMicrotask(() => {
           requestDesignerFitToView();
-          void refreshDisplayForAllPages(finalPages, result.autoImageOptimization !== false);
+          void refreshDisplayForAllPages(pagesToSet, result.autoImageOptimization !== false);
+          if (designerConnectedDataset) {
+            const target = pagesToSet[result.activePageIndex];
+            const api = studioApiRef.current;
+            if (target && api) {
+              patchLiveCanvasFromDatasetPageObjects(api, target.objects ?? []);
+            }
+          }
         });
       } catch (e) {
         console.error("[Designer] import .de", e);
@@ -2237,6 +2268,7 @@ export default function DesignerStudio({
       }
     },
     [
+      designerConnectedDataset,
       designerSpaceId,
       onAutoImageOptimizationChange,
       requestDesignerFitToView,
@@ -2295,6 +2327,7 @@ export default function DesignerStudio({
     },
     designerOptimizeProgress,
     designerFitToViewNonce,
+    designerPageHydrateNonce,
     designerCanvasZenMode,
     onDesignerCanvasZenModeChange: setDesignerCanvasZenMode,
     designerPageCaptureBusy,

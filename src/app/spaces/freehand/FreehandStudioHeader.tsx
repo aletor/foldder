@@ -234,7 +234,7 @@ export function FreehandStudioHeader({
               disabled={!!designerDeDocument.busy}
               onClick={() => designerDeDocument.onImport()}
               className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.12] bg-[#0b0d10] px-2.5 py-2 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-45"
-              title="Importar documento .de (páginas e imágenes embebidas)"
+              title="Importar documento .de (diseño + imágenes embebidas; referencias al Dataset, no el Dataset en sí)"
             >
               <FileUp size={15} strokeWidth={1.75} />
               Importar .de
@@ -244,7 +244,7 @@ export function FreehandStudioHeader({
               disabled={!!designerDeDocument.busy}
               onClick={() => void designerDeDocument.onExport()}
               className="flex shrink-0 items-center gap-1.5 rounded-lg border border-violet-500/35 bg-violet-950/40 px-2.5 py-2 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-900/50 disabled:opacity-45"
-              title="Exportar documento .de (ZIP: JSON + imágenes, sin depender de S3)"
+              title="Exportar documento .de (ZIP: diseño, imágenes y campos dinámicos; no incluye el Dataset conectado)"
             >
               {designerDeDocument.busy ? (
                 <Loader2 size={15} className="animate-spin" strokeWidth={1.75} />

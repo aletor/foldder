@@ -26,7 +26,11 @@ function isLikelyImageUrl(s: string): boolean {
   return false;
 }
 
-function walkObjects(o: FreehandObject, visit: (url: string) => void): void {
+function collectRasterUrlsFromObject(o: FreehandObject, visit: (url: string) => void): void {
+  const lm = (o as { layerMask?: { src?: string } }).layerMask;
+  const maskSrc = lm?.src?.trim();
+  if (maskSrc && isLikelyImageUrl(maskSrc)) visit(maskSrc);
+
   if (o.type === "image") {
     const s = (o as { src?: string }).src?.trim();
     if (s && isLikelyImageUrl(s)) visit(s);
@@ -39,15 +43,19 @@ function walkObjects(o: FreehandObject, visit: (url: string) => void): void {
     const bg = o as { cachedResult?: string; children: FreehandObject[] };
     const cr = bg.cachedResult?.trim();
     if (cr && isLikelyImageUrl(cr)) visit(cr);
-    for (const c of bg.children) walkObjects(c, visit);
+    for (const c of bg.children) collectRasterUrlsFromObject(c, visit);
   }
   if (o.type === "clippingContainer") {
-    walkObjects(o.mask as FreehandObject, visit);
-    for (const c of o.content) walkObjects(c, visit);
+    collectRasterUrlsFromObject(o.mask as FreehandObject, visit);
+    for (const c of o.content) collectRasterUrlsFromObject(c, visit);
   }
   if (o.type === "groupContainer") {
-    for (const c of o.children) walkObjects(c, visit);
+    for (const c of o.children) collectRasterUrlsFromObject(c, visit);
   }
+}
+
+function walkObjects(o: FreehandObject, visit: (url: string) => void): void {
+  collectRasterUrlsFromObject(o, visit);
 }
 
 function collectImageUrlsFromPages(pages: DesignerPageState[]): string[] {
@@ -198,12 +206,18 @@ export type FoldderDesignFilePayload = {
   pages: DesignerPageState[];
 };
 
-export async function exportDesignerDeFile(args: {
+async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === "function") {
+    return blob.arrayBuffer();
+  }
+  return new Response(blob).arrayBuffer();
+}
+
+export async function packDesignerDeFile(args: {
   pages: DesignerPageState[];
   activePageIndex: number;
   autoImageOptimization: boolean;
-  filenameBase?: string;
-}): Promise<void> {
+}): Promise<Blob> {
   const urls = collectImageUrlsFromPages(args.pages);
   const blobs: Blob[] = [];
   const mimes: string[] = [];
@@ -229,11 +243,20 @@ export async function exportDesignerDeFile(args: {
   const zip = new JSZip();
   zip.file(DOC_ENTRY, JSON.stringify(payload));
   for (let i = 0; i < blobs.length; i++) {
-    const ab = await blobs[i]!.arrayBuffer();
+    const ab = await blobToArrayBuffer(blobs[i]!);
     zip.file(`assets/${i}`, ab);
   }
 
-  const out = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+  return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+}
+
+export async function exportDesignerDeFile(args: {
+  pages: DesignerPageState[];
+  activePageIndex: number;
+  autoImageOptimization: boolean;
+  filenameBase?: string;
+}): Promise<void> {
+  const out = await packDesignerDeFile(args);
   const base = args.filenameBase?.replace(/\.de$/i, "") || "diseno-foldder";
   const name = `${base}-${new Date().toISOString().slice(0, 10)}${FOLDDER_DE_EXTENSION}`;
   const a = document.createElement("a");
