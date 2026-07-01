@@ -113,7 +113,6 @@ export function GoogleFontInstallModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="designer-google-font-install-title"
-        onClick={(e) => e.stopPropagation()}
         {...studioOverlayPointerGuards}
       >
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.1] px-3 py-2">
