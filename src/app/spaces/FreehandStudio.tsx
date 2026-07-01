@@ -467,6 +467,7 @@ import {
   DesignerRulerHorizontal,
   DesignerRulerVertical,
 } from "./designer/DesignerCanvasRulers";
+import { DesignerCanvasFormatLabel } from "./designer/DesignerCanvasFormatLabel";
 import { TopbarGlyphDesignerStudio } from "./TopbarPinIcons";
 import { ImageFrameFittingGlyph } from "./freehand/ImageFrameFittingGlyph";
 import { normalizeProjectAssets, type VisualCapsule, type VisualCapsuleSuggestion } from "./project-assets-metadata";
@@ -8991,6 +8992,7 @@ export function FreehandStudioCanvas({
   designerSkipAutoNodeExportOnClose = false,
   designerCanvasZenMode,
   onDesignerCanvasZenModeChange,
+  designerCanvasFormatLabel = null,
   designerBrainTelemetry,
   brainConnected = false,
   designerConnectedDataset = null,
@@ -25021,6 +25023,19 @@ export function FreehandStudioCanvas({
             />
           )}
           <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden">
+        {designerMode &&
+          designerCanvasFormatLabel &&
+          !canvasZenMode &&
+          artboards[0] && (
+            <DesignerCanvasFormatLabel
+              width={designerCanvasFormatLabel.width}
+              height={designerCanvasFormatLabel.height}
+              presetId={designerCanvasFormatLabel.presetId}
+              viewport={viewport}
+              artboardX={artboards[0].x}
+              artboardY={artboards[0].y}
+            />
+          )}
         {designerMode && designerPageCaptureBusy && (
           <div
             className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-[#0b0d10]"

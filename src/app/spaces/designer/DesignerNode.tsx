@@ -73,6 +73,8 @@ export type DesignerPageState = {
   customHeight?: number;
   /** Fondo del pliego: blanco, negro o transparente. */
   pageBackground?: "white" | "black" | "transparent";
+  /** Preset Web/Arte aplicado al lienzo (solo lectura en UI; no editable a mano). */
+  canvasPresetId?: string | null;
   objects: FreehandObject[];
   layoutGuides?: LayoutGuide[];
   stories?: Story[];

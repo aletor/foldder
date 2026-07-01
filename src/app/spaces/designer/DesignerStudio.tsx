@@ -18,6 +18,7 @@ import {
 import { createArtboard, type Artboard } from "../freehand/artboard";
 import type { VectorPdfExportOptions } from "../freehand/text-outline";
 import { StudioCanvasPresetPanel } from "../studio-node/StudioCanvasPresetPanel";
+import { findStudioCanvasPresetIdForSize } from "../studio-node/studio-canvas-presets";
 import {
   artboardCssToDocumentBackground,
   newDocumentBackgroundToCss,
@@ -1007,6 +1008,7 @@ export default function DesignerStudio({
         width?: number;
         height?: number;
         background?: NewDocumentConfig["background"];
+        presetId?: string | null;
       },
     ) => {
       setPages((prev) => {
@@ -1018,6 +1020,7 @@ export default function DesignerStudio({
           ...(patch.width != null ? { customWidth: clampCanvasDim(patch.width) } : {}),
           ...(patch.height != null ? { customHeight: clampCanvasDim(patch.height) } : {}),
           ...(patch.background != null ? { pageBackground: patch.background } : {}),
+          ...(patch.presetId !== undefined ? { canvasPresetId: patch.presetId } : {}),
         };
         return n;
       });
@@ -1027,7 +1030,11 @@ export default function DesignerStudio({
 
   const applyActivePageDimensions = useCallback(
     (w: number, h: number) => {
-      patchPageCanvas(activeIdxRef.current, { width: w, height: h });
+      patchPageCanvas(activeIdxRef.current, {
+        width: w,
+        height: h,
+        presetId: findStudioCanvasPresetIdForSize(w, h),
+      });
       requestDesignerFitToView();
     },
     [patchPageCanvas, requestDesignerFitToView],
@@ -1069,6 +1076,7 @@ export default function DesignerStudio({
           width: config.width,
           height: config.height,
           background: config.background,
+          presetId: config.presetId ?? findStudioCanvasPresetIdForSize(config.width, config.height),
         });
       });
       setCanvasPresetModalOpen(false);
@@ -1166,6 +1174,7 @@ export default function DesignerStudio({
       format: source.format,
       ...(source.customWidth != null ? { customWidth: source.customWidth } : {}),
       ...(source.customHeight != null ? { customHeight: source.customHeight } : {}),
+      ...(source.canvasPresetId != null ? { canvasPresetId: source.canvasPresetId } : {}),
       pageBackground: source.pageBackground ?? "white",
       objects: [],
       layoutGuides: [],
@@ -1365,7 +1374,12 @@ export default function DesignerStudio({
         const f = formatById(p.format);
         const cw = p.customWidth ?? f.width;
         const ch = p.customHeight ?? f.height;
-        n[idx] = { ...p, customWidth: ch, customHeight: cw };
+        n[idx] = {
+          ...p,
+          customWidth: ch,
+          customHeight: cw,
+          canvasPresetId: findStudioCanvasPresetIdForSize(ch, cw),
+        };
         return n;
       });
     },
@@ -2317,6 +2331,11 @@ export default function DesignerStudio({
     designerPageHydrateNonce,
     designerCanvasZenMode,
     onDesignerCanvasZenModeChange: setDesignerCanvasZenMode,
+    designerCanvasFormatLabel: {
+      width: liveCanvas.width,
+      height: liveCanvas.height,
+      presetId: activePage?.canvasPresetId ?? null,
+    },
     designerPageCaptureBusy,
     designerPageCaptureProgress,
     designerGenerativeFill: generativeFillBridge,

@@ -114,6 +114,12 @@ export type DesignerEmbedProps = {
   designerConnectedDatasetLoading?: boolean;
   /** Fila del Dataset a usar en la página activa (0 = primera fila). */
   designerActivePageDatasetRowIndex?: number;
+  /** Etiqueta de preset/tamaño sobre el lienzo (solo lectura). */
+  designerCanvasFormatLabel?: {
+    width: number;
+    height: number;
+    presetId?: string | null;
+  } | null;
   /** Fija la fila del Dataset de la página activa (re-aplica los datos enlazados). */
   onDesignerSetActivePageRowIndex?: (rowIndex: number) => void;
   /**

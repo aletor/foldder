@@ -8,6 +8,17 @@ import {
 } from "../freehand/studio-modal-shell";
 import type { NewDocumentConfig } from "./studio-canvas-document-model";
 import { StudioCanvasMeasuresControls } from "./StudioCanvasMeasuresControls";
+import {
+  findStudioCanvasPresetIdForSize,
+  resolveStudioCanvasPresetBrand,
+  STUDIO_CANVAS_PRESET_BRAND_META,
+  STUDIO_CANVAS_PRESETS_ART,
+  STUDIO_CANVAS_PRESETS_WEB,
+  studioCanvasPresetTabForId,
+  type StudioCanvasPresetBrand,
+  type StudioCanvasPresetDef,
+  type StudioCanvasPresetIconKind,
+} from "./studio-canvas-presets";
 
 export interface NewDocumentPanelProps {
   onConfirm: (config: NewDocumentConfig) => void;
@@ -30,121 +41,24 @@ export type StudioCanvasPresetPanelProps = NewDocumentPanelProps;
 
 type TabId = "web" | "art";
 
-type PresetIconKind =
-  | "monitor"
-  | "square"
-  | "portrait"
-  | "vertical"
-  | "image"
-  | "panoramic"
-  | "landscape";
+type PresetIconKind = StudioCanvasPresetIconKind;
+type PresetBrand = StudioCanvasPresetBrand;
+type PresetDef = StudioCanvasPresetDef;
 
-type PresetBrand = "web" | "instagram" | "tiktok" | "youtube" | "x" | "facebook" | "print";
-
-type PresetDef = {
-  id: string;
-  icon: PresetIconKind;
-  category: string;
-  title: string;
-  width: number;
-  height: number;
-  brand?: PresetBrand;
-};
-
-const PRESET_BRAND_META: Record<
-  PresetBrand,
-  { accent: string; tileBg: string; tileActiveBg: string; iconBg: string; iconColor: string }
-> = {
-  web: {
-    accent: "#71449f",
-    tileBg: "rgba(113, 68, 159, 0.06)",
-    tileActiveBg: "rgba(113, 68, 159, 0.18)",
-    iconBg: "#71449f",
-    iconColor: "#ffffff",
-  },
-  instagram: {
-    accent: "#E4405F",
-    tileBg: "rgba(228, 64, 95, 0.08)",
-    tileActiveBg: "rgba(228, 64, 95, 0.2)",
-    iconBg: "linear-gradient(135deg, #833AB4 0%, #FD1D1D 50%, #FCAF45 100%)",
-    iconColor: "#ffffff",
-  },
-  tiktok: {
-    accent: "#EE1D52",
-    tileBg: "rgba(238, 29, 82, 0.08)",
-    tileActiveBg: "rgba(238, 29, 82, 0.18)",
-    iconBg: "#010101",
-    iconColor: "#ffffff",
-  },
-  youtube: {
-    accent: "#FF0000",
-    tileBg: "rgba(255, 0, 0, 0.08)",
-    tileActiveBg: "rgba(255, 0, 0, 0.18)",
-    iconBg: "#FF0000",
-    iconColor: "#ffffff",
-  },
-  x: {
-    accent: "#ffffff",
-    tileBg: "rgba(255, 255, 255, 0.05)",
-    tileActiveBg: "rgba(255, 255, 255, 0.12)",
-    iconBg: "#000000",
-    iconColor: "#ffffff",
-  },
-  facebook: {
-    accent: "#1877F2",
-    tileBg: "rgba(24, 119, 242, 0.08)",
-    tileActiveBg: "rgba(24, 119, 242, 0.2)",
-    iconBg: "#1877F2",
-    iconColor: "#ffffff",
-  },
-  print: {
-    accent: "#c9a96e",
-    tileBg: "rgba(201, 169, 110, 0.08)",
-    tileActiveBg: "rgba(201, 169, 110, 0.18)",
-    iconBg: "#3d3428",
-    iconColor: "#f5e6c8",
-  },
-};
-
-const PRESETS_WEB: readonly PresetDef[] = [
-  { id: "web-small", icon: "monitor", category: "Monitor", title: "Web Small", width: 1024, height: 768, brand: "web" },
-  { id: "web-common", icon: "monitor", category: "Monitor", title: "Web Common", width: 1366, height: 768, brand: "web" },
-  { id: "web-large", icon: "monitor", category: "Monitor", title: "Web Large", width: 1920, height: 1080, brand: "web" },
-  { id: "ig-post", icon: "square", category: "Cuadrado", title: "Instagram Post", width: 1080, height: 1080, brand: "instagram" },
-  { id: "ig-portrait", icon: "portrait", category: "Retrato", title: "Instagram Portrait", width: 1080, height: 1350, brand: "instagram" },
-  { id: "ig-reel", icon: "vertical", category: "Vertical", title: "Instagram Reel", width: 1080, height: 1920, brand: "instagram" },
-  { id: "tiktok", icon: "vertical", category: "Vertical", title: "TikTok", width: 1080, height: 1920, brand: "tiktok" },
-  { id: "yt-thumb", icon: "image", category: "Imagen", title: "YouTube Thumbnail", width: 1280, height: 720, brand: "youtube" },
-  { id: "yt-banner", icon: "panoramic", category: "Panorámico", title: "YouTube Banner", width: 2560, height: 1440, brand: "youtube" },
-  { id: "twitter", icon: "landscape", category: "Paisaje", title: "Twitter/X Post", width: 1600, height: 900, brand: "x" },
-  { id: "fb-post", icon: "landscape", category: "Paisaje", title: "Facebook Post", width: 1200, height: 630, brand: "facebook" },
-  { id: "fb-cover", icon: "panoramic", category: "Panorámico", title: "Facebook Cover", width: 1640, height: 624, brand: "facebook" },
-] as const;
-
-const PRESETS_ART: readonly PresetDef[] = [
-  { id: "a4-v", icon: "portrait", category: "Retrato", title: "A4 Vertical", width: 2480, height: 3508, brand: "print" },
-  { id: "a4-h", icon: "landscape", category: "Paisaje", title: "A4 Horizontal", width: 3508, height: 2480, brand: "print" },
-  { id: "a3-v", icon: "portrait", category: "Retrato", title: "A3 Vertical", width: 3508, height: 4961, brand: "print" },
-  { id: "a3-h", icon: "landscape", category: "Paisaje", title: "A3 Horizontal", width: 4961, height: 3508, brand: "print" },
-] as const;
+const PRESET_BRAND_META = STUDIO_CANVAS_PRESET_BRAND_META;
+const PRESETS_WEB = STUDIO_CANVAS_PRESETS_WEB;
+const PRESETS_ART = STUDIO_CANVAS_PRESETS_ART;
 
 function resolvePresetBrand(p: PresetDef): PresetBrand {
-  return p.brand ?? "web";
+  return resolveStudioCanvasPresetBrand(p);
 }
 
 function findPresetIdForSize(w: number, h: number): string | null {
-  for (const p of PRESETS_WEB) {
-    if (p.width === w && p.height === h) return p.id;
-  }
-  for (const p of PRESETS_ART) {
-    if (p.width === w && p.height === h) return p.id;
-  }
-  return null;
+  return findStudioCanvasPresetIdForSize(w, h);
 }
 
 function tabForPresetId(id: string | null): TabId {
-  if (!id) return "web";
-  return PRESETS_ART.some((p) => p.id === id) ? "art" : "web";
+  return studioCanvasPresetTabForId(id);
 }
 
 function IconWebTab({ className }: { className?: string }) {
@@ -392,8 +306,9 @@ export function StudioCanvasPresetPanel({
       width: widthNum,
       height: heightNum,
       background,
+      presetId: activePresetId,
     });
-  }, [canCreate, onConfirm, documentName, widthNum, heightNum, background]);
+  }, [canCreate, onConfirm, documentName, widthNum, heightNum, background, activePresetId]);
 
   const titleId = isResize ? "studio-canvas-resize-title" : "studio-canvas-newdoc-title";
 

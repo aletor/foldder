@@ -7,6 +7,8 @@ export type NewDocumentConfig = {
   width: number;
   height: number;
   background: "white" | "black" | "transparent";
+  /** Preset elegido en el panel Web/Arte; ausente si el tamaño es personalizado. */
+  presetId?: string | null;
 };
 
 export function newDocumentBackgroundToCss(bg: NewDocumentConfig["background"]): string {
