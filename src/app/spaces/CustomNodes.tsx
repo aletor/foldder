@@ -130,6 +130,8 @@ import { SpaceNodeMediaPreviewGrid } from "./SpaceNodeMediaPreviewGrid";
 import { collectSpaceMediaPreviewItems } from "./space-node-preview";
 import { listPopulateDesignerTemplatesFromSpacePortal } from "./populate/populate-space-template";
 import { reconcileSpacePortalNode } from "./space-media-list";
+import { SPACE_NODE_GHOST_STACK_PX } from "./space-node-drag";
+import { SpaceNodeGhostStack } from "./SpaceNodeGhostStack";
 import { useSpacesMapCanvas } from "./spaces-map-canvas-context";
 import { hasFoldderStudioTouched, hasGeminiVideoStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
@@ -3859,6 +3861,8 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     reconciledData.outputType,
   ]);
 
+  const showGhostStack = !hasTemplateOutput;
+
   useLayoutEffect(() => {
     const baseFrame = getNodeGridFrameForType("space");
     if (!baseFrame) return;
@@ -3899,7 +3903,21 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   }, [getNodes, hasDock, id, setNodes, updateNodeInternals]);
 
   return (
-    <StudioCanvasNodeShell
+    <div
+      className={`space-node-root cursor-grab active:cursor-grabbing${showGhostStack ? " space-node-root--ghost-stack" : ""}`}
+      style={
+        showGhostStack
+          ? ({
+              isolation: "isolate",
+              paddingRight: SPACE_NODE_GHOST_STACK_PX,
+              paddingBottom: SPACE_NODE_GHOST_STACK_PX,
+            } as React.CSSProperties)
+          : ({ isolation: "isolate" } as React.CSSProperties)
+      }
+    >
+      <div className="space-node-stack relative z-[2] min-w-0">
+        {showGhostStack ? <SpaceNodeGhostStack /> : null}
+        <StudioCanvasNodeShell
       nodeId={id}
       nodeType="space"
       selected={selected}
@@ -3911,7 +3929,7 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
       variant="frameless"
       material="media"
       exteriorTileMark={showExteriorTile}
-      className={`space-node foldder-frameless-label-dark cursor-grab active:cursor-grabbing${hasDock ? " space-node--has-content" : " space-node--empty"}${hasPreviewVisual ? " space-node--has-preview" : ""}${showExteriorTile ? " space-node--connected" : ""}`}
+      className={`space-node space-node-shell foldder-frameless-label-dark${hasDock ? " space-node--has-content" : " space-node--empty"}${hasPreviewVisual ? " space-node--has-preview" : ""}${showExteriorTile ? " space-node--connected" : ""}`}
       minWidth={hasDock ? 260 : 200}
       style={
         {
@@ -4001,6 +4019,8 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
         ) : null}
       </div>
     </StudioCanvasNodeShell>
+      </div>
+    </div>
   );
 });
 

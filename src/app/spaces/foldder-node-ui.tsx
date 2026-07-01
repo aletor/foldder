@@ -248,14 +248,17 @@ export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCent
       type="button"
       disabled={disabled}
       title={resolvedTitle}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+      }}
       onClick={(e) => {
         e.stopPropagation();
         if (!disabled) onClick();
       }}
       className={
         variant === "dock"
-          ? "foldder-node-content-dock-btn pointer-events-auto nodrag inline-flex h-full min-h-[40px] min-w-[72px] items-center justify-center gap-1.5 self-stretch rounded-none border-0 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-black shadow-none transition hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
-          : "foldder-node-footer-button pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-none border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+          ? "foldder-node-content-dock-btn pointer-events-auto nodrag nopan inline-flex h-full min-h-[40px] min-w-[72px] items-center justify-center gap-1.5 self-stretch rounded-none border-0 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-black shadow-none transition hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+          : "foldder-node-footer-button pointer-events-auto nodrag nopan inline-flex items-center gap-1.5 rounded-none border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
       }
     >
       <Maximize2 size={13} strokeWidth={2.4} className="shrink-0" />
