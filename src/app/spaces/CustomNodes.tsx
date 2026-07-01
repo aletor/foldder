@@ -67,7 +67,7 @@ import {
   foldderStudioHeaderActionClassName,
 } from './FoldderStudioHeader';
 import { type FoldderStudioEventDetail } from './desktop-studio-events';
-import { getNodeGridFrameForType } from './canvas-grid-layout';
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from './canvas-grid-layout';
 import {
   getNodeCardBackgroundColor,
   PROMPT_DEFAULT_CARD_BG,
@@ -142,7 +142,13 @@ import {
   parseAspectRatioValue,
   resolveAspectLockedNodeFrame,
   resolveNodeChromeHeight,
+  resolveNodeFrameWidth,
 } from "./studio-node-aspect";
+import {
+  StudioCanvasNodeShell,
+  type StudioCanvasNodeHandleSpec,
+} from "./studio-node/studio-canvas-node";
+import { resolveFoldderNodeStudioBackground } from "./studio-node/foldder-studio-node-backgrounds";
 import {
   applyPromptValueToEdgeSource,
   resolvePromptValueFromEdgeSource,
@@ -5483,7 +5489,27 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
 });
 GeminiVideoStudio.displayName = 'GeminiVideoStudio';
 
-const GEMINI_VIDEO_EMPTY_BACKGROUND_SRC = "/assets/nodes/gemini-video-empty-blue.png";
+const GEMINI_VIDEO_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("geminiVideo");
+const GEMINI_VIDEO_ACCENT = "#3239ba";
+const GEMINI_VIDEO_SEEDANCE_ACCENT = "#f97316";
+const GEMINI_VIDEO_DOCK_MIN_CHROME = 180;
+const GEMINI_VIDEO_CONNECTED_PREVIEW_MIN = 140;
+
+const GEMINI_VIDEO_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
+  { side: "left", top: "20%", type: "target", id: "firstFrame", dataType: "image", label: "First Frame" },
+  { side: "left", top: "38%", type: "target", id: "lastFrame", dataType: "image", label: "Last Frame" },
+  { side: "left", top: "56%", type: "target", id: "prompt", dataType: "prompt", label: "Prompt" },
+  { side: "left", top: "74%", type: "target", id: "negativePrompt", dataType: "prompt", label: "Negative" },
+  { side: "right", top: "50%", type: "source", id: "video", dataType: "video", label: "Video Out" },
+];
+
+function resolveGeminiVideoNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    STUDIO_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, GEMINI_VIDEO_CONNECTED_PREVIEW_MIN + GEMINI_VIDEO_DOCK_MIN_CHROME)),
+  );
+}
 
 export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData & {
@@ -5679,33 +5705,6 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
   }, [useSeedance, durationSecondsForApi]);
   const videoAspect = parseAspectRatioValue(videoFormatForApi) ?? { width: 16, height: 9 };
 
-  useLayoutEffect(() => {
-    const syncKey = `${videoFormatForApi}:${videoAspect.width}x${videoAspect.height}`;
-    if (frameSyncKeyRef.current === syncKey) return;
-    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
-    const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentFrameNode,
-      contentWidth: videoAspect.width,
-      contentHeight: videoAspect.height,
-      minWidth: 200,
-      maxWidth: 960,
-      minHeight: 120,
-      maxHeight: STUDIO_NODE_MAX_HEIGHT,
-      chromeHeight,
-    });
-    frameSyncKeyRef.current = syncKey;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, videoAspect.width / videoAspect.height));
-    requestAnimationFrame(() => updateNodeInternals(id));
-  }, [
-    currentFrameNode,
-    id,
-    setNodes,
-    updateNodeInternals,
-    videoFormatForApi,
-    videoAspect.height,
-    videoAspect.width,
-  ]);
-
   const displayVideo = useMemo(() => {
     const v = nodeData.value;
     if (typeof v === 'string' && v.length > 0) return v;
@@ -5779,11 +5778,211 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     return typeof v === 'string' && v.trim().length > 0 ? v : null;
   }, [edges, nodes, id]);
 
+  const connectedFirstFrameSource = useMemo(() => {
+    const edge = edges.find((e) => e.target === id && e.targetHandle === 'firstFrame');
+    if (!edge) return null;
+    const url = resolvePromptValueFromEdgeSource(edge, nodes as Node[]);
+    if (typeof url !== 'string' || url.trim().length === 0) return null;
+    const source = nodes.find((n) => n.id === edge.source);
+    const s3Key =
+      typeof (source?.data as { s3Key?: string } | undefined)?.s3Key === 'string'
+        ? ((source!.data as { s3Key: string }).s3Key)
+        : undefined;
+    return { url: url.trim(), s3Key };
+  }, [edges, id, nodes]);
+
+  const connectedLastFrameSource = useMemo(() => {
+    const edge = edges.find((e) => e.target === id && e.targetHandle === 'lastFrame');
+    if (!edge) return null;
+    const url = resolvePromptValueFromEdgeSource(edge, nodes as Node[]);
+    if (typeof url !== 'string' || url.trim().length === 0) return null;
+    const source = nodes.find((n) => n.id === edge.source);
+    const s3Key =
+      typeof (source?.data as { s3Key?: string } | undefined)?.s3Key === 'string'
+        ? ((source!.data as { s3Key: string }).s3Key)
+        : undefined;
+    return { url: url.trim(), s3Key };
+  }, [edges, id, nodes]);
+
+  const { displayUrl: firstFramePreviewUrl } = useCanvasNodeMediaPreviewUrl(
+    connectedFirstFrameSource?.url,
+    connectedFirstFrameSource?.s3Key,
+  );
+  const { displayUrl: lastFramePreviewUrl } = useCanvasNodeMediaPreviewUrl(
+    connectedLastFrameSource?.url,
+    connectedLastFrameSource?.s3Key,
+  );
+
   const hasPrompt =
     graphPromptFromEdge.trim().length > 0 ||
     (typeof nodeData.prompt === 'string' && nodeData.prompt.trim().length > 0);
 
   const isActivelyGenerating = status === 'running' && progress < 100;
+
+  const hasPromptConnection = Boolean(promptEdge);
+  const hasNegativeConnection = Boolean(negativePromptEdgeForStudio);
+  const hasFirstFrameConnection = Boolean(
+    edges.find((e) => e.target === id && e.targetHandle === 'firstFrame'),
+  );
+  const hasLastFrameConnection = Boolean(
+    edges.find((e) => e.target === id && e.targetHandle === 'lastFrame'),
+  );
+  const hasLocalPrompt = typeof nodeData.prompt === 'string' && nodeData.prompt.trim().length > 0;
+  const hasConnections =
+    hasPromptConnection || hasNegativeConnection || hasFirstFrameConnection || hasLastFrameConnection;
+  const hasVideo = Boolean(displayVideo);
+  const hasFirstFramePreview = Boolean(
+    hasConnections && !hasVideo && connectedFirstFrameSource && firstFramePreviewUrl,
+  );
+  const hasLastFramePreview = Boolean(
+    hasConnections && !hasVideo && connectedLastFrameSource && lastFramePreviewUrl,
+  );
+  const hasDualFramePreview = hasFirstFramePreview && hasLastFramePreview;
+  const hasSingleFramePreview = (hasFirstFramePreview || hasLastFramePreview) && !hasDualFramePreview;
+  const singleFramePreviewUrl = hasFirstFramePreview ? firstFramePreviewUrl : lastFramePreviewUrl;
+  const hasConnectedFramePreview = hasFirstFramePreview || hasLastFramePreview;
+  const hasDock = hasConnections;
+  const isEmpty = !hasConnections && !hasVideo;
+  const connectedOnly = hasConnections && !hasVideo && !hasLocalPrompt;
+  const showExteriorTile = hasDock;
+  const hasPreviewVisual = hasVideo || hasConnectedFramePreview;
+  const accentColor = useSeedance ? GEMINI_VIDEO_SEEDANCE_ACCENT : GEMINI_VIDEO_ACCENT;
+  const modelLabel = useSeedance ? 'Seedance 2' : 'Veo 3.1';
+  const headerTitle = nodeData.label?.trim() || 'Video Creation';
+  const formatLabel = useSeedance ? videoFormatForApi : `${videoFormatForApi} · ${resolutionForApi}`;
+  const durationLabel = `${durationSecondsForApi}s`;
+  const inputsLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (hasPromptConnection || hasLocalPrompt) parts.push('Prompt');
+    if (hasNegativeConnection) parts.push('Negative');
+    if (connectedFirstFrame) parts.push('First Frame');
+    if (connectedLastFrame) parts.push('Last Frame');
+    return parts.length > 0 ? parts.join(' · ') : '—';
+  }, [
+    connectedFirstFrame,
+    connectedLastFrame,
+    hasLocalPrompt,
+    hasNegativeConnection,
+    hasPromptConnection,
+  ]);
+  const statusLabel =
+    isEmpty
+      ? 'Vacío'
+      : isActivelyGenerating
+        ? 'Generando'
+        : status === 'error'
+          ? 'Error'
+          : connectedOnly
+            ? 'Conectado'
+            : hasVideo
+              ? studioTouched
+                ? 'En edición'
+                : 'Listo'
+              : hasLocalPrompt
+                ? 'Configurado'
+                : 'Conectado';
+  const previewLine = isEmpty
+    ? 'Conecta Prompt o frames y abre Studio para generar vídeo.'
+    : isActivelyGenerating
+      ? `Generando vídeo… ${Math.round(progress)}%`
+      : hasVideo
+        ? `${modelLabel} · ${formatLabel} · ${durationLabel}`
+        : hasDualFramePreview
+          ? 'First y Last frame conectados. Abre Studio para generar vídeo.'
+          : hasConnectedFramePreview
+            ? 'Imagen de entrada conectada. Abre Studio para generar vídeo.'
+          : hasConnections
+            ? 'Entradas listas. Abre Studio para configurar y generar.'
+            : 'Configura modelo, formato y prompt en Studio.';
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("geminiVideo");
+    if (!baseFrame) return;
+
+    if (hasPreviewVisual) {
+      const syncKey = `${videoFormatForApi}:${videoAspect.width}x${videoAspect.height}:${hasDock ? "dock" : "preview-only"}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: videoAspect.width,
+        contentHeight: videoAspect.height,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 120,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, videoAspect.width / videoAspect.height));
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    if (isEmpty) {
+      const syncKey = "gemini-video-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const measuredHeight = resolveGeminiVideoNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+    const syncKey = `gemini-video-content:${hasConnections ? "connected" : "idle"}:${hasVideo ? "video" : "meta"}:${measuredHeight}:${status}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        const resolvedWidth = resolveNodeFrameWidth(n, baseFrame.width);
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(n, resolvedTarget)) return n;
+        return {
+          ...n,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(n.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: STUDIO_NODE_MAX_HEIGHT,
+          },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    connectedOnly,
+    currentFrameNode,
+    hasConnections,
+    hasDock,
+    hasPreviewVisual,
+    hasVideo,
+    id,
+    isEmpty,
+    setNodes,
+    status,
+    updateNodeInternals,
+    videoAspect.height,
+    videoAspect.width,
+    videoFormatForApi,
+  ]);
 
   const onRun = async () => {
     const edges = getEdges();
@@ -5921,134 +6120,165 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     );
   }, [id, setNodes]);
 
-  const showGeminiVideoEmpty = !displayVideo;
-
   return (
-    <div
+    <StudioCanvasNodeShell
       ref={frameRef}
-      className={`custom-node processor-node gemini-video-node group/node foldder-node--frameless node--media ${studioTouched ? "foldder-node--studio-touched" : ""} ${showGeminiVideoEmpty ? "gemini-video-node--empty foldder-frameless-label-dark" : ""} ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
-      style={{
-        minWidth: 200,
-        minHeight: 120,
-        "--foldder-frameless-accent": useSeedance ? "#f97316" : "#8b5cf6",
-      } as React.CSSProperties}
+      nodeId={id}
+      nodeType="geminiVideo"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="Video Creation"
+      title="VIDEO CREATION"
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile}
+      minWidth={200}
+      className={`gemini-video-node foldder-frameless-label-dark${isEmpty ? " gemini-video-node--empty" : hasConnections ? " gemini-video-node--has-content" : ""}${hasPreviewVisual ? " gemini-video-node--has-preview" : ""}${connectedOnly ? " gemini-video-node--connected-only" : ""}${hasConnections ? " gemini-video-node--connected" : ""}${status === "error" ? " foldder-node--error" : ""}${isActivelyGenerating ? " node-glow-running" : ""}`}
+      handles={GEMINI_VIDEO_NODE_HANDLES}
+      variant="frameless"
+      material="media"
+      style={
+        {
+          minWidth: 200,
+          minHeight: hasConnections ? GEMINI_VIDEO_DOCK_MIN_CHROME + GEMINI_VIDEO_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": accentColor,
+          "--foldder-frameless-glass-bg": accentColor,
+          "--foldder-frameless-accent": accentColor,
+        } as React.CSSProperties
+      }
     >
-      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
-      {studioTouched ? <FoldderStudioTouchedMark nodeType="geminiVideo" /> : null}
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Video Generator" />
-
-      <div className="handle-wrapper handle-left !top-[20%]">
-        <FoldderDataHandle type="target" position={Position.Left} id="firstFrame" dataType="image" />
-        <span className="handle-label text-emerald-600">First Frame</span>
-      </div>
-      <div className="handle-wrapper handle-left !top-[38%]">
-        <FoldderDataHandle type="target" position={Position.Left} id="lastFrame" dataType="image" />
-        <span className="handle-label text-emerald-600">Last Frame</span>
-      </div>
-      <div className="handle-wrapper handle-left !top-[56%]">
-        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
-        <span className="handle-label text-emerald-600">Prompt</span>
-      </div>
-      <div className="handle-wrapper handle-left !top-[74%]">
-        <FoldderDataHandle type="target" position={Position.Left} id="negativePrompt" dataType="prompt" className="border-rose-500/50" />
-        <span className="handle-label text-rose-600">Negative</span>
-      </div>
-
-      <div className="node-header">
-        <NodeIcon
-          type="geminiVideo"
-          selected={selected}
-          state={resolveFoldderNodeState({
-            loading: isActivelyGenerating,
-            done: !!displayVideo,
-            error: status === 'error',
-          })}
-          size={16}
-        />
-        <FoldderNodeHeaderTitle
-          className="flex-1"
-          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-        >
-          Video Generator
-        </FoldderNodeHeaderTitle>
-        <div
-          className="node-badge max-w-[7rem] truncate"
-          title={nodeData.videoModel === 'seedance2' ? 'Seedance 2 (火山方舟)' : 'Gemini Veo 3.1'}
-        >
-          {nodeData.videoModel === 'seedance2' ? 'SEEDANCE 2' : 'VEO 3.1'}
-        </div>
-      </div>
+      <FoldderNodeResizer
+        minWidth={200}
+        minHeight={120}
+        maxWidth={960}
+        maxHeight={STUDIO_NODE_MAX_HEIGHT}
+        keepAspectRatio={hasPreviewVisual}
+        isVisible={selected}
+      />
 
       <div
-        ref={previewRef}
-        className={`gemini-video-preview foldder-frameless-main relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden group/out ${showGeminiVideoEmpty ? "" : "bg-[#0a0a0a]"}`}
-        style={{ minHeight: 140 }}
+        className={`node-content foldder-frameless-main gemini-video-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
-        {displayVideo ? (
-          <>
-            <video
-              src={displayVideo}
-              className="h-full w-full object-cover"
-              controls
-              loop
-              muted
-              playsInline
-            />
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-0 transition-opacity group-hover/out:opacity-100" />
-            <div className="pointer-events-none absolute top-2 left-2 z-20 opacity-0 transition-opacity group-hover/out:opacity-100">
-              <span className="rounded-none bg-black/55 px-1.5 py-0.5 text-[6px] font-black uppercase tracking-widest text-white/75">
-                {useSeedance ? videoFormatForApi : resolutionForApi} · {durationSecondsForApi}s
-              </span>
+        <div
+          ref={previewRef}
+          className={`gemini-video-node-preview-area foldder-node-content-preview-area group/gemini-video${hasDualFramePreview ? " gemini-video-node-preview-area--dual-frames" : ""}`}
+        >
+          {hasVideo ? (
+            <>
+              <video
+                src={displayVideo!}
+                className="gemini-video-node-preview-video"
+                controls
+                loop
+                muted
+                playsInline
+              />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-0 transition-opacity group-hover/gemini-video:opacity-100" />
+              <div className="pointer-events-none absolute top-2 left-2 z-20 opacity-0 transition-opacity group-hover/gemini-video:opacity-100">
+                <span className="rounded-none bg-black/55 px-1.5 py-0.5 text-[6px] font-black uppercase tracking-widest text-white/75">
+                  {useSeedance ? videoFormatForApi : resolutionForApi} · {durationSecondsForApi}s
+                </span>
+              </div>
+            </>
+          ) : hasDualFramePreview ? (
+            <div className="gemini-video-node-frame-grid" aria-hidden>
+              <div className="gemini-video-node-frame-grid__cell">
+                <img
+                  src={firstFramePreviewUrl}
+                  alt=""
+                  className="gemini-video-node-preview-img"
+                  decoding="async"
+                  draggable={false}
+                />
+                <span className="gemini-video-node-frame-grid__label">First</span>
+              </div>
+              <div className="gemini-video-node-frame-grid__cell">
+                <img
+                  src={lastFramePreviewUrl}
+                  alt=""
+                  className="gemini-video-node-preview-img"
+                  decoding="async"
+                  draggable={false}
+                />
+                <span className="gemini-video-node-frame-grid__label">Last</span>
+              </div>
             </div>
-          </>
-        ) : (
-          <div className="gemini-video-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+          ) : hasSingleFramePreview && singleFramePreviewUrl ? (
+            <img
+              src={singleFramePreviewUrl}
+              alt=""
+              className="gemini-video-node-preview-img"
+              decoding="async"
+              draggable={false}
+            />
+          ) : (
             <img
               src={GEMINI_VIDEO_EMPTY_BACKGROUND_SRC}
               alt=""
-              className="h-full w-full object-contain object-bottom"
+              className="gemini-video-node-bg"
               draggable={false}
             />
-          </div>
-        )}
+          )}
 
-        <FoldderStudioModeCenterButton onClick={openVideoStudio} />
-
-        {isActivelyGenerating && (
-          <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
-            <div className="h-px w-full bg-white/15">
-              <div
-                className="h-full bg-white transition-all duration-500"
-                style={{ width: `${Math.min(100, progress)}%` }}
+          {isEmpty ? (
+            <>
+              <div className="gemini-video-node-empty-hint" aria-hidden>
+                <span className="gemini-video-node-empty-hint__title">Video Creation vacío</span>
+                <span className="gemini-video-node-empty-hint__body">
+                  Conecta Prompt o frames y abre Studio.
+                </span>
+              </div>
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Abrir Video Creation Studio"
+                onClick={openVideoStudio}
               />
-            </div>
-            <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-white/95 backdrop-blur-sm">
-              Generando… {Math.round(progress)}%
-            </p>
-          </div>
-        )}
-      </div>
+            </>
+          ) : null}
 
-      {!showStudio && (
-        <div className="foldder-frameless-footer-action nodrag flex shrink-0 px-2 py-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRun();
-            }}
-            disabled={isActivelyGenerating || !hasPrompt}
-            title={
-              !hasPrompt
-                ? 'Conecta un prompt o abre Studio y escribe el guion en Prompt local'
-                : undefined
-            }
-            className="execute-btn nodrag justify-center disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Generar vídeo
-          </button>
+          {isActivelyGenerating ? (
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
+              <div className="h-px w-full bg-white/15">
+                <div
+                  className="h-full bg-white transition-all duration-500"
+                  style={{ width: `${Math.min(100, progress)}%` }}
+                />
+              </div>
+              <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-white/95 backdrop-blur-sm">
+                Generando… {Math.round(progress)}%
+              </p>
+            </div>
+          ) : null}
         </div>
-      )}
+
+        {hasDock ? (
+          <div className="gemini-video-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Modelo" value={modelLabel} />
+                  <FoldderNodeContentMetaRow label="Formato" value={formatLabel} />
+                  <FoldderNodeContentMetaRow label="Duración" value={durationLabel} />
+                  <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="gemini-video-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Abrir Studio"
+                  title="Abrir Video Creation Studio"
+                  onClick={openVideoStudio}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
+      </div>
 
       {showStudio && (
         <GeminiVideoStudio
@@ -6078,12 +6308,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
           connectedLastFrame={connectedLastFrame}
         />
       )}
-
-      <div className="handle-wrapper handle-right" style={{ top: '50%' }}>
-        <span className="handle-label text-cyan-400">Video Out</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="video" dataType="video" />
-      </div>
-    </div>
+    </StudioCanvasNodeShell>
   );
 });
 

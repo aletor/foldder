@@ -12,9 +12,11 @@ import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { ScrubNumberInput } from "../ScrubNumberInput";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { FoldderStudioHeader, foldderStudioHeaderActionClassName } from "../FoldderStudioHeader";
-import { NodeLabel, FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import { FoldderStudioModeCenterButton, FoldderNodeContentDock, FoldderNodeContentDockActions, FoldderNodeContentDockMain, FoldderNodeContentMeta, FoldderNodeContentMetaRow } from "../foldder-node-ui";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "../canvas-grid-layout";
+import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { resolveFoldderNodeStudioBackground } from "../studio-node/foldder-studio-node-backgrounds";
 import { hasVideoEditorStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
-import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { readMediaListFromNode } from "../media-list-consumers";
 import type { MediaListItem, MediaListOutput } from "../media-list-output";
 import { generateTimelineAudio } from "./video-editor-audio-generation-service";
@@ -80,6 +82,7 @@ import {
   nodeFrameNeedsSync,
   resolveAspectLockedNodeFrame,
   resolveNodeChromeHeight,
+  resolveNodeFrameWidth,
 } from "../studio-node-aspect";
 import { loadVideoDimensions } from "../presenter/presenter-video-frame-layout";
 import { VideoEditorCompositionStage, type VideoEditorStageMode } from "./VideoEditorCompositionStage";
@@ -138,8 +141,12 @@ import {
 } from "./video-editor-edit-types";
 
 import { useVideoEditorAssetUrl } from "./use-video-editor-asset-url";
+import { VideoEditorNodeExteriorFrameCell } from "./video-editor-node-exterior-frame-cell";
 
-const VIDEO_EDITOR_EMPTY_BACKGROUND_SRC = "/assets/nodes/video-editor-empty.jpg";
+const VIDEO_EDITOR_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("videoEditor");
+const VIDEO_EDITOR_ACCENT = "#3a8f96";
+const VIDEO_EDITOR_DOCK_MIN_CHROME = 180;
+const VIDEO_EDITOR_CONNECTED_PREVIEW_MIN = 140;
 const VIDEO_EDITOR_NODE_MAX_HEIGHT = 2200;
 const VIDEO_EDITOR_DEFAULT_ASPECT = { width: 16, height: 9 };
 const VIDEO_EDITOR_MIN_WIDTH = 200;
@@ -149,6 +156,32 @@ const VIDEO_EDITOR_MIN_HEIGHT = Math.max(
 );
 function VideoEditorNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
   return <NodeResizer {...props} />;
+}
+
+function resolveVideoEditorNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    VIDEO_EDITOR_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, VIDEO_EDITOR_CONNECTED_PREVIEW_MIN + VIDEO_EDITOR_DOCK_MIN_CHROME)),
+  );
+}
+
+function mapVideoEditorStatusLabel(status: VideoEditorNodeData["status"], isEmpty: boolean): string {
+  if (isEmpty) return "Vacío";
+  switch (status) {
+    case "empty":
+      return "Conectado";
+    case "media_loaded":
+      return "Medios cargados";
+    case "editing":
+      return "En edición";
+    case "generating_audio":
+      return "Generando audio";
+    case "ready":
+      return "Listo";
+    default:
+      return status;
+  }
 }
 
 function cx(...parts: Array<string | false | null | undefined>) {
@@ -3590,6 +3623,7 @@ function VideoEditorNodeExteriorPreview({
 export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("VideoEditorNode", id);
   const {
+    sourceMediaList,
     combinedSourceMediaList,
     connectedByVideoSlot,
     connectedVideoCount,
@@ -3612,15 +3646,71 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   const stats = clipStats(effectiveData);
   const previewClip = useMemo(() => getVideoEditorNodePreviewClip(effectiveData), [effectiveData]);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
+  const hasConnections = Boolean(combinedSourceMediaList);
+  const hasDock = hasConnections;
+  const isEmpty = !hasConnections;
+  const exteriorPreviewVideos = useMemo(
+    () => (combinedSourceMediaList?.items ?? []).filter((item) => item.mediaType === "video"),
+    [combinedSourceMediaList],
+  );
   const previewUrl = useVideoEditorAssetUrl(
     previewClip?.url || previewClip?.assetId,
     previewClip?.s3Key,
-    nodeMediaVisible && Boolean(previewClip),
+    nodeMediaVisible && Boolean(previewClip) && hasConnections,
   );
-  const showPreview = Boolean(previewClip);
-  const studioTouched = hasVideoEditorStudioTouched(data as Record<string, unknown>) || stats.clips.length > 0;
+  const hasRenderPreview = Boolean(hasConnections && previewClip?.id === "render_preview" && previewUrl);
+  const hasGridPreview = Boolean(hasConnections && !hasRenderPreview && exteriorPreviewVideos.length > 0);
+  const hasPreviewVisual = hasRenderPreview || hasGridPreview;
+  const studioTouched = hasVideoEditorStudioTouched(data as Record<string, unknown>) || (hasConnections && stats.clips.length > 0);
+  const showExteriorTile = hasDock;
   const [studioOpen, setStudioOpen] = useState(false);
   const [previewDimensions, setPreviewDimensions] = useState<{ width: number; height: number } | null>(null);
+
+  const videoEditorHandles = useMemo((): StudioCanvasNodeHandleSpec[] => {
+    const handles: StudioCanvasNodeHandleSpec[] = visibleVideoSlotIds.map((slotId) => {
+      const slot = VIDEO_EDITOR_VIDEO_SLOTS.find((item) => item.id === slotId)!;
+      const connected = connectedByVideoSlot[slotId];
+      return {
+        side: "left" as const,
+        top: slot.top,
+        type: "target" as const,
+        id: slot.id,
+        dataType: "video" as const,
+        label: connected ? `✓ ${slot.label}` : slot.label,
+        labelStyle: connected ? { color: "#3a8f96" } : undefined,
+      };
+    });
+    handles.push({
+      side: "left",
+      top: "92%",
+      type: "target",
+      id: "media_list",
+      dataType: "generic",
+      label: "Media list",
+    });
+    return handles;
+  }, [connectedByVideoSlot, visibleVideoSlotIds]);
+
+  const headerTitle = String((data as { label?: unknown }).label || "Video Editor");
+  const clipsLabel = `${stats.clips.length} clip${stats.clips.length === 1 ? "" : "s"}`;
+  const durationLabel = `${stats.duration.toFixed(0)}s`;
+  const videosLabel = `${exteriorPreviewVideos.length || stats.videos} vídeo${(exteriorPreviewVideos.length || stats.videos) === 1 ? "" : "s"}`;
+  const inputsLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (sourceMediaList) parts.push("Media list");
+    if (connectedVideoCount > 0) parts.push(`${connectedVideoCount} conectado${connectedVideoCount === 1 ? "" : "s"}`);
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }, [connectedVideoCount, sourceMediaList]);
+  const statusLabel = mapVideoEditorStatusLabel(effectiveData.status, isEmpty);
+  const previewLine = isEmpty
+    ? "Conecta vídeos o una media list y abre Studio."
+    : hasRenderPreview
+      ? `Render listo · ${durationLabel}`
+      : hasGridPreview
+        ? `${exteriorPreviewVideos.length} vídeo${exteriorPreviewVideos.length === 1 ? "" : "s"} conectado${exteriorPreviewVideos.length === 1 ? "" : "s"}. Abre Studio para editar.`
+        : hasConnections
+          ? `${clipsLabel} · ${durationLabel}. Abre Studio para montar la línea de tiempo.`
+          : "Conecta entradas y abre Studio.";
 
   const projectAspect = useMemo(() => {
     const width = effectiveData.render?.settings?.width ?? 1920;
@@ -3632,13 +3722,14 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   }, [effectiveData.render?.settings?.height, effectiveData.render?.settings?.width]);
 
   const contentAspect = previewDimensions ?? projectAspect;
+  const gridCountClass = `video-editor-node-frame-grid--count-${Math.min(Math.max(exteriorPreviewVideos.length, 1), 8)}`;
 
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, updateNodeInternals, visibleVideoSlotIds.join(",")]);
 
   useEffect(() => {
-    if (!nodeMediaVisible || !previewUrl || !previewClip) {
+    if (!nodeMediaVisible || !previewUrl || !previewClip || !hasRenderPreview) {
       setPreviewDimensions(null);
       return;
     }
@@ -3657,40 +3748,95 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
     return () => {
       cancelled = true;
     };
-  }, [nodeMediaVisible, previewClip, previewUrl]);
+  }, [hasRenderPreview, nodeMediaVisible, previewClip, previewUrl]);
 
   useLayoutEffect(() => {
-    const syncKey = `${contentAspect.width}x${contentAspect.height}:${previewUrl || "empty"}`;
+    const baseFrame = getNodeGridFrameForType("videoEditor");
+    if (!baseFrame) return;
+
+    if (hasRenderPreview) {
+      const syncKey = `${contentAspect.width}x${contentAspect.height}:${hasDock ? "dock" : "preview-only"}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: contentAspect.width,
+        contentHeight: contentAspect.height,
+        minWidth: VIDEO_EDITOR_MIN_WIDTH,
+        maxWidth: 960,
+        minHeight: VIDEO_EDITOR_MIN_HEIGHT,
+        maxHeight: VIDEO_EDITOR_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      frameSyncKeyRef.current = syncKey;
+      const nextAspectRatio = contentAspect.width / contentAspect.height;
+      setNodes((nodes) =>
+        nodes.map((node) => {
+          if (node.id !== id) return node;
+          const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+          const currentAspectRatio =
+            typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+              ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+              : null;
+          const needsAspectSync =
+            currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+          if (!needsFrameSync && !needsAspectSync) return node;
+          return {
+            ...node,
+            ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+            data: { ...(node.data as Record<string, unknown>), _foldderAspectRatio: nextAspectRatio },
+            style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    if (isEmpty) {
+      const syncKey = "video-editor-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nodes) =>
+        nodes.map((node) => {
+          if (node.id !== id) return node;
+          if (!nodeFrameNeedsSync(node, baseFrame)) return node;
+          return {
+            ...node,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(node.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const measuredHeight = resolveVideoEditorNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+    const syncKey = `video-editor-content:${hasGridPreview ? "grid" : "meta"}:${exteriorPreviewVideos.length}:${measuredHeight}:${effectiveData.status}`;
     if (frameSyncKeyRef.current === syncKey) return;
-    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
-    const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentFrameNode,
-      contentWidth: contentAspect.width,
-      contentHeight: contentAspect.height,
-      minWidth: VIDEO_EDITOR_MIN_WIDTH,
-      maxWidth: 960,
-      minHeight: VIDEO_EDITOR_MIN_HEIGHT,
-      maxHeight: VIDEO_EDITOR_NODE_MAX_HEIGHT,
-      chromeHeight,
-    });
+
     frameSyncKeyRef.current = syncKey;
-    const nextAspectRatio = contentAspect.width / contentAspect.height;
     setNodes((nodes) =>
       nodes.map((node) => {
         if (node.id !== id) return node;
-        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
-        const currentAspectRatio =
-          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
-            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
-            : null;
-        const needsAspectSync =
-          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
-        if (!needsFrameSync && !needsAspectSync) return node;
+        const resolvedWidth = resolveNodeFrameWidth(node, baseFrame.width);
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(node, resolvedTarget)) return node;
         return {
           ...node,
-          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
-          data: { ...(node.data as Record<string, unknown>), _foldderAspectRatio: nextAspectRatio },
-          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(node.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: VIDEO_EDITOR_NODE_MAX_HEIGHT,
+          },
         };
       }),
     );
@@ -3699,14 +3845,13 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
     contentAspect.height,
     contentAspect.width,
     currentFrameNode,
-    currentFrameSnapshot.height,
-    currentFrameSnapshot.measuredHeight,
-    currentFrameSnapshot.measuredWidth,
-    currentFrameSnapshot.styleHeight,
-    currentFrameSnapshot.styleWidth,
-    currentFrameSnapshot.width,
+    effectiveData.status,
+    exteriorPreviewVideos.length,
+    hasDock,
+    hasGridPreview,
+    hasRenderPreview,
     id,
-    previewUrl,
+    isEmpty,
     setNodes,
     updateNodeInternals,
   ]);
@@ -3724,122 +3869,129 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
     );
   }, [id, setNodes]);
 
-  const label = String((data as { label?: unknown }).label || "Video Editor");
   return (
-    <div
+    <StudioCanvasNodeShell
       ref={frameRef}
+      nodeId={id}
+      nodeType="videoEditor"
+      selected={selected}
+      label={typeof data.label === "string" ? data.label : undefined}
+      defaultLabel="Video Editor"
+      title="VIDEO EDITOR"
+      introActive={!!(data as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile}
+      minWidth={VIDEO_EDITOR_MIN_WIDTH}
       className={cx(
-        "custom-node video-editor-node foldder-node--frameless node--media relative text-white group/node",
-        showPreview ? "video-editor-node--has-preview foldder-frameless-label-dark" : "video-editor-node--empty",
-        studioTouched ? "foldder-node--studio-touched" : undefined,
+        "video-editor-node foldder-frameless-label-dark",
+        isEmpty ? "video-editor-node--empty" : hasConnections ? "video-editor-node--has-content" : undefined,
+        hasPreviewVisual ? "video-editor-node--has-preview" : undefined,
+        hasConnections && !hasRenderPreview && !hasGridPreview ? "video-editor-node--connected-only" : undefined,
+        hasConnections ? "video-editor-node--connected" : undefined,
         selected ? "video-editor-node--selected" : undefined,
       )}
-      style={{ width: "100%", height: "100%", minWidth: VIDEO_EDITOR_MIN_WIDTH, minHeight: VIDEO_EDITOR_MIN_HEIGHT }}
+      handles={videoEditorHandles}
+      variant="frameless"
+      material="media"
+      style={
+        {
+          width: "100%",
+          height: "100%",
+          minWidth: VIDEO_EDITOR_MIN_WIDTH,
+          minHeight: hasConnections ? VIDEO_EDITOR_DOCK_MIN_CHROME + VIDEO_EDITOR_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": VIDEO_EDITOR_ACCENT,
+          "--foldder-frameless-glass-bg": VIDEO_EDITOR_ACCENT,
+          "--foldder-frameless-accent": "#67e8f9",
+        } as React.CSSProperties
+      }
     >
       <VideoEditorNodeResizer
         minWidth={VIDEO_EDITOR_MIN_WIDTH}
         minHeight={VIDEO_EDITOR_MIN_HEIGHT}
         maxWidth={960}
         maxHeight={VIDEO_EDITOR_NODE_MAX_HEIGHT}
-        keepAspectRatio
+        keepAspectRatio={hasRenderPreview}
         isVisible={selected}
       />
-      {studioTouched ? <FoldderStudioTouchedMark nodeType="video_editor" /> : null}
-      <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Video Editor" />
-      {VIDEO_EDITOR_VIDEO_SLOTS.filter((slot) => visibleVideoSlotIds.includes(slot.id)).map((slot, index) => (
-        <div
-          key={slot.id}
-          className="handle-wrapper handle-left"
-          style={{
-            top: slot.top,
-            opacity: index === 0 || connectedByVideoSlot[VIDEO_EDITOR_VIDEO_SLOT_IDS[index - 1]!] ? 1 : 0.35,
-          }}
-        >
-          <FoldderDataHandle type="target" position={Position.Left} id={slot.id} dataType="video" />
-          <span
-            className="handle-label"
-            style={{ color: connectedByVideoSlot[slot.id] ? "#3a8f96" : undefined }}
-          >
-            {connectedByVideoSlot[slot.id] ? `✓ ${slot.label}` : slot.label}
-          </span>
-        </div>
-      ))}
-      <div className="handle-wrapper handle-left" style={{ top: "92%" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />
-        <span className="handle-label">Media list</span>
-      </div>
 
-      <div ref={previewRef} className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {showPreview && previewClip ? (
-          <>
+      <div
+        className={`node-content foldder-frameless-main video-editor-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div
+          ref={previewRef}
+          className={`video-editor-node-preview-area foldder-node-content-preview-area${hasGridPreview ? " video-editor-node-preview-area--grid" : ""}`}
+        >
+          {hasRenderPreview && previewClip ? (
             <VideoEditorNodeExteriorPreview
               clip={previewClip}
               previewUrl={previewUrl}
               mediaVisible={nodeMediaVisible}
             />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[11] bg-gradient-to-t from-black/75 via-black/25 to-transparent px-3 pb-2 pt-8">
-              <div className="text-[10px] font-black uppercase tracking-[0.12em] text-white/55">
-                {stats.clips.length} clips · {stats.duration.toFixed(0)}s
-              </div>
+          ) : hasGridPreview ? (
+            <div className={`video-editor-node-frame-grid ${gridCountClass}`} aria-hidden>
+              {exteriorPreviewVideos.map((item, index) => (
+                <VideoEditorNodeExteriorFrameCell
+                  key={item.id}
+                  item={item}
+                  mediaVisible={nodeMediaVisible}
+                  label={`Video ${index + 1}`}
+                />
+              ))}
             </div>
-            <span className="video-editor-status rounded-none bg-black/35 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/80">
-              {effectiveData.status}
-            </span>
-            <FoldderStudioModeCenterButton onClick={() => setStudioOpen(true)} />
-          </>
-        ) : (
-          <>
-        <div className="video-editor-empty-background absolute inset-0 overflow-hidden" aria-hidden>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={VIDEO_EDITOR_EMPTY_BACKGROUND_SRC}
-            alt=""
-            className="h-full w-full object-cover object-center"
-            draggable={false}
-          />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={VIDEO_EDITOR_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="video-editor-node-bg"
+              draggable={false}
+            />
+          )}
+
+          {isEmpty ? (
+            <>
+              <div className="video-editor-node-empty-hint" aria-hidden>
+                <span className="video-editor-node-empty-hint__title">Video Editor vacío</span>
+                <span className="video-editor-node-empty-hint__body">
+                  Conecta vídeos o una media list y abre Studio.
+                </span>
+              </div>
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Abrir Video Editor Studio"
+                onClick={() => setStudioOpen(true)}
+              />
+            </>
+          ) : null}
         </div>
 
-        <div className="node-content video-editor-node-content relative z-10 flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2">
-          <div className="video-editor-heading flex items-start justify-between gap-3">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.18em] text-white/70">Video Editor</div>
-              <h3 className="mt-1 text-lg font-black tracking-[-0.04em] text-white">{label}</h3>
-            </div>
-            <div className="video-editor-icon flex h-10 w-10 items-center justify-center rounded-none bg-white/15 text-white">
-              <Film size={18} />
-            </div>
+        {hasDock ? (
+          <div className="video-editor-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Clips" value={clipsLabel} />
+                  <FoldderNodeContentMetaRow label="Duración" value={durationLabel} />
+                  <FoldderNodeContentMetaRow label="Vídeos" value={videosLabel} />
+                  <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="video-editor-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Abrir Studio"
+                  title="Abrir Video Editor Studio"
+                  onClick={() => setStudioOpen(true)}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
           </div>
-          <div className="video-editor-summary mt-4 rounded-none border-none bg-white/10 p-4 backdrop-blur-sm">
-            {combinedSourceMediaList ? (
-              <>
-                <div className="text-3xl font-black tracking-[-0.06em] text-white">{stats.clips.length} clips</div>
-                <div className="mt-2 text-sm font-semibold text-white/75">
-                  {stats.duration.toFixed(0)}s · {stats.videos} vídeos · {stats.images} imágenes · {stats.audio} audios
-                  {connectedVideoCount > 0 ? ` · ${connectedVideoCount} conectado${connectedVideoCount === 1 ? "" : "s"}` : ""}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="text-lg font-black tracking-[-0.04em] text-white">Sin medios conectados</div>
-                <div className="mt-1 text-sm text-white/70">Conecta vídeos o una media list</div>
-              </>
-            )}
-          </div>
-          <div className="video-editor-actions mt-auto flex items-center justify-between gap-3 pt-3">
-            <span className="video-editor-status rounded-none bg-black/35 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/80">
-              {effectiveData.status}
-            </span>
-            <button
-              type="button"
-              onClick={() => setStudioOpen(true)}
-              className="video-editor-open-button rounded-none bg-white px-3 py-1.5 text-[11px] font-semibold text-black transition hover:scale-[1.02] hover:bg-[#f7f7f4]"
-            >
-              Abrir
-            </button>
-          </div>
-        </div>
-          </>
-        )}
+        ) : null}
       </div>
 
       {studioOpen ? (
@@ -3851,6 +4003,6 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
           onClose={() => setStudioOpen(false)}
         />
       ) : null}
-    </div>
+    </StudioCanvasNodeShell>
   );
 });

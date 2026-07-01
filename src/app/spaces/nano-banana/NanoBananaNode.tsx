@@ -4,7 +4,6 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import { createPortal, flushSync } from "react-dom";
 import {
   NodeResizer,
-  Position,
   useNodeId,
   useReactFlow,
   useNodes,
@@ -28,9 +27,20 @@ import { useInputMode } from "../input-mode-context";
 import { useNanoBananaViewerTouch } from "./nano-banana-viewer-touch";
 import { composeBrainImageGeneratorPromptWithRuntime, type BrainImageGeneratorPromptDiagnostics } from "@/lib/brain/build-brain-visual-prompt-context";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
-import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "../foldder-node-ui";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
+import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "../canvas-grid-layout";
+import { resolveNodeFrameWidth } from "../studio-node-aspect";
+import { NanoBananaNodeExteriorGridCell } from "./nano-banana-node-exterior-grid-cell";
+import { NanoBananaNodeExteriorHistoryThumb } from "./nano-banana-node-exterior-history-thumb";
+import { NanoBananaNodeDockProviderSelect } from "./nano-banana-node-dock-provider-select";
 import {
   FoldderStudioHeader,
   foldderStudioHeaderActionClassName,
@@ -51,7 +61,6 @@ import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import { hasFoldderStudioTouched, hasNanoBananaStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
-import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 
 interface BaseNodeData {
   value?: string;
@@ -84,78 +93,30 @@ function captureCurrentOutput(
 
 const STUDIO_NODE_MAX_HEIGHT = 2200;
 const NANO_BANANA_EMPTY_BACKGROUND_SRC = "/assets/nodes/nano-banana-empty-pink.png";
+const NANO_BANANA_ACCENT = "#f16389";
+const NANO_BANANA_DOCK_MIN_CHROME = 180;
+const NANO_BANANA_CONNECTED_PREVIEW_MIN = 140;
+
+function resolveNanoBananaNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    STUDIO_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, NANO_BANANA_CONNECTED_PREVIEW_MIN + NANO_BANANA_DOCK_MIN_CHROME)),
+  );
+}
+
+function mapNanoBananaStatusLabel(status: string, isEmpty: boolean, isActivelyGenerating: boolean): string {
+  if (isActivelyGenerating) return "Generando…";
+  if (isEmpty) return "Vacío";
+  if (status === "error") return "Error";
+  if (status === "success") return "Listo";
+  return "Conectado";
+}
 
 export type NanoBananaImageProvider = "gemini" | "openai";
 
 function resolveNanoBananaImageProvider(value: unknown): NanoBananaImageProvider {
   return value === "openai" ? "openai" : "gemini";
-}
-
-function NanoBananaProviderSwitch({
-  imageProvider,
-  onSelect,
-}: {
-  imageProvider: NanoBananaImageProvider;
-  onSelect: (provider: NanoBananaImageProvider) => void;
-}) {
-  const isOpenAi = imageProvider === "openai";
-  return (
-    <div
-      className="nano-banana-provider-toggle nodrag nopan"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <span
-        className={`nano-banana-provider-toggle__label ${!isOpenAi ? "is-active" : ""}`}
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (isOpenAi) onSelect("gemini");
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (isOpenAi) onSelect("gemini");
-          }
-        }}
-      >
-        Gemini
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={isOpenAi}
-        aria-label={isOpenAi ? "ChatGPT Images activo" : "Gemini activo"}
-        title={isOpenAi ? "Cambiar a Gemini" : "Cambiar a ChatGPT Images"}
-        className={`nano-banana-provider-toggle__track ${isOpenAi ? "is-on" : ""}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(isOpenAi ? "gemini" : "openai");
-        }}
-      >
-        <span className="nano-banana-provider-toggle__thumb" aria-hidden />
-      </button>
-      <span
-        className={`nano-banana-provider-toggle__label ${isOpenAi ? "is-active" : ""}`}
-        role="button"
-        tabIndex={0}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!isOpenAi) onSelect("openai");
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            e.stopPropagation();
-            if (!isOpenAi) onSelect("openai");
-          }
-        }}
-      >
-        ChatGPT
-      </span>
-    </div>
-  );
 }
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
@@ -2407,7 +2368,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const brainCanvasCtx = useProjectBrainCanvas();
   const brainTelemetry = useBrainNodeTelemetry({ canvasNodeId: id, nodeType: "IMAGE_GENERATOR" });
   const [brainImageDiag, setBrainImageDiag] = useState<BrainImageGeneratorPromptDiagnostics | null>(null);
-  const [showBrainWhy, setShowBrainWhy] = useState(false);
   const brainDiagRef = useRef<BrainImageGeneratorPromptDiagnostics | null>(null);
   const setBrainImageDiagSync = useCallback((d: BrainImageGeneratorPromptDiagnostics | null) => {
     brainDiagRef.current = d;
@@ -2773,8 +2733,10 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
   useRegisterAssistantNodeRun(id, onRun);
 
-  // Preview of connected ref slot 0 (the base image)
-  const refImgPreview = connectedSlots[0] ? (refImages[0] ?? null) : null;
+  const connectedRefImages = useMemo(
+    () => refImages.filter((img, index) => connectedSlots[index] && img) as string[],
+    [connectedSlots, refImages],
+  );
 
   /** Persisted URL/base64 from node data (S3 presigned after save + hydrate). `result` is only in-memory after generate. */
   const persistedOutput =
@@ -2788,81 +2750,216 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     outputS3Key,
     { canvasThumbnail: true },
   );
-  const { displayUrl: refCanvasPreviewUrl } = useAuthedMediaPreviewUrl(
-    refImgPreview,
-    null,
-    { canvasThumbnail: true },
-  );
 
   /** Barra y glow solo con avance <100%; a 100% se oculta aunque `status` tarde un tick en pasar a success. */
   const isActivelyGenerating = status === 'running' && progress < 100;
-
   const nbResLabel = isFlash25 ? '1K' : normalizeNanoBananaResolution(nodeData.resolution).toUpperCase();
   const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
 
+  const hasConnections = brainConnected || promptConnected || connectedSlots.some(Boolean);
+  const hasGeneratedOutput = Boolean(outputImage);
+  const hasDock = hasConnections;
+  const isEmpty = !hasConnections && !hasGeneratedOutput;
+  const hasHeroPreview = hasGeneratedOutput && nodeMediaVisible;
+  const hasGridPreview = hasConnections && !hasGeneratedOutput && connectedRefImages.length > 0;
+  const hasPreviewVisual = hasHeroPreview || hasGridPreview;
+  const connectedOnly = hasConnections && !hasPreviewVisual;
+  const showExteriorTile = hasDock;
+  const previousVersions = useMemo(() => {
+    if (!outputImage) return [] as string[];
+    const fromHistory = persistedGenerationHistory.filter((url) => url && url !== outputImage);
+    if (fromHistory.length > 0) return fromHistory;
+    const versions = Array.isArray((nodeData as { _assetVersions?: unknown })._assetVersions)
+      ? ((nodeData as { _assetVersions: Array<{ url?: string }> })._assetVersions ?? [])
+      : [];
+    return versions
+      .map((entry) => entry.url)
+      .filter((url): url is string => typeof url === "string" && url.length > 0 && url !== outputImage);
+  }, [nodeData, outputImage, persistedGenerationHistory]);
+  const hasHistoryStrip = hasHeroPreview && previousVersions.length > 0;
+  const gridCountClass = `nano-banana-node-frame-grid--count-${Math.min(Math.max(connectedRefImages.length, 1), 4)}`;
+  const hasConnectedRef = connectedRefImages.length > 0;
+  const showDockGenerar = hasDock && promptConnected && !hasConnectedRef && !hasGeneratedOutput;
+
+  const nanoBananaHandles = useMemo((): StudioCanvasNodeHandleSpec[] => {
+    const handles: StudioCanvasNodeHandleSpec[] = [
+      {
+        side: "left",
+        top: "2%",
+        type: "target",
+        id: "brain",
+        dataType: "brain",
+        label: brainConnected ? "✓ BrandKit" : "BrandKit",
+        labelStyle: brainConnected ? { color: "#a78bfa" } : undefined,
+      },
+    ];
+    REF_SLOTS.forEach((slot, index) => {
+      handles.push({
+        side: "left",
+        top: slot.top,
+        type: "target",
+        id: slot.id,
+        dataType: "image",
+        label: connectedSlots[index] ? `✓ ${slot.label}` : slot.label,
+        labelStyle: connectedSlots[index] ? { color: "#f59e0b" } : undefined,
+        style: index === 0 || connectedSlots[index - 1] ? undefined : { opacity: 0.35 },
+      });
+    });
+    handles.push({
+      side: "left",
+      top: "94%",
+      type: "target",
+      id: "prompt",
+      dataType: "prompt",
+      label: promptConnected ? "✓ Prompt" : "Prompt",
+      labelStyle: promptConnected ? { color: "#3a8f96" } : undefined,
+    });
+    handles.push({
+      side: "right",
+      top: "55%",
+      type: "source",
+      id: "image",
+      dataType: "image",
+      label: "Image out",
+    });
+    return handles;
+  }, [brainConnected, connectedSlots, promptConnected]);
+
+  const headerTitle = String(nodeData.label || "Image Creation");
+  const modelLabel = isOpenAiProvider ? "GPT Image 2" : modelInfo.label;
+  const formatLabel = nodeData.aspect_ratio || "16:9";
+  const inputsLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (brainConnected) parts.push("BrandKit");
+    if (promptConnected) parts.push("Prompt");
+    const refCount = connectedSlots.filter(Boolean).length;
+    if (refCount > 0) parts.push(`${refCount} ref${refCount === 1 ? "" : "s"}`);
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }, [brainConnected, connectedSlots, promptConnected]);
+  const versionsLabel = hasGeneratedOutput
+    ? `${Math.max(1, previousVersions.length + 1)} versión${previousVersions.length + 1 === 1 ? "" : "es"}`
+    : "—";
+  const statusLabel = mapNanoBananaStatusLabel(status, isEmpty, isActivelyGenerating);
+  const previewLine = isEmpty
+    ? "Conecta Prompt, refs o BrandKit y abre Studio."
+    : isActivelyGenerating
+      ? `Generando imagen… ${Math.round(progress)}%`
+      : hasGeneratedOutput
+        ? `${modelLabel} · ${nbResLabel} · ${formatLabel}`
+        : hasGridPreview
+          ? `${connectedRefImages.length} ref${connectedRefImages.length === 1 ? "" : "s"} conectada${connectedRefImages.length === 1 ? "" : "s"}. Abre Studio para generar.`
+          : hasConnections
+            ? "Entradas listas. Abre Studio para generar."
+            : "Conecta entradas y abre Studio.";
+
   useLayoutEffect(() => {
-    const hasFooterChrome = (promptConnected || brainConnected) && !showStudio;
-    const syncKey = `${nodeData.aspect_ratio || '16:9'}:${nanoAspect.width}x${nanoAspect.height}:${outputImage ? 'out' : 'empty'}:${hasFooterChrome ? 'foot' : 'nofoot'}`;
+    const baseFrame = getNodeGridFrameForType("nanoBanana");
+    if (!baseFrame) return;
+
+    if (hasPreviewVisual) {
+      const syncKey = `${nodeData.aspect_ratio || "16:9"}:${nanoAspect.width}x${nanoAspect.height}:${hasDock ? "dock" : "preview-only"}:${hasHistoryStrip ? "history" : "hero"}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: nanoAspect.width,
+        contentHeight: nanoAspect.height,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 120,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      const nextAspectRatio = nanoAspect.width / nanoAspect.height;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== id) return node;
+          const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+          const currentAspectRatio =
+            typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+              ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+              : null;
+          const needsAspectSync =
+            currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+          if (!needsFrameSync && !needsAspectSync) return node;
+          return {
+            ...node,
+            ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+            data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+            style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    if (isEmpty) {
+      const syncKey = "nano-banana-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== id) return node;
+          if (!nodeFrameNeedsSync(node, baseFrame)) return node;
+          return {
+            ...node,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(node.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const measuredHeight = resolveNanoBananaNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+    const syncKey = `nano-banana-content:${hasConnections ? "connected" : "idle"}:${hasGeneratedOutput ? "output" : "meta"}:${measuredHeight}:${status}`;
     if (frameSyncKeyRef.current === syncKey) return;
 
-    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
-    const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentFrameNode,
-      contentWidth: nanoAspect.width,
-      contentHeight: nanoAspect.height,
-      minWidth: 200,
-      maxWidth: 960,
-      minHeight: 120,
-      maxHeight: STUDIO_NODE_MAX_HEIGHT,
-      chromeHeight,
-    });
-    const nextAspectRatio = nanoAspect.width / nanoAspect.height;
-    const needsFrameSync = nodeFrameNeedsSync(currentFrameNode, nextFrame);
-    const currentAspectRatio =
-      typeof (nodeData as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
-        ? ((nodeData as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
-        : null;
-    const needsAspectSync =
-      currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
-
     frameSyncKeyRef.current = syncKey;
-    if (!needsFrameSync && !needsAspectSync) return;
-
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id !== id) return node;
-        const nodeNeedsFrameSync = nodeFrameNeedsSync(node, nextFrame);
-        const nodeCurrentAspectRatio =
-          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
-            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
-            : null;
-        const nodeNeedsAspectSync =
-          nodeCurrentAspectRatio === null || Math.abs(nodeCurrentAspectRatio - nextAspectRatio) > 0.0001;
-        if (!nodeNeedsFrameSync && !nodeNeedsAspectSync) return node;
+        const resolvedWidth = resolveNodeFrameWidth(node, baseFrame.width);
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(node, resolvedTarget)) return node;
         return {
           ...node,
-          ...(nodeNeedsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
-          data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
-          style: nodeNeedsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(node.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: STUDIO_NODE_MAX_HEIGHT,
+          },
         };
       }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
-    brainConnected,
+    connectedOnly,
+    currentFrameNode,
+    hasConnections,
+    hasDock,
+    hasGeneratedOutput,
+    hasHistoryStrip,
+    hasPreviewVisual,
     id,
+    isEmpty,
     nanoAspect.height,
     nanoAspect.width,
-    nodeData._foldderAspectRatio,
     nodeData.aspect_ratio,
-    outputImage,
-    promptConnected,
     setNodes,
-    showStudio,
+    status,
     updateNodeInternals,
   ]);
-
-  const showNanoEmptyBackground = !outputImage && !(refImgPreview && nodeMediaVisible);
 
   useEffect(() => {
     if (hasNanoBananaStudioTouched(nodeData as Record<string, unknown>)) {
@@ -2878,251 +2975,189 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [id, nodeData, setNodes]);
 
   return (
-    <div className={`custom-node processor-node nano-banana-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${studioTouched ? "foldder-node--studio-touched" : ""} ${showNanoEmptyBackground ? "nano-banana-node--empty" : ""} ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
-         style={{ minWidth: 200, minHeight: 120 }}
-         ref={frameRef}>
-      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
-      {studioTouched ? <FoldderStudioTouchedMark nodeType="nanoBanana" /> : null}
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN" />
+    <StudioCanvasNodeShell
+      ref={frameRef}
+      nodeId={id}
+      nodeType="nanoBanana"
+      selected={selected}
+      label={typeof nodeData.label === "string" ? nodeData.label : undefined}
+      defaultLabel="Image Creation"
+      title="IMAGE CREATION"
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile}
+      minWidth={200}
+      handles={nanoBananaHandles}
+      variant="frameless"
+      material="media"
+      className={`nano-banana-node foldder-frameless-label-dark${isEmpty ? " nano-banana-node--empty" : hasConnections ? " nano-banana-node--has-content" : ""}${hasPreviewVisual ? " nano-banana-node--has-preview" : ""}${connectedOnly ? " nano-banana-node--connected-only" : ""}${hasConnections ? " nano-banana-node--connected" : ""}${hasGeneratedOutput ? " nano-banana-node--has-output" : ""}${status === "error" ? " foldder-node--error" : ""}${isActivelyGenerating ? " node-glow-running" : ""}`}
+      style={
+        {
+          width: "100%",
+          height: "100%",
+          minWidth: 200,
+          minHeight: hasConnections ? NANO_BANANA_DOCK_MIN_CHROME + NANO_BANANA_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": NANO_BANANA_ACCENT,
+          "--foldder-frameless-glass-bg": NANO_BANANA_ACCENT,
+          "--foldder-frameless-accent": "#fbcfe8",
+        } as React.CSSProperties
+      }
+    >
+      <FoldderNodeResizer
+        minWidth={200}
+        minHeight={120}
+        maxWidth={960}
+        maxHeight={STUDIO_NODE_MAX_HEIGHT}
+        keepAspectRatio={hasPreviewVisual}
+        isVisible={selected}
+      />
 
-      {/* ── Handles ── */}
-      <div className="handle-wrapper handle-left" style={{ top: "2%" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="brain" dataType="brain" />
-        <span
-          className="handle-label"
-          style={{
-            color: brainConnected ? "#a78bfa" : undefined,
-          }}
-        >
-          {brainConnected ? "✓ BrandKit" : "BrandKit"}
-        </span>
-      </div>
-      {REF_SLOTS.map((slot, i) => (
-        <div key={slot.id} className="handle-wrapper handle-left"
-             style={{ top: slot.top, opacity: i === 0 || connectedSlots[i - 1] ? 1 : 0.35 }}>
-          <FoldderDataHandle type="target" position={Position.Left} id={slot.id} dataType="image" />
-          <span className="handle-label" style={{
-            color: connectedSlots[i] ? '#f59e0b' : undefined,
-          }}>
-            {connectedSlots[i] ? `✓ ${slot.label}` : slot.label}
-          </span>
-        </div>
-      ))}
-      <div className="handle-wrapper handle-left" style={{ top: '94%' }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
-        <span className="handle-label">Prompt</span>
-      </div>
-      <div className="handle-wrapper handle-right" style={{ top: '55%' }}>
-        <span className="handle-label">Image out</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
-      </div>
-
-      {/* ── Header ── */}
-      <div className="node-header">
-        <NodeIcon
-          type="nanoBanana"
-          selected={selected}
-          state={resolveFoldderNodeState({ error: status === 'error', loading: isActivelyGenerating, done: !!outputImage })}
-          size={16}
-        />
-        <FoldderNodeHeaderTitle
-          className="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-3"
-          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-        >
-          CREACION DE IMAGEN
-        </FoldderNodeHeaderTitle>
-        <div className="flex shrink-0 flex-col items-end gap-0.5 text-[8px] font-mono font-light uppercase leading-none">
-          <span
-            className={`rounded-none border px-1.5 py-0.5 ${isOpenAiProvider ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400" : `${modelInfo.borderColor} ${modelInfo.bg} ${modelInfo.color}`}`}
-            title={isOpenAiProvider ? "ChatGPT Images en canvas" : "Calidad del modelo Gemini"}
-          >
-            {isOpenAiProvider ? "GPT Image 2" : modelInfo.label}
-          </span>
-          <span
-            className="rounded-none border border-white/20 bg-black/[0.06] px-1.5 py-0.5 text-zinc-600"
-            title="Resolución de salida"
-          >
-            {nbResLabel}
-          </span>
-        </div>
-      </div>
-
-      {/* ── Main image area: preview encaja sin recortar (object-contain); la imagen generada sigue con su resolución real ── */}
       <div
-        ref={previewRef}
-        className={`foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-none group/out ${showNanoEmptyBackground ? "" : "items-center justify-center bg-[#0a0a0a]"}`}
-        style={showNanoEmptyBackground ? undefined : { minHeight: 120 }}
+        className={`node-content foldder-frameless-main nano-banana-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
-        <div className="absolute top-2 right-2 z-[30]">
-          <NanoBananaProviderSwitch
-            imageProvider={imageProvider}
-            onSelect={(provider) => updateData("imageProvider", provider)}
-          />
-        </div>
-
-        {/* OUTPUT image — preview ajustado al marco del nodo */}
-        {outputImage && nodeMediaVisible ? (
-          <>
-            <div className="absolute inset-0 overflow-hidden" aria-hidden>
-              <img
-                src={outputPreviewUrl}
-                alt="Generated"
-                className="nano-banana-output-preview h-full w-full object-cover"
-                decoding="async"
-                onError={() => {
-                  void retryOutputPreview();
-                }}
-              />
-            </div>
-            {/* Hover gradient + actions */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent
-                            opacity-0 group-hover/out:opacity-100 transition-opacity" />
-            <button
-              onClick={() => setShowFullSize(true)}
-              className="absolute top-9 right-2 z-20 bg-black/60 hover:bg-black/90 text-white
-                         text-[7px] font-black px-2 py-1 rounded-none flex items-center gap-1
-                         opacity-0 group-hover/out:opacity-100 transition-opacity"
-            >
-              <Maximize2 size={8} /> EXPAND
-            </button>
-            {/* Model info badge on hover */}
-            <span className="absolute top-2 left-2 z-20 text-[6px] font-black uppercase text-white/70
-                             bg-black/50 px-1.5 py-0.5 rounded-none
-                             opacity-0 group-hover/out:opacity-100 transition-opacity">
-              {isOpenAiProvider ? "ChatGPT Images" : modelInfo.label} · {nbResLabel} · {nodeData.aspect_ratio || '16:9'}
-            </span>
-          </>
-        ) : outputImage ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-2"
-               style={{ background: 'rgba(0,0,0,0.04)' }}>
-            <ImageIcon size={28} className="text-zinc-400/50" />
-            <span className="text-[7px] font-black uppercase tracking-widest text-zinc-400/60 text-center leading-tight">
-              Preview pausada<br/>fuera de viewport
-            </span>
-          </div>
-        ) : (
-          /* No output yet — show input image at full opacity as reference preview */
-          refImgPreview && nodeMediaVisible ? (
+        <div
+          ref={previewRef}
+          className={`nano-banana-node-preview-area foldder-node-content-preview-area group/nano-banana${hasGridPreview ? " nano-banana-node-preview-area--grid" : ""}${hasHeroPreview ? " nano-banana-node-preview-area--generated" : ""}${hasHistoryStrip ? " nano-banana-node-preview-area--with-history" : ""}`}
+        >
+          {hasHeroPreview ? (
             <>
-              <img src={refCanvasPreviewUrl ?? refImgPreview} alt="Input" className="max-h-full max-w-full object-contain" decoding="async" />
-              <div className="absolute bottom-0 left-0 right-0 flex items-center px-2 py-1 z-[12]"
-                   style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(4px)' }}>
-                <span className="text-[7px] font-black uppercase tracking-wider text-white/70">REF · sin generar</span>
+              <div className="nano-banana-node-hero">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={outputPreviewUrl}
+                  alt="Generated"
+                  className="nano-banana-node-hero__img"
+                  decoding="async"
+                  draggable={false}
+                  onError={() => {
+                    void retryOutputPreview();
+                  }}
+                />
+                <div className="nano-banana-node-hero__shade" aria-hidden />
+                <button
+                  type="button"
+                  onClick={() => setShowFullSize(true)}
+                  className="nano-banana-node-hero__expand nodrag nopan"
+                  title="Ver a tamaño completo"
+                >
+                  <Maximize2 size={10} aria-hidden />
+                  <span>Expandir</span>
+                </button>
               </div>
-            </>
-          ) : (
-            <div className="nano-banana-empty-background absolute inset-0 overflow-hidden" aria-hidden>
-              <img
-                src={NANO_BANANA_EMPTY_BACKGROUND_SRC}
-                alt=""
-                className="h-full w-full object-contain object-bottom"
-                draggable={false}
-              />
-            </div>
-          )
-        )}
-
-        {/* Siempre visible: al quedar el estado «generando» por carrera, el usuario puede reabrir Studio */}
-        <FoldderStudioModeCenterButton onClick={openNanoStudioNormal} />
-
-        {/* INPUT image badge — bottom-left corner overlay (always visible when connected) */}
-        {refImgPreview && outputImage && nodeMediaVisible && (
-          <div className="absolute bottom-2 left-2 rounded-none overflow-hidden border-2 border-white/60 shadow-lg"
-               style={{ width: 56, height: 40 }}>
-            <img src={refCanvasPreviewUrl ?? refImgPreview} alt="ref" className="w-full h-full object-cover" decoding="async" />
-            <span className="absolute bottom-0 left-0 right-0 text-[5px] font-black uppercase text-white bg-black/60 text-center py-px">BASE</span>
-          </div>
-        )}
-
-        {/* Progress bar while generating — z-50 para quedar por encima del preview object-contain */}
-        {isActivelyGenerating && (
-          <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
-            <div className="h-px w-full bg-white/15">
-              <div
-                className="h-full bg-white transition-all duration-500"
-                style={{ width: `${Math.min(100, progress)}%` }}
-              />
-            </div>
-            <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-white/95 backdrop-blur-sm">
-              {isPro && nodeData.thinking ? `Thinking… ${Math.round(progress)}%` : `Generando… ${Math.round(progress)}%`}
-            </p>
-          </div>
-        )}
-      </div>
-
-      {promptConnected && !showStudio && (
-        <div className="foldder-frameless-footer-action nodrag flex shrink-0 border-t border-black/[0.06] bg-white/[0.04] px-2 py-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRun();
-            }}
-            disabled={isActivelyGenerating}
-            className="execute-btn nodrag w-full !py-2.5 !text-[9px] justify-center disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Generar Imagen con prompt
-          </button>
-        </div>
-      )}
-
-      {brainConnected && !showStudio && (
-        <div className="foldder-frameless-secondary-panel nodrag flex shrink-0 flex-col gap-1 border-t border-black/[0.06] bg-violet-950/15 px-2 py-1.5">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowBrainWhy((s) => !s);
-            }}
-            className="text-left text-[8px] font-black uppercase tracking-wider text-violet-200/90 hover:text-violet-100"
-          >
-            {showBrainWhy ? "Ocultar por qué" : "Ver por qué · BrandKit"}
-          </button>
-          {showBrainWhy &&
-            (brainImageDiag ? (
-              <div className="max-h-40 overflow-y-auto rounded-none border border-white/10 bg-black/45 px-2 py-1.5 text-[7px] leading-relaxed text-zinc-200">
-                <div className="mb-1 font-bold uppercase tracking-wide text-violet-200/90">Última composición</div>
-                <div>finalPromptUsed (recorte):</div>
-                <pre className="mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-zinc-400">
-                  {brainImageDiag.finalPromptUsed.length > 1600
-                    ? `${brainImageDiag.finalPromptUsed.slice(0, 1600)}…`
-                    : brainImageDiag.finalPromptUsed}
-                </pre>
-                <div className="mt-1 border-t border-white/10 pt-1 text-zinc-300">
-                  confirmedVisualPatterns: {String(brainImageDiag.confirmedVisualPatternsUsed)}
+              {hasHistoryStrip ? (
+                <div className="nano-banana-node-history-strip" aria-label="Versiones anteriores">
+                  {previousVersions.map((url, index) => (
+                    <NanoBananaNodeExteriorHistoryThumb
+                      key={`${url.slice(0, 48)}-${index}`}
+                      url={url}
+                      index={index}
+                      mediaVisible={nodeMediaVisible}
+                    />
+                  ))}
                 </div>
-                <div>trusted visual analyses: {brainImageDiag.trustedVisualAnalysisCount}</div>
-                <div>textOnlyGeneration: {String(brainImageDiag.textOnlyGeneration)}</div>
-                {brainImageDiag.varietyMode ? (
-                  <div className="mt-0.5 text-zinc-400">
-                    variedad: {brainImageDiag.varietyMode}
-                    {brainImageDiag.familyUsed ? ` · familia: ${brainImageDiag.familyUsed}` : ""}
-                    {brainImageDiag.repeatedElementsAvoided != null
-                      ? ` · repetición evitada: ${String(brainImageDiag.repeatedElementsAvoided)}`
-                      : ""}
-                  </div>
-                ) : null}
-                {brainImageDiag.chosenVariationAxes ? (
-                  <div className="mt-0.5 text-zinc-500">
-                    ejes: {brainImageDiag.chosenVariationAxes.subjectMode} ·{" "}
-                    {brainImageDiag.chosenVariationAxes.framing} · {brainImageDiag.chosenVariationAxes.environment}
-                  </div>
-                ) : null}
-                <div className="mt-0.5">visualAvoid (muestra):</div>
-                <pre className="max-h-14 overflow-y-auto whitespace-pre-wrap text-zinc-500">
-                  {brainImageDiag.visualAvoid.slice(0, 12).join("; ")}
-                  {brainImageDiag.visualAvoid.length > 12 ? "…" : ""}
-                </pre>
+              ) : null}
+            </>
+          ) : hasGeneratedOutput ? (
+            <div className="nano-banana-node-preview-paused">
+              <ImageIcon size={28} className="text-zinc-400/50" aria-hidden />
+              <span className="nano-banana-node-preview-paused__label">Preview pausada fuera de viewport</span>
+            </div>
+          ) : hasGridPreview ? (
+            <div className={`nano-banana-node-frame-grid ${gridCountClass}`} aria-hidden>
+              {connectedRefImages.map((url, index) => (
+                <NanoBananaNodeExteriorGridCell
+                  key={`${url.slice(0, 48)}-${index}`}
+                  url={url}
+                  label={`Ref ${index + 1}`}
+                  mediaVisible={nodeMediaVisible}
+                />
+              ))}
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={NANO_BANANA_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="nano-banana-node-bg"
+              draggable={false}
+            />
+          )}
+
+          {isEmpty ? (
+            <>
+              <div className="nano-banana-node-empty-hint" aria-hidden>
+                <span className="nano-banana-node-empty-hint__title">Image Creation vacío</span>
+                <span className="nano-banana-node-empty-hint__body">
+                  Conecta Prompt, refs o BrandKit y abre Studio.
+                </span>
               </div>
-            ) : (
-              <p className="text-[7px] text-zinc-500">
-                Genera desde el botón o Studio para ver el prompt enviado y las señales del BrandKit.
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Abrir Image Creation Studio"
+                onClick={openNanoStudioNormal}
+              />
+            </>
+          ) : null}
+
+          {isActivelyGenerating ? (
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
+              <div className="h-px w-full bg-white/15">
+                <div
+                  className="h-full bg-white transition-all duration-500"
+                  style={{ width: `${Math.min(100, progress)}%` }}
+                />
+              </div>
+              <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-white/95 backdrop-blur-sm">
+                {isPro && nodeData.thinking ? `Thinking… ${Math.round(progress)}%` : `Generando… ${Math.round(progress)}%`}
               </p>
-            ))}
+            </div>
+          ) : null}
         </div>
-      )}
 
-
+        {hasDock ? (
+          <div className="nano-banana-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow
+                    label="Proveedor"
+                    value={
+                      <NanoBananaNodeDockProviderSelect
+                        value={imageProvider}
+                        disabled={isActivelyGenerating}
+                        onChange={(provider) => updateData("imageProvider", provider)}
+                      />
+                    }
+                  />
+                  <FoldderNodeContentMetaRow label="Modelo" value={modelLabel} />
+                  <FoldderNodeContentMetaRow label="Formato" value={formatLabel} />
+                  <FoldderNodeContentMetaRow label="Resolución" value={nbResLabel} />
+                  <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                  <FoldderNodeContentMetaRow label="Versiones" value={versionsLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="nano-banana-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label={showDockGenerar ? "Generate" : "Abrir Studio"}
+                  title={
+                    showDockGenerar
+                      ? "Generar imagen con el prompt conectado"
+                      : "Abrir Image Creation Studio"
+                  }
+                  disabled={showDockGenerar ? isActivelyGenerating || !effectivePromptValue : false}
+                  onClick={showDockGenerar ? () => { void onRun(); } : openNanoStudioNormal}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
+      </div>
 
       {/* ── NanoBanana Studio ── */}
       {showStudio && (() => {
@@ -3206,6 +3241,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           />
         </div>
       )}
-    </div>
+    </StudioCanvasNodeShell>
   );
 });
