@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import {
   STUDIO_BODY_PORTAL_Z,
   studioModalBackdropHandlers,
+  studioOverlayPointerGuards,
 } from "./studio-modal-shell";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import type { GoogleFontCatalogEntry } from "./google-fonts";
@@ -112,7 +113,8 @@ export function GoogleFontInstallModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="designer-google-font-install-title"
-        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        {...studioOverlayPointerGuards}
       >
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.1] px-3 py-2">
           <div className="min-w-0">
