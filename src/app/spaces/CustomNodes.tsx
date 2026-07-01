@@ -3666,7 +3666,7 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
   );
 });
 
-const SPACE_ACCENT = "#8A5755";
+const SPACE_ACCENT = "#006699";
 const SPACE_DOCK_MIN_CHROME = 180;
 const SPACE_CONNECTED_PREVIEW_MIN = 140;
 const SPACE_NODE_MAX_HEIGHT = 720;
@@ -3785,8 +3785,6 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   const hasMediaPreview = mediaPreviewItems.length > 0;
   const hasPreviewVisual = hasTemplateOutput || hasMediaPreview;
   const hasDock = hasPreviewVisual;
-  const showExteriorTile = hasDock;
-
   const isMediaListOutput = reconciledData.outputType === "media_list";
   const mediaListItems = reconciledData.mediaListOutput?.items ?? [];
 
@@ -3928,8 +3926,8 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
       handles={spaceHandles}
       variant="frameless"
       material="media"
-      exteriorTileMark={showExteriorTile}
-      className={`space-node space-node-shell foldder-frameless-label-dark${hasDock ? " space-node--has-content" : " space-node--empty"}${hasPreviewVisual ? " space-node--has-preview" : ""}${showExteriorTile ? " space-node--connected" : ""}`}
+      exteriorTileMark={false}
+      className={`space-node space-node-shell foldder-frameless-label-dark${hasDock ? " space-node--has-content" : " space-node--empty"}${hasPreviewVisual ? " space-node--has-preview" : ""}`}
       minWidth={hasDock ? 260 : 200}
       style={
         {
