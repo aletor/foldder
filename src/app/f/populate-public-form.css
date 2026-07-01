@@ -359,6 +359,14 @@
   flex-shrink: 0;
 }
 
+.populate-public .populate-pose-grid--dropdown {
+  gap: 4px;
+}
+
+.populate-public .populate-pose-grid--dropdown .populate-record-dropdown {
+  position: relative;
+}
+
 .populate-public .populate-pose-grid__list {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;

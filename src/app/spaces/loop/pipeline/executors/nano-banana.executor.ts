@@ -9,13 +9,36 @@ import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
 import { generateLoopImage, type LoopImageProvider } from "../../loop-generate";
 import {
   bindableVarsForNodeType,
-  collectImageRefs,
   portText,
   type NodeExecutor,
+  type PortInputs,
 } from "../node-executor";
-import { resolveMediaRefsForApi } from "../resolve-media-ref-for-api";
+import { resolveMediaRefForApi } from "../resolve-media-ref-for-api";
 
-const IMAGE_HANDLES = ["image", "image2", "image3", "image4"];
+const IMAGE_HANDLES = ["image", "image2", "image3", "image4"] as const;
+
+function loopImageRefError(rowIndex: number, refIndex: number, handle: string): string {
+  return (
+    `Fila ${rowIndex + 1} · Ref ${refIndex} (${handle}): imagen inválida o vacía. ` +
+    "Revisa la conexión, la columna del Dataset en esa fila o que el archivo esté subido."
+  );
+}
+
+async function resolveLoopImageRefsForRow(inputs: PortInputs, rowIndex: number): Promise<string[]> {
+  const images: string[] = [];
+  let refIndex = 0;
+  for (const handle of IMAGE_HANDLES) {
+    const val = inputs.byHandle[handle];
+    if (!val || val.kind !== "image" || !val.url?.trim()) continue;
+    refIndex += 1;
+    const resolved = await resolveMediaRefForApi({ url: val.url, s3Key: val.s3Key });
+    if (!resolved) {
+      throw new Error(loopImageRefError(rowIndex, refIndex, handle));
+    }
+    images.push(resolved);
+  }
+  return images;
+}
 
 function provider(data: Record<string, unknown>): LoopImageProvider {
   return data.imageProvider === "openai" ? "openai" : "gemini";
@@ -34,13 +57,7 @@ export const nanoBananaExecutor: NodeExecutor = {
     const prompt = String(
       overrides.prompt ?? data.promptText ?? portText(inputs, "prompt") ?? "",
     ).trim();
-    const imageRefs = collectImageRefs(inputs, IMAGE_HANDLES);
-    const images = await resolveMediaRefsForApi(imageRefs);
-    if (imageRefs.length > 0 && images.length === 0) {
-      throw new Error(
-        "No se pudo leer la imagen de referencia. Si es una vista previa local, espera a que termine de subir o reconecta el Media Input.",
-      );
-    }
+    const images = await resolveLoopImageRefsForRow(inputs, ctx.rowIndex);
 
     const result = await generateLoopImage({
       prompt,

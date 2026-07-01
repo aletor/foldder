@@ -212,7 +212,7 @@ function PublicPopulateEntitySlot({
 }) {
   const manualFacets = entity.facets.filter((f) => f.sourceKind === "manual");
   const datasetFacets = entity.facets.filter((f) => f.sourceKind === "dataset");
-  const pickedCardId = pickedRows[entity.pickId] ?? "";
+  const pickedCardId = pickedRows[entity.pickId] ?? entity.options[0]?.cardId ?? "";
   const poseFieldId =
     pickedPoses[entity.entityId] ??
     entity.poseFieldId ??
@@ -226,9 +226,9 @@ function PublicPopulateEntitySlot({
     rowsSnapshot,
     fieldLabels: poseLabels,
   });
-  const hasManualExtras =
-    manualFacets.length > 0 || (pickedCardId && entity.poseOptions.length > 1);
-  const manualOnly = datasetFacets.length === 0 && manualFacets.length > 0;
+  const showPosePicker = entity.poseOptions.length > 1 && Boolean(pickedCardId);
+  const hasManualTextFields = manualFacets.length > 0;
+  const manualOnly = datasetFacets.length === 0 && hasManualTextFields && !showPosePicker;
 
   return (
     <div
@@ -239,7 +239,7 @@ function PublicPopulateEntitySlot({
       {datasetFacets.length > 0 ? (
         <PopulateRecordGrid
           label="Elige jugador"
-          variant="studio"
+          variant="public"
           layout="dropdown"
           options={entity.options}
           value={pickedCardId}
@@ -248,7 +248,18 @@ function PublicPopulateEntitySlot({
         />
       ) : null}
 
-      {hasManualExtras ? (
+      {showPosePicker ? (
+        <PopulatePoseGrid
+          label="Imagen"
+          variant="public"
+          layout="dropdown"
+          value={poseFieldId}
+          onChange={onPickPose}
+          options={poseOptions}
+        />
+      ) : null}
+
+      {hasManualTextFields ? (
         <button
           type="button"
           className={`populate-public-slot__manual-btn${manualOpen ? " is-open" : ""}`}
@@ -258,17 +269,8 @@ function PublicPopulateEntitySlot({
         </button>
       ) : null}
 
-      {(manualOpen || manualOnly) && (
+      {(manualOpen || manualOnly) && hasManualTextFields ? (
         <div className="populate-public-slot__expand">
-          {pickedCardId && entity.poseOptions.length > 1 ? (
-            <PopulatePoseGrid
-              label="Pose"
-              variant="studio"
-              value={poseFieldId}
-              onChange={onPickPose}
-              options={poseOptions}
-            />
-          ) : null}
           {manualFacets.map((f) => (
             <label key={f.slotKey} className="populate-public-manual-field">
               <span className="populate-public-manual-field__label">{f.label}</span>
@@ -280,7 +282,7 @@ function PublicPopulateEntitySlot({
             </label>
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

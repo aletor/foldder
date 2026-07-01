@@ -1,12 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const generateLoopImage = vi.fn();
+const mockResolveMediaRefForApi = vi.hoisted(() =>
+  vi.fn(async (ref: { url: string }) => ref.url?.trim() || null),
+);
 vi.mock("../../loop-generate", () => ({
   generateLoopImage: (args: unknown) => generateLoopImage(args),
 }));
 
 vi.mock("../resolve-media-ref-for-api", () => ({
-  resolveMediaRefsForApi: async (refs: { url: string }[]) => refs.map((r) => r.url),
+  resolveMediaRefForApi: mockResolveMediaRefForApi,
 }));
 
 import { nanoBananaExecutor } from "./nano-banana.executor";
@@ -17,6 +20,8 @@ const ctx: ExecCtx = { ownerEmail: "a@b.com", rowIndex: 0 };
 beforeEach(() => {
   generateLoopImage.mockReset();
   generateLoopImage.mockResolvedValue({ output: "https://img/out.png", s3Key: "k1" });
+  mockResolveMediaRefForApi.mockReset();
+  mockResolveMediaRefForApi.mockImplementation(async (ref) => ref.url?.trim() || null);
 });
 
 describe("nanoBananaExecutor", () => {
@@ -61,5 +66,25 @@ describe("nanoBananaExecutor", () => {
     });
     expect(est.costUsd).toBeGreaterThan(0);
     expect(est.label).toBe("Generar imagen");
+  });
+
+  it("falla con mensaje por fila y ref si una imagen no se puede resolver", async () => {
+    mockResolveMediaRefForApi.mockImplementation(async (ref) =>
+      ref.url === "bad" ? null : ref.url,
+    );
+
+    await expect(
+      nanoBananaExecutor.execute({
+        node: { id: "img", type: "nanoBanana", data: {} },
+        inputs: {
+          byHandle: {
+            image: { kind: "image", url: "ok1" },
+            image2: { kind: "image", url: "bad" },
+          },
+        },
+        overrides: { prompt: "test" },
+        ctx: { ...ctx, rowIndex: 3 },
+      }),
+    ).rejects.toThrow(/Fila 4 · Ref 2 \(image2\)/);
   });
 });

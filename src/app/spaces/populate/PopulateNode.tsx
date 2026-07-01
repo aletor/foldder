@@ -159,38 +159,47 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
   useEffect(() => {
     if (!connectedDataset || !listId || designerTemplates.length === 0) return;
-    let nextBindings = [...(nodeData.templateBindings ?? [])];
-    let changed = false;
-    for (const template of designerTemplates) {
-      const existing = bindingForTemplate(nextBindings, template.templateNodeId);
-      const next = syncPopulateTemplateBinding({
-        prev: existing,
-        template,
-        dataset: connectedDataset,
-        listId,
-      });
-      if (JSON.stringify(existing) !== JSON.stringify(next)) {
-        changed = true;
-        nextBindings = [
-          ...nextBindings.filter((b) => b.templateNodeId !== template.templateNodeId),
-          next,
-        ];
-      }
-    }
-    if (!changed && nodeData.listId === listId) return;
-    patchSelf({
-      templateBindings: changed ? nextBindings : nodeData.templateBindings ?? [],
-      listId,
-      activeTemplateNodeId: activeTemplateNodeId || designerTemplates[0]?.templateNodeId,
-    });
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        const current = (n.data ?? {}) as unknown as PopulateNodeData;
+        let nextBindings = [...(current.templateBindings ?? [])];
+        let changed = false;
+        for (const template of designerTemplates) {
+          const existing = bindingForTemplate(nextBindings, template.templateNodeId);
+          const next = syncPopulateTemplateBinding({
+            prev: existing,
+            template,
+            dataset: connectedDataset,
+            listId,
+          });
+          if (JSON.stringify(existing) !== JSON.stringify(next)) {
+            changed = true;
+            nextBindings = [
+              ...nextBindings.filter((b) => b.templateNodeId !== template.templateNodeId),
+              next,
+            ];
+          }
+        }
+        if (!changed && current.listId === listId) return n;
+        return {
+          ...n,
+          data: {
+            ...current,
+            templateBindings: changed ? nextBindings : current.templateBindings ?? [],
+            listId,
+            activeTemplateNodeId: activeTemplateNodeId || designerTemplates[0]?.templateNodeId,
+          },
+        };
+      }),
+    );
   }, [
     activeTemplateNodeId,
     connectedDataset,
     designerTemplates,
+    id,
     listId,
-    nodeData.listId,
-    nodeData.templateBindings,
-    patchSelf,
+    setNodes,
   ]);
 
   const activeBinding = useMemo(() => {
@@ -204,21 +213,46 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   );
 
   const onSelectList = useCallback(
-    (nextListId: string) => patchSelf({ listId: nextListId }),
-    [patchSelf],
+    (nextListId: string) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const data = (n.data ?? {}) as unknown as PopulateNodeData;
+          return {
+            ...n,
+            data: {
+              ...data,
+              listId: nextListId,
+              templateBindings: (data.templateBindings ?? []).map((b) => ({
+                ...b,
+                defaultPickedRows: undefined,
+                manualSlotValues: undefined,
+              })),
+            },
+          };
+        }),
+      );
+    },
+    [id, setNodes],
   );
 
   const onChangeBinding = useCallback(
     (next: PopulateTemplateBinding) => {
-      patchSelf({
-        templateBindings: patchPopulateBinding(
-          nodeData.templateBindings ?? [],
-          next.templateNodeId,
-          next,
-        ),
-      });
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const prev = ((n.data ?? {}) as unknown as PopulateNodeData).templateBindings ?? [];
+          return {
+            ...n,
+            data: {
+              ...(n.data ?? {}),
+              templateBindings: patchPopulateBinding(prev, next.templateNodeId, next),
+            },
+          };
+        }),
+      );
     },
-    [nodeData.templateBindings, patchSelf],
+    [id, setNodes],
   );
 
   const rasterize = useCallback(
@@ -302,11 +336,13 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           const useStudioPreview = studioPreview?.templateNodeId === template.templateNodeId;
           const pickedRows = useStudioPreview
             ? studioPreview.pickedRows
-            : defaultPickedRowsForForm(form);
+            : { ...defaultPickedRowsForForm(form), ...(binding.defaultPickedRows ?? {}) };
           const pickedPoses = useStudioPreview
             ? studioPreview.pickedPoses
             : binding.entityPoseColumnFieldId;
-          const manualValues = useStudioPreview ? studioPreview.manualValues : {};
+          const manualValues = useStudioPreview
+            ? studioPreview.manualValues
+            : (binding.manualSlotValues ?? {});
 
           const slotValues = resolvePopulateSlotValues({
             binding,

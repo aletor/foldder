@@ -20,4 +20,19 @@ describe("runAiJobWithNotification", () => {
     });
     expect(isNodeAiExecutionActive("nb-2")).toBe(false);
   });
+
+  it("clears after overlapping runs on the same node complete", async () => {
+    let resolveFirst!: () => void;
+    const first = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const slow = runAiJobWithNotification({ nodeId: "nb-3", label: "Slow" }, async () => {
+      await first;
+    });
+    await runAiJobWithNotification({ nodeId: "nb-3", label: "Fast" }, async () => undefined);
+    expect(isNodeAiExecutionActive("nb-3")).toBe(true);
+    resolveFirst();
+    await slow;
+    expect(isNodeAiExecutionActive("nb-3")).toBe(false);
+  });
 });

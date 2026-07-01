@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from "react";
 import { createPortal, flushSync } from "react-dom";
 import {
   NodeResizer,
@@ -18,7 +18,8 @@ import { shallow } from "zustand/shallow";
 import { Camera, ChevronLeft, ChevronRight, Eye, Globe, ImageIcon, Loader2, Maximize2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
-import { aiHudNanoBananaJobEnd, aiHudNanoBananaJobProgress, aiHudNanoBananaJobStart, getAiHudNanoBananaJobProgressForNode } from "@/lib/ai-hud-generation-progress";
+import { isNodeAiExecutionActive, subscribeActiveAiJobs } from "@/lib/ai-active-jobs";
+import { aiHudNanoBananaJobProgress, getAiHudNanoBananaJobProgressForNode } from "@/lib/ai-hud-generation-progress";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { openaiGenerateWithServerProgress } from "@/lib/openai-generate-stream-client";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
@@ -1305,7 +1306,6 @@ const NanoBananaStudio = memo(({
     if (hasPaintedZoneWithDescription) {
       setGenStatus('running');
       setProgress(0);
-      aiHudNanoBananaJobStart(nodeId);
 
       let genFinishedOk = false;
       try {
@@ -1371,7 +1371,6 @@ const NanoBananaStudio = memo(({
             aiHudNanoBananaJobProgress(nodeId, 100);
           });
         }
-        aiHudNanoBananaJobEnd(nodeId);
         setTimeout(() => setProgress(0), 1000);
       }
       return;
@@ -1418,7 +1417,6 @@ const NanoBananaStudio = memo(({
 
     setGenStatus('running');
     setProgress(0);
-    aiHudNanoBananaJobStart(nodeId);
 
     const maskImages = changes.map((c) => c.paintData).filter(Boolean) as string[];
     const refImages = [...(imageToSend ? [imageToSend] : []), ...maskImages];
@@ -1471,7 +1469,6 @@ const NanoBananaStudio = memo(({
           aiHudNanoBananaJobProgress(nodeId, 100);
         });
       }
-      aiHudNanoBananaJobEnd(nodeId);
       setTimeout(() => setProgress(0), 1000);
     }
   };
@@ -1503,7 +1500,6 @@ const NanoBananaStudio = memo(({
     setCallPreview(null);
     setGenStatus('running');
     setProgress(0);
-    aiHudNanoBananaJobStart(nodeId);
 
     const ref2 = markedRef2 || colorMapUrl;
     const refImages = [
@@ -1566,7 +1562,6 @@ const NanoBananaStudio = memo(({
           aiHudNanoBananaJobProgress(nodeId, 100);
         });
       }
-      aiHudNanoBananaJobEnd(nodeId);
       setTimeout(() => setProgress(0), 1000);
     }
   };
@@ -2649,7 +2644,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     const epoch = ++graphGenEpochRef.current;
     setStatus('running');
     setProgress(0);
-    aiHudNanoBananaJobStart(id);
 
     let genFinishedOk = false;
     try {
@@ -2723,7 +2717,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         });
       }
       if (graphGenEpochRef.current === epoch) {
-        aiHudNanoBananaJobEnd(id);
         setTimeout(() => {
           if (graphGenEpochRef.current === epoch) setProgress(0);
         }, 1000);
@@ -2751,8 +2744,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     { canvasThumbnail: true },
   );
 
-  /** Barra y glow solo con avance <100%; a 100% se oculta aunque `status` tarde un tick en pasar a success. */
-  const isActivelyGenerating = status === 'running' && progress < 100;
+  /** Barra y glow siguen el store global de jobs IA (misma fuente que la banda del header). */
+  const isAiExecutionActive = useSyncExternalStore(
+    subscribeActiveAiJobs,
+    () => isNodeAiExecutionActive(id),
+    () => false,
+  );
+  const isActivelyGenerating = isAiExecutionActive;
   const nbResLabel = isFlash25 ? '1K' : normalizeNanoBananaResolution(nodeData.resolution).toUpperCase();
   const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
 

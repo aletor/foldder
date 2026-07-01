@@ -168,6 +168,8 @@ export function syncPopulateTemplateBinding(args: {
     entityPoseColumnFieldId:
       Object.keys(entityPoseColumnFieldId).length > 0 ? entityPoseColumnFieldId : undefined,
     slotLayoutOverrides: args.prev?.slotLayoutOverrides,
+    defaultPickedRows: args.prev?.defaultPickedRows,
+    manualSlotValues: args.prev?.manualSlotValues,
     pagesSnapshot: template.pages,
   };
 }
@@ -184,6 +186,11 @@ export function patchPopulateBinding(
   templateNodeId: string,
   patch: Partial<PopulateTemplateBinding>,
 ): PopulateTemplateBinding[] {
+  const idx = bindings.findIndex((b) => b.templateNodeId === templateNodeId);
+  if (idx < 0) {
+    if (!patch.templateNodeId) return bindings;
+    return [...bindings, patch as PopulateTemplateBinding];
+  }
   return bindings.map((b) =>
     b.templateNodeId === templateNodeId ? { ...b, ...patch } : b,
   );

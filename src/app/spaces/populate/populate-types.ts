@@ -39,6 +39,10 @@ export interface PopulateTemplateBinding {
   entityPoseColumnFieldId?: Record<string, string>;
   /** Ajustes de posición/tamaño por hueco (Studio Populate). */
   slotLayoutOverrides?: Record<string, PopulateSlotLayoutOverride>;
+  /** Fila elegida por pick (pickId → cardId) — persiste al cerrar Studio. */
+  defaultPickedRows?: Record<string, string>;
+  /** Valores manuales por slotKey cuando la entidad está en modo Manual. */
+  manualSlotValues?: Record<string, string>;
   pagesSnapshot?: DesignerPageState[];
 }
 

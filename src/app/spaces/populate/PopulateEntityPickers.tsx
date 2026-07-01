@@ -190,27 +190,109 @@ export function PopulatePoseGrid({
   value,
   onChange,
   variant = "studio",
+  layout = "grid",
 }: {
   label: string;
   options: PopulatePoseOptionVisual[];
   value: string;
   onChange: (fieldId: string) => void;
   variant?: "studio" | "public";
+  /** `dropdown`: desplegable compacto (recomendado en formulario público). */
+  layout?: "grid" | "dropdown";
 }) {
   if (options.length <= 1) return null;
-  const root = variant === "public" ? "populate-pose-grid populate-pose-grid--public" : "populate-pose-grid";
+
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useCloseOnOutside(open, () => setOpen(false), rootRef);
+
+  const selected = options.find((o) => o.fieldId === value) ?? options[0];
+  const root =
+    variant === "public" ? "populate-pose-grid populate-pose-grid--public" : "populate-pose-grid";
+  const layoutClass = layout === "dropdown" ? " populate-pose-grid--dropdown" : "";
+
+  if (layout === "dropdown") {
+    return (
+      <div className={`${root}${layoutClass}`} ref={rootRef}>
+        <span className="populate-pose-grid__label">{label}</span>
+        <div className="populate-record-dropdown nodrag">
+          <button
+            type="button"
+            className={`populate-record-dropdown__trigger${open ? " is-open" : ""}`}
+            aria-expanded={open}
+            aria-haspopup="listbox"
+            onClick={() => setOpen((o) => !o)}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <span className="populate-record-dropdown__value">
+              {selected?.url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={selected.url}
+                  alt=""
+                  className="populate-record-dropdown__thumb"
+                  draggable={false}
+                />
+              ) : (
+                <span className="populate-record-dropdown__thumb populate-record-dropdown__thumb--empty" />
+              )}
+              <span className="populate-record-dropdown__name">{selected?.label ?? "Elegir…"}</span>
+            </span>
+            <ChevronDown size={14} className="populate-record-dropdown__chevron" aria-hidden />
+          </button>
+          {open ? (
+            <div className="populate-record-dropdown__panel nodrag" onPointerDown={(e) => e.stopPropagation()}>
+              <ul className="populate-record-dropdown__list" role="listbox">
+                {options.map((o) => {
+                  const isSelected = value === o.fieldId;
+                  return (
+                    <li key={o.fieldId} role="option" aria-selected={isSelected}>
+                      <button
+                        type="button"
+                        className={`populate-record-dropdown__option${isSelected ? " is-selected" : ""}`}
+                        onClick={() => {
+                          onChange(o.fieldId);
+                          setOpen(false);
+                        }}
+                      >
+                        {o.url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={o.url}
+                            alt=""
+                            className="populate-record-dropdown__thumb"
+                            draggable={false}
+                          />
+                        ) : (
+                          <span className="populate-record-dropdown__thumb populate-record-dropdown__thumb--empty" />
+                        )}
+                        <span className="populate-record-dropdown__name">{o.label}</span>
+                        {isSelected ? (
+                          <Check size={12} className="populate-record-dropdown__check" aria-hidden />
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={root}>
+    <div className={`${root}${layoutClass}`}>
       <span className="populate-pose-grid__label">{label}</span>
       <ul className="populate-pose-grid__list nodrag" onPointerDown={(e) => e.stopPropagation()}>
         {options.map((o) => {
-          const selected = value === o.fieldId;
+          const isSelected = value === o.fieldId;
           return (
             <li key={o.fieldId}>
               <button
                 type="button"
-                className={`populate-pose-grid__item${selected ? " is-selected" : ""}`}
+                className={`populate-pose-grid__item${isSelected ? " is-selected" : ""}`}
                 onClick={() => onChange(o.fieldId)}
                 title={o.label}
               >

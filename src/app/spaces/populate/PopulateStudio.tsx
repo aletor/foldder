@@ -194,12 +194,12 @@ export function PopulateStudio({
   }, [selectedEntityId, activeTemplateNodeId]);
 
   useEffect(() => {
-    setPreviewPickedRows({});
+    setPreviewPickedRows(binding.defaultPickedRows ?? {});
+    setManualValues(binding.manualSlotValues ?? {});
     setPreviewPickedPoses({});
-    setManualValues({});
     setSelectedEntityId(null);
     setLayoutEditingSlotKey(null);
-  }, [listId]);
+  }, [binding.templateNodeId]);
 
   const progressPct =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -212,7 +212,7 @@ export function PopulateStudio({
   useEffect(() => {
     if (!formModel) return;
     setPreviewPickedRows((prev) => {
-      const next = { ...prev };
+      const next = { ...(binding.defaultPickedRows ?? {}), ...prev };
       let changed = false;
       for (const entity of formModel.entities) {
         if (!next[entity.pickId] && entity.options[0]?.cardId) {
@@ -222,7 +222,7 @@ export function PopulateStudio({
       }
       return changed ? next : prev;
     });
-  }, [formModel, activeTemplateNodeId]);
+  }, [formModel, activeTemplateNodeId, binding.defaultPickedRows]);
 
   useEffect(() => {
     if (!binding.entityPoseColumnFieldId) return;
@@ -578,9 +578,11 @@ export function PopulateStudio({
                       <PopulateManualFacetFields
                         entity={entity}
                         manualValues={manualValues}
-                        onManualChange={(slotKey, value) =>
-                          setManualValues((m) => ({ ...m, [slotKey]: value }))
-                        }
+                        onManualChange={(slotKey, value) => {
+                          const nextManual = { ...manualValues, [slotKey]: value };
+                          setManualValues(nextManual);
+                          onChangeBinding({ ...binding, manualSlotValues: nextManual });
+                        }}
                         templatePages={activeTemplate.pages}
                         binding={binding}
                         onPatchLayout={patchFacetLayout}
@@ -596,7 +598,9 @@ export function PopulateStudio({
                             value={pickedCardId}
                             onChange={(cardId) => {
                               if (!pick?.id) return;
-                              setPreviewPickedRows((rows) => ({ ...rows, [pick.id]: cardId }));
+                              const nextRows = { ...previewPickedRows, [pick.id]: cardId };
+                              setPreviewPickedRows(nextRows);
+                              onChangeBinding({ ...binding, defaultPickedRows: nextRows });
                             }}
                             thumbForOption={thumbForPreview}
                             variant="studio"
