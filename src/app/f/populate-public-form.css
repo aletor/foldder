@@ -1,7 +1,7 @@
 /* Formulario público Populate — frameless, preview máxima */
 
 .populate-public {
-  --populate-accent: #9b5de5;
+  --populate-accent: #33ffcc;
   --populate-accent-soft: color-mix(in srgb, var(--populate-accent) 10%, transparent);
   --populate-accent-border: color-mix(in srgb, var(--populate-accent) 45%, transparent);
   --populate-accent-border-strong: color-mix(in srgb, var(--populate-accent) 72%, transparent);

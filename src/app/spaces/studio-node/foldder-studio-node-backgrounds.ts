@@ -18,12 +18,12 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   videoEditor: "/assets/nodes/video-editor-empty.jpg",
   imageCreationAdvanced: "/assets/nodes/nano-banana-empty-pink.png",
   vfxGenerator: "/assets/nodes/gemini-video-empty-blue.png",
-  exportMultimedia: "/nodes/enhancer-bg.png",
-  export_multimedia: "/nodes/enhancer-bg.png",
+  exportMultimedia: "/assets/nodes/export-multimedia-bg.png",
+  export_multimedia: "/assets/nodes/export-multimedia-bg.png",
   urlImage: "/nodes/url-image-bg.png",
   painter: "/nodes/painter-bg.png",
   crop: "/nodes/crop-bg.png",
-  lightroom: "/nodes/enhancer-bg.png",
+  lightroom: "/assets/nodes/lightroom-bg.png",
 };
 
 const NODE_TYPE_ALIASES: Record<string, string> = {

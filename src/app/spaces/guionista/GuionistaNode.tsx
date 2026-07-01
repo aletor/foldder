@@ -1,11 +1,21 @@
 "use client";
 
-import React, { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { NodeResizer, NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { NodeResizer, NodeProps, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { BookOpen, CheckCircle2, ChevronRight, FileText, Film, LayoutTemplate, PenLine, RefreshCw, Sparkles } from "lucide-react";
+import { BookOpen, ChevronRight, FileText, Film, LayoutTemplate, PenLine, RefreshCw, Sparkles } from "lucide-react";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "../canvas-grid-layout";
 import { GuionistaStudio } from "../GuionistaStudio";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
+import { nodeFrameNeedsSync, resolveNodeFrameWidth } from "../studio-node-aspect";
 import { normalizeProjectAssets } from "../project-assets-metadata";
 import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import {
@@ -19,8 +29,6 @@ import {
 } from "../guionista-types";
 import {
   StudioCanvasNodeShell,
-  StudioCanvasOpenButton,
-  StudioCanvasPill,
   type StudioCanvasNodeHandleSpec,
 } from "../studio-node/studio-canvas-node";
 import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
@@ -37,6 +45,35 @@ const GUIONISTA_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
 ];
 
 const GUIONISTA_EMPTY_BACKGROUND_SRC = "/assets/nodes/guionista-empty-blue.png";
+const GUIONISTA_ACCENT = "#1b71df";
+const GUIONISTA_NODE_MAX_HEIGHT = 2200;
+const GUIONISTA_DOCK_MIN_CHROME = 180;
+const GUIONISTA_CONNECTED_PREVIEW_MIN = 140;
+
+function selectGuionistaConnections(
+  state: ReactFlowState<Node, Edge>,
+  nodeId: string,
+): { promptConnected: boolean; textConnected: boolean; brainConnected: boolean; hasConnections: boolean } {
+  const nodeLookup = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  let promptConnected = false;
+  let textConnected = false;
+  let brainConnected = false;
+  for (const edge of state.edges) {
+    if (edge.target !== nodeId) continue;
+    const handle = edge.targetHandle;
+    if (!handle || handle === "prompt") promptConnected = true;
+    if (handle === "text") textConnected = true;
+    if (handle === "brain") brainConnected = true;
+    const source = nodeLookup.get(edge.source) ?? state.nodes.find((node) => node.id === edge.source);
+    if (source?.type === "projectBrain") brainConnected = true;
+  }
+  return {
+    promptConnected,
+    textConnected,
+    brainConnected,
+    hasConnections: promptConnected || textConnected || brainConnected,
+  };
+}
 
 function summarizeGuionistaBrainContext(assetsMetadata: unknown, enabled: boolean): GuionistaBrainContext {
   if (!enabled) return { enabled: false };
@@ -201,6 +238,35 @@ function resolveGuionistaAssetVisualMeta(format: GuionistaFormat, platform?: Gui
   return byFormat[format];
 }
 
+type GuionistaExteriorDerivativeMeta = GuionistaAssetVisualMeta & {
+  platformLabel: string;
+  toneClass: string;
+};
+
+function resolveGuionistaExteriorDerivativeMeta(
+  format: GuionistaFormat,
+  platform?: GuionistaSocialPlatform,
+): GuionistaExteriorDerivativeMeta {
+  const visual = resolveGuionistaAssetVisualMeta(format, platform);
+  if (platform === "LinkedIn") {
+    return { ...visual, platformLabel: "LinkedIn", toneClass: "guionista-node-derivative-icon--linkedin" };
+  }
+  if (platform === "Instagram") {
+    return { ...visual, platformLabel: "Instagram", toneClass: "guionista-node-derivative-icon--instagram" };
+  }
+  if (platform === "X") {
+    return { ...visual, platformLabel: "X", toneClass: "guionista-node-derivative-icon--x" };
+  }
+  if (platform === "Short") {
+    return { ...visual, platformLabel: "Short", toneClass: "guionista-node-derivative-icon--short" };
+  }
+  return {
+    ...visual,
+    platformLabel: visual.detail ?? visual.label,
+    toneClass: `guionista-node-derivative-icon--${format}`,
+  };
+}
+
 function guionistaAssetPreview(asset: GuionistaTextAsset): string {
   return asset.preview || plainTextFromMarkdown(asset.markdown || asset.plainText || "").slice(0, 120);
 }
@@ -228,7 +294,7 @@ function selectGuionistaInputSnapshot(
   let brainConnected = false;
   for (const edge of state.edges) {
     if (edge.target !== nodeId) continue;
-    const source = nodeLookup.get(edge.source);
+    const source = nodeLookup.get(edge.source) ?? state.nodes.find((node) => node.id === edge.source);
     if (!brainConnected && (source?.type === "projectBrain" || edge.targetHandle === "brain")) {
       brainConnected = true;
     }
@@ -241,18 +307,45 @@ function selectGuionistaInputSnapshot(
   };
 }
 
+function resolveGuionistaNodeHeight(args: {
+  baseHeight: number;
+  hasConnections: boolean;
+  hasDerivatives: boolean;
+  derivativeCount: number;
+  hasGeneratedText: boolean;
+}): number {
+  if (!args.hasConnections && !args.hasDerivatives && !args.hasGeneratedText) {
+    return args.baseHeight;
+  }
+
+  const derivativeBlock = args.hasDerivatives
+    ? 64 + 32 + args.derivativeCount * 52 + Math.max(0, args.derivativeCount - 1) * 6
+    : GUIONISTA_CONNECTED_PREVIEW_MIN;
+
+  const stackedHeight = derivativeBlock + GUIONISTA_DOCK_MIN_CHROME;
+  return Math.min(
+    GUIONISTA_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, stackedHeight)),
+  );
+}
+
 export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("GuionistaNode", id);
   const nodeData = normalizeGuionistaData(data);
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameSyncKeyRef = useRef<string | null>(null);
   const inputSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectGuionistaInputSnapshot(state, id), [id]),
+    shallow,
+  );
+  const connectionSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectGuionistaConnections(state, id), [id]),
     shallow,
   );
   const assetsCtx = useProjectAssetsCanvas();
   const brainCtx = useProjectBrainCanvas();
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  const [generatedExpanded, setGeneratedExpanded] = useState(false);
   const { isStudioOpen, openStudio: openStudioController, closeStudio } = useStudioNodeController({
     nodeId: id,
     nodeType: "guionista",
@@ -297,21 +390,120 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
           const candidateKey = candidate.platform ? `${candidate.sourceAssetId ?? ""}:${candidate.platform}` : candidate.id;
           return candidateKey === key;
         }) === index;
-      })
-      .slice(0, 8);
+      });
   }, [activeTextAsset, assetsCtx?.generatedTextAssets?.items, sourceAssetIdForDerivatives]);
   const socialDerivatives = generatedDerivatives.filter((asset) => asset.type === "post" && asset.platform);
 
-  const brainConnected = inputSnapshot.brainConnected;
+  const brainConnected = inputSnapshot.brainConnected || connectionSnapshot.brainConnected;
   const initialBriefing = inputSnapshot.initialBriefing;
+  const hasConnections = connectionSnapshot.hasConnections;
+  const hasGeneratedText = Boolean(activeTextAsset || currentVersion?.markdown?.trim());
+  const hasDerivatives = generatedDerivatives.length > 0;
+  const hasDock = hasConnections || hasGeneratedText || hasDerivatives;
+  const showConnectedIcon = hasDock;
+  const connectedOnly = hasConnections && !hasGeneratedText && !hasDerivatives;
+
   const brainHints = useMemo(
-    () => brainConnected ? ["Tono del proyecto", "Contexto del proyecto", "Claims aprobados", "Frases a evitar", "Notas relevantes"] : [],
+    () =>
+      brainConnected
+        ? ["Tono del proyecto", "Contexto del proyecto", "Claims aprobados", "Frases a evitar", "Notas relevantes"]
+        : [],
     [brainConnected],
   );
   const brainContext = useMemo(
     () => summarizeGuionistaBrainContext(brainCtx?.assetsMetadata, brainConnected),
     [brainCtx?.assetsMetadata, brainConnected],
   );
+  const activeVersionIndex = useMemo(() => {
+    const versions = nodeData.versions ?? [];
+    const index = versions.findIndex((version) => version.id === nodeData.activeVersionId);
+    return index >= 0 ? index + 1 : versions.length || (currentVersion ? 1 : 0);
+  }, [currentVersion, nodeData.activeVersionId, nodeData.versions]);
+  const inputsLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (connectionSnapshot.promptConnected) parts.push("Prompt");
+    if (connectionSnapshot.textConnected) parts.push("Text");
+    if (brainConnected) parts.push("BrandKit");
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }, [brainConnected, connectionSnapshot.promptConnected, connectionSnapshot.textConnected]);
+  const derivativesLabel =
+    generatedDerivatives.length > 0
+      ? socialDerivatives.length > 0
+        ? `${generatedDerivatives.length} pieza${generatedDerivatives.length === 1 ? "" : "s"} · ${socialDerivatives.length} social`
+        : `${generatedDerivatives.length} derivado${generatedDerivatives.length === 1 ? "" : "s"}`
+      : "—";
+  const statusLabel = activeTextAsset ? "Guardado" : hasGeneratedText ? "Borrador" : hasConnections ? "Conectado" : "Vacío";
+  const versionLabel = activeVersionIndex > 0 ? `V${activeVersionIndex}` : "—";
+  const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("guionista");
+    if (!baseFrame) return;
+
+    if (!hasDock) {
+      const syncKey = "guionista-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const measuredHeight = resolveGuionistaNodeHeight({
+      baseHeight: baseFrame.height,
+      hasConnections,
+      hasDerivatives,
+      derivativeCount: generatedDerivatives.length,
+      hasGeneratedText,
+    });
+    const syncKey = `guionista-content:${hasConnections ? "connected" : "idle"}:${generatedDerivatives.length}:${measuredHeight}:${hasGeneratedText ? "text" : "empty-text"}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        const resolvedWidth = resolveNodeFrameWidth(n, baseFrame.width);
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(n, resolvedTarget)) return n;
+        return {
+          ...n,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(n.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: GUIONISTA_NODE_MAX_HEIGHT,
+          },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    generatedDerivatives.length,
+    hasConnections,
+    hasDerivatives,
+    hasDock,
+    hasGeneratedText,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   const patchData = useCallback(
     (patch: Partial<GuionistaNodeData>) => {
@@ -336,17 +528,13 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
     setOpenAssetId(null);
     openStudioController();
   }, [openStudioController]);
-  const openAssetInThisNode = useCallback((assetId: string) => {
-    setOpenAssetId(assetId);
-    openStudioController({ nodeId: id, assetId });
-  }, [id, openStudioController]);
-  const visibleDerivatives = generatedExpanded ? generatedDerivatives.slice(0, 6) : generatedDerivatives.slice(0, 3);
-  const activeVersionIndex = useMemo(() => {
-    const versions = nodeData.versions ?? [];
-    const index = versions.findIndex((version) => version.id === nodeData.activeVersionId);
-    return index >= 0 ? index + 1 : versions.length || (currentVersion ? 1 : 0);
-  }, [currentVersion, nodeData.activeVersionId, nodeData.versions]);
-  const hasGeneratedText = Boolean(activeTextAsset || currentVersion?.markdown?.trim());
+  const openAssetInThisNode = useCallback(
+    (assetId: string) => {
+      setOpenAssetId(assetId);
+      openStudioController({ nodeId: id, assetId });
+    },
+    [id, openStudioController],
+  );
 
   return (
     <StudioCanvasNodeShell
@@ -356,123 +544,128 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
       label={nodeData.label}
       defaultLabel="Guionista"
       title="GUIONISTA"
-      badge={compactTypeLabel}
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
       minWidth={200}
-      className="guionista-node foldder-frameless-label-dark"
+      className={`guionista-node foldder-frameless-label-dark${hasDock ? " guionista-node--has-content" : " guionista-node--empty"}${connectedOnly ? " guionista-node--connected-only" : ""}${hasDerivatives ? " guionista-node--has-derivatives" : ""}${showConnectedIcon || studioTouched ? " foldder-node--studio-touched" : ""}`}
       handles={GUIONISTA_NODE_HANDLES}
       variant="frameless"
       material="media"
-      studioTouched={hasFoldderStudioTouched(nodeData as Record<string, unknown>)}
+      studioTouched={studioTouched}
+      exteriorTileMark={showConnectedIcon}
+      style={
+        {
+          minWidth: 200,
+          minHeight: hasDock ? GUIONISTA_DOCK_MIN_CHROME + GUIONISTA_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": GUIONISTA_ACCENT,
+          "--foldder-frameless-glass-bg": GUIONISTA_ACCENT,
+          "--foldder-frameless-accent": GUIONISTA_ACCENT,
+        } as React.CSSProperties
+      }
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
-      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="guionista-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+      <div
+        className={`node-content foldder-frameless-main guionista-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="guionista-node-preview-area foldder-node-content-preview-area">
           <img
             src={GUIONISTA_EMPTY_BACKGROUND_SRC}
             alt=""
-            className="h-full w-full object-contain object-bottom"
+            className="guionista-node-bg"
             draggable={false}
           />
-        </div>
-        <div className="guionista-node-content relative z-10 flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
-        <div className="min-w-0">
-          <div className="flex items-start gap-2">
-            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-none ${activeVisualMeta.accent.replace("border-", "border border-")}`}>
-              {activeVisualMeta.icon}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="text-[8px] font-black uppercase tracking-[0.14em] text-slate-400">{compactTypeLabel}</span>
-                {activeTextAsset && <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" strokeWidth={2.2} />}
+
+          {!hasDock ? (
+            <>
+              <div className="guionista-node-empty-hint" aria-hidden>
+                Conecta Prompt, Text o BrandKit y abre Studio para escribir.
               </div>
-              <h3 className="mt-1 line-clamp-2 text-[16px] font-semibold leading-[1.08] tracking-[-0.02em] text-slate-950">
-                {compactText.title}
-              </h3>
-            </div>
-          </div>
-          <p className="mt-2 line-clamp-3 text-[11px] font-light leading-relaxed text-slate-600">
-            {hasGeneratedText ? compactText.preview : "Conecta una idea, texto o BrandKit y abre Studio para escribir."}
-          </p>
+              <FoldderStudioModeCenterButton
+                label={currentVersion ? "Abrir" : "Empezar"}
+                title="Abrir Guionista Studio"
+                onClick={openStudio}
+              />
+            </>
+          ) : null}
 
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <StudioCanvasPill active={Boolean(activeTextAsset)} activeClassName="border-emerald-500/20 bg-emerald-500/10 text-emerald-700">
-              {activeTextAsset ? "Guardado" : "Borrador"}
-            </StudioCanvasPill>
-            {activeVersionIndex > 0 && (
-              <span className="rounded-none bg-slate-100 px-2 py-1 text-[9px] font-semibold text-slate-500">
-                V{activeVersionIndex}
-              </span>
-            )}
-            <StudioCanvasPill active={brainConnected} activeClassName="border-sky-400/20 bg-sky-400/10 text-sky-700">
-              {brainConnected ? "BrandKit" : "Sin BrandKit"}
-            </StudioCanvasPill>
-          </div>
+          {hasDerivatives ? (
+            <div className="guionista-node-derivatives nodrag nopan">
+              <div className="guionista-node-derivatives-header">
+                <p className="guionista-node-derivatives-title">Derivados</p>
+                <p className="guionista-node-derivatives-count">
+                  {socialDerivatives.length
+                    ? `Social pack · ${socialDerivatives.length}`
+                    : `Piezas · ${generatedDerivatives.length}`}
+                </p>
+              </div>
+              <div className="guionista-node-derivatives-list">
+                {generatedDerivatives.map((asset) => {
+                  const meta = resolveGuionistaExteriorDerivativeMeta(asset.type, asset.platform);
+                  return (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openAssetInThisNode(asset.id);
+                      }}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        openAssetInThisNode(asset.id);
+                      }}
+                      className="guionista-node-derivative-card nodrag group"
+                      title={`Abrir ${meta.platformLabel} en Guionista`}
+                    >
+                      <span className={`guionista-node-derivative-icon ${meta.toneClass}`}>
+                        {meta.icon}
+                      </span>
+                      <span className="guionista-node-derivative-copy">
+                        <span className="guionista-node-derivative-platform">{meta.platformLabel}</span>
+                        <span className="guionista-node-derivative-title">{asset.title}</span>
+                        <span className="guionista-node-derivative-preview">{guionistaAssetPreview(asset)}</span>
+                      </span>
+                      <ChevronRight className="guionista-node-derivative-chevron" strokeWidth={2} aria-hidden />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        {generatedDerivatives.length > 0 && (
-          <div className="min-w-0">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="m-0 text-[9px] font-medium uppercase tracking-wide text-slate-500">Derivados</p>
-              <p className="m-0 text-[8px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                {socialDerivatives.length ? `Social pack · ${socialDerivatives.length}` : `Piezas · ${generatedDerivatives.length}`}
-              </p>
-            </div>
-            <div className="grid gap-1.5">
-              {visibleDerivatives.map((asset) => {
-                const meta = resolveGuionistaAssetVisualMeta(asset.type, asset.platform);
-                return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openAssetInThisNode(asset.id);
-                    }}
-                    onDoubleClick={(event) => {
-                      event.stopPropagation();
-                      openAssetInThisNode(asset.id);
-                    }}
-                    className="nodrag group flex items-center gap-2 rounded-none bg-slate-50 px-2.5 py-2 text-left transition hover:bg-white"
-                    title="Abrir en Guionista"
-                  >
-                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-none ${meta.accent.replace("border-", "border border-")}`}>
-                      {meta.icon}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-1 text-[10px] font-semibold leading-tight text-slate-800">{asset.title}</p>
-                      <p className="mt-0.5 line-clamp-1 text-[9px] font-light text-slate-500">{guionistaAssetPreview(asset)}</p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-700" />
-                  </button>
-                );
-              })}
-              {generatedDerivatives.length > 3 && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setGeneratedExpanded((value) => !value);
-                  }}
-                  className="nodrag rounded-none bg-slate-50 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500 transition hover:bg-white hover:text-slate-800"
-                >
-                  {generatedExpanded ? "Ocultar" : `Ver ${generatedDerivatives.length - 3} más`}
-                </button>
-              )}
-            </div>
+        {hasDock ? (
+          <div className="guionista-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{compactText.title}</p>
+                {hasGeneratedText ? (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    {compactText.preview}
+                  </p>
+                ) : (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    Entradas conectadas. Abre Studio para generar texto.
+                  </p>
+                )}
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Formato" value={compactTypeLabel} />
+                  <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                  <FoldderNodeContentMetaRow label="BrandKit" value={brainConnected ? "Conectado" : "—"} />
+                  <FoldderNodeContentMetaRow label="Versión" value={versionLabel} />
+                  <FoldderNodeContentMetaRow label="Derivados" value={derivativesLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="guionista-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label={currentVersion || activeTextAsset ? "Abrir Studio" : "Empezar"}
+                  title="Abrir Guionista Studio"
+                  onClick={openStudio}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
           </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2">
-          <StudioCanvasOpenButton
-            onClick={openStudio}
-            accent="amber"
-            icon={<BookOpen className="h-4 w-4 shrink-0 text-slate-600" strokeWidth={2} aria-hidden />}
-          >
-            {currentVersion ? "Abrir" : "Empezar"}
-          </StudioCanvasOpenButton>
-        </div>
-        </div>
+        ) : null}
       </div>
 
       {isStudioOpen && (

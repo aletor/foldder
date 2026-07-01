@@ -39,7 +39,11 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   layerizer: { cols: 5, rows: 3 },
   vfxGenerator: { cols: 5, rows: 3 },
   painter: { cols: 5, rows: 3 },
+  lightroom: { cols: 5, rows: 3 },
   presenter: { cols: 5, rows: 3 },
+
+  // Tier 2b — 4×4 · datasets de proyecto
+  dataset: { cols: 4, rows: 4 },
 
   // Tier 3 — 4×3 · texto / contenido
   guionista: { cols: 4, rows: 3 },
@@ -50,11 +54,11 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   mediaDescriber: { cols: 4, rows: 3 },
 
   // Tier 4 — 3×2 · utilidades y export
-  loop: { cols: 4, rows: 3 },
-  populate: { cols: 4, rows: 3 },
+  loop: { cols: 4, rows: 4 },
+  populate: { cols: 4, rows: 4 },
   imageExport: { cols: 3, rows: 2 },
-  export_multimedia: { cols: 3, rows: 2 },
-  exportMultiple: { cols: 3, rows: 2 },
+  export_multimedia: { cols: 5, rows: 4 },
+  exportMultiple: { cols: 5, rows: 4 },
   projectBrain: { cols: 3, rows: 2 },
   projectAssets: { cols: 3, rows: 2 },
   space: { cols: 3, rows: 2 },

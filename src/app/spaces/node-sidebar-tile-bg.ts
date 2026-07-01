@@ -6,8 +6,8 @@ export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   designer: "/assets/nodes/designer-sidebar-bg.png",
   guionista: "/assets/nodes/guionista-sidebar-bg.png",
   dataset: "/assets/nodes/dataset-sidebar-bg.png",
-  loop: "/assets/nodes/dataset-sidebar-bg.png",
-  populate: "/assets/nodes/dataset-sidebar-bg.png",
+  loop: "/assets/nodes/populate-empty-pink.png",
+  populate: "/assets/nodes/populate-bg.png",
   inspiration: "/assets/nodes/inspiration-sidebar-bg.png",
   geminiVideo: "/assets/nodes/gemini-video-sidebar-bg.png",
   nanoBanana: "/assets/nodes/nano-banana-sidebar-bg.png",
@@ -17,13 +17,15 @@ export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   imageCreationAdvanced: "/assets/nodes/nano-banana-sidebar-bg.png",
   vfxGenerator: "/assets/nodes/gemini-video-sidebar-bg.png",
   backgroundRemover: "/nodes/bg-remover-mark.png",
-  layerizer: "/nodes/bg-remover-mark.png",
+  layerizer: "/nodes/layerizer-mark.png",
   concatenator: "/nodes/concatenator-mark.png",
   enhancer: "/nodes/enhancer-mark.png",
   imageExport: "/nodes/image-export-mark.png",
+  export_multimedia: "/assets/nodes/export-multimedia-bg.png",
+  exportMultiple: "/assets/nodes/export-multimedia-bg.png",
   painter: "/nodes/painter-mark.png",
   crop: "/nodes/crop-mark.png",
-  lightroom: "/nodes/enhancer-mark.png",
+  lightroom: "/assets/nodes/lightroom-bg.png",
 };
 
 /** ~180px JPEG para pintar mosaicos en sidebar (evita decodificar ~900px en iPad). */

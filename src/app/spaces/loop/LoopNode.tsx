@@ -1,10 +1,12 @@
 "use client";
 
-import React, { memo, useCallback, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
+  NodeResizer,
   useReactFlow,
   useStore,
+  useUpdateNodeInternals,
   type Edge,
   type Node,
   type NodeProps,
@@ -15,10 +17,18 @@ import {
   Download,
   FolderOpen,
   Loader2,
-  Repeat,
-  Sparkles,
 } from "lucide-react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { getNodeGridFrameForType } from "../canvas-grid-layout";
+import { nodeFrameNeedsSync } from "../studio-node-aspect";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import { resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
 import { getNodeOrchestrationDeclaration } from "./loop-declaration";
 import {
@@ -236,6 +246,8 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
   const { data: session } = useSession();
   const ownerEmail = session?.user?.email ?? "";
   const { getNodes, getEdges, setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameSyncKeyRef = useRef<string | null>(null);
   const { connectedDataset, datasetConnected, datasetLoading } = useConnectedDatasetForNode(id);
 
   const [busy, setBusy] = useState(false);
@@ -1455,6 +1467,64 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
     [patchSelf],
   );
 
+  const templateConnected = isDesignerTemplate || !!template;
+  const hasDock = datasetConnected;
+  const showConnectedIcon = datasetConnected || templateConnected;
+  const plantillaLabel = templateConnected
+    ? (template?.templateLabel ?? designerTemplate?.templateLabel ?? "—")
+    : "Sin conectar";
+  const modoLabel = mode === "batch" ? "Bucle" : "Formulario";
+  const filasLabel = rowCount > 0 ? String(rowCount) : "—";
+  const statusLabel =
+    busy && progress
+      ? `Ejecutando ${progress.done}/${progress.total}`
+      : datasetLoading
+        ? "Cargando"
+        : lastRunOutputs.length > 0
+          ? runStatus === "partial"
+            ? "Parcial"
+            : "Listo"
+          : ready
+            ? "Pendiente"
+            : rowCount === 0
+              ? "Sin filas"
+              : "Pendiente";
+  const ejecucionLabel =
+    lastRunOutputs.length > 0 && !busy
+      ? `${lastRunOutputs.length} imagen${lastRunOutputs.length === 1 ? "" : "es"}${
+          nodeData.lastRunFailedCount
+            ? ` · ${nodeData.lastRunFailedCount} fallo${nodeData.lastRunFailedCount === 1 ? "" : "s"}`
+            : ""
+        }`
+      : "—";
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("loop");
+    if (!baseFrame) return;
+    const syncKey = "loop-base";
+    if (frameSyncKeyRef.current === syncKey) return;
+    const current = getNodes().find((n) => n.id === id);
+    if (current && !nodeFrameNeedsSync(current, baseFrame)) {
+      frameSyncKeyRef.current = syncKey;
+      return;
+    }
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+        return {
+          ...n,
+          width: baseFrame.width,
+          height: baseFrame.height,
+          measured: { width: baseFrame.width, height: baseFrame.height },
+          style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [getNodes, id, setNodes, updateNodeInternals]);
+
   return (
     <StudioCanvasNodeShell
       nodeId={id}
@@ -1466,189 +1536,149 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
       handles={HANDLES}
       variant="frameless"
       material="media"
-      className="loop-node"
+      className={`loop-node${hasDock ? " loop-node--has-content" : " loop-node--empty"}${showConnectedIcon ? " loop-node--connected" : ""}`}
+      exteriorTileMark={showConnectedIcon}
+      style={
+        {
+          minWidth: 200,
+          minHeight: 416,
+          "--foldder-node-card-bg": LOOP_ACCENT,
+          "--foldder-frameless-glass-bg": LOOP_ACCENT,
+          "--foldder-frameless-accent": LOOP_ACCENT,
+        } as React.CSSProperties
+      }
     >
-      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="loop-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={520} isVisible={selected} />
+      <div
+        className={`node-content foldder-frameless-main loop-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="loop-node-preview foldder-node-content-preview-area">
           <img
             src={LOOP_EMPTY_BACKGROUND_SRC}
             alt=""
-            className="h-full w-full object-cover object-center"
+            className="loop-node-bg"
             draggable={false}
           />
-        </div>
 
-        {previewUrl || progress ? (
-          <div className="loop-node-preview" aria-hidden={!previewUrl && !progress}>
-            {previewUrl ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={previewUrl} alt="Vista previa" />
-                <button
-                  type="button"
-                  className="loop-download-btn nodrag"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onDownloadResult();
-                  }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  title="Descargar imagen"
-                >
-                  <Download size={13} strokeWidth={2.2} />
-                </button>
-              </>
-            ) : progress ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-white/90">
-                <Loader2 size={22} className="animate-spin" style={{ color: LOOP_ACCENT }} />
-                <span className="text-[11px] font-semibold uppercase tracking-wide">
-                  Bucle {progress.done}/{progress.total}
-                </span>
-                <div className="h-1 w-full max-w-[180px] bg-white/20">
-                  <div
-                    className="h-full transition-[width] duration-300"
-                    style={{ width: `${progressPct}%`, background: LOOP_ACCENT }}
-                  />
+          {!hasDock ? (
+            <div className="loop-node-empty-hint" aria-hidden>
+              <span className="loop-node-empty-hint__body">
+                Conecta un Dataset en la entrada izquierda.
+              </span>
+            </div>
+          ) : null}
+
+          {hasDock && (previewUrl || progress) ? (
+            <div className="loop-node-media-preview" aria-hidden={!previewUrl && !progress}>
+              {previewUrl ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={previewUrl} alt="Vista previa" />
+                  <button
+                    type="button"
+                    className="loop-download-btn nodrag"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onDownloadResult();
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    title="Descargar imagen"
+                  >
+                    <Download size={13} strokeWidth={2.2} />
+                  </button>
+                </>
+              ) : progress ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-white/90">
+                  <Loader2 size={22} className="animate-spin" style={{ color: LOOP_ACCENT }} />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide">
+                    Bucle {progress.done}/{progress.total}
+                  </span>
+                  <div className="h-1 w-full max-w-[180px] bg-white/20">
+                    <div
+                      className="h-full transition-[width] duration-300"
+                      style={{ width: `${progressPct}%`, background: LOOP_ACCENT }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="loop-node-summary nodrag relative z-10">
-          {!datasetConnected ? (
-            <p className="loop-node-summary__text loop-node-summary__text--muted">
-              Conecta un Dataset (izquierda) y Image Creation → Image out (abajo).
-            </p>
-          ) : datasetLoading ? (
-            <p className="loop-node-summary__text loop-node-summary__text--muted">
-              <Loader2 size={12} className="inline animate-spin" /> Cargando Dataset…
-            </p>
-          ) : (
-            <>
-              <p className="loop-node-summary__text">
-                {isDesignerTemplate
-                  ? `Designer «${designerTemplate?.templateLabel}» · ${listName} · ${rowCount} fila${
-                      rowCount === 1 ? "" : "s"
-                    } · ${designerTemplate?.pages.length ?? 0} slide${
-                      (designerTemplate?.pages.length ?? 0) === 1 ? "" : "s"
-                    } · ${designerTemplate?.dynamicFields.length ?? 0} campo${
-                      (designerTemplate?.dynamicFields.length ?? 0) === 1 ? "" : "s"
-                    } dinámico${(designerTemplate?.dynamicFields.length ?? 0) === 1 ? "" : "s"}`
-                  : compactSummary}
-              </p>
-              {lists.length > 1 ? (
-                <select
-                  className="loop-node-list-select nodrag"
-                  value={listId ?? ""}
-                  onChange={(e) => onSelectList(e.target.value)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                >
-                  {lists.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name} · {l.cards.length}
-                    </option>
-                  ))}
-                </select>
               ) : null}
-              {isDesignerTemplate && datasetConnected ? (
-                <p className="loop-node-summary__meta">
-                  {designerMappedCount > 0
-                    ? `${designerMappedCount}/${designerPendingFields.length} campo${
-                        designerPendingFields.length === 1 ? "" : "s"
-                      } mapeado${designerMappedCount === 1 ? "" : "s"}`
-                    : designerPendingFields.length > 0
-                      ? `${designerPendingFields.length} campo${
+            </div>
+          ) : null}
+
+          {hasDock && studioError ? (
+            <div className="foldder-frameless-error loop-node-error nodrag flex items-start gap-1.5 px-2 py-1 text-[10px]">
+              <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+              <span>{studioError}</span>
+            </div>
+          ) : null}
+        </div>
+
+        {hasDock ? (
+          <div className="loop-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock>
+              <FoldderNodeContentDockMain>
+                {datasetLoading ? (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    Cargando Dataset…
+                  </p>
+                ) : !templateConnected ? (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    Dataset conectado. Conecta una plantilla creative en Plantilla (izquierda, abajo).
+                  </p>
+                ) : isDesignerTemplate ? (
+                  <p className="foldder-node-content-dock-text">
+                    Designer «{designerTemplate?.templateLabel}» · {listName} · {rowCount} fila
+                    {rowCount === 1 ? "" : "s"}
+                  </p>
+                ) : (
+                  <p className="foldder-node-content-dock-text">{compactSummary}</p>
+                )}
+                {isDesignerTemplate && !datasetLoading ? (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    {designerMappedCount > 0
+                      ? `${designerMappedCount}/${designerPendingFields.length} campo${
                           designerPendingFields.length === 1 ? "" : "s"
-                        } por mapear en Studio`
-                      : "Marca campos dinámicos en el Designer"}
-                  {datasetOutputSettings.enabled ? " · volcado al Dataset activo" : ""}
-                </p>
-              ) : null}
-              {lastRunOutputs.length > 0 && !busy ? (
-                <p className="loop-node-summary__meta">
-                  Última ejecución: {lastRunOutputs.length} imagen
-                  {lastRunOutputs.length === 1 ? "" : "es"}
-                  {runStatus === "partial" ? " · parcial" : ""}
-                  {nodeData.lastRunFailedCount
-                    ? ` · ${nodeData.lastRunFailedCount} fallo${nodeData.lastRunFailedCount === 1 ? "" : "s"}`
-                    : ""}
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
-
-        {studioError ? (
-          <div className="foldder-frameless-error nodrag flex items-start gap-1.5 px-2 py-1 text-[10px]">
-            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-            <span>{studioError}</span>
+                        } mapeado${designerMappedCount === 1 ? "" : "s"}`
+                      : designerPendingFields.length > 0
+                        ? `${designerPendingFields.length} campo${
+                            designerPendingFields.length === 1 ? "" : "s"
+                          } por mapear en Studio`
+                        : "Marca campos dinámicos en el Designer"}
+                    {datasetOutputSettings.enabled ? " · volcado al Dataset activo" : ""}
+                  </p>
+                ) : null}
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Listado" value={listName} />
+                  <FoldderNodeContentMetaRow label="Filas" value={filasLabel} />
+                  <FoldderNodeContentMetaRow label="Plantilla" value={plantillaLabel} />
+                  <FoldderNodeContentMetaRow label="Modo" value={modoLabel} />
+                  <FoldderNodeContentMetaRow label="Ejecución" value={ejecucionLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="loop-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Open Studio"
+                  onClick={() => setStudioOpen(true)}
+                />
+                {nodeData.spaceId || lastRunOutputs.length > 0 ? (
+                  <button
+                    type="button"
+                    className="foldder-node-content-dock-btn nodrag"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenResults();
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <FolderOpen size={14} aria-hidden />
+                    <span>Resultados</span>
+                  </button>
+                ) : null}
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
           </div>
         ) : null}
-
-        <div className="foldder-frameless-footer-action nodrag loop-node-footer relative z-10">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setStudioOpen(true);
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            className="loop-open-studio nodrag"
-            title="Abrir Studio para mapear variables y generar"
-          >
-            <Sparkles size={14} strokeWidth={2.2} />
-            Abrir Studio
-          </button>
-
-          {mode === "batch" ? (
-            <button
-              type="button"
-              disabled={busy || !ready}
-              onClick={(e) => {
-                e.stopPropagation();
-                void (isDesignerTemplate ? onGenerateDesignerBatch() : onGenerateBatch());
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="execute-btn loop-run-button nodrag"
-              title={
-                ready
-                  ? isDesignerTemplate
-                    ? `Multiplica el Designer en ${rowCount} instancia${rowCount === 1 ? "" : "s"}, una por fila`
-                    : `Genera ${rowCount} imagen${rowCount === 1 ? "" : "es"}, una por fila`
-                  : isDesignerTemplate
-                    ? "Conecta Dataset y Designer (Document)"
-                    : "Conecta Dataset e Image out"
-              }
-            >
-              {busy && progress ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Bucle {progress.done}/{progress.total}
-                </>
-              ) : (
-                <>
-                  <Repeat size={13} strokeWidth={2.2} />
-                  Ejecutar · {rowCount}
-                </>
-              )}
-            </button>
-          ) : null}
-
-          {(nodeData.spaceId || lastRunOutputs.length > 0) ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenResults();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="action-btn loop-open-results nodrag"
-            >
-              <FolderOpen size={12} />
-              Resultados
-            </button>
-          ) : null}
-        </div>
       </div>
 
       {studioOpen ? (

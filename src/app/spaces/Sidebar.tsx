@@ -105,7 +105,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
   if (type === 'dataset') return 'border-[#37b7df] group-hover/tile:border-[#37b7df]';
   if (type === 'loop') return 'border-[#fd52eb] group-hover/tile:border-[#fd52eb]';
-  if (type === 'populate') return 'border-[#9b5de5] group-hover/tile:border-[#9b5de5]';
+  if (type === 'populate') return 'border-[#33ffcc] group-hover/tile:border-[#33ffcc]';
   if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
   return fallback;
 }

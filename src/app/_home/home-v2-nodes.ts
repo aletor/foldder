@@ -19,7 +19,7 @@ const NODE_TYPE_ALIASES: Record<string, string> = {
 
 const EXTRA_NODE_IMAGE_SRC: Record<string, string> = {
   backgroundRemover: "/nodes/bg-remover-bg.png",
-  layerizer: "/nodes/bg-remover-bg.png",
+  layerizer: "/nodes/layerizer-bg.png",
   mediaDescriber: "/nodes/describer-bg.png",
 };
 

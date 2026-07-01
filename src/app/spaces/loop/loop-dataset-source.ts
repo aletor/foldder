@@ -17,7 +17,13 @@ export function findLoopDatasetSource(
   nodes: Node[],
   edges: Edge[],
 ): LoopDatasetSource | null {
-  const edge = edges.find((e) => e.target === loopNodeId && e.targetHandle === "dataset");
+  const edge =
+    edges.find((e) => e.target === loopNodeId && e.targetHandle === "dataset") ??
+    edges.find((e) => {
+      if (e.target !== loopNodeId) return false;
+      const source = nodes.find((n) => n.id === e.source);
+      return source?.type === "dataset" && (!e.targetHandle || e.sourceHandle === "dataset");
+    });
   if (!edge) return null;
   const source = nodes.find((n) => n.id === edge.source);
   if (!source || source.type !== "dataset") return null;

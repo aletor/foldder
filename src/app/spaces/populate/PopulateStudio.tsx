@@ -61,6 +61,7 @@ export interface PopulateStudioProps {
   nodeLabel: string;
   dataset: Dataset | null;
   listId: string;
+  onSelectList: (listId: string) => void;
   templates: PopulateDesignerTemplateConfig[];
   activeTemplate: PopulateDesignerTemplateConfig;
   activeTemplateNodeId: string;
@@ -101,6 +102,7 @@ export function PopulateStudio({
   nodeLabel,
   dataset,
   listId,
+  onSelectList,
   templates,
   activeTemplate,
   activeTemplateNodeId,
@@ -128,7 +130,8 @@ export function PopulateStudio({
   onCreateEditablesOnGenerateChange,
   onGenerate,
 }: PopulateStudioProps) {
-  const list = dataset?.lists.find((l) => l.id === listId);
+  const lists = dataset?.lists ?? [];
+  const list = lists.find((l) => l.id === listId);
   const schema = list?.schema ?? [];
   const textCols = useMemo(() => textLikeColumnsInSchema(schema), [schema]);
   const imageCols = useMemo(() => imageColumnsInSchema(schema), [schema]);
@@ -189,6 +192,14 @@ export function PopulateStudio({
   useEffect(() => {
     setLayoutEditingSlotKey(null);
   }, [selectedEntityId, activeTemplateNodeId]);
+
+  useEffect(() => {
+    setPreviewPickedRows({});
+    setPreviewPickedPoses({});
+    setManualValues({});
+    setSelectedEntityId(null);
+    setLayoutEditingSlotKey(null);
+  }, [listId]);
 
   const progressPct =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -357,6 +368,29 @@ export function PopulateStudio({
       <div className="populate-studio-body">
         <aside className="populate-studio-col populate-studio-col--left">
           <div className="populate-studio-col__head">
+            <span className="populate-studio-col__title">Listado</span>
+            <span className="populate-studio-col__hint">
+              {list
+                ? `${list.name} · ${list.cards.length} fila${list.cards.length === 1 ? "" : "s"}`
+                : "Dataset sin listados"}
+            </span>
+          </div>
+          {lists.length > 1 ? (
+            <select
+              className="populate-studio-list-select nodrag"
+              value={listId}
+              onChange={(e) => onSelectList(e.target.value)}
+              aria-label="Listado del Dataset"
+            >
+              {lists.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name} · {l.cards.length}
+                </option>
+              ))}
+            </select>
+          ) : null}
+
+          <div className="populate-studio-col__head populate-studio-col__head--after-list">
             <span className="populate-studio-col__title">Plantillas</span>
             <span className="populate-studio-col__hint">
               {templates.length}/8 conectada{templates.length === 1 ? "" : "s"}

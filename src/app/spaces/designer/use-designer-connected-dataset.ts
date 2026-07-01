@@ -29,10 +29,11 @@ function findDatasetInputEdge(
 ): Edge | undefined {
   for (const row of state.edges) {
     if (row.target !== consumerNodeId) continue;
-    if (row.targetHandle === targetHandle) return row;
-    // Legacy: dataset cableado a ranura media_list (ml0…) por error de resolución de handle.
     const source = state.nodeLookup.get(row.source) ?? state.nodes.find((n) => n.id === row.source);
-    if (source?.type === "dataset" && row.sourceHandle === "dataset") return row;
+    if (source?.type !== "dataset") continue;
+    if (row.targetHandle === targetHandle) return row;
+    // Legacy: dataset cableado sin targetHandle explícito o con sourceHandle dataset.
+    if (!row.targetHandle || row.sourceHandle === "dataset") return row;
   }
   return undefined;
 }

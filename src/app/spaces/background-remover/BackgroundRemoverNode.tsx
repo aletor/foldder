@@ -16,9 +16,18 @@ import {
 import { Loader2, Zap } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
+import { getNodeGridFrameForType } from "../canvas-grid-layout";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderNodeHeaderTitle,
+  NodeLabel,
+} from "../foldder-node-ui";
 import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
 import {
@@ -44,6 +53,18 @@ type BackgroundRemoverNodeData = {
 type MattePreviewMode = "original" | "mask" | "cutout";
 
 const STUDIO_NODE_MAX_HEIGHT = 2200;
+const MASK_BG_SRC = "/nodes/bg-remover-bg.png";
+const MASK_DOCK_MIN_CHROME = 132;
+
+function resolveMaskDockChrome(
+  frameEl: HTMLElement | null,
+  previewEl: HTMLElement | null,
+  dockEl: HTMLElement | null,
+): number {
+  const measuredDock = dockEl?.offsetHeight ?? 0;
+  const measuredChrome = resolveNodeChromeHeight(frameEl, previewEl, MASK_DOCK_MIN_CHROME);
+  return Math.max(MASK_DOCK_MIN_CHROME, measuredDock, measuredChrome);
+}
 
 function createNodeFrameSnapshot(
   node: Pick<Node, "width" | "height" | "measured" | "style"> | undefined,
@@ -155,7 +176,8 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({
   const currentNode = nodes.find((node) => node.id === id);
   const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const previewRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const dockRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
   const [aspectImageSize, setAspectImageSize] = useState<{
     url: string;
@@ -170,6 +192,8 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({
   };
 
   const threshold = nodeData.threshold ?? 0.9;
+  const expansion = nodeData.expansion ?? 0;
+  const feather = nodeData.feather ?? 0.6;
 
   const onRun = async () => {
     const incomingEdges = edges.filter((e) => e.target === id);
@@ -205,8 +229,8 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image: media,
-          expansion: nodeData.expansion ?? 0,
-          feather: nodeData.feather ?? 0.6,
+          expansion,
+          feather,
           threshold,
         }),
       });
@@ -268,11 +292,74 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({
     };
   }, [aspectImageUrl]);
 
+  const getPreviewImage = () => {
+    switch (previewMode) {
+      case "original":
+        return originalPreview;
+      case "mask":
+        return nodeData.result_mask ?? originalPreview;
+      case "cutout":
+        return nodeData.result_rgba ?? originalPreview;
+      default:
+        return originalPreview;
+    }
+  };
+
+  const hasPreview = Boolean(getPreviewImage());
+  const hasResult = Boolean(nodeData.result_rgba || nodeData.result_mask);
+  const hasInput = Boolean(originalPreview);
+  const hasDock = hasInput;
+  const resolutionLabel =
+    aspectContentWidth != null && aspectContentHeight != null
+      ? `${aspectContentWidth}×${aspectContentHeight} px`
+      : "—";
+  const previewModeLabel =
+    previewMode === "original" ? "Original" : previewMode === "mask" ? "Mask" : "Cutout";
+  const statusLabel =
+    status === "running"
+      ? "Procesando"
+      : hasResult
+        ? "Listo"
+        : hasInput
+          ? "Pendiente"
+          : "Sin entrada";
+
   useLayoutEffect(() => {
-    if (aspectContentWidth == null || aspectContentHeight == null) return;
-    const syncKey = `${aspectImageUrl ?? "empty"}:${aspectContentWidth}x${aspectContentHeight}`;
+    if (aspectContentWidth == null || aspectContentHeight == null) {
+      if (hasInput) return;
+      const baseFrame = getNodeGridFrameForType("backgroundRemover");
+      if (!baseFrame) return;
+      const syncKey = "empty";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const needsFrameSync = nodeFrameNeedsSync(n, baseFrame);
+          const hasAspectRatio =
+            typeof (n.data as { _foldderAspectRatio?: unknown })._foldderAspectRatio === "number";
+          if (!needsFrameSync && !hasAspectRatio) return n;
+          const nextData = { ...(n.data as Record<string, unknown>) };
+          delete nextData._foldderAspectRatio;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            data: nextData,
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const chromeHeight = hasDock
+      ? resolveMaskDockChrome(frameRef.current, previewFrameRef.current, dockRef.current)
+      : 0;
+    const syncKey = `${aspectImageUrl ?? "empty"}:${aspectContentWidth}x${aspectContentHeight}:chrome${chromeHeight}`;
     if (frameSyncKeyRef.current === syncKey) return;
-    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentFrameNode,
       contentWidth: aspectContentWidth,
@@ -298,36 +385,69 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({
     aspectContentHeight,
     aspectContentWidth,
     currentFrameNode,
+    hasDock,
+    hasInput,
     id,
     setNodes,
     updateNodeInternals,
   ]);
 
-  const getPreviewImage = () => {
-    switch (previewMode) {
-      case "original":
-        return originalPreview;
-      case "mask":
-        return nodeData.result_mask ?? originalPreview;
-      case "cutout":
-        return nodeData.result_rgba ?? originalPreview;
-      default:
-        return originalPreview;
-    }
-  };
-
-  const hasPreview = Boolean(getPreviewImage());
-  const hasResult = Boolean(nodeData.result_rgba || nodeData.result_mask);
-  const hasInput = Boolean(originalPreview);
+  useLayoutEffect(() => {
+    if (!hasDock || aspectContentWidth == null || aspectContentHeight == null) return;
+    const remeasureId = requestAnimationFrame(() => {
+      frameSyncKeyRef.current = null;
+      const chromeHeight = resolveMaskDockChrome(
+        frameRef.current,
+        previewFrameRef.current,
+        dockRef.current,
+      );
+      const syncKey = `${aspectImageUrl ?? "empty"}:${aspectContentWidth}x${aspectContentHeight}:chrome${chromeHeight}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: aspectContentWidth,
+        contentHeight: aspectContentHeight,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 120,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      setNodes((nds) =>
+        syncAspectLockedFrameForNode(
+          nds as Node[],
+          id,
+          nextFrame,
+          aspectContentWidth / aspectContentHeight,
+        ),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+    });
+    return () => cancelAnimationFrame(remeasureId);
+  }, [
+    aspectContentHeight,
+    aspectContentWidth,
+    aspectImageUrl,
+    currentFrameNode,
+    hasDock,
+    hasResult,
+    id,
+    previewMode,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
     <div
       ref={frameRef}
-      className={`custom-node mask-node foldder-node--frameless node--media group/node ${hasPreview ? "mask-node--has-preview" : "mask-node--empty"} ${status === "running" ? "node-glow-running" : ""}`}
+      className={`custom-node mask-node foldder-node--frameless node--media group/node ${hasPreview ? "mask-node--has-preview" : "mask-node--empty"} ${hasDock ? "mask-node--has-content" : ""} ${status === "running" ? "node-glow-running" : ""}`}
       style={
         {
           minWidth: 200,
-          minHeight: 120,
+          minHeight: hasInput ? 120 : 300,
+          "--foldder-node-card-bg": "#a6c85e",
+          "--foldder-frameless-glass-bg": "#a6c85e",
           "--foldder-frameless-accent": "#22d3ee",
         } as React.CSSProperties
       }
@@ -360,102 +480,139 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({
         </FoldderNodeHeaderTitle>
       </div>
 
-      <div ref={previewRef} className="node-content foldder-frameless-main">
-        {hasPreview ? (
-          <img
-            src={getPreviewImage()}
-            draggable={false}
-            className={`pointer-events-none absolute inset-0 h-full w-full object-contain ${previewMode === "mask" ? "invert brightness-150" : ""}`}
-            alt="Cutout preview"
-          />
-        ) : null}
+      <div
+        className={`node-content foldder-frameless-main mask-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div ref={previewFrameRef} className="mask-node-preview foldder-node-content-preview-area">
+          {!hasPreview ? (
+            <img src={MASK_BG_SRC} alt="" className="mask-node-bg" draggable={false} />
+          ) : (
+            <img
+              src={getPreviewImage()}
+              draggable={false}
+              className={`mask-node-media-preview pointer-events-none absolute inset-0 h-full w-full object-cover ${previewMode === "mask" ? "invert brightness-150" : ""}`}
+              alt="Cutout preview"
+            />
+          )}
 
-        {status === "running" && (
-          <div className="absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 bg-black/55 backdrop-blur-sm">
-            <Loader2 size={22} className="animate-spin text-cyan-300" />
-            <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">
-              Processing Alpha
-            </span>
-          </div>
-        )}
-
-        {hasInput && (
-          <div className="foldder-frameless-secondary-panel nodrag flex w-[150px] flex-col gap-2">
-            <label className="flex flex-col gap-1">
-              <span className="flex items-center justify-between text-[7px] font-black uppercase tracking-[0.12em] text-white/55">
-                Precision{" "}
-                <span className="font-mono text-white/85">{threshold.toFixed(2)}</span>
+          {status === "running" ? (
+            <div className="mask-node-loading absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 bg-black/55 backdrop-blur-sm">
+              <Loader2 size={22} className="animate-spin text-cyan-300" />
+              <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">
+                Processing Alpha
               </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={threshold}
-                onChange={(e) => updateNestedData("threshold", parseFloat(e.target.value))}
-                className="node-slider nodrag h-1 w-full accent-cyan-400"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="flex items-center justify-between text-[7px] font-black uppercase tracking-[0.12em] text-white/55">
-                Expansion{" "}
-                <span className="font-mono text-white/85">{nodeData.expansion ?? 0}px</span>
-              </span>
-              <input
-                type="range"
-                min="-10"
-                max="10"
-                step="1"
-                value={nodeData.expansion ?? 0}
-                onChange={(e) => updateNestedData("expansion", parseInt(e.target.value, 10))}
-                className="node-slider nodrag h-1 w-full accent-cyan-400"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="flex items-center justify-between text-[7px] font-black uppercase tracking-[0.12em] text-white/55">
-                Feather{" "}
-                <span className="font-mono text-white/85">{(nodeData.feather ?? 0.6).toFixed(1)}px</span>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="2"
-                step="0.1"
-                value={nodeData.feather ?? 0.6}
-                onChange={(e) => updateNestedData("feather", parseFloat(e.target.value))}
-                className="node-slider nodrag h-1 w-full accent-pink-400"
-              />
-            </label>
-          </div>
-        )}
+            </div>
+          ) : null}
 
-        <button onClick={onRun} disabled={status === "running"} className="execute-btn nodrag">
-          {status === "running" ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
-          <span>{status === "running" ? "Removing…" : "Remove BG"}</span>
-        </button>
-      </div>
-
-      {hasResult && (
-        <div
-          className="nodrag nopan flex gap-1"
-          style={{ position: "absolute", top: 8, right: 8, zIndex: 60, pointerEvents: "auto" }}
-        >
-          {(["original", "mask", "cutout"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPreviewMode(mode);
-              }}
-              style={{ pointerEvents: "auto", cursor: "pointer" }}
-              className={`nodrag px-2 py-1 text-[7px] font-black uppercase tracking-[0.15em] transition-colors ${previewMode === mode ? "bg-white text-black" : "bg-black/45 text-white/55 hover:text-white"}`}
-            >
-              {mode}
-            </button>
-          ))}
+          {!hasInput ? (
+            <div className="mask-node-empty" aria-label="No image connected">
+              <p className="mask-node-empty-hint" aria-hidden>
+                Connect image on the left
+              </p>
+            </div>
+          ) : null}
         </div>
-      )}
+
+        {hasDock ? (
+          <div ref={dockRef} className="mask-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock>
+              <FoldderNodeContentDockMain>
+                <div className="mask-node-dock-sliders nodrag">
+                  <label className="mask-node-dock-slider">
+                    <span className="mask-node-dock-slider-label">
+                      Precision <span>{threshold.toFixed(2)}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={threshold}
+                      onChange={(e) => updateNestedData("threshold", parseFloat(e.target.value))}
+                      className="node-slider nodrag h-1 w-full accent-zinc-800"
+                    />
+                  </label>
+                  <label className="mask-node-dock-slider">
+                    <span className="mask-node-dock-slider-label">
+                      Expansion <span>{expansion}px</span>
+                    </span>
+                    <input
+                      type="range"
+                      min="-10"
+                      max="10"
+                      step="1"
+                      value={expansion}
+                      onChange={(e) => updateNestedData("expansion", parseInt(e.target.value, 10))}
+                      className="node-slider nodrag h-1 w-full accent-zinc-800"
+                    />
+                  </label>
+                  <label className="mask-node-dock-slider">
+                    <span className="mask-node-dock-slider-label">
+                      Feather <span>{feather.toFixed(1)}px</span>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={feather}
+                      onChange={(e) => updateNestedData("feather", parseFloat(e.target.value))}
+                      className="node-slider nodrag h-1 w-full accent-zinc-800"
+                    />
+                  </label>
+                </div>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Resolución" value={resolutionLabel} />
+                  <FoldderNodeContentMetaRow label="Precisión" value={threshold.toFixed(2)} />
+                  <FoldderNodeContentMetaRow label="Expansión" value={`${expansion}px`} />
+                  <FoldderNodeContentMetaRow label="Feather" value={`${feather.toFixed(1)}px`} />
+                  {hasResult ? (
+                    <FoldderNodeContentMetaRow label="Vista" value={previewModeLabel} />
+                  ) : null}
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="mask-node-dock-actions">
+                {hasResult
+                  ? (["original", "mask", "cutout"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`foldder-node-content-dock-btn nodrag${previewMode === mode ? " is-active" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewMode(mode);
+                        }}
+                        title={mode}
+                      >
+                        <span>{mode}</span>
+                      </button>
+                    ))
+                  : null}
+                <button
+                  type="button"
+                  className="foldder-node-content-dock-btn nodrag"
+                  onClick={() => void onRun()}
+                  disabled={status === "running"}
+                  title={hasResult ? "Re-process background removal" : "Remove background"}
+                >
+                  {status === "running" ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" aria-hidden />
+                      <span>Removing…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={14} aria-hidden />
+                      <span>{hasResult ? "Re-process" : "Remove BG"}</span>
+                    </>
+                  )}
+                </button>
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
+      </div>
 
       <div className="handle-wrapper handle-right">
         <span className="handle-label text-pink-400">Cutout</span>

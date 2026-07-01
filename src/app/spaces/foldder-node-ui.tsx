@@ -154,36 +154,113 @@ export const FoldderNodeHeaderTitle = memo(function FoldderNodeHeaderTitle({
   return <span className={titleClass}>{display}</span>;
 });
 
-/** Botón unificado para abrir Studio Mode desde el overlay del nodo. */
+/** Franja inferior opaca con metadatos del nodo (patrón Image Export). */
+export function FoldderNodeContentDock({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <div className={`foldder-node-content-dock nodrag ${className}`.trim()}>{children}</div>;
+}
+
+export function FoldderNodeContentDockMain({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <div className={`foldder-node-content-dock-main ${className}`.trim()}>{children}</div>;
+}
+
+export function FoldderNodeContentMeta({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <div className={`foldder-node-content-meta ${className}`.trim()}>{children}</div>;
+}
+
+export function FoldderNodeContentMetaRow({
+  label,
+  value,
+  variant,
+}: {
+  label: string;
+  value: React.ReactNode;
+  variant?: "status" | "optional";
+}) {
+  const rowClass = [
+    "foldder-node-content-meta-row",
+    variant === "status" ? "foldder-node-content-meta-row--status" : "",
+    variant === "optional" ? "foldder-node-content-meta-row--optional" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className={rowClass}>
+      <span className="foldder-node-content-meta-label">{label}</span>
+      <span className="foldder-node-content-meta-value">{value}</span>
+    </div>
+  );
+}
+
+export function FoldderNodeContentDockActions({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <div className={`foldder-node-content-dock-actions nodrag ${className}`.trim()}>{children}</div>;
+}
+
+/** Botón unificado para abrir Studio Mode desde el overlay del nodo o la franja inferior. */
 export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCenterButton({
   onClick,
   disabled,
   className,
   label = "Open Studio",
   title,
+  variant = "overlay",
 }: {
   onClick: () => void;
   disabled?: boolean;
   className?: string;
   label?: string;
   title?: string;
+  variant?: "overlay" | "dock";
 }) {
   const resolvedTitle = title ?? label;
+  const button = (
+    <button
+      type="button"
+      disabled={disabled}
+      title={resolvedTitle}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onClick();
+      }}
+      className={
+        variant === "dock"
+          ? "foldder-node-content-dock-btn pointer-events-auto nodrag inline-flex h-full min-h-[40px] min-w-[72px] items-center justify-center gap-1.5 self-stretch rounded-none border-0 bg-white px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-black shadow-none transition hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+          : "foldder-node-footer-button pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-none border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+      }
+    >
+      <Maximize2 size={13} strokeWidth={2.4} className="shrink-0" />
+      {label}
+    </button>
+  );
+
+  if (variant === "dock") {
+    return button;
+  }
+
   return (
-    <div className={`pointer-events-none absolute bottom-3 right-3 z-[15] ${className ?? ""}`}>
-      <button
-        type="button"
-        disabled={disabled}
-        title={resolvedTitle}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!disabled) onClick();
-        }}
-        className="foldder-node-footer-button pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-none border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
-      >
-        <Maximize2 size={13} strokeWidth={2.4} className="shrink-0" />
-        {label}
-      </button>
-    </div>
+    <div className={`pointer-events-none absolute bottom-3 right-3 z-[15] ${className ?? ""}`}>{button}</div>
   );
 });

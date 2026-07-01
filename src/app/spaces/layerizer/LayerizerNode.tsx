@@ -1,21 +1,50 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+/* eslint-disable @next/next/no-img-element */
+
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   Position,
+  NodeResizer,
   useEdges,
   useNodes,
   useReactFlow,
+  useUpdateNodeInternals,
   type NodeProps,
   type Node,
 } from "@xyflow/react";
 import { Check, ChevronRight, Eye, Layers, Loader2, Maximize2, MousePointerSquareDashed, Scissors, Send, Sparkles, Type, Wand2, X } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
+import { getNodeGridFrameForType } from "../canvas-grid-layout";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderNodeHeaderTitle,
+  NodeLabel,
+} from "../foldder-node-ui";
+import {
+  loadImageDimensions,
+  nodeFrameNeedsSync,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "../studio-node-aspect";
+import "../spaces.css";
 import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
 import { layerizerCostBreakdown } from "@/lib/layerizer/layerizer-cost";
@@ -52,6 +81,116 @@ const REGION_SCAN_MESSAGES = [
   "Detectando objetos locales…",
   "Ajustando los límites…",
 ];
+
+const STUDIO_NODE_MAX_HEIGHT = 2200;
+const LAYERIZER_BG_SRC = "/nodes/layerizer-bg.png";
+const LAYERIZER_DOCK_MIN_CHROME = 104;
+const LAYERIZER_DEFAULT_FRAME_TYPE = "backgroundRemover";
+
+function resolveLayerizerDockChrome(
+  frameEl: HTMLElement | null,
+  previewEl: HTMLElement | null,
+  dockEl: HTMLElement | null,
+): number {
+  const measuredDock = dockEl?.offsetHeight ?? 0;
+  const measuredChrome = resolveNodeChromeHeight(frameEl, previewEl, LAYERIZER_DOCK_MIN_CHROME);
+  return Math.max(LAYERIZER_DOCK_MIN_CHROME, measuredDock, measuredChrome);
+}
+
+function createNodeFrameSnapshot(
+  node: Pick<Node, "width" | "height" | "measured" | "style"> | undefined,
+): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
+  if (!node) return undefined;
+  return {
+    width: node.width,
+    height: node.height,
+    measured: node.measured
+      ? { width: node.measured.width, height: node.measured.height }
+      : undefined,
+    style: node.style ? { width: node.style.width, height: node.style.height } : undefined,
+  };
+}
+
+function useCurrentNodeFrameSnapshot(
+  node: Node | undefined,
+): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
+  const width = node?.width;
+  const height = node?.height;
+  const measuredWidth = node?.measured?.width;
+  const measuredHeight = node?.measured?.height;
+  const styleWidth = node?.style?.width;
+  const styleHeight = node?.style?.height;
+
+  return useMemo(() => {
+    const hasFrame =
+      width !== undefined ||
+      height !== undefined ||
+      measuredWidth !== undefined ||
+      measuredHeight !== undefined ||
+      styleWidth !== undefined ||
+      styleHeight !== undefined;
+    if (!hasFrame) return undefined;
+    return createNodeFrameSnapshot({
+      width,
+      height,
+      measured:
+        measuredWidth !== undefined || measuredHeight !== undefined
+          ? { width: measuredWidth, height: measuredHeight }
+          : undefined,
+      style:
+        styleWidth !== undefined || styleHeight !== undefined
+          ? { width: styleWidth, height: styleHeight }
+          : undefined,
+    });
+  }, [height, measuredHeight, measuredWidth, styleHeight, styleWidth, width]);
+}
+
+function syncAspectLockedFrameForNode(
+  nodes: Node[],
+  id: string,
+  nextFrame: { width: number; height: number },
+  aspectRatio?: number,
+): Node[] {
+  let didSync = false;
+  const safeAspectRatio =
+    typeof aspectRatio === "number" && Number.isFinite(aspectRatio) && aspectRatio > 0
+      ? aspectRatio
+      : null;
+  const nextNodes = nodes.map((node) => {
+    if (node.id !== id) return node;
+    const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+    const currentAspectRatio =
+      typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio ===
+      "number"
+        ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+        : null;
+    const needsAspectSync =
+      safeAspectRatio !== null &&
+      (currentAspectRatio === null || Math.abs(currentAspectRatio - safeAspectRatio) > 0.0001);
+    if (!needsFrameSync && !needsAspectSync) return node;
+    didSync = true;
+    return {
+      ...node,
+      ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+      ...(needsAspectSync
+        ? {
+            data: {
+              ...node.data,
+              _foldderAspectRatio: safeAspectRatio,
+            },
+          }
+        : {}),
+      style: needsFrameSync
+        ? { ...node.style, width: nextFrame.width, height: nextFrame.height }
+        : node.style,
+    };
+  });
+  return didSync ? nextNodes : nodes;
+}
+
+function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
+  return <NodeResizer {...props} />;
+}
 
 function usd(n: number): string {
   return `$${n.toFixed(3)}`;
@@ -100,7 +239,6 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
   const nodeData = data as LayerizerNodeData;
   const nodes = useNodes();
   const edges = useEdges();
-  const { setNodes } = useReactFlow();
 
   const [open, setOpen] = useState(false);
   const [detecting, setDetecting] = useState(false);
@@ -117,10 +255,21 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [analyzingRegion, setAnalyzingRegion] = useState(false);
-  // Aspect ratio (w/h) de la imagen conectada, para que la tarjeta se adapte.
-  const [imgAR, setImgAR] = useState<number | null>(null);
   const detectedRef = useRef(detected);
   detectedRef.current = detected;
+  const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const currentNode = nodes.find((node) => node.id === id);
+  const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const [aspectImageSize, setAspectImageSize] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const toggleExpand = useCallback((subjectId: string) => {
     setExpandedIds((prev) => {
@@ -397,28 +546,185 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
     ? PROGRESS_STEPS.findIndex((s) => s.status === progress.status)
     : -1;
 
-  const previewUrl = output?.background?.url || inputImage || nodeData.masterUrl;
+  const previewDisplayUrl =
+    inputImage ||
+    (typeof nodeData.masterUrl === "string" ? nodeData.masterUrl : "") ||
+    output?.background?.url ||
+    "";
+  const aspectImageUrl = inputImage || null;
+  const activeAspectImageSize =
+    aspectImageUrl && aspectImageSize?.url === aspectImageUrl ? aspectImageSize : null;
+  const aspectContentWidth = activeAspectImageSize?.width ?? null;
+  const aspectContentHeight = activeAspectImageSize?.height ?? null;
+  const hasInput = Boolean(inputImage);
+  const hasDock = hasInput;
+  const resolutionLabel =
+    aspectContentWidth != null && aspectContentHeight != null
+      ? `${aspectContentWidth}×${aspectContentHeight} px`
+      : dims?.w && dims?.h
+        ? `${dims.w}×${dims.h} px`
+        : "—";
+  const objectsLabel = detected.length > 0 ? String(detected.length) : "—";
+  const layersLabel = output ? `${output.layers.length + 1} capas` : "—";
+  const statusLabel = running
+    ? "Extrayendo"
+    : output
+      ? "Listo"
+      : hasInput
+        ? "Pendiente"
+        : "Sin entrada";
 
   useEffect(() => {
-    if (!previewUrl) setImgAR(null);
-  }, [previewUrl]);
+    if (!aspectImageUrl) return;
+    let cancelled = false;
+    loadImageDimensions(aspectImageUrl).then(({ width, height }) => {
+      if (!cancelled) setAspectImageSize({ url: aspectImageUrl, width, height });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [aspectImageUrl]);
+
+  useLayoutEffect(() => {
+    if (aspectContentWidth == null || aspectContentHeight == null) {
+      if (hasInput) return;
+      const baseFrame = getNodeGridFrameForType(LAYERIZER_DEFAULT_FRAME_TYPE);
+      if (!baseFrame) return;
+      const syncKey = "empty";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const needsFrameSync = nodeFrameNeedsSync(n, baseFrame);
+          const hasAspectRatio =
+            typeof (n.data as { _foldderAspectRatio?: unknown })._foldderAspectRatio === "number";
+          if (!needsFrameSync && !hasAspectRatio) return n;
+          const nextData = { ...(n.data as Record<string, unknown>) };
+          delete nextData._foldderAspectRatio;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            data: nextData,
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const chromeHeight = hasDock
+      ? resolveLayerizerDockChrome(frameRef.current, previewFrameRef.current, dockRef.current)
+      : 0;
+    const syncKey = `${aspectImageUrl ?? "empty"}:${aspectContentWidth}x${aspectContentHeight}:chrome${chromeHeight}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentFrameNode,
+      contentWidth: aspectContentWidth,
+      contentHeight: aspectContentHeight,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      syncAspectLockedFrameForNode(
+        nds as Node[],
+        id,
+        nextFrame,
+        aspectContentWidth / aspectContentHeight,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    aspectImageUrl,
+    aspectContentHeight,
+    aspectContentWidth,
+    currentFrameNode,
+    hasDock,
+    hasInput,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!hasDock || aspectContentWidth == null || aspectContentHeight == null) return;
+    const remeasureId = requestAnimationFrame(() => {
+      frameSyncKeyRef.current = null;
+      const chromeHeight = resolveLayerizerDockChrome(
+        frameRef.current,
+        previewFrameRef.current,
+        dockRef.current,
+      );
+      const syncKey = `${aspectImageUrl ?? "empty"}:${aspectContentWidth}x${aspectContentHeight}:chrome${chromeHeight}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: aspectContentWidth,
+        contentHeight: aspectContentHeight,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 120,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      setNodes((nds) =>
+        syncAspectLockedFrameForNode(
+          nds as Node[],
+          id,
+          nextFrame,
+          aspectContentWidth / aspectContentHeight,
+        ),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+    });
+    return () => cancelAnimationFrame(remeasureId);
+  }, [
+    aspectContentHeight,
+    aspectContentWidth,
+    aspectImageUrl,
+    currentFrameNode,
+    hasDock,
+    output,
+    running,
+    detected.length,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
     <div
-      className={`custom-node layerizer-node foldder-node--frameless node--media group/node ${previewUrl ? "" : "layerizer-node--empty"}`}
-      style={{
-        width: 260,
-        minWidth: 220,
-        // Con imagen: la tarjeta adopta su aspect ratio (sin marco/letterbox).
-        // Sin imagen: altura mínima para el placeholder "Connect an image".
-        aspectRatio: imgAR ? String(imgAR) : undefined,
-        minHeight: imgAR ? 0 : 150,
-        "--foldder-frameless-accent": "#a6c85e",
-      } as React.CSSProperties}
+      ref={frameRef}
+      className={`custom-node layerizer-node foldder-node--frameless node--media group/node ${hasInput ? "layerizer-node--has-preview" : "layerizer-node--empty"} ${hasDock ? "layerizer-node--has-content" : ""} ${running ? "node-glow-running" : ""}`}
+      style={
+        {
+          minWidth: 200,
+          minHeight: hasInput ? 120 : 300,
+          "--foldder-node-card-bg": "#ff6666",
+          "--foldder-frameless-glass-bg": "#ff6666",
+          "--foldder-frameless-accent": "#ff3333",
+        } as React.CSSProperties
+      }
     >
+      <FoldderNodeResizer
+        minWidth={200}
+        minHeight={120}
+        maxWidth={960}
+        maxHeight={STUDIO_NODE_MAX_HEIGHT}
+        keepAspectRatio={Boolean(aspectImageUrl)}
+        isVisible={selected}
+      />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Layerizer" />
 
-      {previewUrl ? <FoldderStudioTouchedMark nodeType="layerizer" /> : null}
+      {hasInput ? <FoldderStudioTouchedMark nodeType="layerizer" backgroundSrc={LAYERIZER_BG_SRC} /> : null}
 
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
@@ -435,40 +741,70 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
         <FoldderNodeHeaderTitle>Layerizer</FoldderNodeHeaderTitle>
       </div>
 
-      <div className="node-content foldder-frameless-main">
-        {previewUrl ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={previewUrl}
-            draggable={false}
-            onLoad={(e) => {
-              const t = e.currentTarget;
-              if (t.naturalWidth > 0 && t.naturalHeight > 0) {
-                setImgAR(t.naturalWidth / t.naturalHeight);
-              }
-            }}
-            className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-90"
-            alt="Layerizer input"
-          />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-white/40">
-            <Layers size={22} />
-            <span className="text-[8px] font-black uppercase tracking-[0.2em]">Connect an image</span>
-          </div>
-        )}
+      <div
+        className={`node-content foldder-frameless-main layerizer-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div ref={previewFrameRef} className="layerizer-node-preview foldder-node-content-preview-area">
+          {!hasInput ? (
+            <img src={LAYERIZER_BG_SRC} alt="" className="layerizer-node-bg" draggable={false} />
+          ) : (
+            <img
+              src={previewDisplayUrl}
+              draggable={false}
+              className="layerizer-node-media-preview pointer-events-none absolute inset-0 h-full w-full object-cover"
+              alt="Layerizer input"
+            />
+          )}
 
-        {output ? (
-          <div className="foldder-frameless-secondary-panel nodrag flex flex-col gap-1 text-[8px] text-white/80">
-            <span className="font-black uppercase tracking-[0.15em] text-purple-300">
-              {output.layers.length} capas + fondo
-            </span>
+          {running ? (
+            <div className="layerizer-node-loading absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 bg-black/55 backdrop-blur-sm">
+              <Loader2 size={22} className="animate-spin text-purple-300" />
+              <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">
+                Extracting Layout
+              </span>
+            </div>
+          ) : null}
+
+          {!hasInput ? (
+            <div className="layerizer-node-empty" aria-label="No image connected">
+              <Layers size={22} className="mb-1 text-white/45" aria-hidden />
+              <p className="layerizer-node-empty-hint" aria-hidden>
+                Connect image on the left
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {hasDock ? (
+          <div ref={dockRef} className="layerizer-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock>
+              <FoldderNodeContentDockMain>
+                {output ? (
+                  <p className="foldder-node-content-dock-text">
+                    {output.layers.length} capas + fondo
+                  </p>
+                ) : null}
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Resolución" value={resolutionLabel} />
+                  <FoldderNodeContentMetaRow label="Objetos" value={objectsLabel} />
+                  <FoldderNodeContentMetaRow label="Capas" value={layersLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="layerizer-node-dock-actions">
+                <button
+                  type="button"
+                  className="foldder-node-content-dock-btn nodrag"
+                  onClick={() => setOpen(true)}
+                  title="Open Layerizer"
+                >
+                  <Maximize2 size={14} aria-hidden />
+                  <span>Open Layerizer</span>
+                </button>
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
           </div>
         ) : null}
-
-        <button onClick={() => setOpen(true)} disabled={!inputImage} className="execute-btn nodrag">
-          <Maximize2 size={13} />
-          <span>Open Layerizer</span>
-        </button>
       </div>
 
       <div className="handle-wrapper handle-right">

@@ -1,17 +1,29 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  NodeResizer,
   useReactFlow,
   useStore,
+  useUpdateNodeInternals,
   type Edge,
   type Node,
   type NodeProps,
   type ReactFlowState,
 } from "@xyflow/react";
-import { Loader2, Sparkles } from "lucide-react";
+import { AlertTriangle, FolderOpen, Loader2 } from "lucide-react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { getNodeGridFrameForType } from "../canvas-grid-layout";
+import { nodeFrameNeedsSync } from "../studio-node-aspect";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import { useConnectedDatasetForNode } from "@/app/spaces/loop/use-loop-context";
 import {
   listPopulateDesignerTemplateConfigs,
@@ -46,7 +58,8 @@ import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
 import { reconcileSpacePortalNode } from "../space-media-list";
 import { useSpacesMapCanvas } from "../spaces-map-canvas-context";
 
-const BG = "/assets/nodes/populate-empty-pink.png";
+const POPULATE_ACCENT = "#33ffcc";
+const POPULATE_EMPTY_BACKGROUND_SRC = "/assets/nodes/populate-bg.png";
 
 function reconcilePopulateCanvasNodes(
   nodes: Node[],
@@ -65,6 +78,8 @@ const HANDLES: StudioCanvasNodeHandleSpec[] = [
 function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const nodeData = (data ?? {}) as unknown as PopulateNodeData;
   const { setNodes, getNodes, getEdges } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameSyncKeyRef = useRef<string | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
@@ -185,6 +200,11 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
   const onSelectTemplate = useCallback(
     (templateNodeId: string) => patchSelf({ activeTemplateNodeId: templateNodeId }),
+    [patchSelf],
+  );
+
+  const onSelectList = useCallback(
+    (nextListId: string) => patchSelf({ listId: nextListId }),
     [patchSelf],
   );
 
@@ -542,6 +562,70 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     ? `${typeof window !== "undefined" ? window.location.origin : ""}/f/${nodeData.publicShareToken}`
     : null;
 
+  const datasetConnected = Boolean(connectedDataset);
+  const hasDock = datasetConnected;
+  const templatesConnected = templateCount > 0;
+  const showConnectedIcon = datasetConnected || templatesConnected;
+  const activeList = lists.find((l) => l.id === listId);
+  const listName = activeList?.name ?? "—";
+  const rowCount = activeList?.cards.length ?? 0;
+  const studioError = error ?? shareError ?? nodeData.error ?? null;
+  const progressPct =
+    progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
+  const statusLabel = busy
+    ? "Generando"
+    : nodeData.status === "error"
+      ? "Error"
+      : lastRunOutputs.length > 0
+        ? "Listo"
+        : templatesConnected
+          ? "Pendiente"
+          : datasetConnected
+            ? "Sin plantillas"
+            : "Desconectado";
+
+  const ejecucionLabel =
+    lastRunOutputs.length > 0 && !busy
+      ? `${lastRunOutputs.length} imagen${lastRunOutputs.length === 1 ? "" : "es"}`
+      : "—";
+
+  const plantillaLabel = templatesConnected
+    ? `${templateCount} template${templateCount === 1 ? "" : "s"}`
+    : "—";
+
+  const onOpenResults = useCallback(() => {
+    if (lastRunOutputs.length === 0 && previewUrls.length === 0) return;
+    setStudioOpen(true);
+  }, [lastRunOutputs.length, previewUrls.length]);
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("populate");
+    if (!baseFrame) return;
+    const syncKey = "populate-base";
+    if (frameSyncKeyRef.current === syncKey) return;
+    const current = getNodes().find((n) => n.id === id);
+    if (current && !nodeFrameNeedsSync(current, baseFrame)) {
+      frameSyncKeyRef.current = syncKey;
+      return;
+    }
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+        return {
+          ...n,
+          width: baseFrame.width,
+          height: baseFrame.height,
+          measured: { width: baseFrame.width, height: baseFrame.height },
+          style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [getNodes, id, setNodes, updateNodeInternals]);
+
   return (
     <>
       <StudioCanvasNodeShell
@@ -554,65 +638,135 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         handles={HANDLES}
         variant="frameless"
         material="media"
-        className={`populate-node${templateCount > 0 && connectedDataset ? " populate-node--connected" : ""}`}
+        className={`populate-node${hasDock ? " populate-node--has-content" : " populate-node--empty"}${showConnectedIcon ? " populate-node--connected" : ""}`}
+        exteriorTileMark={showConnectedIcon}
+        style={
+          {
+            minWidth: 200,
+            minHeight: 416,
+            "--foldder-node-card-bg": POPULATE_ACCENT,
+            "--foldder-frameless-glass-bg": POPULATE_ACCENT,
+            "--foldder-frameless-accent": POPULATE_ACCENT,
+          } as React.CSSProperties
+        }
       >
-        <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          {templateCount === 0 ? (
-            <div className="populate-empty-background absolute inset-0 overflow-hidden" aria-hidden>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={BG} alt="" className="h-full w-full object-cover object-center" draggable={false} />
-            </div>
-          ) : (
-            <PopulateNodeBackgroundGrid templates={designerTemplates} />
-          )}
+        <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={520} isVisible={selected} />
+        <div
+          className={`node-content foldder-frameless-main populate-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+        >
+          <div className="populate-node-preview foldder-node-content-preview-area">
+            <img
+              src={POPULATE_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="populate-node-bg"
+              draggable={false}
+            />
 
-          <div className="populate-node-summary nodrag relative z-10">
-            {!connectedDataset ? (
-              <p className="populate-node-summary__text populate-node-summary__text--muted">
-                Conecta un Dataset y plantillas Designer.
-              </p>
-            ) : datasetLoading ? (
-              <p className="populate-node-summary__text populate-node-summary__text--muted">
-                <Loader2 size={12} className="inline animate-spin" /> Cargando Dataset…
-              </p>
-            ) : templateCount === 0 ? (
-              <p className="populate-node-summary__text populate-node-summary__text--muted">
-                Conecta plantillas Designer (Document → Plantilla).
-              </p>
-            ) : (
-              <p className="populate-node-summary__text">
-                {templateCount} template{templateCount === 1 ? "" : "s"} conectado
-                {templateCount === 1 ? "" : "s"}
-              </p>
-            )}
+            {!hasDock ? (
+              <div className="populate-node-empty-hint" aria-hidden>
+                <span className="populate-node-empty-hint__body">
+                  Conecta un Dataset y plantillas Designer en las entradas izquierdas.
+                </span>
+              </div>
+            ) : null}
+
+            {hasDock && templatesConnected ? (
+              <div className="populate-node-template-grid" aria-hidden={!templatesConnected}>
+                <PopulateNodeBackgroundGrid templates={designerTemplates} />
+              </div>
+            ) : null}
+
+            {hasDock && progress ? (
+              <div className="populate-node-media-preview" aria-hidden={!progress}>
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-white/90">
+                  <Loader2 size={22} className="animate-spin" style={{ color: POPULATE_ACCENT }} />
+                  <span className="text-[11px] font-semibold uppercase tracking-wide">
+                    Populate {progress.done}/{progress.total}
+                  </span>
+                  <div className="h-1 w-full max-w-[180px] bg-white/20">
+                    <div
+                      className="h-full transition-[width] duration-300"
+                      style={{ width: `${progressPct}%`, background: POPULATE_ACCENT }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {hasDock && studioError ? (
+              <div className="foldder-frameless-error populate-node-error nodrag flex items-start gap-1.5 px-2 py-1 text-[10px]">
+                <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                <span>{studioError}</span>
+              </div>
+            ) : null}
           </div>
 
-          {(error ?? shareError ?? nodeData.error) ? (
-            <div className="foldder-frameless-error nodrag relative z-10 flex items-start gap-1.5 px-2 py-1 text-[10px]">
-              <span>{error ?? shareError ?? nodeData.error}</span>
+          {hasDock ? (
+            <div className="populate-node-dock-wrap shrink-0">
+              <FoldderNodeContentDock>
+                <FoldderNodeContentDockMain>
+                  {datasetLoading ? (
+                    <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                      Cargando Dataset…
+                    </p>
+                  ) : !templatesConnected ? (
+                    <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                      Dataset conectado. Conecta plantillas Designer en Plantilla (izquierda, abajo).
+                    </p>
+                  ) : (
+                    <p className="foldder-node-content-dock-text">
+                      {templateCount} template{templateCount === 1 ? "" : "s"} · {listName} · {rowCount}{" "}
+                      fila{rowCount === 1 ? "" : "s"} · {totalSlideCount} slide
+                      {totalSlideCount === 1 ? "" : "s"}
+                    </p>
+                  )}
+                  {templatesConnected && !datasetLoading ? (
+                    <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                      {canOpenStudio
+                        ? "Abre Studio para mapear entidades y generar"
+                        : "Completa el mapeo de columnas en Studio"}
+                      {nodeData.publicShareToken ? " · formulario compartido activo" : ""}
+                    </p>
+                  ) : null}
+                  <FoldderNodeContentMeta>
+                    <FoldderNodeContentMetaRow label="Listado" value={listName} />
+                    <FoldderNodeContentMetaRow label="Filas" value={String(rowCount)} />
+                    <FoldderNodeContentMetaRow label="Plantillas" value={plantillaLabel} />
+                    <FoldderNodeContentMetaRow label="Slides" value={templatesConnected ? String(totalSlideCount) : "—"} />
+                    <FoldderNodeContentMetaRow label="Ejecución" value={ejecucionLabel} />
+                    <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                  </FoldderNodeContentMeta>
+                </FoldderNodeContentDockMain>
+                <FoldderNodeContentDockActions className="populate-node-dock-actions">
+                  <FoldderStudioModeCenterButton
+                    variant="dock"
+                    label="Open Studio"
+                    disabled={!canOpenStudio}
+                    title={
+                      canOpenStudio
+                        ? "Abrir Studio para mapear y generar"
+                        : "Conecta Dataset y al menos una plantilla"
+                    }
+                    onClick={() => setStudioOpen(true)}
+                  />
+                  {lastRunOutputs.length > 0 || previewUrls.length > 0 ? (
+                    <button
+                      type="button"
+                      className="foldder-node-content-dock-btn nodrag"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenResults();
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                    >
+                      <FolderOpen size={14} aria-hidden />
+                      <span>Resultados</span>
+                    </button>
+                  ) : null}
+                </FoldderNodeContentDockActions>
+              </FoldderNodeContentDock>
             </div>
           ) : null}
-
-          <div className="foldder-frameless-footer-action nodrag populate-node-footer relative z-10">
-            <button
-              type="button"
-              className="populate-open-studio nodrag"
-              disabled={!canOpenStudio}
-              title={
-                canOpenStudio
-                  ? "Abrir Studio para mapear y generar"
-                  : "Conecta Dataset y al menos una plantilla"
-              }
-              onClick={(e) => {
-                e.stopPropagation();
-                setStudioOpen(true);
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <Sparkles size={14} strokeWidth={2.2} />
-              Abrir Studio
-            </button>
-          </div>
         </div>
       </StudioCanvasNodeShell>
 
@@ -622,6 +776,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               nodeLabel={nodeData.label?.trim() || "Populate"}
               dataset={connectedDataset}
               listId={listId}
+              onSelectList={onSelectList}
               templates={designerTemplates}
               activeTemplate={activeDesignerTemplate}
               activeTemplateNodeId={activeTemplateNodeId}

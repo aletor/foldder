@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NodeResizer, Position, useEdges, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
@@ -10,9 +10,21 @@ import { downloadS3Object, forceDownloadUrl, sanitizeDownloadFilename } from "@/
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 import { FoldderDataHandle } from "./FoldderDataHandle";
-import { NodeLabel, FoldderNodeHeaderTitle } from "./foldder-node-ui";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderNodeHeaderTitle,
+  FoldderStudioModeCenterButton,
+  NodeLabel,
+} from "./foldder-node-ui";
 import { NodeIcon } from "./foldder-icons";
 import { FoldderStudioHeader } from "./FoldderStudioHeader";
+import { getNodeGridFrameForType } from "./canvas-grid-layout";
+import { nodeFrameNeedsSync } from "./studio-node-aspect";
+import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
 import {
   buildMediaListManifest,
   EXPORT_MULTIMEDIA_MEDIA_LIST_HANDLES,
@@ -519,10 +531,10 @@ function ExportMultimediaStudio({
         role="dialog"
         aria-modal="true"
         aria-label="Export Multimedia studio"
-        style={{ ["--foldder-studio-accent" as string]: "#21817f" }}
+        style={{ ["--foldder-studio-accent" as string]: EXPORT_MULTIMEDIA_ACCENT }}
       >
-        <img src="/nodes/enhancer-bg.png" alt="" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover opacity-[0.10]" draggable={false} />
-        <div className="pointer-events-none absolute inset-0 z-0 bg-[#0d1f1e]/82" />
+        <img src={EXPORT_MULTIMEDIA_BG_SRC} alt="" className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover opacity-[0.12]" draggable={false} />
+        <div className="pointer-events-none absolute inset-0 z-0 bg-[#1a0a12]/78" />
 
         <div className="relative z-10 flex min-h-0 flex-1 flex-col">
           <FoldderStudioHeader
@@ -701,12 +713,16 @@ function ExportMultimediaStudio({
   );
 }
 
+const EXPORT_MULTIMEDIA_ACCENT = "#ff99cc";
+const EXPORT_MULTIMEDIA_BG_SRC = "/assets/nodes/export-multimedia-bg.png";
+
 export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("ExportMultimediaNode", id);
   const nodeData = (data ?? {}) as ExportMultimediaNodeData;
-  const { setNodes } = useReactFlow();
+  const { setNodes, getNodes } = useReactFlow();
   const edges = useEdges();
   const updateNodeInternals = useUpdateNodeInternals();
+  const frameSyncKeyRef = useRef<string | null>(null);
   const { output, datasetConnected, datasetLoading } = useExportMultimediaOutput(
     id,
     nodeData.datasetListId,
@@ -760,41 +776,84 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
   }, [id, visibleCount, datasetEdgeConnected, updateNodeInternals]);
 
   const connectedSourceCount = connectedEdges.length + (datasetEdgeConnected ? 1 : 0);
+  const hasDock = connectedSourceCount > 0;
+  const showConnectedIcon = hasDock;
   const stats = mediaListStats(output);
   const statusLabel = datasetLoading
-    ? "cargando dataset…"
+    ? "Cargando"
     : !output
       ? datasetConnected
-        ? "dataset conectado · sin medios"
-        : "sin conexión"
+        ? "Sin medios"
+        : "Sin conexión"
       : stats.pending > 0
-        ? "algunos archivos pendientes"
+        ? "Parcial"
         : stats.downloadable > 0
-          ? "listo para descargar"
-          : datasetConnected
-            ? "dataset + medios"
-            : "media list recibida";
+          ? "Listo"
+          : "Vacío";
 
   const previewItems = (output?.items ?? []).slice(0, 6);
+  const canOpenStudio = Boolean(output) && !datasetLoading;
+
+  const origenesLabel = connectedSourceCount > 0 ? String(connectedSourceCount) : "—";
+  const mediosLabel = output ? String(stats.total) : "—";
+  const descargablesLabel = output ? String(stats.downloadable) : "—";
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("export_multimedia");
+    if (!baseFrame) return;
+    const syncKey = "export-multimedia-base";
+    if (frameSyncKeyRef.current === syncKey) return;
+    const current = getNodes().find((n) => n.id === id);
+    if (current && !nodeFrameNeedsSync(current, baseFrame)) {
+      frameSyncKeyRef.current = syncKey;
+      return;
+    }
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+        return {
+          ...n,
+          width: baseFrame.width,
+          height: baseFrame.height,
+          measured: { width: baseFrame.width, height: baseFrame.height },
+          style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [getNodes, id, setNodes, updateNodeInternals]);
 
   return (
     <div
       className={cx(
-        "custom-node tool-node export-multimedia-node foldder-node--frameless node--glass foldder-frameless-label-dark",
-        output || datasetConnected ? "export-multimedia-node--active" : "export-multimedia-node--empty",
+        "custom-node tool-node export-multimedia-node foldder-node--frameless node--media group/node",
+        hasDock ? "export-multimedia-node--has-content" : "export-multimedia-node--empty",
+        showConnectedIcon ? "export-multimedia-node--connected foldder-node--studio-touched" : "",
       )}
-      style={{
-        minWidth: 240,
-        minHeight: 240,
-        "--foldder-node-card-bg": "#21817f",
-        "--foldder-frameless-glass-bg": "#21817f",
-        "--foldder-frameless-accent": "#1f2328",
-      } as React.CSSProperties}
+      style={
+        {
+          minWidth: 200,
+          minHeight: 416,
+          "--foldder-node-card-bg": EXPORT_MULTIMEDIA_ACCENT,
+          "--foldder-frameless-glass-bg": EXPORT_MULTIMEDIA_ACCENT,
+          "--foldder-frameless-accent": EXPORT_MULTIMEDIA_ACCENT,
+        } as React.CSSProperties
+      }
     >
-      <NodeResizer minWidth={240} minHeight={240} maxWidth={760} maxHeight={900} isVisible={selected} />
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={520} isVisible={selected} />
+      {showConnectedIcon ? <FoldderStudioTouchedMark nodeType="export_multimedia" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Export Multimedia" />
 
-      <div className="handle-wrapper handle-left" style={{ top: "8%" }}>
+      <div className="node-header pointer-events-none">
+        <NodeIcon type="export_multimedia" selected={selected} size={16} />
+        <FoldderNodeHeaderTitle className="sr-only" introActive={!!nodeData._foldderCanvasIntro}>
+          Export Multimedia
+        </FoldderNodeHeaderTitle>
+      </div>
+
+      <div className="handle-wrapper handle-left nodrag" style={{ top: "8%" }}>
         <FoldderDataHandle
           type="target"
           position={Position.Left}
@@ -807,7 +866,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
       {visibleHandles.map((hId, index) => (
         <div
           key={hId}
-          className="handle-wrapper handle-left"
+          className="handle-wrapper handle-left nodrag"
           style={{
             top: `${14 + ((index + 1) / (visibleHandles.length + 1)) * 78}%`,
           }}
@@ -822,55 +881,82 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
         </div>
       ))}
 
-      <div className="node-header">
-        <NodeIcon type="export_multimedia" selected={selected} size={16} />
-        <FoldderNodeHeaderTitle className="flex-1" introActive={!!nodeData._foldderCanvasIntro}>
-          Export Multimedia
-        </FoldderNodeHeaderTitle>
-      </div>
+      <div
+        className={`node-content foldder-frameless-main export-multimedia-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="export-multimedia-node-preview foldder-node-content-preview-area">
+          <img src={EXPORT_MULTIMEDIA_BG_SRC} alt="" className="export-multimedia-node-bg" draggable={false} />
 
-      <div className="node-content foldder-frameless-main export-multimedia-node-main nodrag nopan">
-        <img src="/nodes/enhancer-bg.png" alt="" className="export-multimedia-node-bg" draggable={false} />
+          {!hasDock ? (
+            <div className="export-multimedia-node-empty-hint" aria-hidden>
+              <span className="export-multimedia-node-empty-hint__body">
+                Conecta un Dataset o salidas media_list (Loop, Designer, Populate…).
+              </span>
+            </div>
+          ) : null}
 
-        <div className="export-multimedia-node-dock nodrag">
-          {output ? (
-            <>
-              <div className="export-multimedia-stat-row">
-                <span className="export-multimedia-stat-total">{stats.total}</span>
-                <span className="export-multimedia-stat-sub">
-                  {connectedSourceCount > 1 ? `${connectedSourceCount} orígenes · ` : ""}
-                  {datasetConnected ? "dataset · " : ""}
-                  {stats.images} img · {stats.videos} vid · {stats.files + stats.audio} otros
-                  {stats.pending ? ` · ${stats.pending} pend.` : ""}
-                </span>
+          {hasDock && previewItems.length > 0 ? (
+            <div className="export-multimedia-node-media-preview nodrag">
+              <div className="export-multimedia-thumbs">
+                {previewItems.map((item) => (
+                  <MediaThumb key={item.id} item={item} compact />
+                ))}
               </div>
-              {previewItems.length > 0 ? (
-                <div className="export-multimedia-thumbs">
-                  {previewItems.map((item) => (
-                    <MediaThumb key={item.id} item={item} compact />
-                  ))}
-                </div>
-              ) : (
-                <p className="export-multimedia-empty-text">Lista vacía — todavía sin medios.</p>
-              )}
-            </>
-          ) : (
-            <p className="export-multimedia-empty-text">
-              Conecta un Dataset (arriba) o salidas media_list (p. ej. Loop, Designer).
-            </p>
-          )}
+            </div>
+          ) : null}
         </div>
-      </div>
 
-      <div className="foldder-frameless-footer-action nodrag export-multimedia-node-footer">
-        <button
-          type="button"
-          className="execute-btn export-multimedia-open-button nodrag w-full"
-          onClick={() => setStudioOpen(true)}
-          disabled={!output || datasetLoading}
-        >
-          {datasetLoading ? "Cargando dataset…" : output ? `Abrir · ${statusLabel}` : "Sin conexión"}
-        </button>
+        {hasDock ? (
+          <div className="export-multimedia-node-dock-wrap shrink-0 nodrag">
+            <FoldderNodeContentDock>
+              <FoldderNodeContentDockMain>
+                {datasetLoading ? (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    Cargando Dataset…
+                  </p>
+                ) : output ? (
+                  <p className="foldder-node-content-dock-text">
+                    {stats.total} medio{stats.total === 1 ? "" : "s"} · {stats.downloadable} descargable
+                    {stats.downloadable === 1 ? "" : "s"}
+                    {connectedSourceCount > 1 ? ` · ${connectedSourceCount} orígenes` : ""}
+                  </p>
+                ) : (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    Conectado — esperando medios en las fuentes enlazadas.
+                  </p>
+                )}
+                {output ? (
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    {stats.images} img · {stats.videos} vid · {stats.audio + stats.files} otros
+                    {stats.pending ? ` · ${stats.pending} pend.` : ""}
+                  </p>
+                ) : null}
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Orígenes" value={origenesLabel} />
+                  <FoldderNodeContentMetaRow label="Medios" value={mediosLabel} />
+                  <FoldderNodeContentMetaRow label="Descargables" value={descargablesLabel} />
+                  <FoldderNodeContentMetaRow label="Dataset" value={datasetEdgeConnected ? "Sí" : "—"} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="export-multimedia-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Open Studio"
+                  disabled={!canOpenStudio}
+                  title={
+                    canOpenStudio
+                      ? "Abrir Export Multimedia Studio"
+                      : datasetLoading
+                        ? "Cargando Dataset…"
+                        : "Conecta fuentes con medios listos"
+                  }
+                  onClick={() => setStudioOpen(true)}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
       </div>
 
       {studioOpen ? (

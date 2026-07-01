@@ -604,12 +604,22 @@ export function LoopStudio(props: LoopStudioProps) {
     : activeSlots[0]?.id ?? "prompt";
   const selected = activeSlots.find((s) => s.id === effectiveSelectedId) ?? activeSlots[0];
 
+  /** Columnas del listado activo (sin constantes compartidas / BrandKit). */
+  const listTextFields = useMemo(() => {
+    const allowed = datasetFieldTypesForInputKind("text");
+    return schema
+      .filter((f) => allowed.includes(f.type))
+      .map((f) => ({ id: f.id, key: f.key, label: f.label }));
+  }, [schema]);
+
+  /** Prompt y tokens manuales: listado + constantes del dataset. */
   const textFields = useMemo(() => {
     const allowed = datasetFieldTypesForInputKind("text");
-    const fromList = schema.filter((f) => allowed.includes(f.type));
-    const fromConst = constantFields.filter((f) => allowed.includes(f.type));
-    return [...fromList, ...fromConst].map((f) => ({ id: f.id, key: f.key, label: f.label }));
-  }, [schema, constantFields]);
+    const fromConst = constantFields
+      .filter((f) => allowed.includes(f.type))
+      .map((f) => ({ id: f.id, key: f.key, label: f.label }));
+    return [...listTextFields, ...fromConst];
+  }, [listTextFields, constantFields]);
 
   const imageFields = useMemo(() => {
     const allowed = datasetFieldTypesForInputKind("image");
@@ -678,7 +688,7 @@ export function LoopStudio(props: LoopStudioProps) {
               const isImage = facet.kind === "image";
               const pickerFields = isImage
                 ? imageFields.map((f) => ({ id: f.id, key: f.key, label: f.label }))
-                : textFields;
+                : listTextFields;
 
               return (
                 <li key={facet.slotKey} className="loop-studio-entity-facet-row">
@@ -740,7 +750,7 @@ export function LoopStudio(props: LoopStudioProps) {
     const isImage = field.kind === "image";
     const pickerFields = isImage
       ? imageFields.map((f) => ({ id: f.id, key: f.key, label: f.label }))
-      : textFields;
+      : listTextFields;
 
     return (
       <div className="loop-studio-center-panel">

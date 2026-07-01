@@ -42,6 +42,8 @@ export type StudioCanvasNodeShellProps = {
   material?: "media" | "glass";
   error?: boolean;
   studioTouched?: boolean;
+  /** Muestra el tile de librería arriba a la izquierda (p. ej. cuando hay nodos conectados). */
+  exteriorTileMark?: boolean;
 };
 
 export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanvasNodeShellProps>(function StudioCanvasNodeShell({
@@ -68,16 +70,18 @@ export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanv
   material = "glass",
   error,
   studioTouched = false,
+  exteriorTileMark = false,
 }, ref) {
   const variantClassName =
     variant === "frameless"
       ? `foldder-node--frameless node--${material}${error ? " foldder-node--error" : ""}`
       : "";
   const nodeTypeClassName = `foldder-studio-node foldder-studio-node--${nodeType}`;
+  const showTileMark = studioTouched || exteriorTileMark;
   return (
     <div
       ref={ref}
-      className={[baseClassName, nodeTypeClassName, variantClassName, className, studioTouched ? "foldder-node--studio-touched" : ""]
+      className={[baseClassName, nodeTypeClassName, variantClassName, className, showTileMark ? "foldder-node--studio-touched" : ""]
         .filter(Boolean)
         .join(" ")}
       style={{
@@ -86,7 +90,7 @@ export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanv
         ...style,
       }}
     >
-      {studioTouched ? <FoldderStudioTouchedMark nodeType={nodeType} /> : null}
+      {showTileMark ? <FoldderStudioTouchedMark nodeType={nodeType} /> : null}
       <NodeLabel id={nodeId} label={label} defaultLabel={defaultLabel} />
 
       <div className={["node-header", headerClassName].filter(Boolean).join(" ")}>

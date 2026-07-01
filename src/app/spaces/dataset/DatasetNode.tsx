@@ -12,7 +12,14 @@ import {
 } from "@xyflow/react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
-import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import { touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { resolveFoldderNodeStudioBackground } from "../studio-node/foldder-studio-node-backgrounds";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
@@ -658,6 +665,21 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [consumersSignature],
   );
 
+  const hasDock = !isLibraryPreview && !exteriorInfo.isEmpty;
+  const showConnectedIcon = connectedConsumers.length > 0;
+  const listadosLabel = `${cardView.listCount} ${cardView.listCount === 1 ? "listado" : "listados"}`;
+  const constantesLabel = cardView.constantCount > 0 ? String(cardView.constantCount) : "—";
+  const scopeLabel = cardView.scope === "global" ? "Global" : "Local";
+  const statusLabel = versionStale
+    ? "Desactualizado"
+    : cardView.complete
+      ? "Completo"
+      : `${cardView.gapCount} vacío${cardView.gapCount === 1 ? "" : "s"}`;
+  const consumersLabel =
+    connectedConsumers.length > 0
+      ? connectedConsumers.map((c) => friendlyNodeName(c.type, c.label)).join(", ")
+      : "—";
+
   return (
     <StudioCanvasNodeShell
       nodeId={id}
@@ -667,58 +689,83 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
       defaultLabel="Dataset"
       title={cardView.name || "Dataset"}
       minWidth={200}
-      className="dataset-node"
+      className={`dataset-node${hasDock ? " dataset-node--has-content" : " dataset-node--empty"}${showConnectedIcon ? " dataset-node--connected" : ""}`}
       handles={DATASET_NODE_HANDLES}
       variant="frameless"
       material="media"
+      exteriorTileMark={showConnectedIcon}
+      style={
+        {
+          minWidth: 200,
+          minHeight: 416,
+          "--foldder-node-card-bg": "#37b7df",
+          "--foldder-frameless-glass-bg": "#37b7df",
+          "--foldder-frameless-accent": "#37b7df",
+        } as React.CSSProperties
+      }
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={420} isVisible={selected} />
-      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="dataset-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+      <div
+        className={`node-content foldder-frameless-main dataset-node-main nodrag nopan${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="dataset-node-preview foldder-node-content-preview-area">
           <img
             src={DATASET_EMPTY_BACKGROUND_SRC}
             alt=""
-            className="h-full w-full object-contain object-bottom"
+            className="dataset-node-bg"
             draggable={false}
           />
+
+          {exteriorInfo.isEmpty ? (
+            <div className="dataset-node-empty-hint" aria-hidden>
+              <span className="dataset-node-empty-hint__title">Tabla vacía</span>
+              <span className="dataset-node-empty-hint__body">
+                Abre Studio para definir columnas y filas.
+              </span>
+            </div>
+          ) : null}
+
+          {!hasDock && !isLibraryPreview ? (
+            <FoldderStudioModeCenterButton onClick={() => openStudio()} />
+          ) : null}
         </div>
 
-        <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
-          <div className="foldder-frameless-secondary-panel nodrag flex flex-col gap-1 text-[8px] text-white/80">
-            {exteriorInfo.isEmpty ? (
-              <>
-                <span className="font-black uppercase tracking-[0.15em] text-white/70">
-                  Tabla vacía
-                </span>
-                <span className="leading-snug text-white/55">
-                  Abre Studio para definir columnas y filas.
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="font-black uppercase tracking-[0.15em] text-white/90">
-                  {exteriorInfo.headline}
-                </span>
+        {hasDock ? (
+          <div className="dataset-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock>
+              <FoldderNodeContentDockMain>
+                {exteriorInfo.headline ? (
+                  <p className="foldder-node-content-dock-text">{exteriorInfo.headline}</p>
+                ) : null}
                 {exteriorInfo.listNamesLine ? (
-                  <span className="leading-snug text-white/75">{exteriorInfo.listNamesLine}</span>
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    {exteriorInfo.listNamesLine}
+                  </p>
                 ) : null}
                 {exteriorInfo.metaLine ? (
-                  <span className="text-[7px] leading-snug text-white/55">{exteriorInfo.metaLine}</span>
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    {exteriorInfo.metaLine}
+                  </p>
                 ) : null}
-                {connectedConsumers.length > 0 ? (
-                  <span className="text-[7px] leading-snug text-white/55">
-                    Conectado a{" "}
-                    {connectedConsumers
-                      .map((c) => friendlyNodeName(c.type, c.label))
-                      .join(", ")}
-                  </span>
-                ) : null}
-              </>
-            )}
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Listados" value={listadosLabel} />
+                  <FoldderNodeContentMetaRow label="Elementos" value={String(cardView.cardCount)} />
+                  <FoldderNodeContentMetaRow label="Constantes" value={constantesLabel} />
+                  <FoldderNodeContentMetaRow label="Alcance" value={scopeLabel} />
+                  <FoldderNodeContentMetaRow label="Salida" value={consumersLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="dataset-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Open Studio"
+                  onClick={() => openStudio()}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
           </div>
-          <div className="flex-1" />
-          <FoldderStudioModeCenterButton onClick={() => openStudio()} />
-        </div>
+        ) : null}
       </div>
 
       {chooserOpen && !isLibraryPreview ? (

@@ -115,16 +115,27 @@ import {
   FOLDDER_INTERNAL_CATEGORY_TO_ICON,
   type FoldderIconKey,
 } from './foldder-icons';
-import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
-import { SPACE_NODE_GHOST_STACK_PX } from "./space-node-drag";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderNodeHeaderTitle,
+  FoldderStudioModeCenterButton,
+  NodeLabel,
+} from "./foldder-node-ui";
 import { SpaceNodeTemplatePreview } from "./SpaceNodeTemplatePreview";
 import { listPopulateDesignerTemplatesFromSpacePortal } from "./populate/populate-space-template";
 import { reconcileSpacePortalNode } from "./space-media-list";
 import { useSpacesMapCanvas } from "./spaces-map-canvas-context";
 import { hasFoldderStudioTouched, hasGeminiVideoStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
-import { DescriberNodeAnalysisOverlay, DESCRIBER_ICON_REVEAL_MS } from "./describer-node-analysis-grid";
-import { DESCRIBER_ANALYSIS_CATEGORY_ORDER } from "@/lib/parse-describer-sections";
+import { DESCRIBER_ICON_REVEAL_MS } from "./describer-node-analysis-grid";
+import {
+  DESCRIBER_ANALYSIS_CATEGORY_ORDER,
+  parseDescriberAnalysisStatus,
+} from "@/lib/parse-describer-sections";
 import {
   loadImageDimensions,
   nodeFrameNeedsSync,
@@ -2980,10 +2991,18 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
 
   const hasOutput = Boolean(nodeData.value?.trim());
   const isActive = connectedEdges.length > 0 || hasOutput;
+  const outputCharCount = nodeData.value?.trim().length ?? 0;
+  const inputsLabel =
+    connectedEdges.length === 1 ? "1 conectada" : `${connectedEdges.length} conectadas`;
+  const statusLabel = hasOutput
+    ? "Concatenado"
+    : connectedEdges.length > 0
+      ? "Esperando prompts"
+      : "Sin entradas";
 
   return (
     <div
-      className={`custom-node tool-node concatenator-node foldder-node--frameless node--glass foldder-frameless-label-dark ${isActive ? "concatenator-node--active" : "concatenator-node--empty"}`}
+      className={`custom-node tool-node concatenator-node foldder-node--frameless node--glass foldder-frameless-label-dark ${isActive ? "concatenator-node--active concatenator-node--has-content" : "concatenator-node--empty"}`}
       style={{
         minWidth: 280,
         minHeight: 300,
@@ -3019,29 +3038,43 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
         </FoldderNodeHeaderTitle>
       </div>
 
-      <div className="node-content foldder-frameless-main concatenator-node-main nodrag nopan">
-        <img
-          src="/nodes/concatenator-bg.png"
-          alt=""
-          className="concatenator-node-bg"
-          draggable={false}
-        />
+      <div
+        className={`node-content foldder-frameless-main concatenator-node-main nodrag nopan${isActive ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="concatenator-node-preview foldder-node-content-preview-area">
+          <img
+            src="/nodes/concatenator-bg.png"
+            alt=""
+            className="concatenator-node-bg"
+            draggable={false}
+          />
+          {!isActive ? (
+            <div className="concatenator-node-empty-hint" aria-hidden>
+              Connect prompts on the left
+            </div>
+          ) : null}
+        </div>
         {isActive ? (
-          <div className="concatenator-node-output-dock">
-            {hasOutput ? (
-              <p className="concatenator-node-output-text">{nodeData.value}</p>
-            ) : (
-              <p className="concatenator-node-output-placeholder">Esperando prompts conectados…</p>
-            )}
-            <span className="concatenator-node-meta">
-              {connectedEdges.length} {connectedEdges.length === 1 ? "input" : "inputs"}
-            </span>
-          </div>
-        ) : (
-          <div className="concatenator-node-empty-hint" aria-hidden>
-            Connect prompts on the left
-          </div>
-        )}
+          <FoldderNodeContentDock>
+            <FoldderNodeContentDockMain>
+              {hasOutput ? (
+                <p className="foldder-node-content-dock-text">{nodeData.value}</p>
+              ) : (
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  Esperando prompts conectados…
+                </p>
+              )}
+              <FoldderNodeContentMeta>
+                <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                <FoldderNodeContentMetaRow
+                  label="Caracteres"
+                  value={hasOutput ? String(outputCharCount) : "—"}
+                />
+                <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+              </FoldderNodeContentMeta>
+            </FoldderNodeContentDockMain>
+          </FoldderNodeContentDock>
+        ) : null}
       </div>
 
       <div className="handle-wrapper handle-right">
@@ -3300,10 +3333,26 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
   const hasOutput = Boolean(enhancedText);
   const showEnhanceButton = connectedEdges.length > 0 || loading;
   const isActive = connectedEdges.length > 0 || hasInput || hasOutput || loading;
+  const inputsLabel =
+    connectedEdges.length === 1 ? "1 conectada" : `${connectedEdges.length} conectadas`;
+  const charCount = hasOutput
+    ? enhancedText.length
+    : hasInput
+      ? concatenated.trim().length
+      : 0;
+  const statusLabel = loading
+    ? "Mejorando"
+    : hasOutput
+      ? "Listo"
+      : hasInput
+        ? "Pendiente"
+        : connectedEdges.length > 0
+          ? "Esperando prompts"
+          : "Sin entradas";
 
   return (
     <div
-      className={`custom-node tool-node enhancer-node foldder-node--frameless node--glass foldder-frameless-label-dark ${isActive ? 'enhancer-node--active' : 'enhancer-node--empty'} ${showEnhanceButton ? 'enhancer-node--show-run' : ''} ${loading ? 'node-glow-running' : ''}`}
+      className={`custom-node tool-node enhancer-node foldder-node--frameless node--glass foldder-frameless-label-dark ${isActive ? "enhancer-node--active enhancer-node--has-content" : "enhancer-node--empty"} ${loading ? "node-glow-running" : ""}`}
       style={{
         minWidth: 280,
         minHeight: 300,
@@ -3340,61 +3389,89 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
         </FoldderNodeHeaderTitle>
       </div>
 
-      <div className="node-content foldder-frameless-main enhancer-node-main nodrag nopan">
-        <img
-          src="/nodes/enhancer-bg.png"
-          alt=""
-          className="enhancer-node-bg"
-          draggable={false}
-        />
+      <div
+        className={`node-content foldder-frameless-main enhancer-node-main nodrag nopan${isActive ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="enhancer-node-preview foldder-node-content-preview-area">
+          <img
+            src="/nodes/enhancer-bg.png"
+            alt=""
+            className="enhancer-node-bg"
+            draggable={false}
+          />
 
-        {loading ? (
-          <div className="enhancer-node-loading absolute inset-0 z-[8] flex flex-col items-center justify-center gap-2 bg-black/45 backdrop-blur-[2px]">
-            <Loader2 size={22} className="animate-spin text-white/90" />
-            <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">Enhancing</span>
-          </div>
-        ) : null}
+          {loading ? (
+            <div className="enhancer-node-loading absolute inset-0 z-[8] flex flex-col items-center justify-center gap-2 bg-black/45 backdrop-blur-[2px]">
+              <Loader2 size={22} className="animate-spin text-white/90" />
+              <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">Enhancing</span>
+            </div>
+          ) : null}
 
-        {(hasInput || hasOutput) ? (
-          <div className="enhancer-node-dock nodrag">
-            {hasOutput ? (
-              <div className="enhancer-node-output-row">
-                <p className="enhancer-node-output-text">{enhancedText}</p>
-                <button
-                  type="button"
-                  className="enhancer-copy-prompt-btn nodrag shrink-0"
-                  onClick={() => void onCopyEnhancedPrompt()}
-                  title={copiedPrompt ? 'Copied' : 'Copy prompt'}
-                  aria-label={copiedPrompt ? 'Copied' : 'Copy prompt'}
-                >
-                  <Copy size={15} strokeWidth={2} aria-hidden />
-                </button>
-              </div>
-            ) : hasInput ? (
-              <p className="enhancer-node-input-preview">{concatenated}</p>
+          {!isActive ? (
+            <div className="enhancer-node-empty-hint" aria-hidden>
+              Connect prompts on the left
+            </div>
+          ) : null}
+        </div>
+
+        {isActive ? (
+          <FoldderNodeContentDock>
+            <FoldderNodeContentDockMain>
+              {hasOutput ? (
+                <p className="foldder-node-content-dock-text">{enhancedText}</p>
+              ) : hasInput ? (
+                <p className="foldder-node-content-dock-text">{concatenated}</p>
+              ) : (
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  Esperando prompts conectados…
+                </p>
+              )}
+              <FoldderNodeContentMeta>
+                <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                <FoldderNodeContentMetaRow
+                  label="Caracteres"
+                  value={charCount > 0 ? String(charCount) : "—"}
+                />
+                <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+              </FoldderNodeContentMeta>
+            </FoldderNodeContentDockMain>
+            {hasOutput || showEnhanceButton ? (
+              <FoldderNodeContentDockActions className="enhancer-node-dock-actions">
+                {hasOutput ? (
+                  <button
+                    type="button"
+                    className="foldder-node-content-dock-btn foldder-node-content-dock-btn--icon nodrag"
+                    onClick={() => void onCopyEnhancedPrompt()}
+                    title={copiedPrompt ? "Copied" : "Copy prompt"}
+                    aria-label={copiedPrompt ? "Copied" : "Copy prompt"}
+                  >
+                    <Copy size={14} strokeWidth={2} aria-hidden />
+                    <span>{copiedPrompt ? "Copied" : "Copy"}</span>
+                  </button>
+                ) : null}
+                {showEnhanceButton ? (
+                  <button
+                    type="button"
+                    className="foldder-node-content-dock-btn nodrag"
+                    onClick={() => void handleEnhance()}
+                    disabled={loading || !hasInput}
+                    title="Enhance with OpenAI"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" aria-hidden />
+                        <span>Enhancing…</span>
+                      </>
+                    ) : (
+                      <span>Enhance</span>
+                    )}
+                  </button>
+                ) : null}
+              </FoldderNodeContentDockActions>
             ) : null}
-          </div>
+          </FoldderNodeContentDock>
         ) : null}
       </div>
-
-      {showEnhanceButton ? (
-        <div className="foldder-frameless-footer-action nodrag enhancer-node-footer">
-          <button
-            type="button"
-            className="execute-btn enhancer-run-button nodrag w-full"
-            onClick={handleEnhance}
-            disabled={loading || !hasInput}
-          >
-            {loading ? (
-              <>
-                <Loader2 size={12} className="animate-spin" /> Enhancing…
-              </>
-            ) : (
-              'Enhance with OpenAI'
-            )}
-          </button>
-        </div>
-      ) : null}
 
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Result</span>
@@ -3579,6 +3656,8 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
   );
 });
 
+const SPACE_ACCENT = "#8A5755";
+
 export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData & { 
     outputType?: string, 
@@ -3590,7 +3669,9 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     outputMode?: string,
     mediaListOutput?: { items?: Array<{ url?: string; mediaType?: string }> },
   };
-  const { setNodes } = useReactFlow();
+  const { setNodes, getNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameSyncKeyRef = useRef<string | null>(null);
   const spaceId = nodeData.spaceId;
 
   // Refresh node when returning from an inner space (so preview updates)
@@ -3648,12 +3729,6 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     }
   };
 
-  const renderInternalIcon = (cat: string) => {
-    const key = FOLDDER_INTERNAL_CATEGORY_TO_ICON[cat];
-    if (!key) return null;
-    return <NodeIcon key={cat} type="space" iconKey={key} size={14} />;
-  };
-
   const isMediaListOutput = nodeData.outputType === 'media_list';
   const mediaListItems = nodeData.mediaListOutput?.items ?? [];
   const previewThumb = mediaListItems.find((item) => item.url)?.url;
@@ -3674,129 +3749,189 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     (isMediaListOutput && previewThumb),
   );
 
+  const hasWiredNodes = useStore(
+    useCallback(
+      (s: ReactFlowState) => s.edges.some((e) => e.source === id || e.target === id),
+      [id],
+    ),
+  );
+
+  const hasDock = hasTemplateOutput || hasMediaPreview;
+  const showConnectedIcon = hasWiredNodes || hasDock;
+
+  const outputLabel =
+    nodeData.outputType === "media_list"
+      ? "Media List"
+      : nodeData.outputType
+        ? nodeData.outputType
+        : "—";
+
+  const templatesLabel = hasTemplateOutput ? String(templateOutputCount) : "—";
+  const mediaLabel =
+    isMediaListOutput && mediaListItems.length > 0
+      ? `${mediaListItems.length} item${mediaListItems.length === 1 ? "" : "s"}`
+      : hasMediaPreview
+        ? "1 preview"
+        : "—";
+
+  const blueprintLabel =
+    nodeData.internalCategories && nodeData.internalCategories.length > 0
+      ? nodeData.internalCategories.join(" · ")
+      : "Vacío";
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("space");
+    if (!baseFrame) return;
+    const syncKey = "space-base";
+    if (frameSyncKeyRef.current === syncKey) return;
+    const current = getNodes().find((n) => n.id === id);
+    if (current && !nodeFrameNeedsSync(current, baseFrame)) {
+      frameSyncKeyRef.current = syncKey;
+      return;
+    }
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+        return {
+          ...n,
+          width: baseFrame.width,
+          height: baseFrame.height,
+          measured: { width: baseFrame.width, height: baseFrame.height },
+          style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [getNodes, id, setNodes, updateNodeInternals]);
+
   return (
-    <div
-      className="space-node-root relative cursor-grab active:cursor-grabbing"
-      style={
-        hasTemplateOutput
-          ? { isolation: "isolate" }
-          : {
-              isolation: "isolate",
-              paddingRight: SPACE_NODE_GHOST_STACK_PX,
-              paddingBottom: SPACE_NODE_GHOST_STACK_PX,
-            }
-      }
-    >
-      <div className="relative z-[2] pointer-events-none">
-        {!hasTemplateOutput ? (
-          <>
-            <div
-              className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
-              aria-hidden
-              style={{
-                transform: "translate(20px, 20px) rotate(3deg)",
-                background: "#f5b91b",
-                zIndex: 0,
-              }}
-            />
-            <div
-              className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
-              aria-hidden
-              style={{
-                transform: "translate(13px, 13px) rotate(2deg)",
-                background: "#abbc14",
-                zIndex: 1,
-              }}
-            />
-            <div
-              className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
-              aria-hidden
-              style={{
-                transform: "translate(6px, 6px) rotate(1deg)",
-                background: "#71449f",
-                zIndex: 2,
-              }}
-            />
-          </>
+    <div className="space-node-root relative cursor-grab active:cursor-grabbing">
+      <div
+        className={`custom-node space-node foldder-node--frameless node--media group/node relative z-[4] ${hasDock ? "space-node--has-content" : "space-node--empty"}${showConnectedIcon ? " space-node--connected foldder-node--studio-touched" : ""}${hasMediaPreview ? " space-node--has-preview" : ""}`}
+        style={
+          {
+            minWidth: 200,
+            minHeight: 208,
+            "--foldder-node-card-bg": SPACE_ACCENT,
+            "--foldder-frameless-glass-bg": SPACE_ACCENT,
+            "--foldder-frameless-accent": SPACE_ACCENT,
+          } as React.CSSProperties
+        }
+      >
+        <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={520} isVisible={selected} />
+        {showConnectedIcon ? <FoldderStudioTouchedMark nodeType="space" /> : null}
+        <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
+
+        <div className="node-header pointer-events-none">
+          <NodeIcon type="space" selected={selected} size={16} />
+          <FoldderNodeHeaderTitle className="sr-only">Space</FoldderNodeHeaderTitle>
+        </div>
+
+        {nodeData.hasInput !== false ? (
+          <div className="handle-wrapper handle-left nodrag">
+            <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
+            <span className="handle-label">Data In</span>
+          </div>
         ) : null}
 
         <div
-          className={`custom-node space-node foldder-node--frameless node--media group/node pointer-events-none relative z-[4] ${hasTemplateOutput ? "space-node--template-grid space-node--connected" : hasMediaPreview ? "space-node--has-preview" : "space-node--empty"}`}
-          style={{ "--foldder-frameless-accent": "#8A5755" } as React.CSSProperties}
+          className={`node-content foldder-frameless-main space-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
         >
-          <FoldderNodeResizer minWidth={280} minHeight={180} isVisible={selected} />
-          <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
+          <div className="space-node-preview foldder-node-content-preview-area">
+            <div className="space-node-bg" aria-hidden />
 
-          <div className="node-header pointer-events-none">
-            <NodeIcon type="space" selected={selected} size={16} />
-            <FoldderNodeHeaderTitle className="sr-only">Space</FoldderNodeHeaderTitle>
-          </div>
+            {!hasDock ? (
+              <div className="space-node-empty-hint" aria-hidden>
+                <span className="space-node-empty-hint__body">
+                  Entra al Space para añadir nodos o conecta una salida interna.
+                </span>
+              </div>
+            ) : null}
 
-          {/* Input handle only if space has an internal InputNode */}
-          {nodeData.hasInput !== false && (
-            <div className="handle-wrapper handle-left pointer-events-auto">
-              <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
-              <span className="handle-label">Data In</span>
-            </div>
-          )}
-
-          <div className="node-content foldder-frameless-main pointer-events-none">
             {hasTemplateOutput ? (
-              <SpaceNodeTemplatePreview nodeId={id} nodeData={nodeData as Record<string, unknown>} />
-            ) : hasMediaPreview ? (
-              isMediaListOutput && previewThumb ? (
-                <>
-                  <img src={previewThumb} className="pointer-events-none absolute inset-0 h-full w-full object-cover" alt="Space collection" draggable={false} />
-                  {mediaListItems.length > 1 ? (
-                    <div className="pointer-events-none absolute top-3 right-3 z-[9] rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white">
-                      {mediaListItems.length} items
-                    </div>
-                  ) : null}
-                </>
-              ) : nodeData.outputType === "video" ? (
-                <video src={nodeData.value as string} className="pointer-events-none absolute inset-0 h-full w-full object-cover" muted playsInline draggable={false} />
-              ) : (
-                <img src={nodeData.value as string} className="pointer-events-none absolute inset-0 h-full w-full object-cover" alt="Space output" draggable={false} />
-              )
-            ) : null}
-
-            {!hasTemplateOutput ? (
-              <div className="pointer-events-auto absolute bottom-3 left-3.5 z-[9] flex items-center gap-2 bg-black/45 px-2 py-1 text-white nodrag">
-                <span className="text-[7px] font-black uppercase tracking-[0.18em] text-white/55">Blueprint</span>
-                <div className="flex items-center gap-2.5 [&_svg]:text-white">
-                  {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
-                    nodeData.internalCategories.map((cat) => renderInternalIcon(cat))
-                  ) : (
-                    <NodeIcon type="space" iconKey="layout" size={12} />
-                  )}
-                </div>
+              <div className="space-node-template-grid" aria-hidden={!hasTemplateOutput}>
+                <SpaceNodeTemplatePreview nodeId={id} nodeData={nodeData as Record<string, unknown>} />
               </div>
             ) : null}
 
-            <button
-              onClick={onEnterSpace}
-              className="execute-btn pointer-events-auto nodrag"
-              type="button"
-            >
-              <Maximize2 size={13} /> Enter Space
-            </button>
+            {hasMediaPreview ? (
+              <div className="space-node-media-preview">
+                {isMediaListOutput && previewThumb ? (
+                  <>
+                    <img src={previewThumb} className="h-full w-full object-cover" alt="Space collection" draggable={false} />
+                    {mediaListItems.length > 1 ? (
+                      <div className="pointer-events-none absolute top-3 right-3 z-[9] rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white">
+                        {mediaListItems.length} items
+                      </div>
+                    ) : null}
+                  </>
+                ) : nodeData.outputType === "video" ? (
+                  <video src={nodeData.value as string} className="h-full w-full object-cover" muted playsInline draggable={false} />
+                ) : (
+                  <img src={nodeData.value as string} className="h-full w-full object-cover" alt="Space output" draggable={false} />
+                )}
+              </div>
+            ) : null}
+
+            {!hasDock ? (
+              <FoldderStudioModeCenterButton label="Enter Space" onClick={onEnterSpace} />
+            ) : null}
           </div>
 
-          {/* Output handle only if space has an internal OutputNode */}
-          {nodeData.hasOutput !== false ? (
-            isMediaListOutput ? (
-              <div className="handle-wrapper handle-right pointer-events-auto" style={{ top: "50%" }}>
-                <span className="handle-label">Media List</span>
-                <FoldderDataHandle type="source" position={Position.Right} id="media_list" dataType="generic" />
-              </div>
-            ) : (
-              <div className="handle-wrapper handle-right pointer-events-auto">
-                <span className="handle-label">Result Out</span>
-                <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
-              </div>
-            )
+          {hasDock ? (
+            <div className="space-node-dock-wrap shrink-0">
+              <FoldderNodeContentDock>
+                <FoldderNodeContentDockMain>
+                  {hasTemplateOutput ? (
+                    <p className="foldder-node-content-dock-text">
+                      {templateOutputCount} template{templateOutputCount === 1 ? "" : "s"} · {blueprintLabel}
+                    </p>
+                  ) : (
+                    <p className="foldder-node-content-dock-text">
+                      Salida {outputLabel}
+                      {isMediaListOutput && mediaListItems.length > 0
+                        ? ` · ${mediaListItems.length} item${mediaListItems.length === 1 ? "" : "s"}`
+                        : ""}
+                    </p>
+                  )}
+                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                    {hasWiredNodes ? "Conectado al lienzo principal" : "Sin cables en el lienzo principal"}
+                  </p>
+                  <FoldderNodeContentMeta>
+                    <FoldderNodeContentMetaRow label="Templates" value={templatesLabel} />
+                    <FoldderNodeContentMetaRow label="Media" value={mediaLabel} />
+                    <FoldderNodeContentMetaRow label="Salida" value={outputLabel} />
+                    <FoldderNodeContentMetaRow label="Blueprint" value={blueprintLabel} />
+                    <FoldderNodeContentMetaRow
+                      label="Estado"
+                      value={hasWiredNodes ? "Conectado" : "Aislado"}
+                      variant="status"
+                    />
+                  </FoldderNodeContentMeta>
+                </FoldderNodeContentDockMain>
+                <FoldderNodeContentDockActions className="space-node-dock-actions">
+                  <FoldderStudioModeCenterButton variant="dock" label="Enter Space" onClick={onEnterSpace} />
+                </FoldderNodeContentDockActions>
+              </FoldderNodeContentDock>
+            </div>
           ) : null}
         </div>
+
+        {nodeData.hasOutput !== false ? (
+          isMediaListOutput ? (
+            <div className="handle-wrapper handle-right nodrag" style={{ top: "50%" }}>
+              <span className="handle-label">Media List</span>
+              <FoldderDataHandle type="source" position={Position.Right} id="media_list" dataType="generic" />
+            </div>
+          ) : (
+            <div className="handle-wrapper handle-right nodrag">
+              <span className="handle-label">Result Out</span>
+              <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
+            </div>
+          )
+        ) : null}
       </div>
     </div>
   );
@@ -3989,6 +4124,17 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
 
 
 const DESCRIBER_TOUCHED_MARK_SRC = "/nodes/describer-bg.png";
+const DESCRIBER_DOCK_MIN_CHROME = 104;
+
+function resolveDescriberDockChrome(
+  frameEl: HTMLElement | null,
+  previewEl: HTMLElement | null,
+  dockEl: HTMLElement | null,
+): number {
+  const measuredDock = dockEl?.offsetHeight ?? 0;
+  const measuredChrome = resolveNodeChromeHeight(frameEl, previewEl, DESCRIBER_DOCK_MIN_CHROME);
+  return Math.max(DESCRIBER_DOCK_MIN_CHROME, measuredDock, measuredChrome);
+}
 
 function describerPhotoAspectRatio(width?: number, height?: number): number | null {
   if (!Number.isFinite(width) || !Number.isFinite(height) || !width || !height) return null;
@@ -4003,6 +4149,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   const updateNodeInternals = useUpdateNodeInternals();
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const dockRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
   const [inputImageSize, setInputImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
   const currentNode = nodes.find((node) => node.id === id);
@@ -4091,11 +4238,36 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   const showMediaBackground = Boolean(
     hasImagePreview && (showInputPreview || showAnalyzingShell || showAnalyzedView || showIconReveal || showMediaError),
   );
+  const hasDock = mediaConnected;
   const hasSizedInputImage = Boolean(
     hasImagePreview && inputPreviewUrl && inputImageSize?.url === inputPreviewUrl,
   );
   const inputImageWidth = hasSizedInputImage ? inputImageSize?.width ?? null : null;
   const inputImageHeight = hasSizedInputImage ? inputImageSize?.height ?? null : null;
+  const parsedCategoryCount = useMemo(() => {
+    if (!visibleDescription) return 0;
+    const parsed = parseDescriberAnalysisStatus(visibleDescription);
+    return DESCRIBER_ANALYSIS_CATEGORY_ORDER.filter((category) => parsed[category]).length;
+  }, [visibleDescription]);
+  const resolutionLabel =
+    inputImageWidth != null && inputImageHeight != null
+      ? `${inputImageWidth}×${inputImageHeight} px`
+      : "—";
+  const outputCharCount = visibleDescription?.length ?? 0;
+  const categoriesLabel = isAnalyzing
+    ? `${revealedIconCount}/${DESCRIBER_ANALYSIS_CATEGORY_ORDER.length}`
+    : visibleDescription
+      ? `${parsedCategoryCount}/${DESCRIBER_ANALYSIS_CATEGORY_ORDER.length}`
+      : "—";
+  const statusLabel = showMediaError || errorMessage
+    ? "Error"
+    : isAnalyzing
+      ? "Analizando"
+      : visibleDescription
+        ? "Analizado"
+        : mediaConnected
+          ? "Pendiente"
+          : "Sin entrada";
 
   const clearIconRevealTimer = useCallback(() => {
     if (revealTimeoutRef.current) {
@@ -4207,10 +4379,12 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       return;
     }
 
-    const syncKey = `${inputPreviewUrl}:${inputImageWidth}x${inputImageHeight}`;
+    const chromeHeight = hasDock
+      ? resolveDescriberDockChrome(frameRef.current, previewFrameRef.current, dockRef.current)
+      : 0;
+    const syncKey = `${inputPreviewUrl}:${inputImageWidth}x${inputImageHeight}:chrome${chromeHeight}`;
     if (frameSyncKeyRef.current === syncKey) return;
-    const aspectRatio =
-      describerPhotoAspectRatio(inputImageWidth, inputImageHeight) ?? inputImageWidth / inputImageHeight;
+    const aspectRatio = inputImageWidth / inputImageHeight;
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentNode,
       contentWidth: inputImageWidth,
@@ -4219,26 +4393,36 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       maxWidth: 960,
       minHeight: 120,
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
-      chromeHeight: 0,
+      chromeHeight,
     });
     frameSyncKeyRef.current = syncKey;
     setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, aspectRatio));
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
     currentNode,
+    hasDock,
     hasSizedInputImage,
     id,
     inputImageHeight,
     inputImageWidth,
     inputPreviewUrl,
     mediaConnected,
+    visibleDescription,
+    isAnalyzing,
+    revealedIconCount,
     setNodes,
     updateNodeInternals,
   ]);
 
   useLayoutEffect(() => {
     syncDescriberNodeFrame();
-  }, [syncDescriberNodeFrame]);
+    if (!hasDock || !hasSizedInputImage) return;
+    const remeasureId = requestAnimationFrame(() => {
+      frameSyncKeyRef.current = null;
+      syncDescriberNodeFrame();
+    });
+    return () => cancelAnimationFrame(remeasureId);
+  }, [syncDescriberNodeFrame, hasDock, hasSizedInputImage]);
 
   const onRun = async () => {
     if (!inputEdge) {
@@ -4346,8 +4530,13 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   return (
     <div
       ref={frameRef}
-      className={`custom-node describer-node foldder-node--frameless describer-node--expanded ${showMediaBackground ? 'node--media' : 'node--glass'} ${showAnalyzedView ? 'describer-node--analyzed' : showMediaError ? 'describer-node--error-media' : showAnalyzingShell || showIconReveal ? 'describer-node--analyzing' : showInputPreview ? 'describer-node--preview' : ''} ${mediaConnected ? 'describer-node--has-media' : 'describer-node--no-media'} ${errorMessage && !showMediaError ? 'foldder-node--error' : ''} ${isAnalysisBusy ? 'node-glow-running' : ''}`}
-      style={{ minWidth: hasSizedInputImage ? 200 : 300, minHeight: hasSizedInputImage ? 0 : 330 }}
+      className={`custom-node describer-node foldder-node--frameless describer-node--expanded ${showMediaBackground ? "node--media" : "node--glass"} ${hasDock ? "describer-node--has-content" : "describer-node--no-media"} ${mediaConnected ? "describer-node--has-media" : ""} ${errorMessage && !showMediaError ? "foldder-node--error" : ""} ${isAnalysisBusy ? "node-glow-running" : ""}`}
+      style={{
+        minWidth: hasSizedInputImage ? 200 : 300,
+        minHeight: hasSizedInputImage ? 0 : 330,
+        "--foldder-node-card-bg": "#fc329f",
+        "--foldder-frameless-glass-bg": "#fc329f",
+      } as React.CSSProperties}
     >
       <FoldderNodeResizer
         minWidth={hasSizedInputImage ? 200 : 300}
@@ -4378,75 +4567,121 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       </div>
 
       <div
-        ref={previewFrameRef}
-        className={`node-content foldder-frameless-main describer-node-content ${showMediaBackground ? 'describer-node-content--media-preview' : ''}`}
+        className={`node-content foldder-frameless-main describer-node-content${hasDock ? " foldder-node-content-main--with-dock" : ""}${showMediaBackground ? " describer-node-content--media-preview" : ""}`}
       >
-        {errorMessage && !showMediaError ? (
-          <div className="foldder-frameless-error describer-node-error shrink-0 rounded-none border border-rose-500/30 bg-rose-500/10 p-2 text-[9px] leading-snug text-rose-200">
-            {errorMessage}
-          </div>
-        ) : null}
-
-        {showMediaBackground ? (
-          <img
-            src={inputPreviewUrl}
-            alt=""
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-            draggable={false}
-            decoding="async"
-            onError={() => {
-              void retryInputPreview();
-            }}
-          />
-        ) : null}
-
-        {showMediaError ? (
-          <div className="describer-node-error-banner absolute inset-0 z-[9] flex items-center justify-center px-6 nodrag nopan">
-            <p className="describer-node-error-text">{errorMessage}</p>
-          </div>
-        ) : null}
-
-        {showIconReveal ? (
-          <DescriberNodeAnalysisOverlay mode="progress" revealedCount={revealedIconCount} />
-        ) : null}
-
-        {showAnalyzedView && visibleDescription ? (
-          <>
-            <DescriberNodeAnalysisOverlay
-              mode="complete"
-              description={visibleDescription}
-              onCopy={() => void onCopyPrompt()}
-              copied={copiedPrompt}
+        <div ref={previewFrameRef} className="describer-node-preview foldder-node-content-preview-area">
+          {!showMediaBackground ? (
+            <img
+              src="/nodes/describer-bg.png"
+              alt=""
+              className="describer-node-bg"
+              draggable={false}
             />
-            <span className="sr-only">{visibleDescription}</span>
-          </>
-        ) : null}
+          ) : null}
 
-        {!showAnalyzedView && !showIconReveal ? (
-        <div className="describer-output-body min-h-0 flex-1">
+          {errorMessage && !showMediaError ? (
+            <div className="foldder-frameless-error describer-node-error absolute left-3 right-3 top-12 z-[10] shrink-0 rounded-none border border-rose-500/30 bg-rose-500/10 p-2 text-[9px] leading-snug text-rose-200">
+              {errorMessage}
+            </div>
+          ) : null}
+
+          {showMediaBackground ? (
+            <img
+              src={inputPreviewUrl}
+              alt=""
+              className="describer-node-media-preview pointer-events-none absolute inset-0 h-full w-full object-cover"
+              draggable={false}
+              decoding="async"
+              onError={() => {
+                void retryInputPreview();
+              }}
+            />
+          ) : null}
+
+          {showMediaError ? (
+            <div className="describer-node-error-banner absolute inset-0 z-[9] flex items-center justify-center px-6 nodrag nopan">
+              <p className="describer-node-error-text">{errorMessage}</p>
+            </div>
+          ) : null}
+
+          {isAnalyzing ? (
+            <div className="describer-node-loading absolute inset-0 z-[8] flex flex-col items-center justify-center gap-2 bg-black/45 backdrop-blur-[2px]">
+              <Loader2 size={22} className="animate-spin text-white/90" />
+              <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">Analyzing</span>
+            </div>
+          ) : null}
+
           {!mediaConnected ? (
             <div className="describer-node-empty" aria-label="No image connected">
               <div className="describer-node-empty-icon">
                 <ImageIcon className="describer-node-empty-icon-glyph" size={26} strokeWidth={1.5} aria-hidden />
               </div>
+              <p className="describer-node-empty-hint" aria-hidden>
+                Connect image on the left
+              </p>
             </div>
           ) : null}
         </div>
+
+        {hasDock ? (
+          <div ref={dockRef} className="describer-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock>
+            <FoldderNodeContentDockMain>
+              {visibleDescription ? (
+                <p className="foldder-node-content-dock-text">{visibleDescription}</p>
+              ) : showMediaError && errorMessage ? (
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {errorMessage}
+                </p>
+              ) : isAnalyzing ? (
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  Analizando imagen…
+                </p>
+              ) : null}
+              <FoldderNodeContentMeta>
+                <FoldderNodeContentMetaRow label="Resolución" value={resolutionLabel} />
+                <FoldderNodeContentMetaRow
+                  label="Caracteres"
+                  value={outputCharCount > 0 ? String(outputCharCount) : "—"}
+                />
+                <FoldderNodeContentMetaRow label="Categorías" value={categoriesLabel} />
+                <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+              </FoldderNodeContentMeta>
+            </FoldderNodeContentDockMain>
+            <FoldderNodeContentDockActions className="describer-node-dock-actions">
+              {visibleDescription ? (
+                <button
+                  type="button"
+                  className="foldder-node-content-dock-btn nodrag"
+                  onClick={() => void onCopyPrompt()}
+                  title={copiedPrompt ? "Copied" : "Copy prompt"}
+                  aria-label={copiedPrompt ? "Copied" : "Copy prompt"}
+                >
+                  <Copy size={14} strokeWidth={2} aria-hidden />
+                  <span>{copiedPrompt ? "Copied" : "Copy"}</span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="foldder-node-content-dock-btn nodrag"
+                onClick={() => void onRun()}
+                disabled={isAnalysisBusy}
+                title={visibleDescription ? "Re-analyze image" : "Generate description"}
+              >
+                {isAnalysisBusy ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" aria-hidden />
+                    <span>Analyzing…</span>
+                  </>
+                ) : (
+                  <span>{visibleDescription ? "Re-analyze" : "Generate"}</span>
+                )}
+              </button>
+            </FoldderNodeContentDockActions>
+          </FoldderNodeContentDock>
+          </div>
         ) : null}
       </div>
-
-      {mediaConnected ? (
-      <div className="foldder-frameless-footer-action nodrag describer-node-footer">
-        <button
-          type="button"
-          className="execute-btn describer-generate-button nodrag"
-          onClick={onRun}
-          disabled={isAnalysisBusy}
-        >
-          {isAnalysisBusy ? 'Analyzing...' : visibleDescription ? 'Re-analyze' : 'Generate description'}
-        </button>
-      </div>
-      ) : null}
 
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Description (Prompt)</span>
@@ -5864,6 +6099,17 @@ const PAINT_COLORS = [
 const PAINT_CANVAS_SIZE = 1024;
 const PAINT_BRUSH_MIN = 1;
 const PAINT_BRUSH_MAX = 80;
+const PAINTER_DOCK_MIN_CHROME = 104;
+
+function resolvePainterDockChrome(
+  frameEl: HTMLElement | null,
+  previewEl: HTMLElement | null,
+  dockEl: HTMLElement | null,
+): number {
+  const measuredDock = dockEl?.offsetHeight ?? 0;
+  const measuredChrome = resolveNodeChromeHeight(frameEl, previewEl, PAINTER_DOCK_MIN_CHROME);
+  return Math.max(PAINTER_DOCK_MIN_CHROME, measuredDock, measuredChrome);
+}
 
 export const PainterNode = memo(function PainterNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
@@ -5881,6 +6127,9 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const cursorDotRef = useRef<HTMLDivElement>(null);   // ref-based cursor, no setState
   const painterStudioRootRef = useRef<HTMLDivElement>(null);
+  const painterFrameRef = useRef<HTMLDivElement>(null);
+  const painterPreviewRef = useRef<HTMLDivElement>(null);
+  const painterDockRef = useRef<HTMLDivElement>(null);
   const painterFrameSyncKeyRef = useRef<string | null>(null);
   const isDrawingRef = useRef(false);
   const modeRef      = useRef<'brush'|'eraser'>('brush');
@@ -5936,29 +6185,52 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
   const bgHex = bgColor === 'white' ? '#ffffff' : '#111111';
   const color = PAINT_COLORS.find(c => c.id === colorId)?.hex || '#111111';
   const hasDrawingPreview = typeof data.value === 'string' && Boolean(data.value);
+  const hasDock = hasDrawingPreview;
   const PAINTER_TOUCHED_MARK_SRC = "/nodes/painter-mark.png";
+  const colorLabel = PAINT_COLORS.find((c) => c.id === colorId)?.label ?? "—";
+  const bgLabel = bgColor === "white" ? "Blanco" : "Negro";
+  const modeLabel = mode === "eraser" ? "Goma" : "Pincel";
+  const statusLabel = hasDrawingPreview ? "Listo" : "Vacío";
 
   useLayoutEffect(() => {
     if (!hasDrawingPreview) {
       painterFrameSyncKeyRef.current = null;
       return;
     }
-    const syncKey = "1:1:drawing";
-    if (painterFrameSyncKeyRef.current === syncKey) return;
-    const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentFrameNode,
-      contentWidth: PAINT_CANVAS_SIZE,
-      contentHeight: PAINT_CANVAS_SIZE,
-      minWidth: 200,
-      maxWidth: 960,
-      minHeight: 200,
-      maxHeight: STUDIO_NODE_MAX_HEIGHT,
-      chromeHeight: 0,
+    const remeasureId = requestAnimationFrame(() => {
+      const chromeHeight = resolvePainterDockChrome(
+        painterFrameRef.current,
+        painterPreviewRef.current,
+        painterDockRef.current,
+      );
+      const syncKey = `1:1:drawing:chrome${chromeHeight}`;
+      if (painterFrameSyncKeyRef.current === syncKey) return;
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: PAINT_CANVAS_SIZE,
+        contentHeight: PAINT_CANVAS_SIZE,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 200,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      painterFrameSyncKeyRef.current = syncKey;
+      setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, 1));
+      requestAnimationFrame(() => updateNodeInternals(id));
     });
-    painterFrameSyncKeyRef.current = syncKey;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, 1));
-    requestAnimationFrame(() => updateNodeInternals(id));
-  }, [currentFrameNode, hasDrawingPreview, id, setNodes, updateNodeInternals]);
+    return () => cancelAnimationFrame(remeasureId);
+  }, [
+    bgColor,
+    brushSize,
+    colorId,
+    currentFrameNode,
+    hasDrawingPreview,
+    id,
+    mode,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   const openPainterStudio = useCallback(() => {
     setFullscreen(true);
@@ -6208,7 +6480,8 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
 
   return (
     <div
-      className={`custom-node tool-node painter-node foldder-node--frameless ${hasDrawingPreview ? 'node--media painter-node--has-preview' : 'node--glass painter-node--empty foldder-frameless-label-dark'}`}
+      ref={painterFrameRef}
+      className={`custom-node tool-node painter-node foldder-node--frameless group/node ${hasDrawingPreview ? "node--media painter-node--has-preview" : "node--glass painter-node--empty foldder-frameless-label-dark"}${hasDock ? " painter-node--has-content" : ""}${hasDrawingPreview ? " foldder-node--studio-touched" : ""}`}
       style={{
         padding: 0,
         overflow: 'visible',
@@ -6237,33 +6510,66 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
             {canvasJSX}
           </div>
 
-          <div className="node-content foldder-frameless-main painter-node-main">
-            {!hasDrawingPreview ? (
-              <img
-                src="/nodes/painter-bg.png"
-                alt=""
-                className="painter-node-bg"
-                draggable={false}
-              />
-            ) : null}
-
-            {hasDrawingPreview ? (
-              <div className="painter-node-preview">
-                <div
-                  className="painter-node-preview-frame max-h-full max-w-full min-h-0 min-w-0"
-                  style={{ aspectRatio: "1 / 1" }}
-                >
+          <div
+            className={`node-content foldder-frameless-main painter-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+          >
+            <div ref={painterPreviewRef} className="painter-node-preview-area foldder-node-content-preview-area">
+              {!hasDrawingPreview ? (
+                <>
                   <img
-                    src={data.value as string}
-                    className="painter-node-preview-img block h-full w-full object-contain"
-                    alt="Drawing preview"
+                    src="/nodes/painter-bg.png"
+                    alt=""
+                    className="painter-node-bg"
                     draggable={false}
                   />
+                  <div className="painter-node-empty-hint" aria-hidden>
+                    Pulsa Paint para abrir el lienzo.
+                  </div>
+                  <FoldderStudioModeCenterButton label="Paint" title="Paint" onClick={openPainterStudio} />
+                </>
+              ) : (
+                <div className="painter-node-preview">
+                  <div
+                    className="painter-node-preview-frame max-h-full max-w-full min-h-0 min-w-0"
+                    style={{ aspectRatio: "1 / 1" }}
+                  >
+                    <img
+                      src={data.value as string}
+                      className="painter-node-preview-img block h-full w-full object-contain"
+                      alt="Drawing preview"
+                      draggable={false}
+                    />
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {hasDock ? (
+              <div ref={painterDockRef} className="painter-node-dock-wrap shrink-0">
+                <FoldderNodeContentDock>
+                  <FoldderNodeContentDockMain>
+                    <p className="foldder-node-content-dock-text">
+                      Lienzo {PAINT_CANVAS_SIZE}×{PAINT_CANVAS_SIZE} · Fondo {bgLabel}
+                    </p>
+                    <FoldderNodeContentMeta>
+                      <FoldderNodeContentMetaRow label="Fondo" value={bgLabel} />
+                      <FoldderNodeContentMetaRow label="Pincel" value={`${brushSize}px`} />
+                      <FoldderNodeContentMetaRow label="Color" value={colorLabel} />
+                      <FoldderNodeContentMetaRow label="Modo" value={modeLabel} />
+                      <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                    </FoldderNodeContentMeta>
+                  </FoldderNodeContentDockMain>
+                  <FoldderNodeContentDockActions className="painter-node-dock-actions">
+                    <FoldderStudioModeCenterButton
+                      variant="dock"
+                      label="Paint"
+                      title="Abrir Paint"
+                      onClick={openPainterStudio}
+                    />
+                  </FoldderNodeContentDockActions>
+                </FoldderNodeContentDock>
               </div>
             ) : null}
-
-            <FoldderStudioModeCenterButton label="Paint" title="Paint" onClick={openPainterStudio} />
           </div>
         </>
       )}
@@ -6360,6 +6666,23 @@ async function resolveImageUrlForCanvasCrop(src: string): Promise<string> {
 
 // --- CROP NODE ---
 const CROP_TOUCHED_MARK_SRC = "/nodes/crop-mark.png";
+const CROP_DOCK_MIN_CHROME = 104;
+const CROP_ASPECT_LABELS: Record<string, string> = {
+  free: "Libre",
+  "1:1": "1:1 Square",
+  "16:9": "16:9 Wide",
+  "9:16": "9:16 Story",
+};
+
+function resolveCropDockChrome(
+  frameEl: HTMLElement | null,
+  previewEl: HTMLElement | null,
+  dockEl: HTMLElement | null,
+): number {
+  const measuredDock = dockEl?.offsetHeight ?? 0;
+  const measuredChrome = resolveNodeChromeHeight(frameEl, previewEl, CROP_DOCK_MIN_CHROME);
+  return Math.max(CROP_DOCK_MIN_CHROME, measuredDock, measuredChrome);
+}
 
 export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
@@ -6379,7 +6702,9 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
   
   const previewRef = useRef<HTMLImageElement>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewAreaRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
   const cropFrameSyncKeyRef = useRef<string | null>(null);
   const [sourceImageSize, setSourceImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
   
@@ -6423,6 +6748,14 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     
   const sourceImage = typeof rawValue === 'string' ? rawValue : undefined;
   const hasSource = Boolean(sourceImage);
+  const hasDock = hasSource;
+  const aspectLabel = CROP_ASPECT_LABELS[aspectRatio] ?? aspectRatio;
+  const sourceResolutionLabel =
+    sourceImageSize && sourceImageSize.url === sourceImage
+      ? `${sourceImageSize.width}×${sourceImageSize.height}`
+      : "—";
+  const cropRegionLabel = `${Math.round(crop.x)}%, ${Math.round(crop.y)}% · ${Math.round(crop.w)}×${Math.round(crop.h)}%`;
+  const outputLabel = nodeData.value ? "Recortado" : "Pendiente";
 
   useEffect(() => {
     if (!sourceImage) {
@@ -6444,23 +6777,34 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
 
   useLayoutEffect(() => {
     if (!sourceImage || sourceImageSize?.url !== sourceImage) return;
-    const syncKey = `${sourceImage}:${sourceImageSize.width}x${sourceImageSize.height}`;
-    if (cropFrameSyncKeyRef.current === syncKey) return;
-    const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentFrameNode,
-      contentWidth: sourceImageSize.width,
-      contentHeight: sourceImageSize.height,
-      minWidth: 200,
-      maxWidth: 960,
-      minHeight: 120,
-      maxHeight: STUDIO_NODE_MAX_HEIGHT,
-      chromeHeight: resolveNodeChromeHeight(frameRef.current, containerRef.current),
+    const remeasureId = requestAnimationFrame(() => {
+      const chromeHeight = resolveCropDockChrome(
+        frameRef.current,
+        previewAreaRef.current,
+        dockRef.current,
+      );
+      const syncKey = `${sourceImage}:${sourceImageSize.width}x${sourceImageSize.height}:chrome${chromeHeight}`;
+      if (cropFrameSyncKeyRef.current === syncKey) return;
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentFrameNode,
+        contentWidth: sourceImageSize.width,
+        contentHeight: sourceImageSize.height,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 120,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      cropFrameSyncKeyRef.current = syncKey;
+      setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, sourceImageSize.width / sourceImageSize.height));
+      requestAnimationFrame(() => updateNodeInternals(id));
     });
-    cropFrameSyncKeyRef.current = syncKey;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, sourceImageSize.width / sourceImageSize.height));
-    requestAnimationFrame(() => updateNodeInternals(id));
+    return () => cancelAnimationFrame(remeasureId);
   }, [
+    aspectRatio,
     currentFrameNode,
+    crop.h,
+    crop.w,
     id,
     setNodes,
     sourceImage,
@@ -6477,7 +6821,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     setAspectRatio(nextAspectRatio);
     updateData('aspectRatio', nextAspectRatio);
   }, [updateData]);
-  
+
   const commitCropRect = useCallback(
     (rect: CropRect, rectAspectRatio = aspectRatioRef.current) => {
       if (!sourceImage || !containerRef.current) return;
@@ -6580,6 +6924,22 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     [sourceImage, id, setNodes],
   );
 
+  const onAspectRatioChange = useCallback(
+    (nextAspectRatio: string) => {
+      setCropAspectMode(nextAspectRatio);
+      const targetRatio = cropAspectRatioValue(nextAspectRatio);
+      const bounds = containerRef.current?.getBoundingClientRect();
+      let next = clampCropRect({ ...latestCropRef.current });
+      if (targetRatio && bounds) {
+        next = fitCropRectToVisualAspect(next, targetRatio, bounds);
+      }
+      latestCropRef.current = next;
+      setCrop(next);
+      window.setTimeout(() => commitCropRect(next, nextAspectRatio), 0);
+    },
+    [commitCropRect, setCropAspectMode],
+  );
+
   useEffect(() => {
     if (!sourceImage) return;
     const t = window.setTimeout(() => {
@@ -6670,7 +7030,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
   return (
     <div
       ref={frameRef}
-      className={`custom-node crop-node foldder-node--frameless ${hasSource ? 'node--media crop-node--has-source' : 'node--glass crop-node--empty foldder-frameless-label-dark'}`}
+      className={`custom-node crop-node foldder-node--frameless group/node ${hasSource ? "node--media crop-node--has-source" : "node--glass crop-node--empty foldder-frameless-label-dark"}${hasDock ? " crop-node--has-content" : ""}${hasSource ? " foldder-node--studio-touched" : ""}`}
       style={{
         padding: 0,
         overflow: 'visible',
@@ -6697,87 +7057,104 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
         <span className="handle-label text-emerald-500">Source Image</span>
       </div>
 
-      <div className="node-content foldder-frameless-main crop-node-main">
+      <div
+        className={`node-content foldder-frameless-main crop-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
         {!hasSource ? (
-          <img
-            src="/nodes/crop-bg.png"
-            alt=""
-            className="crop-node-bg"
-            draggable={false}
-          />
+          <>
+            <img
+              src="/nodes/crop-bg.png"
+              alt=""
+              className="crop-node-bg"
+              draggable={false}
+            />
+            <div className="crop-node-empty-hint" aria-hidden>
+              Conecta una imagen en la entrada izquierda.
+            </div>
+          </>
         ) : (
           <>
-            <div
-              ref={containerRef}
-              className="crop-node-crop-area relative flex min-h-0 flex-1 items-center justify-center overflow-hidden touch-none select-none nodrag nopan"
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
-            >
-              <img
-                ref={previewRef}
-                src={sourceImage}
-                alt="Source"
-                className="crop-node-source-img pointer-events-none block h-full w-full min-h-0 object-contain"
-              />
-
-              <div className="pointer-events-none absolute inset-0 bg-black/40" />
-
+            <div ref={previewAreaRef} className="crop-node-preview-area foldder-node-content-preview-area">
               <div
-                className="group/crop absolute cursor-move border border-amber-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]"
-                style={{
-                  left: `${crop.x}%`,
-                  top: `${crop.y}%`,
-                  width: `${crop.w}%`,
-                  height: `${crop.h}%`,
-                  pointerEvents: draggingAction !== null ? 'none' : 'auto',
-                }}
-                onPointerDown={(e) => handlePointerDown(e, 'move')}
+                ref={containerRef}
+                className="crop-node-crop-area relative flex min-h-0 flex-1 items-center justify-center overflow-hidden touch-none select-none nodrag nopan"
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
               >
-                <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-0 transition-opacity group-hover/crop:opacity-50">
-                  <div className="border-b border-r border-amber-400/40" />
-                  <div className="border-b border-r border-amber-400/40" />
-                  <div className="border-b border-amber-400/40" />
-                  <div className="border-b border-r border-amber-400/40" />
-                  <div className="border-b border-r border-amber-400/40" />
-                  <div className="border-b border-amber-400/40" />
-                  <div className="border-r border-amber-400/40" />
-                  <div className="border-r border-amber-400/40" />
-                  <div />
-                </div>
+                <img
+                  ref={previewRef}
+                  src={sourceImage}
+                  alt="Source"
+                  className="crop-node-source-img pointer-events-none block h-full w-full min-h-0 object-contain"
+                />
 
-                <div className="pointer-events-auto absolute -left-1.5 -top-1.5 h-3 w-3 cursor-nwse-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'nw')} />
-                <div className="pointer-events-auto absolute -right-1.5 -top-1.5 h-3 w-3 cursor-nesw-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'ne')} />
-                <div className="pointer-events-auto absolute -bottom-1.5 -left-1.5 h-3 w-3 cursor-nesw-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'sw')} />
-                <div className="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-nwse-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'se')} />
+                <div className="pointer-events-none absolute inset-0 bg-black/40" />
+
+                <div
+                  className="group/crop absolute cursor-move border border-amber-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]"
+                  style={{
+                    left: `${crop.x}%`,
+                    top: `${crop.y}%`,
+                    width: `${crop.w}%`,
+                    height: `${crop.h}%`,
+                    pointerEvents: draggingAction !== null ? 'none' : 'auto',
+                  }}
+                  onPointerDown={(e) => handlePointerDown(e, 'move')}
+                >
+                  <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-0 transition-opacity group-hover/crop:opacity-50">
+                    <div className="border-b border-r border-amber-400/40" />
+                    <div className="border-b border-r border-amber-400/40" />
+                    <div className="border-b border-amber-400/40" />
+                    <div className="border-b border-r border-amber-400/40" />
+                    <div className="border-b border-r border-amber-400/40" />
+                    <div className="border-b border-amber-400/40" />
+                    <div className="border-r border-amber-400/40" />
+                    <div className="border-r border-amber-400/40" />
+                    <div />
+                  </div>
+
+                  <div className="pointer-events-auto absolute -left-1.5 -top-1.5 h-3 w-3 cursor-nwse-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'nw')} />
+                  <div className="pointer-events-auto absolute -right-1.5 -top-1.5 h-3 w-3 cursor-nesw-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'ne')} />
+                  <div className="pointer-events-auto absolute -bottom-1.5 -left-1.5 h-3 w-3 cursor-nesw-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'sw')} />
+                  <div className="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-nwse-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'se')} />
+                </div>
               </div>
             </div>
 
-            <div className="crop-node-aspect-dock nodrag">
-              <select
-                value={aspectRatio}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setCropAspectMode(v);
-                  const targetRatio = cropAspectRatioValue(v);
-                  const bounds = containerRef.current?.getBoundingClientRect();
-                  let next = clampCropRect({ ...latestCropRef.current });
-                  if (targetRatio && bounds) {
-                    next = fitCropRectToVisualAspect(next, targetRatio, bounds);
-                  }
-                  latestCropRef.current = next;
-                  setCrop(next);
-                  window.setTimeout(() => commitCropRect(next, v), 0);
-                }}
-                className="crop-node-aspect-select nodrag"
-                aria-label="Aspect ratio"
-              >
-                <option value="free">Freeform</option>
-                <option value="1:1">1:1 Square</option>
-                <option value="16:9">16:9 Wide</option>
-                <option value="9:16">9:16 Story</option>
-              </select>
-            </div>
+            {hasDock ? (
+              <div ref={dockRef} className="crop-node-dock-wrap shrink-0">
+                <FoldderNodeContentDock>
+                  <FoldderNodeContentDockMain>
+                    <p className="foldder-node-content-dock-text">
+                      Proporción {aspectLabel} · región {cropRegionLabel}
+                    </p>
+                    <FoldderNodeContentMeta>
+                      <FoldderNodeContentMetaRow label="Origen" value={sourceResolutionLabel} />
+                      <FoldderNodeContentMetaRow label="Proporción" value={aspectLabel} />
+                      <FoldderNodeContentMetaRow label="Recorte" value={cropRegionLabel} />
+                      <FoldderNodeContentMetaRow label="Salida" value={outputLabel} variant="status" />
+                    </FoldderNodeContentMeta>
+                  </FoldderNodeContentDockMain>
+                  <FoldderNodeContentDockActions className="crop-node-dock-actions">
+                    <label className="crop-node-aspect-field nodrag">
+                      <span className="crop-node-aspect-field__label">Proporción</span>
+                      <select
+                        value={aspectRatio}
+                        onChange={(e) => onAspectRatioChange(e.target.value)}
+                        className="crop-node-aspect-select nodrag"
+                        aria-label="Proporción de recorte"
+                      >
+                        <option value="free">Freeform</option>
+                        <option value="1:1">1:1 Square</option>
+                        <option value="16:9">16:9 Wide</option>
+                        <option value="9:16">9:16 Story</option>
+                      </select>
+                    </label>
+                  </FoldderNodeContentDockActions>
+                </FoldderNodeContentDock>
+              </div>
+            ) : null}
           </>
         )}
       </div>

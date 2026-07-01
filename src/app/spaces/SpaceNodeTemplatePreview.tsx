@@ -38,14 +38,5 @@ export function SpaceNodeTemplatePreview({
 
   if (sources.length === 0) return null;
 
-  return (
-    <>
-      <FoldderTemplatePreviewGrid sources={sources} />
-      <div className="space-node-template-summary nodrag pointer-events-none">
-        <p className="space-node-template-summary__text">
-          {sources.length} template{sources.length === 1 ? "" : "s"}
-        </p>
-      </div>
-    </>
-  );
+  return <FoldderTemplatePreviewGrid sources={sources} />;
 }
