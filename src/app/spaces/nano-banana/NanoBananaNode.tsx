@@ -2778,8 +2778,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [nodeData, outputImage, persistedGenerationHistory]);
   const hasHistoryStrip = hasHeroPreview && previousVersions.length > 0;
   const gridCountClass = `nano-banana-node-frame-grid--count-${Math.min(Math.max(connectedRefImages.length, 1), 4)}`;
-  const hasConnectedRef = connectedRefImages.length > 0;
-  const showDockGenerar = hasDock && promptConnected && !hasConnectedRef && !hasGeneratedOutput;
+  const showDockGenerate = hasDock && promptConnected;
 
   const nanoBananaHandles = useMemo((): StudioCanvasNodeHandleSpec[] => {
     const handles: StudioCanvasNodeHandleSpec[] = [
@@ -3144,15 +3143,21 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               <FoldderNodeContentDockActions className="nano-banana-node-dock-actions">
                 <FoldderStudioModeCenterButton
                   variant="dock"
-                  label={showDockGenerar ? "Generate" : "Abrir Studio"}
-                  title={
-                    showDockGenerar
-                      ? "Generar imagen con el prompt conectado"
-                      : "Abrir Image Creation Studio"
-                  }
-                  disabled={showDockGenerar ? isActivelyGenerating || !effectivePromptValue : false}
-                  onClick={showDockGenerar ? () => { void onRun(); } : openNanoStudioNormal}
+                  label="Open Studio"
+                  title="Abrir Image Creation Studio"
+                  onClick={openNanoStudioNormal}
                 />
+                {showDockGenerate ? (
+                  <FoldderStudioModeCenterButton
+                    variant="dock"
+                    label="Generate"
+                    title="Generar imagen con el prompt conectado"
+                    disabled={isActivelyGenerating || !effectivePromptValue}
+                    onClick={() => {
+                      void onRun();
+                    }}
+                  />
+                ) : null}
               </FoldderNodeContentDockActions>
             </FoldderNodeContentDock>
           </div>

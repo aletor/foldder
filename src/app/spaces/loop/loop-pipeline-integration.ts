@@ -25,7 +25,13 @@ import {
 } from "./pipeline/pipeline-bindings";
 import { defaultExecutorRegistry } from "./pipeline/executor-registry";
 import { registerDefaultLoopExecutors } from "./pipeline/register-default-executors";
-import type { ExecutorNode, NodeOutput, PortInputValue } from "./pipeline/node-executor";
+import {
+  NUMBERED_PROMPT_NODE_TYPES,
+  PROMPT_SLOT_HANDLES,
+  type ExecutorNode,
+  type NodeOutput,
+  type PortInputValue,
+} from "./pipeline/node-executor";
 import { LOOP_PIPELINE_EXECUTABLE_TYPES } from "./pipeline/loop-pipeline-sink-types";
 import { expandSpacePortalTemplateForPipeline } from "../space-portal-loop-link";
 import {
@@ -97,6 +103,7 @@ export function createResolveFixedExternal(
   edges: Edge[],
 ): (edge: PipelineEdge) => PortInputValue | undefined {
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
+  const numberedPromptSlots = new Set<string>(PROMPT_SLOT_HANDLES);
 
   return (edge: PipelineEdge): PortInputValue | undefined => {
     const targetHandle = edge.targetHandle ?? "";
@@ -104,8 +111,10 @@ export function createResolveFixedExternal(
     const targetType = targetNode?.type ?? "";
     const inputDef = NODE_REGISTRY[targetType]?.inputs?.find((i) => i.id === targetHandle);
     const kind = inputDef?.type ? creativeInputKindFromHandleType(inputDef.type) : null;
+    const isNumberedPromptSlot =
+      NUMBERED_PROMPT_NODE_TYPES.has(targetType) && numberedPromptSlots.has(targetHandle);
 
-    if (kind === "text" || targetHandle === "prompt") {
+    if (kind === "text" || targetHandle === "prompt" || isNumberedPromptSlot) {
       const text = resolvePromptValueFromEdgeSourceMap(edge, nodesById)?.trim();
       return text ? { kind: "text", text } : undefined;
     }

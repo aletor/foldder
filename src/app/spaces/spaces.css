@@ -9497,6 +9497,15 @@
 
 .custom-node.nano-banana-node .nano-banana-node-dock-actions {
   align-self: stretch;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 96px;
+}
+
+.custom-node.nano-banana-node .nano-banana-node-dock-actions .foldder-node-content-dock-btn {
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 40px;
 }
 
 .custom-node.nano-banana-node .nano-banana-node-dock-provider-select {
