@@ -2,15 +2,33 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, useReactFlow, useStore, useNodes, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import {
+  NodeResizer,
+  useReactFlow,
+  useStore,
+  useNodes,
+  useUpdateNodeInternals,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowState,
+} from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { Presentation, Plus } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import type { DesignerNodeData, DesignerPageState } from "../designer/DesignerNode";
+import { DesignerNodeDockSlideFormats } from "../designer/designer-node-dock-slide-formats";
 import { DesignerPagePreview } from "../designer/DesignerPagePreview";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "../canvas-grid-layout";
 import { getPageDimensions, DEFAULT_DESIGNER_PAGE_FORMAT } from "../indesign/page-formats";
+import {
+  nodeFrameNeedsSync,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+  resolveNodeFrameWidth,
+} from "../studio-node-aspect";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import type { PresenterImageVideoPlacement } from "./presenter-image-video-types";
 import { firstPlayableIndex } from "./presenter-skip-slide";
 import type { SlideTransitionId } from "./slide-transition-types";
@@ -23,15 +41,33 @@ import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import {
   StudioCanvasNodeShell,
-  StudioCanvasOpenButton,
   type StudioCanvasNodeHandleSpec,
 } from "../studio-node/studio-canvas-node";
-import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import { resolveFoldderNodeStudioBackground } from "../studio-node/foldder-studio-node-backgrounds";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 
 const PRESENTER_NODE_MAX_WIDTH = 960;
 const PRESENTER_NODE_MAX_HEIGHT = 2200;
-const PRESENTER_EMPTY_BACKGROUND_SRC = "/assets/nodes/presenter-empty-yellow.jpg";
+const PRESENTER_ACCENT = "#f5b91b";
+const PRESENTER_DOCK_MIN_CHROME = 180;
+const PRESENTER_CONNECTED_PREVIEW_MIN = 140;
+const PRESENTER_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("presenter");
+
+function resolvePresenterNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    PRESENTER_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, PRESENTER_CONNECTED_PREVIEW_MIN + PRESENTER_DOCK_MIN_CHROME)),
+  );
+}
 
 const PRESENTER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   {
@@ -104,13 +140,23 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = (liveNode?.data ?? data) as PresenterNodeData;
   const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
   const { setNodes, setEdges, getNode, fitView } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const currentNodeFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+  const currentNodeFrame = useMemo(() => nodeFrameFromSnapshot(currentNodeFrameSnapshot), [currentNodeFrameSnapshot]);
   const [studioOpen, setStudioOpen] = useState(false);
   const { pages, connected, designerMissing, designerNodeId, designerPreviewUrl } = useDesignerDocumentPages(id);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
 
   const slideCount = pages?.length ?? 0;
-  const showPresenterEmpty = slideCount === 0;
-  const canOpenStudio = slideCount > 0;
+  const hasSlides = slideCount > 0;
+  const overlayCount = nodeData.imageVideoPlacements?.length ?? 0;
+  const canOpenStudio = hasSlides && !designerMissing;
   const openStudioDisabledReason = !connected
     ? "Conecta la salida Document del nodo Designer"
     : designerMissing
@@ -119,10 +165,25 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
         ? "Añade páginas en Designer primero"
         : undefined;
   const previewPageIndex = pages ? firstPlayableIndex(pages) : null;
-  const previewPage =
-    pages && pages.length > 0 ? pages[previewPageIndex ?? 0] : null;
+  const previewPage = pages && pages.length > 0 ? pages[previewPageIndex ?? 0] : null;
   const previewPageDims = previewPage ? getPageDimensions(previewPage) : null;
-  const showSlidePreview = Boolean(!showPresenterEmpty && previewPage && previewPageDims);
+  const hasConnections = connected;
+  const hasDock = connected;
+  const isEmpty = !hasDock;
+  const connectedOnly = connected && !designerMissing && !hasSlides && overlayCount === 0 && !studioTouched;
+  const showExteriorTile = hasDock;
+  const hasExportPreview = Boolean(connected && !designerMissing && hasSlides && designerPreviewUrl && nodeMediaVisible);
+  const hasCanvasPreview = Boolean(connected && !designerMissing && hasSlides && previewPage && previewPageDims && !designerPreviewUrl);
+  const hasPreviewVisual = hasExportPreview || hasCanvasPreview;
+
+  const refreshHandleGeometry = useCallback(() => {
+    const run = () => updateNodeInternals(id);
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
 
   const openStudio = useCallback(() => {
     if (!canOpenStudio) return;
@@ -182,6 +243,163 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
       new CustomEvent("foldder:open-studio", { detail: { nodeId: designerNodeId } }),
     );
   }, [designerNodeId, fitView]);
+
+  const handleEmpezar = useCallback(() => {
+    if (!connected) {
+      spawnDesignerAndConnect();
+      return;
+    }
+    if (slideCount === 0 && designerNodeId) {
+      openConnectedDesigner();
+      return;
+    }
+    openStudio();
+  }, [connected, designerNodeId, openConnectedDesigner, openStudio, slideCount, spawnDesignerAndConnect]);
+
+  const headerTitle = nodeData.label?.trim() || "Presenter";
+  const slidesLabel = `${slideCount} diapositiva${slideCount === 1 ? "" : "s"}`;
+  const modeLabel = (nodeData.presenterEditorMode ?? "simple") === "pro" ? "Pro" : "Simple";
+  const inputLabel = !connected ? "—" : designerMissing ? "Inválida" : "Designer";
+  const overlaysLabel = overlayCount > 0 ? `${overlayCount} vídeo${overlayCount === 1 ? "" : "s"}` : "—";
+  const statusLabel = isEmpty
+    ? "Vacío"
+    : designerMissing
+      ? "Conexión inválida"
+      : connectedOnly
+        ? "Conectado"
+        : !hasSlides
+          ? "Sin diapositivas"
+          : studioTouched
+            ? "En edición"
+            : "Listo";
+  const previewLine = designerMissing
+    ? "La conexión debe venir de un nodo Designer."
+    : hasPreviewVisual
+      ? `${slidesLabel} listas para presentar.`
+      : hasSlides
+        ? `${slidesLabel} · abre Studio para animar y compartir.`
+        : connected
+          ? "Designer conectado. Añade páginas en Designer."
+          : "Conecta Document del Designer y prepara la presentación.";
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => refreshHandleGeometry());
+    const t = window.setTimeout(() => refreshHandleGeometry(), 160);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [designerPreviewUrl, hasPreviewVisual, previewPageDims?.height, previewPageDims?.width, refreshHandleGeometry, slideCount]);
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("presenter");
+    if (!baseFrame) return;
+
+    if (hasSlides && previewPageDims) {
+      const syncKey = `${previewPageDims.width}x${previewPageDims.height}:${hasDock ? "dock" : "preview-only"}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: currentNodeFrame,
+        contentWidth: previewPageDims.width,
+        contentHeight: previewPageDims.height,
+        minWidth: 260,
+        maxWidth: PRESENTER_NODE_MAX_WIDTH,
+        minHeight: 180,
+        maxHeight: PRESENTER_NODE_MAX_HEIGHT,
+        chromeHeight,
+      });
+      frameSyncKeyRef.current = syncKey;
+      const nextAspectRatio = previewPageDims.width / previewPageDims.height;
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== id) return node;
+          const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+          const currentAspectRatio =
+            typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+              ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+              : null;
+          const needsAspectSync =
+            currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+          if (!needsFrameSync && !needsAspectSync) return node;
+          return {
+            ...node,
+            ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+            data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+            style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    if (isEmpty) {
+      const syncKey = "presenter-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const measuredHeight = resolvePresenterNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+    const syncKey = `presenter-content:${hasConnections ? "connected" : "idle"}:${hasSlides ? "slides" : "meta"}:${measuredHeight}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        const resolvedWidth = resolveNodeFrameWidth(n, baseFrame.width);
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(n, resolvedTarget)) return n;
+        return {
+          ...n,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(n.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: PRESENTER_NODE_MAX_HEIGHT,
+          },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    connectedOnly,
+    currentNodeFrame,
+    currentNodeFrameSnapshot.height,
+    currentNodeFrameSnapshot.measuredHeight,
+    currentNodeFrameSnapshot.measuredWidth,
+    currentNodeFrameSnapshot.styleHeight,
+    currentNodeFrameSnapshot.styleWidth,
+    currentNodeFrameSnapshot.width,
+    hasConnections,
+    hasDock,
+    hasSlides,
+    id,
+    isEmpty,
+    previewPageDims,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   const setImageVideoPlacements = useCallback(
     (next: PresenterImageVideoPlacement[]) => {
@@ -314,164 +532,129 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [designerNodeId, id, setNodes],
   );
 
-  const statusPanel = useMemo(() => {
-    if (!connected) {
-      return (
-        <div className="presenter-summary-panel min-w-0">
-          <span className="node-label">Conexión</span>
-          <p className="mt-1 text-[11px] font-light leading-relaxed text-slate-800">
-            Conecta la salida <span className="font-semibold">Document</span> del nodo{" "}
-            <span className="font-medium">Designer</span>.
-          </p>
-        </div>
-      );
-    }
-    if (designerMissing) {
-      return (
-        <div className="presenter-summary-panel min-w-0">
-          <span className="node-label">Conexión</span>
-          <p className="mt-1 text-[11px] font-light leading-relaxed text-rose-900">
-            La conexión debe venir de un nodo Designer.
-          </p>
-        </div>
-      );
-    }
-    if (slideCount === 0) {
-      return (
-        <div className="presenter-summary-panel min-w-0">
-          <span className="node-label">Diapositivas</span>
-          <p className="mt-1 text-[11px] font-light leading-relaxed text-slate-800">
-            El Designer no tiene páginas aún.
-          </p>
-        </div>
-      );
-    }
-    return null;
-  }, [connected, designerMissing, slideCount]);
-
   return (
     <StudioCanvasNodeShell
+      ref={frameRef}
       nodeId={id}
       nodeType="presenter"
       selected={selected}
       label={nodeData.label}
       defaultLabel="Presenter"
       title="PRESENTER"
-      badge="DECK"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-      studioTouched={studioTouched}
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile}
       minWidth={260}
-      className={
-        showPresenterEmpty
-          ? "presenter-node presenter-node--empty foldder-frameless-label-dark"
-          : "presenter-node"
-      }
+      className={`presenter-node foldder-frameless-label-dark${hasDock ? " presenter-node--has-content" : " presenter-node--empty"}${hasPreviewVisual ? " presenter-node--has-preview" : ""}${connectedOnly ? " presenter-node--connected-only" : ""}${hasConnections ? " presenter-node--connected" : ""}${designerMissing ? " presenter-node--invalid-connection" : ""}`}
       handles={PRESENTER_NODE_HANDLES}
       variant="frameless"
       material="media"
+      style={
+        {
+          minWidth: 260,
+          minHeight: hasDock ? PRESENTER_DOCK_MIN_CHROME + PRESENTER_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": PRESENTER_ACCENT,
+          "--foldder-frameless-glass-bg": PRESENTER_ACCENT,
+          "--foldder-frameless-accent": PRESENTER_ACCENT,
+        } as React.CSSProperties
+      }
     >
       <PresenterNodeResizer
         minWidth={260}
         minHeight={180}
         maxWidth={PRESENTER_NODE_MAX_WIDTH}
         maxHeight={PRESENTER_NODE_MAX_HEIGHT}
+        keepAspectRatio={hasSlides}
         isVisible={selected}
       />
 
-      {showPresenterEmpty ? (
-        <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="presenter-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+      <div
+        className={`node-content foldder-frameless-main presenter-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div
+          ref={previewRef}
+          className="presenter-node-preview-area foldder-node-content-preview-area"
+        >
+          {hasExportPreview ? (
+            <img
+              src={designerPreviewUrl!}
+              alt="Presenter preview"
+              className="presenter-node-preview-img"
+              decoding="async"
+              draggable={false}
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
+            />
+          ) : hasCanvasPreview && previewPage && previewPageDims ? (
+            <div className="presenter-node-page-preview absolute inset-0 overflow-hidden bg-[#fafafa]">
+              <DesignerPagePreview
+                objects={previewPage.objects}
+                pageWidth={previewPageDims.width}
+                pageHeight={previewPageDims.height}
+                renderImages={nodeMediaVisible}
+              />
+            </div>
+          ) : (
             <img
               src={PRESENTER_EMPTY_BACKGROUND_SRC}
               alt=""
-              className="h-full w-full object-contain object-bottom"
+              className="presenter-node-bg"
               draggable={false}
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
             />
-          </div>
-          <div className="node-content presenter-node-content relative z-10 mt-auto flex flex-col gap-3 px-3 pb-3 pt-2">
-            {statusPanel}
-            {!connected ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  spawnDesignerAndConnect();
-                }}
-                className="execute-btn nodrag flex items-center justify-center gap-1.5 py-2.5 text-[10px]"
-              >
-                <Plus className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-                Añadir Designer
-              </button>
-            ) : null}
-            {connected && !designerMissing && slideCount === 0 && designerNodeId ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openConnectedDesigner();
-                }}
-                className="execute-btn nodrag py-2.5 text-[10px]"
-              >
-                Abrir Designer
-              </button>
-            ) : null}
-            <StudioCanvasOpenButton
-              onClick={openStudio}
-              disabled={!canOpenStudio}
-              title={openStudioDisabledReason}
-              accent="slate"
-              icon={<Presentation className="h-[26px] w-[26px]" strokeWidth={1.5} aria-hidden />}
-              className="flex-col gap-2 py-4 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              <span>Abrir presentación</span>
-            </StudioCanvasOpenButton>
-          </div>
-        </div>
-      ) : (
-        <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          {showSlidePreview ? (
-            <div className="absolute inset-0 overflow-hidden" aria-hidden>
-              {designerPreviewUrl && nodeMediaVisible ? (
-                <img
-                  src={designerPreviewUrl}
-                  alt=""
-                  className="h-full w-full object-cover bg-zinc-950/80"
-                  draggable={false}
-                />
-              ) : previewPage && previewPageDims ? (
-                <div className="h-full w-full bg-[#fafafa]">
-                  <DesignerPagePreview
-                    objects={previewPage.objects}
-                    pageWidth={previewPageDims.width}
-                    pageHeight={previewPageDims.height}
-                    renderImages={nodeMediaVisible}
-                  />
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          )}
 
-          <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
-            <div className="flex-1" />
-            {showSlidePreview ? (
-              <div
-                className="pointer-events-none absolute inset-x-0 bottom-0 z-[11] bg-gradient-to-t from-black/80 via-black/30 to-transparent px-3 pb-11 pt-10"
-                aria-hidden
-              >
-                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/70">
-                  {slideCount} {slideCount === 1 ? "diapositiva" : "diapositivas"}
-                </p>
+          {isEmpty ? (
+            <>
+              <div className="presenter-node-empty-hint" aria-hidden>
+                <span className="presenter-node-empty-hint__title">Presenter vacío</span>
+                <span className="presenter-node-empty-hint__body">
+                  Conecta Document del Designer y abre Studio.
+                </span>
               </div>
-            ) : null}
-            <FoldderStudioModeCenterButton
-              onClick={openStudio}
-              disabled={!canOpenStudio}
-              label="Abrir presentación"
-              title={openStudioDisabledReason ?? "Abrir presentación"}
-            />
-          </div>
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Conectar Designer o abrir Presenter"
+                onClick={handleEmpezar}
+              />
+            </>
+          ) : null}
         </div>
-      )}
+
+        {hasDock ? (
+          <div className="presenter-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow
+                    label="Slides"
+                    value={pages ? <DesignerNodeDockSlideFormats pages={pages} /> : "—"}
+                  />
+                  <FoldderNodeContentMetaRow label="Diapositivas" value={slidesLabel} />
+                  <FoldderNodeContentMetaRow label="Modo" value={modeLabel} />
+                  <FoldderNodeContentMetaRow label="Entrada" value={inputLabel} />
+                  <FoldderNodeContentMetaRow label="Overlays" value={overlaysLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="presenter-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Abrir Presenter"
+                  title={openStudioDisabledReason ?? "Abrir Presenter Studio"}
+                  onClick={openStudio}
+                  disabled={!canOpenStudio}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
+      </div>
 
       {studioOpen && pages && pages.length > 0 &&
         typeof document !== "undefined" &&

@@ -1,7 +1,7 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { NodeResizer, Position, type NodeProps } from "@xyflow/react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { NodeResizer, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import {
   BRAIN_ADN_COMPLETENESS_TOOLTIP_ES,
   computeAdnScore,
@@ -11,23 +11,66 @@ import { collectVisualImageAssetRefs } from "@/lib/brain/brain-visual-analysis";
 import type { StoredLearningCandidate } from "@/lib/brain/learning-candidate-schema";
 import { learningRowMatchesCanvasNode } from "@/lib/brain/brain-connected-signals-ui";
 import { readResponseJson } from "@/lib/read-response-json";
-import { FoldderDataHandle } from "./FoldderDataHandle";
-import { NodeLabel } from "./foldder-node-ui";
-import { hasFoldderStudioTouched } from "./studio-node/foldder-studio-touched";
-import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "./canvas-grid-layout";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "./foldder-node-ui";
+import { nodeFrameNeedsSync, resolveNodeFrameWidth } from "./studio-node-aspect";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
+import {
+  StudioCanvasNodeShell,
+  type StudioCanvasNodeHandleSpec,
+} from "./studio-node/studio-canvas-node";
+import { hasFoldderStudioTouched } from "./studio-node/foldder-studio-touched";
+import { resolveFoldderNodeStudioBackground } from "./studio-node/foldder-studio-node-backgrounds";
 
-const BRAIN_EMPTY_BACKGROUND_SRC = "/assets/nodes/brain-empty.jpg";
+const PROJECT_BRAIN_HANDLES: StudioCanvasNodeHandleSpec[] = [
+  {
+    side: "right",
+    top: "50%",
+    style: { transform: "translateY(-50%)" },
+    type: "source",
+    id: "brain",
+    dataType: "brain",
+    label: "BrandKit out",
+  },
+];
+
+const BRANDKIT_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("projectBrain");
+const BRANDKIT_SHELL_ACCENT = "#b8bec8";
+const BRANDKIT_DOCK_ACCENT = "#5e8e70";
+const BRANDKIT_NODE_MAX_HEIGHT = 2200;
+const BRANDKIT_DOCK_MIN_CHROME = 180;
+const BRANDKIT_CONNECTED_PREVIEW_MIN = 140;
 
 export type ProjectBrainNodeData = {
   label?: string;
 };
 
+function resolveBrandkitNodeHeight(args: {
+  baseHeight: number;
+  hasDock: boolean;
+}): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    BRANDKIT_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, BRANDKIT_CONNECTED_PREVIEW_MIN + BRANDKIT_DOCK_MIN_CHROME)),
+  );
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = data as ProjectBrainNodeData;
   const ctx = useProjectBrainCanvas();
+  const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameSyncKeyRef = useRef<string | null>(null);
   const assets = useMemo(() => normalizeProjectAssets(ctx?.assetsMetadata), [ctx?.assetsMetadata]);
   const adn = useMemo(() => computeAdnScore(assets), [assets]);
 
@@ -48,6 +91,9 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
   );
 
   const totalActives = assets.knowledge.documents.length + assets.knowledge.urls.length;
+  const totalLooks = (assets.strategy.visualCapsules ?? []).filter((capsule) => capsule.status !== "archived").length;
+  const activeCount =
+    totalActives + visualRefCount + totalLooks + (hasVoice ? 1 : 0) + (hasPalette ? 1 : 0) + (hasLogo ? 1 : 0);
 
   const [pendingRows, setPendingRows] = useState<StoredLearningCandidate[]>([]);
   const projectId = ctx?.projectScopeId && ctx.projectScopeId !== "__local__" ? ctx.projectScopeId : null;
@@ -92,131 +138,208 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
     }
   }, [ctx]);
 
-  const introActive = !!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro;
-
-  const normalizeCardHex = useCallback((value: string | null | undefined, fallback: string) => {
-    const v = String(value ?? "").trim();
-    return /^#[0-9A-Fa-f]{6}$/.test(v) ? v : fallback;
-  }, []);
-  const primaryColor = normalizeCardHex(assets.brand.colorPrimary, "#7c3aed");
   const atmosphereImage =
     assets.strategy.visualReferenceAnalysis?.dnaCollageImageDataUrl ||
     assets.strategy.visualStyle.environment.imageUrl ||
     assets.strategy.visualStyle.protagonist.imageUrl ||
     null;
-  const totalLooks = (assets.strategy.visualCapsules ?? []).filter((capsule) => capsule.status !== "archived").length;
-  const activeCount =
-    totalActives + visualRefCount + totalLooks + (hasVoice ? 1 : 0) + (hasPalette ? 1 : 0) + (hasLogo ? 1 : 0);
+  const hasPreview = Boolean(atmosphereImage);
   const headerTitle = nodeData.label?.trim() && !/\.(jpg|jpeg|png|webp|mp4)$/i.test(nodeData.label.trim())
     ? nodeData.label.trim()
     : "BrandKit";
-  const hasPreview = Boolean(atmosphereImage);
-  const nodesLabel = brainClients.length === 1 ? "nodo" : "nodos";
+  const hasConnections = brainClients.length > 0;
+  const hasContent = activeCount > 0 || hasPreview || adn.total > 0;
+  const hasDock = hasContent || hasConnections || pendingCount > 0;
+  const isEmpty = !hasDock;
+  const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
+  const showConnectedIcon = hasConnections;
+  const showExteriorTile = !isEmpty && (studioTouched || showConnectedIcon);
+
+  const nodesLabel = brainClients.length === 1 ? "1 nodo" : `${brainClients.length} nodos`;
+  const activosLabel = `${activeCount} activo${activeCount === 1 ? "" : "s"}`;
+  const pendientesLabel = pendingCount > 0 ? String(pendingCount) : "—";
+  const salidaLabel = hasConnections ? nodesLabel : "—";
+  const adnLabel = `ADN ${adn.total}`;
+  const statusLabel = pendingCount > 0
+    ? hasConnections
+      ? "Pendientes · Conectado"
+      : "Pendientes"
+    : hasConnections
+      ? "Conectado"
+      : hasContent
+        ? adn.total >= 80
+          ? "Completo"
+          : "Configurado"
+        : "Vacío";
+  const previewLine = hasContent
+    ? `${adnLabel} · ${activosLabel}${hasConnections ? ` · ${nodesLabel}` : ""}`
+    : hasConnections
+      ? `Salida conectada a ${nodesLabel}`
+      : "Define marca, voz y referencias visuales.";
+
+  useLayoutEffect(() => {
+    const baseFrame = getNodeGridFrameForType("projectBrain");
+    if (!baseFrame) return;
+
+    if (isEmpty) {
+      const syncKey = "brandkit-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const measuredHeight = resolveBrandkitNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+    const syncKey = `brandkit-content:${hasPreview ? "preview" : "meta"}:${hasConnections ? "connected" : "idle"}:${measuredHeight}:${activeCount}:${pendingCount}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        const resolvedWidth = resolveNodeFrameWidth(n, baseFrame.width);
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(n, resolvedTarget)) return n;
+        return {
+          ...n,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(n.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: BRANDKIT_NODE_MAX_HEIGHT,
+          },
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    activeCount,
+    hasConnections,
+    hasPreview,
+    id,
+    isEmpty,
+    pendingCount,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
-    <div
-      className={`custom-node tool-node foldder-studio-node foldder-studio-node--projectBrain project-brain-node foldder-node--frameless node--media group/node relative ${
-        hasPreview ? "project-brain-node--has-preview" : "project-brain-node--empty foldder-frameless-label-dark"
-      } ${selected ? "ring-2 ring-violet-400/45" : ""} ${introActive ? "ring-2 ring-cyan-300/60" : ""}`}
-      style={{
-        width: "100%",
-        height: "100%",
-        minWidth: 200,
-        minHeight: 280,
-        padding: 0,
-        overflow: "visible",
-        display: "flex",
-        flexDirection: "column",
-        "--foldder-node-card-bg": "#b8bec8",
-        "--foldder-frameless-accent": "#1f2328",
-        "--foldder-node-header-tint-color": primaryColor,
-        "--foldder-node-output-color": primaryColor,
-      } as React.CSSProperties}
+    <StudioCanvasNodeShell
+      nodeId={id}
+      nodeType="projectBrain"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="BrandKit"
+      title="BRANDKIT"
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      minWidth={200}
+      className={`project-brain-node foldder-frameless-label-dark${hasDock ? " project-brain-node--has-content" : " project-brain-node--empty"}${hasPreview ? " project-brain-node--has-preview" : ""}${hasConnections ? " project-brain-node--connected" : ""}`}
+      handles={PROJECT_BRAIN_HANDLES}
+      variant="frameless"
+      material="media"
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile && showConnectedIcon}
+      style={
+        {
+          minWidth: 200,
+          minHeight: hasDock ? BRANDKIT_DOCK_MIN_CHROME + BRANDKIT_CONNECTED_PREVIEW_MIN : 280,
+          "--foldder-node-card-bg": hasDock ? BRANDKIT_DOCK_ACCENT : BRANDKIT_SHELL_ACCENT,
+          "--foldder-frameless-glass-bg": BRANDKIT_SHELL_ACCENT,
+          "--foldder-frameless-accent": BRANDKIT_SHELL_ACCENT,
+          "--foldder-node-header-tint-color": assets.brand.colorPrimary?.trim() || BRANDKIT_DOCK_ACCENT,
+          "--foldder-node-output-color": assets.brand.colorPrimary?.trim() || BRANDKIT_DOCK_ACCENT,
+        } as React.CSSProperties
+      }
     >
-      <NodeResizer minWidth={200} minHeight={280} maxWidth={960} maxHeight={2200} isVisible={selected} />
-      {hasFoldderStudioTouched(nodeData as Record<string, unknown>) ? (
-        <FoldderStudioTouchedMark nodeType="projectBrain" />
-      ) : null}
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="BrandKit" />
-
-      <div className="node-content project-brain-node-content foldder-frameless-main relative overflow-hidden">
-        {hasPreview ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={atmosphereImage!}
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-            draggable={false}
-          />
-        ) : (
-          <div className="brain-empty-background absolute inset-0 overflow-hidden" aria-hidden>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={BRANDKIT_NODE_MAX_HEIGHT} isVisible={selected} />
+      <div
+        className={`node-content foldder-frameless-main project-brain-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div className="project-brain-node-preview-area foldder-node-content-preview-area">
+          {hasPreview ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={BRAIN_EMPTY_BACKGROUND_SRC}
+              src={atmosphereImage!}
               alt=""
-              className="brain-empty-background__img h-full w-full object-cover object-center"
+              className="project-brain-node-preview-img"
               draggable={false}
             />
-          </div>
-        )}
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={BRANDKIT_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="project-brain-node-bg"
+              draggable={false}
+            />
+          )}
 
-        <div className="project-brain-node-scrim pointer-events-none absolute inset-0 z-[2]" aria-hidden />
-
-        <span
-          className="project-brain-node-media-tag absolute left-3 top-[42px] z-[8] max-w-[calc(100%-24px)] truncate"
-          title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
-        >
-          ADN {adn.total}
-        </span>
-
-        <div className="project-brain-node-footer absolute inset-x-0 bottom-0 z-[8] px-3 pb-3 pt-10">
-          <div className="flex items-end gap-2">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[12px] font-semibold leading-tight tracking-[-0.02em]">
-                {headerTitle}
-              </p>
-              <p className="project-brain-node-stats mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                <span className="inline-flex items-center gap-1.5">
-                  <span
-                    className="project-brain-node-stats-dot shrink-0"
-                    style={{ backgroundColor: primaryColor }}
-                    aria-hidden
-                  />
-                  {activeCount} activos
+          {isEmpty ? (
+            <>
+              <div className="project-brain-node-empty-hint" aria-hidden>
+                <span className="project-brain-node-empty-hint__title">BrandKit vacío</span>
+                <span className="project-brain-node-empty-hint__body">
+                  Abre Studio para definir marca, voz y referencias.
                 </span>
-                <span className="project-brain-node-stats-sep" aria-hidden>
-                  ·
-                </span>
-                <span>
-                  {brainClients.length} {nodesLabel}
-                </span>
-                <span className="project-brain-node-stats-sep" aria-hidden>
-                  ·
-                </span>
-                <span className={pendingCount > 0 ? "project-brain-node-stats-pending" : undefined}>
-                  {pendingCount} pendientes
-                </span>
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                openStudio();
-              }}
-              className="project-brain-node-open-btn foldder-node-footer-button nodrag inline-flex shrink-0 items-center gap-1.5 rounded-none border-0 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-black shadow-none transition hover:bg-[#f7f7f4]"
-            >
-              Abrir BrandKit
-            </button>
-          </div>
+              </div>
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Abrir BrandKit Studio"
+                onClick={openStudio}
+              />
+            </>
+          ) : null}
         </div>
-      </div>
 
-      <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
-        <span className="handle-label">BrandKit out</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="brain" dataType="brain" />
+        {hasDock ? (
+          <div className="project-brain-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p
+                  className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder"
+                  title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
+                >
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="ADN" value={adnLabel} />
+                  <FoldderNodeContentMetaRow label="Activos" value={activosLabel} />
+                  <FoldderNodeContentMetaRow label="Salida" value={salidaLabel} />
+                  <FoldderNodeContentMetaRow label="Pendientes" value={pendientesLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="project-brain-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Abrir BrandKit"
+                  title="Abrir BrandKit Studio"
+                  onClick={openStudio}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
       </div>
-    </div>
+    </StudioCanvasNodeShell>
   );
 });
 

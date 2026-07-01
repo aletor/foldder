@@ -110,7 +110,7 @@ function PresetShapeIcon({ kind }: { kind: StudioCanvasPresetIconKind }) {
   }
 }
 
-function PresetBadge({ preset }: { preset: StudioCanvasPresetDef }) {
+export function DesignerCanvasPresetBadge({ preset }: { preset: StudioCanvasPresetDef }) {
   const brand = resolveStudioCanvasPresetBrand(preset);
   const meta = STUDIO_CANVAS_PRESET_BRAND_META[brand];
   const iconStyle = meta.iconBg.startsWith("linear-gradient")
@@ -135,6 +135,33 @@ function PresetBadge({ preset }: { preset: StudioCanvasPresetDef }) {
         <FacebookBrandIcon />
       ) : (
         <PresetShapeIcon kind={preset.icon} />
+      )}
+    </span>
+  );
+}
+
+export function DesignerCanvasFormatSizeInline({
+  width,
+  height,
+  presetId,
+  className = "",
+}: {
+  width: number;
+  height: number;
+  presetId?: string | null;
+  className?: string;
+}) {
+  const { preset, sizeLabel } = resolveStudioCanvasFormatDisplay({ width, height, presetId });
+  return (
+    <span className={`inline-flex min-w-0 items-center gap-1 ${className}`.trim()}>
+      {preset ? (
+        <>
+          <DesignerCanvasPresetBadge preset={preset} />
+          <span className="truncate">{preset.title}</span>
+          <span className="shrink-0 tabular-nums opacity-70">{sizeLabel}</span>
+        </>
+      ) : (
+        <span className="tabular-nums">{sizeLabel}</span>
       )}
     </span>
   );
@@ -167,7 +194,7 @@ export function DesignerCanvasFormatLabel({
     >
       {preset ? (
         <>
-          <PresetBadge preset={preset} />
+          <DesignerCanvasPresetBadge preset={preset} />
           <span className="truncate text-zinc-300">{preset.title}</span>
           <span className="text-zinc-600">·</span>
         </>

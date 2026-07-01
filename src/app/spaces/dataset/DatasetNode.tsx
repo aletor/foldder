@@ -706,7 +706,7 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={420} isVisible={selected} />
       <div
-        className={`node-content foldder-frameless-main dataset-node-main nodrag nopan${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+        className={`node-content foldder-frameless-main dataset-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
         <div className="dataset-node-preview foldder-node-content-preview-area">
           <img
@@ -732,7 +732,7 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
         {hasDock ? (
           <div className="dataset-node-dock-wrap shrink-0">
-            <FoldderNodeContentDock>
+            <FoldderNodeContentDock allowNodeDrag>
               <FoldderNodeContentDockMain>
                 {exteriorInfo.headline ? (
                   <p className="foldder-node-content-dock-text">{exteriorInfo.headline}</p>

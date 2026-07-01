@@ -158,11 +158,18 @@ export const FoldderNodeHeaderTitle = memo(function FoldderNodeHeaderTitle({
 export function FoldderNodeContentDock({
   children,
   className = "",
+  allowNodeDrag = false,
 }: {
   children: React.ReactNode;
   className?: string;
+  /** Si true, la franja no bloquea arrastrar el nodo (solo nodrag en acciones/botones). */
+  allowNodeDrag?: boolean;
 }) {
-  return <div className={`foldder-node-content-dock nodrag ${className}`.trim()}>{children}</div>;
+  return (
+    <div className={`foldder-node-content-dock${allowNodeDrag ? "" : " nodrag"} ${className}`.trim()}>
+      {children}
+    </div>
+  );
 }
 
 export function FoldderNodeContentDockMain({

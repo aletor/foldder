@@ -12,11 +12,20 @@ import {
   type ReactFlowState,
 } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import type { IndesignPageFormatId } from "../indesign/page-formats";
 import { DEFAULT_DESIGNER_PAGE_FORMAT, getPageDimensions } from "../indesign/page-formats";
-import { nodeFrameNeedsSync, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "../canvas-grid-layout";
+import { nodeFrameNeedsSync, resolveAspectLockedNodeFrame, resolveNodeChromeHeight, resolveNodeFrameWidth } from "../studio-node-aspect";
 import { DesignerPagePreview } from "./DesignerPagePreview";
+import { DesignerNodeDockSlideFormats } from "./designer-node-dock-slide-formats";
 import type { Story, TextFrame } from "../indesign/text-model";
 import type { ImageFrameRecord } from "../indesign/image-frame-model";
 import type { FreehandObject, LayoutGuide } from "../FreehandStudio";
@@ -26,6 +35,7 @@ import {
 } from "../foldder-export-events";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
+import { resolveFoldderNodeStudioBackground } from "../studio-node/foldder-studio-node-backgrounds";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import type { PresenterGroupStep } from "../presenter/presenter-group-animations";
 import {
@@ -55,7 +65,18 @@ import { duplicateDesignerPageState } from "./designer-studio-pure";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
 const DESIGNER_NODE_MAX_HEIGHT = 2200;
-const DESIGNER_EMPTY_BACKGROUND_SRC = "/assets/nodes/designer-empty-lime.png";
+const DESIGNER_ACCENT = "#abbc14";
+const DESIGNER_DOCK_MIN_CHROME = 180;
+const DESIGNER_CONNECTED_PREVIEW_MIN = 140;
+const DESIGNER_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("designer");
+
+function resolveDesignerNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    DESIGNER_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, DESIGNER_CONNECTED_PREVIEW_MIN + DESIGNER_DOCK_MIN_CHROME)),
+  );
+}
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "20%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
@@ -120,6 +141,14 @@ export type DesignerNodeData = {
   pageThumbnails?: Record<string, string>;
 };
 
+function designerPageHasContent(page: DesignerPageState): boolean {
+  return (
+    (page.objects?.length ?? 0) > 0 ||
+    (page.textFrames?.length ?? 0) > 0 ||
+    (page.imageFrames?.length ?? 0) > 0
+  );
+}
+
 function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
   return <NodeResizer {...props} />;
 }
@@ -169,7 +198,6 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     shallow,
   );
 
-  /** Layerizer: salida del nodo conectado al handle `layout` (Image Layout). */
   const connectedLayerizerOutput = useStore(
     useCallback(
       (state: ReactFlowState<Node, Edge>): LayerizerOutput | null => {
@@ -184,6 +212,12 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       [id],
     ),
     shallow,
+  );
+  const layerizerConnected = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>) => state.edges.some((edge) => edge.target === id && edge.targetHandle === "layout"),
+      [id],
+    ),
   );
 
   const pages: DesignerPageState[] =
@@ -239,8 +273,75 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [refreshHandleGeometry, nodeData.value, pages.length, firstPageDims?.width, firstPageDims?.height]);
 
   useLayoutEffect(() => {
-    if (!firstPageDims) return;
-    const syncKey = `${firstPageDims.width}x${firstPageDims.height}`;
+    const baseFrame = getNodeGridFrameForType("designer");
+    if (!baseFrame || !firstPageDims) return;
+
+    const isLonePlaceholder =
+      pages.length === 1 &&
+      !designerPageHasContent(pages[0]) &&
+      !nodeData._layerizerImportedJobId;
+    const hasDesignedContent =
+      Boolean(nodeData.value) ||
+      !isLonePlaceholder ||
+      Boolean(nodeData._layerizerImportedJobId);
+    const hasConnections = brainConnected || datasetConnected || layerizerConnected;
+    const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
+    const hasDock = hasConnections || hasDesignedContent || studioTouched;
+    const isEmpty = !hasDock;
+    const shouldAspectLock = hasDesignedContent;
+
+    if (!shouldAspectLock) {
+      if (isEmpty) {
+        const syncKey = "designer-base";
+        if (frameSyncKeyRef.current === syncKey) return;
+        frameSyncKeyRef.current = syncKey;
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== id) return n;
+            if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+            return {
+              ...n,
+              width: baseFrame.width,
+              height: baseFrame.height,
+              measured: { width: baseFrame.width, height: baseFrame.height },
+              style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+            };
+          }),
+        );
+        requestAnimationFrame(() => updateNodeInternals(id));
+        return;
+      }
+
+      const measuredHeight = resolveDesignerNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+      const syncKey = `designer-content:${hasConnections ? "connected" : "idle"}:${measuredHeight}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const resolvedWidth = resolveNodeFrameWidth(n, baseFrame.width);
+          const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+          if (!nodeFrameNeedsSync(n, resolvedTarget)) return n;
+          return {
+            ...n,
+            width: resolvedWidth,
+            height: measuredHeight,
+            measured: { width: resolvedWidth, height: measuredHeight },
+            style: {
+              ...(n.style as React.CSSProperties),
+              width: resolvedWidth,
+              height: measuredHeight,
+              minHeight: measuredHeight,
+              maxHeight: DESIGNER_NODE_MAX_HEIGHT,
+            },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const syncKey = `${firstPageDims.width}x${firstPageDims.height}:${hasDock ? "dock" : "preview"}`;
     if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
@@ -275,7 +376,20 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
-  }, [firstPageDims?.width, firstPageDims?.height, id, setNodes, updateNodeInternals]);
+  }, [
+    brainConnected,
+    currentNodeFrame,
+    datasetConnected,
+    firstPageDims?.height,
+    firstPageDims?.width,
+    id,
+    layerizerConnected,
+    nodeData._layerizerImportedJobId,
+    nodeData.value,
+    pages,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   const onUpdatePages = useCallback(
     (next: DesignerPageState[], nextActiveIdx?: number) => {
@@ -465,6 +579,57 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [id, setNodes],
   );
 
+  const isLonePlaceholder =
+    pages.length === 1 &&
+    !designerPageHasContent(pages[0]) &&
+    !nodeData._layerizerImportedJobId;
+  const hasDesignedContent =
+    Boolean(nodeData.value) ||
+    !isLonePlaceholder ||
+    Boolean(nodeData._layerizerImportedJobId);
+  const hasConnections = brainConnected || datasetConnected || layerizerConnected;
+  const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
+  const hasDock = hasConnections || hasDesignedContent || studioTouched;
+  const isEmpty = !hasDock;
+  const connectedOnly = hasConnections && !hasDesignedContent && !studioTouched;
+  const showExteriorTile = hasDock;
+  const hasCanvasPreview =
+    Boolean(pages[0] && designerPageHasContent(pages[0]) && firstPageDims);
+  const hasExportPreview = Boolean(nodeData.value && nodeMediaVisible);
+  const hasPreviewVisual = hasExportPreview || hasCanvasPreview;
+  const objectCount = pages.reduce(
+    (sum, page) =>
+      sum + (page.objects?.length ?? 0) + (page.textFrames?.length ?? 0) + (page.imageFrames?.length ?? 0),
+    0,
+  );
+  const headerTitle = nodeData.label?.trim() || "Designer";
+  const pagesLabel = `${pages.length} página${pages.length === 1 ? "" : "s"}`;
+  const objectsLabel = `${objectCount} objeto${objectCount === 1 ? "" : "s"}`;
+  const inputsLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (brainConnected) parts.push("BrandKit");
+    if (datasetConnected) parts.push("Dataset");
+    if (layerizerConnected) parts.push("Layout");
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }, [brainConnected, datasetConnected, layerizerConnected]);
+  const datasetLabel = effectiveDataset?.name?.trim() || connectedDataset?.name?.trim() || "—";
+  const statusLabel = isEmpty
+    ? "Vacío"
+    : connectedOnly
+      ? "Conectado"
+      : nodeData.value
+        ? "Exportado"
+        : studioTouched || hasDesignedContent
+          ? "En edición"
+          : "Configurado";
+  const previewLine = hasExportPreview
+    ? "Documento rasterizado listo para salida."
+    : hasCanvasPreview
+      ? `${pagesLabel} · ${objectsLabel}`
+      : hasConnections
+        ? "Entradas conectadas. Abre Studio para diseñar."
+        : "Componé páginas, enlazá Dataset o BrandKit y exportá.";
+
   return (
     <StudioCanvasNodeShell
       ref={frameRef}
@@ -473,79 +638,116 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       selected={selected}
       label={nodeData.label}
       defaultLabel="Designer"
-      title="Designer"
-      badge="DESIGN"
-      headerIcon={
-        <span className="flex h-5 w-5 items-center justify-center rounded-none bg-[#fdb04b]">
-          <img src="/designer_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
-        </span>
-      }
-      headerClassName="border-b border-violet-500/15 bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-zinc-900/90"
-      titleClassName="flex-1 truncate uppercase tracking-[0.14em] text-zinc-100"
-      className="group/node designer-node foldder-frameless-label-dark"
+      title="DESIGNER"
+      className={`designer-node foldder-frameless-label-dark${hasDock ? " designer-node--has-content" : " designer-node--empty"}${hasPreviewVisual ? " designer-node--has-preview" : ""}${connectedOnly ? " designer-node--connected-only" : ""}${hasConnections ? " designer-node--connected" : ""}`}
       minWidth={280}
       handles={DESIGNER_NODE_HANDLES}
       variant="frameless"
       material="media"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-      studioTouched={hasFoldderStudioTouched(nodeData as Record<string, unknown>)}
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile}
+      style={
+        {
+          minWidth: 280,
+          minHeight: hasDock ? DESIGNER_DOCK_MIN_CHROME + DESIGNER_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": DESIGNER_ACCENT,
+          "--foldder-frameless-glass-bg": DESIGNER_ACCENT,
+          "--foldder-frameless-accent": DESIGNER_ACCENT,
+        } as React.CSSProperties
+      }
     >
       <DesignerNodeResizer
         minWidth={280}
         minHeight={200}
         maxWidth={DESIGNER_NODE_MAX_WIDTH}
         maxHeight={DESIGNER_NODE_MAX_HEIGHT}
-        keepAspectRatio
+        keepAspectRatio={hasDesignedContent}
         isVisible={selected}
       />
 
       <div
-        ref={previewRef}
-        className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        className={`node-content foldder-frameless-main designer-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
-        {nodeData.value && nodeMediaVisible ? (
-          <div className="absolute inset-0 overflow-hidden" aria-hidden>
+        <div
+          ref={previewRef}
+          className="designer-node-preview-area foldder-node-content-preview-area"
+        >
+          {hasExportPreview ? (
             <img
               src={designerCanvasUrl ?? nodeData.value}
               alt="Designer preview — página 1"
-              className="h-full w-full object-cover bg-zinc-950/80"
+              className="designer-node-preview-img"
               decoding="async"
-              onLoad={refreshHandleGeometry}
-              onError={refreshHandleGeometry}
-            />
-          </div>
-        ) : pages[0] && (pages[0].objects?.length ?? 0) > 0 && firstPageDims ? (
-          <div
-            className="absolute inset-0 overflow-hidden bg-[#fafafa]"
-            style={{
-              aspectRatio: `${Math.max(1, firstPageDims.width)} / ${Math.max(1, firstPageDims.height)}`,
-            }}
-          >
-            <DesignerPagePreview
-              objects={pages[0].objects}
-              pageWidth={firstPageDims.width}
-              pageHeight={firstPageDims.height}
-              renderImages={nodeMediaVisible}
-            />
-          </div>
-        ) : (
-          <div className="designer-empty-background absolute inset-0 overflow-hidden" aria-hidden>
-            <img
-              src={DESIGNER_EMPTY_BACKGROUND_SRC}
-              alt=""
-              className="h-full w-full object-contain object-bottom"
               draggable={false}
               onLoad={refreshHandleGeometry}
               onError={refreshHandleGeometry}
             />
-          </div>
-        )}
-        <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
-          <div className="flex-1" />
-          <FoldderStudioModeCenterButton onClick={() => {
-            openStudio();
-          }} />
+          ) : hasCanvasPreview && pages[0] && firstPageDims ? (
+            <div className="designer-node-page-preview absolute inset-0 overflow-hidden bg-[#fafafa]">
+              <DesignerPagePreview
+                objects={pages[0].objects}
+                pageWidth={firstPageDims.width}
+                pageHeight={firstPageDims.height}
+                renderImages={nodeMediaVisible}
+              />
+            </div>
+          ) : (
+            <img
+              src={DESIGNER_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="designer-node-bg"
+              draggable={false}
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
+            />
+          )}
+
+          {isEmpty ? (
+            <>
+              <div className="designer-node-empty-hint" aria-hidden>
+                <span className="designer-node-empty-hint__title">Designer vacío</span>
+                <span className="designer-node-empty-hint__body">
+                  Conecta BrandKit, Dataset o Layout y abre Studio.
+                </span>
+              </div>
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Abrir Designer Studio"
+                onClick={openStudio}
+              />
+            </>
+          ) : null}
         </div>
+
+        {hasDock ? (
+          <div className="designer-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Slides" value={<DesignerNodeDockSlideFormats pages={pages} />} />
+                  <FoldderNodeContentMetaRow label="Páginas" value={pagesLabel} />
+                  <FoldderNodeContentMetaRow label="Objetos" value={objectsLabel} />
+                  <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                  <FoldderNodeContentMetaRow label="Dataset" value={datasetLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="designer-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Abrir Designer"
+                  title="Abrir Designer Studio"
+                  onClick={openStudio}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
       </div>
 
       {isStudioOpen && (
