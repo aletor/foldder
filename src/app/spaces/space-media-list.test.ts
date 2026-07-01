@@ -5,6 +5,7 @@ import {
   buildMediaSinkToSpaceOutputEdges,
   collectMediaSinkInfos,
   detectSpaceOutputMode,
+  rebuildSpaceMapEntryFromPortalCache,
   reconcileSpacePortalNode,
 } from "./space-media-list";
 
@@ -137,5 +138,45 @@ describe("space-media-list", () => {
     const reconciled = reconcileSpacePortalNode(stalePortal, spacesMap);
     expect((reconciled.data as { outputType?: string }).outputType).toBe("media_list");
     expect((reconciled.data as { mediaListOutput?: { items?: unknown[] } }).mediaListOutput?.items).toHaveLength(3);
+  });
+
+  it("rebuilds a missing spacesMap entry from portal inner cache", () => {
+    const portal: Node = {
+      id: "portal_data",
+      type: "space",
+      position: { x: 0, y: 0 },
+      data: {
+        spaceId: "space_data",
+        label: "Data Space",
+        outputType: "json",
+        hasInput: true,
+        hasOutput: true,
+        _foldderSpaceInnerNodes: [
+          {
+            id: "d1",
+            type: "designer",
+            position: { x: 0, y: 0 },
+            data: { label: "Kit A", pages: [{ id: "p1", name: "1", layers: [] }] },
+          },
+          {
+            id: "d2",
+            type: "designer",
+            position: { x: 280, y: 0 },
+            data: { label: "Kit B", pages: [{ id: "p2", name: "1", layers: [] }] },
+          },
+        ],
+        _foldderSpaceInnerEdges: [
+          { id: "e1", source: "d1", target: "out", sourceHandle: "document", targetHandle: "in" },
+          { id: "e2", source: "d2", target: "out", sourceHandle: "document", targetHandle: "in" },
+        ],
+      },
+    };
+
+    const recovered = rebuildSpaceMapEntryFromPortalCache(portal, "space_data", "Data Space");
+    expect(recovered?.nodes?.some((n) => n.id === "in")).toBe(true);
+    expect(recovered?.nodes?.some((n) => n.id === "out")).toBe(true);
+    expect(recovered?.nodes?.filter((n) => n.type === "designer")).toHaveLength(2);
+    expect(recovered?.edges).toHaveLength(2);
+    expect(recovered?.name).toBe("Data Space");
   });
 });

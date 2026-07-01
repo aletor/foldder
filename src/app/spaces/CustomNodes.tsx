@@ -3715,8 +3715,13 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   }, [id, spaceId, setNodes]);
 
   const onEnterSpace = () => {
-    const targetId = nodeData.spaceId || nodeData.value;
-    window.dispatchEvent(new CustomEvent("enter-space", { detail: { nodeId: id, spaceId: targetId } }));
+    const targetId =
+      typeof nodeData.spaceId === "string" && nodeData.spaceId.trim()
+        ? nodeData.spaceId.trim()
+        : undefined;
+    window.dispatchEvent(
+      new CustomEvent("enter-space", { detail: { nodeId: id, spaceId: targetId } }),
+    );
   };
 
   const getHandleClass = () => {

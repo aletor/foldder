@@ -412,6 +412,93 @@ export function analyzeNestedSpaceStructure(
 }
 
 /**
+ * Reconstruye un nested space perdido del mapa usando el snapshot cacheado en el portal
+ * (`_foldderSpaceInnerNodes` / `_foldderSpaceInnerEdges`). Sin esto, el portal puede seguir
+ * mostrando templates en preview pero «Entrar» no hace nada si falta la entrada en spacesMap.
+ */
+export function rebuildSpaceMapEntryFromPortalCache(
+  portalNode: Node,
+  spaceId: string,
+  fallbackName?: string,
+): SpaceMapEntryLike | null {
+  const data = (portalNode.data ?? {}) as Record<string, unknown>;
+  const cachedNodes = data._foldderSpaceInnerNodes;
+  if (!Array.isArray(cachedNodes) || cachedNodes.length === 0) return null;
+
+  const cachedEdges = Array.isArray(data._foldderSpaceInnerEdges)
+    ? (data._foldderSpaceInnerEdges as Edge[])
+    : [];
+
+  const rawInner = cachedNodes as Node[];
+  const contentNodes = rawInner.filter(
+    (n) => n.type !== "spaceInput" && n.type !== "spaceOutput" && n.id !== "in" && n.id !== "out",
+  );
+  if (contentNodes.length === 0) return null;
+
+  const nodes: Node[] = [];
+  const hasInput = data.hasInput !== false;
+  const hasOutput = data.hasOutput !== false;
+
+  if (hasInput) {
+    nodes.push({
+      id: "in",
+      type: "spaceInput",
+      position: { x: 100, y: 200 },
+      data: {
+        label: "Input",
+        ...(typeof data.inputType === "string" ? { inputType: data.inputType } : {}),
+      },
+    });
+  }
+
+  nodes.push(...contentNodes);
+
+  const existingOut = rawInner.find((n) => n.type === "spaceOutput" || n.id === "out");
+  if (existingOut) {
+    nodes.push(existingOut);
+  } else if (hasOutput) {
+    const maxX = Math.max(...contentNodes.map((n) => n.position?.x ?? 0), 0);
+    const avgY =
+      contentNodes.reduce((sum, n) => sum + (n.position?.y ?? 0), 0) / contentNodes.length;
+    nodes.push({
+      id: "out",
+      type: "spaceOutput",
+      position: { x: maxX + 320, y: avgY },
+      data: {
+        label: "Output",
+        ...(typeof data.outputType === "string" ? { outputType: data.outputType } : {}),
+      },
+    });
+  }
+
+  const edges = [...cachedEdges];
+  const spaceName =
+    fallbackName ??
+    (typeof data.label === "string" && data.label.trim() ? data.label.trim() : "Nested Space");
+
+  const structure = analyzeNestedSpaceStructure(nodes, edges, {
+    spaceId,
+    spaceName,
+  });
+
+  return {
+    id: spaceId,
+    name: spaceName,
+    nodes,
+    edges,
+    outputType: structure.type,
+    outputValue: structure.value,
+    outputMode: structure.outputMode,
+    mediaListOutput: structure.mediaListOutput ?? undefined,
+    hasInput: structure.hasInput,
+    hasOutput: structure.hasOutput,
+    internalCategories: structure.internalCategories,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
  * Refresca un nodo portal Space en el lienzo padre a partir del subgrafo guardado en spacesMap.
  * Evita portales obsoletos (p. ej. outputType url cuando dentro hay media_list · 3).
  */

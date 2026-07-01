@@ -183,6 +183,7 @@ import {
   buildMediaSinkToSpaceOutputEdges,
   collectMediaSinkInfos,
   detectSpaceOutputMode,
+  rebuildSpaceMapEntryFromPortalCache,
   reconcileSpacePortalNode,
   reconcileSpacePortalsInNodes,
   type SpaceStructureAnalysis,
@@ -3301,7 +3302,19 @@ export function SpacesContent() {
       });
     }
 
-    const targetSpace = updatedSpacesMap[targetSpaceId];
+    let targetSpace = updatedSpacesMap[targetSpaceId];
+    if ((!targetSpace?.nodes?.length) && triggerNode?.type === "space") {
+      const recovered = rebuildSpaceMapEntryFromPortalCache(
+        triggerNode as Node,
+        targetSpaceId,
+        nameFromTrigger,
+      );
+      if (recovered) {
+        updatedSpacesMap[targetSpaceId] = recovered;
+        targetSpace = recovered;
+      }
+    }
+
     if (targetSpace && targetSpace.nodes) {
       const mapToCommit =
         nameFromTrigger
