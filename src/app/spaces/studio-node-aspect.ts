@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { Node } from "@xyflow/react";
+import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
 import {
   resolveGridFrameFromAspectRatio,
 } from "./canvas-grid-layout";
@@ -106,7 +107,25 @@ export function parseAspectRatioValue(value: string | null | undefined): { width
   return { width, height };
 }
 
-export function loadImageDimensions(imageUrl: string): Promise<{ width: number; height: number }> {
+function isSameOriginClientUrl(imageUrl: string): boolean {
+  if (typeof window === "undefined") return false;
+  const trimmed = imageUrl.trim();
+  if (!trimmed || trimmed.startsWith("data:") || trimmed.startsWith("blob:")) return true;
+  try {
+    const resolved = new URL(trimmed, window.location.href);
+    return resolved.origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function isExternalHttpUrl(imageUrl: string): boolean {
+  const trimmed = imageUrl.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  return !isSameOriginClientUrl(trimmed);
+}
+
+function loadImageDimensionsFromSrc(src: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     const cleanup = () => {
@@ -124,8 +143,30 @@ export function loadImageDimensions(imageUrl: string): Promise<{ width: number; 
       cleanup();
       reject(new Error("no se pudo cargar la imagen"));
     };
-    image.src = imageUrl;
+    image.src = src;
   });
+}
+
+/** Mide dimensiones; URLs http(s) externas pasan por `/api/spaces/proxy` (CDNs como Pinterest bloquean carga directa). */
+export async function loadImageDimensions(imageUrl: string): Promise<{ width: number; height: number }> {
+  const trimmed = imageUrl.trim();
+  if (!trimmed) throw new Error("no se pudo cargar la imagen");
+
+  if (typeof window !== "undefined" && isExternalHttpUrl(trimmed)) {
+    try {
+      const blob = await fetchBlobViaSpacesProxy(trimmed);
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        return await loadImageDimensionsFromSrc(objectUrl);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    } catch {
+      /* algunos hosts permiten carga directa aunque el proxy falle */
+    }
+  }
+
+  return loadImageDimensionsFromSrc(trimmed);
 }
 
 export function resolveNodeChromeHeight(
