@@ -906,10 +906,12 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
   const [videoPrepareSummary, setVideoPrepareSummary] = useState<string>("");
   const [generationMessage, setGenerationMessage] = useState("");
   const staleVideoRecoveryRef = useRef("");
+  /** Evita carrera: el padre re-renderiza tras onChange antes de que generatingTarget esté activo. */
+  const videoGenerationInFlightRef = useRef<string | null>(null);
   const safeData = data || createEmptyCineNodeData();
 
   useEffect(() => {
-    if (generatingTarget) return;
+    if (generatingTarget || videoGenerationInFlightRef.current) return;
     const staleSceneIds = safeData.scenes
       .filter((scene) => scene.video?.status === "generating")
       .map((scene) => scene.id)
@@ -1460,9 +1462,12 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     const provider = "gemini" as const;
     const apiAspectRatio = cineVideoApiAspectRatio(preparedPlan.aspectRatio);
     const targetKey = `video:${scene.id}`;
-    const generatingPlan: CineVideoPlan = {
+    videoGenerationInFlightRef.current = targetKey;
+    setGeneratingTarget(targetKey);
+    setGenerationMessage(`Generando vídeo de ${scene.title}...`);
+    const inFlightPlan: CineVideoPlan = {
       ...preparedPlan,
-      status: "generating",
+      status: "prepared",
       videoProvider: provider,
       errorMessage: undefined,
       warnings: [
@@ -1470,9 +1475,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         ...(preparedPlan.aspectRatio !== apiAspectRatio ? [`El proveedor de vídeo recibirá ${apiAspectRatio}; la dirección original de Cine es ${preparedPlan.aspectRatio}.`] : []),
       ],
     };
-    let workingData = commitVideoPlan(safeData, scene.id, generatingPlan);
-    setGeneratingTarget(targetKey);
-    setGenerationMessage(`Generando vídeo de ${scene.title}...`);
+    let workingData = commitVideoPlan(safeData, scene.id, inFlightPlan);
     try {
       const firstAsset = preparedPlan.mode === "start_end_frames" ? preparedPlan.startFrameAssetId : preparedPlan.singleFrameAssetId;
       const firstKey = preparedPlan.mode === "start_end_frames" ? preparedPlan.startFrameS3Key : preparedPlan.singleFrameS3Key;
@@ -1523,11 +1526,11 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
       if (!res.ok || !json.output) {
         const message = json.error || "No se pudo generar el vídeo.";
         workingData = commitVideoPlan(workingData, scene.id, {
-          ...generatingPlan,
+          ...inFlightPlan,
           status: "error",
           errorMessage: message,
           metadata: {
-            ...generatingPlan.metadata,
+            ...inFlightPlan.metadata,
             generatedFrom: "cine-node",
             cineNodeId: nodeId,
             updatedAt: new Date().toISOString(),
@@ -1537,7 +1540,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         return;
       }
       const generatedPlan: CineVideoPlan = {
-        ...generatingPlan,
+        ...inFlightPlan,
         status: "generated",
         videoAssetId: json.output,
         videoUrl: json.output,
@@ -1548,7 +1551,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         generatedAt: new Date().toISOString(),
         errorMessage: undefined,
 	        metadata: {
-	          ...generatingPlan.metadata,
+	          ...inFlightPlan.metadata,
 	          generatedFrom: "cine-node",
 	          cineNodeId: nodeId,
 	          updatedAt: new Date().toISOString(),
@@ -1560,11 +1563,11 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
       const message = error instanceof Error ? error.message : "No se pudo generar el vídeo.";
       console.warn("Cine video generation failed:", message);
       commitVideoPlan(workingData, scene.id, {
-        ...generatingPlan,
+        ...inFlightPlan,
         status: "error",
         errorMessage: message,
 	        metadata: {
-	          ...generatingPlan.metadata,
+	          ...inFlightPlan.metadata,
 	          generatedFrom: "cine-node",
 	          cineNodeId: nodeId,
 	          updatedAt: new Date().toISOString(),
@@ -1572,6 +1575,9 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
       });
       setVideoPrepareSummary(message);
     } finally {
+      if (videoGenerationInFlightRef.current === targetKey) {
+        videoGenerationInFlightRef.current = null;
+      }
       setGeneratingTarget(null);
       setGenerationMessage("");
     }
