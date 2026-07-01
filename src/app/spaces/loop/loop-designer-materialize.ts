@@ -14,10 +14,17 @@ import type { Dataset } from "@/app/spaces/dataset/dataset-types";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { duplicateDesignerPageState, resolveSlideKey } from "@/app/spaces/designer/designer-studio-pure";
 import { applyDatasetRowToDesignerPage } from "@/app/spaces/designer/designer-dataset-page";
+import type { DesignerDatasetFieldBinding } from "@/app/spaces/dataset/dataset-types";
 import {
+  bindingKind,
   designerSlotKey,
   isPendingDesignerBinding,
+  populatePendingSlotKey,
 } from "@/app/spaces/designer/designer-dataset-binding";
+import {
+  mapDesignerObjectTree,
+  type DesignerFolderContext,
+} from "@/app/spaces/designer/designer-object-tree";
 
 /** Referencia a una columna del Dataset (la que Loop asigna a un hueco dinámico). */
 export interface DesignerSlotColumnRef {
@@ -27,46 +34,58 @@ export interface DesignerSlotColumnRef {
   fieldKey: string;
 }
 
-/** Mapa hueco→columna (clave = `designerSlotKey`), construido en la UI de Loop. */
+/** Mapa hueco→columna (clave = `populatePendingSlotKey` / `DesignerDynamicField.key`). */
 export type DesignerSlotColumnMap = Record<string, DesignerSlotColumnRef>;
 
-/**
- * Rellena el binding PENDIENTE de un objeto (y de sus hijos anidados dentro de `booleanGroup` y
- * `clippingContainer` — el "pegar dentro") con la columna que Loop le asignó (si la hay),
- * dejándolo resoluble. Sin asignación, se devuelve igual (quedará estático tras el strip).
- */
-function resolvePendingBindingForObject(
+function lookupSlotColumnRef(
+  binding: DesignerDatasetFieldBinding,
   obj: FreehandObject,
   slotMap: DesignerSlotColumnMap,
-): FreehandObject {
-  let next = obj;
-  const binding = next._designerDatasetBinding;
-  if (binding && isPendingDesignerBinding(binding)) {
-    const key = designerSlotKey(binding);
-    const col = key ? slotMap[key] : undefined;
-    if (col) {
-      next = {
-        ...next,
-        _designerDatasetBinding: {
-          ...binding,
-          listId: col.listId,
-          listKey: col.listKey,
-          fieldId: col.fieldId,
-          fieldKey: col.fieldKey,
-        },
-      } as FreehandObject;
-    }
-  }
-  if (next.type === "booleanGroup" || next.type === "groupContainer") {
-    next = { ...next, children: next.children.map((c) => resolvePendingBindingForObject(c, slotMap)) };
-  } else if (next.type === "clippingContainer") {
-    next = {
-      ...next,
-      mask: resolvePendingBindingForObject(next.mask as unknown as FreehandObject, slotMap) as unknown as typeof next.mask,
-      content: next.content.map((c) => resolvePendingBindingForObject(c, slotMap)),
-    };
-  }
-  return next;
+  ctx: DesignerFolderContext,
+): DesignerSlotColumnRef | undefined {
+  const kind = bindingKind(binding, obj);
+  if (!kind) return undefined;
+
+  const primaryKey = populatePendingSlotKey(binding, kind, ctx.folderEntityId);
+  if (primaryKey && slotMap[primaryKey]) return slotMap[primaryKey];
+
+  // Compatibilidad con mapeos guardados antes de carpetas / sufijo `::kind`.
+  const legacyWithKind = `${designerSlotKey(binding)}::${kind}`;
+  if (legacyWithKind && slotMap[legacyWithKind]) return slotMap[legacyWithKind];
+
+  const legacyBase = designerSlotKey(binding);
+  if (legacyBase && slotMap[legacyBase]) return slotMap[legacyBase];
+
+  return undefined;
+}
+
+/**
+ * Rellena los bindings PENDIENTES de la página con las columnas que Loop asignó (si las hay),
+ * respetando carpetas (`groupContainer`) y objetos anidados en clips. Sin asignación, el hueco
+ * queda estático tras el strip.
+ */
+function resolvePendingBindingsOnPage(
+  page: DesignerPageState,
+  slotMap: DesignerSlotColumnMap,
+): DesignerPageState {
+  const objects = mapDesignerObjectTree(page.objects ?? [], (obj, ctx) => {
+    const binding = obj._designerDatasetBinding;
+    if (!binding || !isPendingDesignerBinding(binding)) return obj;
+    const col = lookupSlotColumnRef(binding, obj, slotMap, ctx);
+    if (!col) return obj;
+    return {
+      ...obj,
+      _designerDatasetBinding: {
+        ...binding,
+        listId: col.listId,
+        listKey: col.listKey,
+        fieldId: col.fieldId,
+        fieldKey: col.fieldKey,
+      },
+    } as FreehandObject;
+  });
+  if (objects === page.objects) return page;
+  return { ...page, objects };
 }
 
 /** Quita los enlaces a Dataset de un objeto (y de sus hijos), dejándolo congelado. */
@@ -110,10 +129,7 @@ export function freezeDesignerPagesForRow(
     const dup = duplicateDesignerPageState(tpl);
     const mapped =
       slotColumnMap && Object.keys(slotColumnMap).length > 0
-        ? {
-            ...dup,
-            objects: (dup.objects ?? []).map((o) => resolvePendingBindingForObject(o, slotColumnMap)),
-          }
+        ? resolvePendingBindingsOnPage(dup, slotColumnMap)
         : dup;
     const resolved = applyDatasetRowToDesignerPage(mapped, dataset, rowIndex);
     const objects = (resolved.objects ?? []).map(stripDatasetBindingsFromObject);

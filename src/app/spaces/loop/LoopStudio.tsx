@@ -156,6 +156,10 @@ export interface LoopStudioProps {
   onChangeDesignerFormValue?: (slotKey: string, value: string) => void;
   onAutofillDesignerForm?: (rowIndex: number) => void;
   onGenerateDesignerForm?: () => void;
+
+  /** Designer: inyectar instancias editables en el nested space al generar (por defecto off). */
+  createEditablesOnGenerate?: boolean;
+  onCreateEditablesOnGenerateChange?: (value: boolean) => void;
 }
 
 function slotIcon(slot: LoopStudioSlot) {
@@ -492,6 +496,8 @@ export function LoopStudio(props: LoopStudioProps) {
     onChangeDesignerFormValue,
     onAutofillDesignerForm,
     onGenerateDesignerForm,
+    createEditablesOnGenerate = false,
+    onCreateEditablesOnGenerateChange,
   } = props;
 
   const slots = useMemo(
@@ -824,6 +830,8 @@ export function LoopStudio(props: LoopStudioProps) {
             onGenerate={() => {
               onGenerateDesignerForm();
             }}
+            createEditablesOnGenerate={createEditablesOnGenerate}
+            onCreateEditablesOnGenerateChange={onCreateEditablesOnGenerateChange}
             shareToken={shareToken}
             shareBusy={shareBusy}
             shareError={shareError}
@@ -1364,6 +1372,17 @@ export function LoopStudio(props: LoopStudioProps) {
                     >
                       Probar
                     </button>
+                  </label>
+                ) : null}
+                {isDesignerTemplate ? (
+                  <label className="loop-studio-create-editables">
+                    <input
+                      type="checkbox"
+                      checked={createEditablesOnGenerate}
+                      onChange={(e) => onCreateEditablesOnGenerateChange?.(e.target.checked)}
+                      disabled={busy}
+                    />
+                    <span>Crear editables</span>
                   </label>
                 ) : null}
                 <button

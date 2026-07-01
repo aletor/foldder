@@ -135,6 +135,11 @@ export interface LoopNodeData {
     string,
     { listId: string; listKey: string; fieldId: string; fieldKey: string }
   >;
+  /**
+   * Si es true, al generar (Designer) se inyecta el nested space con nodos Designer editables.
+   * Por defecto false: solo rasterizado / volcado al Dataset según la salida configurada.
+   */
+  createEditablesOnGenerate?: boolean;
 }
 
 /** Opciones de salida Loop → columna del Dataset de entrada. */

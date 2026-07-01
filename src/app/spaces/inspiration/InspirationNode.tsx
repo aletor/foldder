@@ -6,7 +6,6 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReduc
 import {
   NodeProps,
   NodeResizer,
-  Position,
   useEdges,
   useNodes,
   useReactFlow,
@@ -35,14 +34,23 @@ import {
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { readJsonWithHttpError } from "@/lib/read-response-json";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
-import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
+import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "../canvas-grid-layout";
+import {
+  FoldderNodeContentDock,
+  FoldderNodeContentDockActions,
+  FoldderNodeContentDockMain,
+  FoldderNodeContentMeta,
+  FoldderNodeContentMetaRow,
+  FoldderStudioModeCenterButton,
+} from "../foldder-node-ui";
 import {
   loadImageDimensions,
   nodeFrameNeedsSync,
   resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+  resolveNodeFrameWidth,
 } from "../studio-node-aspect";
+import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 import {
   FoldderStudioHeader,
@@ -51,7 +59,6 @@ import {
   hasFoldderStudioTouched,
   touchStudioNodeData,
 } from "../studio-node/foldder-studio-touched";
-import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import {
   buildInspirationFeed,
   feedHasAnyResults,
@@ -138,6 +145,30 @@ const PROVIDERS: Array<{ id: InspirationProvider; label: string }> = [
   { id: "arena", label: "Are.na" },
 ];
 
+const INSPIRATION_EMPTY_BACKGROUND_SRC = "/assets/nodes/inspiration-empty-green.png";
+const INSPIRATION_ACCENT = "#0ac38a";
+const INSPIRATION_DOCK_MIN_CHROME = 180;
+const INSPIRATION_CONNECTED_PREVIEW_MIN = 140;
+const INSPIRATION_NODE_MAX_HEIGHT = 1400;
+
+function resolveInspirationNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
+  if (!args.hasDock) return args.baseHeight;
+  return Math.min(
+    INSPIRATION_NODE_MAX_HEIGHT,
+    growCanvasDimensionToGrid(Math.max(args.baseHeight, INSPIRATION_CONNECTED_PREVIEW_MIN + INSPIRATION_DOCK_MIN_CHROME)),
+  );
+}
+
+function mapInspirationStatusLabel(status: InspirationStatus, isEmpty: boolean, isSearching: boolean): string {
+  if (isEmpty) return "Vacío";
+  if (isSearching) return "Buscando…";
+  if (status === "error") return "Error";
+  if (status === "output" || status === "selected") return "Listo";
+  if (status === "results") return "Resultados";
+  if (status === "ready") return "Conectado";
+  return "—";
+}
+
 function firstImageUrlFromNode(node: Node | undefined): string {
   const data = node?.data as Record<string, unknown> | undefined;
   const value = typeof data?.value === "string" ? data.value : "";
@@ -186,6 +217,7 @@ function syncInspirationNodeFrame(
   nodeId: string,
   contentWidth: number,
   contentHeight: number,
+  chromeHeight = 0,
 ): { nodes: Node[]; didSync: boolean; frame: { width: number; height: number } | null } {
   const safeWidth = Math.max(1, contentWidth);
   const safeHeight = Math.max(1, contentHeight);
@@ -197,10 +229,11 @@ function syncInspirationNodeFrame(
     node: targetNode,
     contentWidth: safeWidth,
     contentHeight: safeHeight,
-    minWidth: 200,
+    minWidth: chromeHeight > 0 ? 260 : 200,
     maxWidth: 960,
     minHeight: 120,
-    maxHeight: 1400,
+    maxHeight: INSPIRATION_NODE_MAX_HEIGHT,
+    chromeHeight,
   });
 
   let didSync = false;
@@ -1197,8 +1230,6 @@ function InspirationStudio({
   );
 }
 
-const INSPIRATION_EMPTY_BACKGROUND_SRC = "/assets/nodes/inspiration-empty-green.png";
-
 export const InspirationNode = memo(function InspirationNode({ id, data, selected }: NodeProps) {
   const nodes = useNodes();
   const flowNode = nodes.find((node) => node.id === id);
@@ -1255,6 +1286,71 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const previewImageHeight = previewImageSize?.height ?? null;
   const showInspirationEmpty = !outputUrl && !selectedRef;
   const originLabel = inspirationOriginLabel(nodeData);
+  const promptConnected = Boolean(promptEdge);
+  const imageConnected = Boolean(imageEdge);
+  const hasConnections = promptConnected || imageConnected;
+  const hasDock = hasConnections;
+  const isEmpty = !hasConnections;
+  const hasPreviewVisual = hasConnections && !showInspirationEmpty;
+  const connectedOnly = hasConnections && showInspirationEmpty;
+  const showExteriorTile = hasDock;
+  const isSearching = status === "searching";
+
+  const inspirationHandles = useMemo((): StudioCanvasNodeHandleSpec[] => [
+    {
+      side: "left",
+      top: "31%",
+      type: "target",
+      id: "prompt",
+      dataType: "prompt",
+      label: promptConnected ? "✓ Prompt" : "Prompt",
+      labelStyle: promptConnected ? { color: "#3a8f96" } : undefined,
+    },
+    {
+      side: "left",
+      top: "50%",
+      type: "target",
+      id: "image",
+      dataType: "image",
+      label: imageConnected ? "✓ Image" : "Image",
+      labelStyle: imageConnected ? { color: "#f59e0b" } : undefined,
+    },
+    {
+      side: "right",
+      top: "50%",
+      type: "source",
+      id: "image",
+      dataType: "image",
+      label: "Image",
+    },
+  ], [imageConnected, promptConnected]);
+
+  const headerTitle = nodeData.label?.trim() || "Inspiration";
+  const facetLabel = FACETS.find((item) => item.id === nodeData.facet)?.en ?? "—";
+  const providerLabel =
+    PROVIDERS.find((item) => item.id === nodeData.provider)?.label ??
+    (nodeData.inspirationSources?.length
+      ? nodeData.inspirationSources.map((source) => PROVIDERS.find((item) => item.id === source)?.label ?? source).join(" · ")
+      : "—");
+  const inputsLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (promptConnected) parts.push("Prompt");
+    if (imageConnected) parts.push("Image");
+    return parts.length > 0 ? parts.join(" · ") : "—";
+  }, [imageConnected, promptConnected]);
+  const referenceLabel = originLabel ?? "—";
+  const statusLabel = mapInspirationStatusLabel(status, isEmpty, isSearching);
+  const previewLine = isEmpty
+    ? "Conecta Prompt o Image y abre Studio."
+    : isSearching
+      ? "Buscando referencias visuales…"
+      : nodeData.error
+        ? nodeData.error
+        : hasPreviewVisual
+          ? referenceLabel !== "—"
+            ? referenceLabel
+            : "Referencia lista para el pipeline."
+          : statusMessage(status, hasInput);
 
   const openStudio = useCallback((options?: { expandDirectLink?: boolean }) => {
     setStudioExpandDirectLink(Boolean(options?.expandDirectLink));
@@ -1342,29 +1438,88 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   }, [outputUrl, previewUrl, selectedRef?.imageUrl]);
 
   useLayoutEffect(() => {
-    if (showInspirationEmpty || !previewUrl || !previewImageWidth || !previewImageHeight) return;
+    const baseFrame = getNodeGridFrameForType("inspiration");
+    if (!baseFrame) return;
 
-    const syncKey = inspirationFrameSyncKey(previewUrl, previewImageWidth, previewImageHeight);
+    if (hasPreviewVisual && previewUrl && previewImageWidth && previewImageHeight) {
+      const syncKey = `${inspirationFrameSyncKey(previewUrl, previewImageWidth, previewImageHeight)}:${hasDock ? "dock" : "preview-only"}`;
+      if (frameSyncKeyRef.current === syncKey) return;
+
+      const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewFrameRef.current);
+      let didSync = false;
+      setNodes((nds) => {
+        const result = syncInspirationNodeFrame(nds, id, previewImageWidth, previewImageHeight, chromeHeight);
+        didSync = result.didSync;
+        return result.nodes;
+      });
+
+      frameSyncKeyRef.current = syncKey;
+      if (didSync) {
+        scheduleInspirationNodeInternalsRefresh(id, updateNodeInternals);
+      }
+      return;
+    }
+
+    if (isEmpty) {
+      const syncKey = "inspiration-base";
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== id) return node;
+          if (!nodeFrameNeedsSync(node, baseFrame)) return node;
+          return {
+            ...node,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            style: { ...(node.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height, minHeight: baseFrame.height },
+          };
+        }),
+      );
+      scheduleInspirationNodeInternalsRefresh(id, updateNodeInternals);
+      return;
+    }
+
+    if (!hasDock) return;
+
+    const measuredHeight = resolveInspirationNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
+    const syncKey = `inspiration-content:${hasPreviewVisual ? "preview" : "meta"}:${measuredHeight}:${status}`;
     if (frameSyncKeyRef.current === syncKey) return;
 
-    let didSync = false;
-    setNodes((nds) => {
-      const result = syncInspirationNodeFrame(nds, id, previewImageWidth, previewImageHeight);
-      didSync = result.didSync;
-      return result.nodes;
-    });
-
     frameSyncKeyRef.current = syncKey;
-    if (didSync) {
-      scheduleInspirationNodeInternalsRefresh(id, updateNodeInternals);
-    }
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const resolvedWidth = resolveNodeFrameWidth(node, Math.max(baseFrame.width, 260));
+        const resolvedTarget = { width: resolvedWidth, height: measuredHeight };
+        if (!nodeFrameNeedsSync(node, resolvedTarget)) return node;
+        return {
+          ...node,
+          width: resolvedWidth,
+          height: measuredHeight,
+          measured: { width: resolvedWidth, height: measuredHeight },
+          style: {
+            ...(node.style as React.CSSProperties),
+            width: resolvedWidth,
+            height: measuredHeight,
+            minHeight: measuredHeight,
+            maxHeight: INSPIRATION_NODE_MAX_HEIGHT,
+          },
+        };
+      }),
+    );
+    scheduleInspirationNodeInternalsRefresh(id, updateNodeInternals);
   }, [
+    hasDock,
+    hasPreviewVisual,
     id,
+    isEmpty,
     previewImageHeight,
     previewImageWidth,
     previewUrl,
     setNodes,
-    showInspirationEmpty,
+    status,
     updateNodeInternals,
   ]);
 
@@ -1411,113 +1566,130 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   );
 
   return (
-    <div
+    <StudioCanvasNodeShell
       ref={frameRef}
-      className={`custom-node inspiration-node foldder-node--frameless node--media group/node ${showInspirationEmpty ? "inspiration-node--empty" : "inspiration-node--has-preview"} ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
-      style={{ minWidth: 200, minHeight: showInspirationEmpty ? 120 : 0 }}
+      nodeId={id}
+      nodeType="inspiration"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="Inspiration"
+      title="INSPIRATION"
+      introActive={!!nodeData._foldderCanvasIntro}
+      studioTouched={showExteriorTile && studioTouched}
+      exteriorTileMark={showExteriorTile}
+      minWidth={hasConnections ? 260 : 200}
+      handles={inspirationHandles}
+      variant="frameless"
+      material="media"
+      className={`inspiration-node foldder-frameless-label-dark${isEmpty ? " inspiration-node--empty" : hasConnections ? " inspiration-node--has-content" : ""}${hasPreviewVisual ? " inspiration-node--has-preview" : ""}${connectedOnly ? " inspiration-node--connected-only" : ""}${hasConnections ? " inspiration-node--connected" : ""}${status === "error" ? " foldder-node--error" : ""}${isSearching ? " node-glow-running" : ""}`}
+      style={
+        {
+          width: "100%",
+          height: "100%",
+          minWidth: hasConnections ? 260 : 200,
+          minHeight: hasConnections ? INSPIRATION_DOCK_MIN_CHROME + INSPIRATION_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": INSPIRATION_ACCENT,
+          "--foldder-frameless-glass-bg": INSPIRATION_ACCENT,
+          "--foldder-frameless-accent": "#86efac",
+        } as React.CSSProperties
+      }
     >
-      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
-      {studioTouched ? <FoldderStudioTouchedMark nodeType="inspiration" /> : null}
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Inspiration" />
+      <NodeResizer
+        minWidth={200}
+        minHeight={120}
+        maxWidth={960}
+        maxHeight={INSPIRATION_NODE_MAX_HEIGHT}
+        keepAspectRatio={hasPreviewVisual}
+        isVisible={selected}
+      />
 
-      <div className="handle-wrapper handle-left" style={{ top: "31%" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
-        <span className="handle-label">Prompt</span>
-      </div>
-      <div className="handle-wrapper handle-left" style={{ top: "50%" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
-        <span className="handle-label">Image</span>
-      </div>
-
-      <div className="node-header">
-        <NodeIcon
-          type="inspiration"
-          selected={selected}
-          state={resolveFoldderNodeState({
-            selected,
-            loading: status === "searching",
-            error: status === "error",
-            done: Boolean(outputUrl),
-          })}
-          size={16}
-        />
-        <FoldderNodeHeaderTitle introActive={!!nodeData._foldderCanvasIntro}>Inspiration</FoldderNodeHeaderTitle>
-      </div>
-
-      {showInspirationEmpty ? (
-        <div className="node-content foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="inspiration-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+      <div
+        className={`node-content foldder-frameless-main inspiration-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
+      >
+        <div
+          ref={previewFrameRef}
+          className="inspiration-node-preview-area foldder-node-content-preview-area group/inspiration"
+        >
+          {hasPreviewVisual ? (
+            <>
+              {outputUrl ? (
+                <img
+                  src={inspirationCanvasUrl ?? outputUrl}
+                  alt=""
+                  className="inspiration-node-preview-img"
+                  draggable={false}
+                  decoding="async"
+                />
+              ) : selectedRef ? (
+                <img
+                  src={selectedRef.thumbUrl || selectedRef.imageUrl}
+                  alt=""
+                  className="inspiration-node-preview-img inspiration-node-preview-img--selected"
+                  draggable={false}
+                />
+              ) : null}
+            </>
+          ) : (
             <img
               src={INSPIRATION_EMPTY_BACKGROUND_SRC}
               alt=""
-              className="h-full w-full object-contain object-bottom"
+              className="inspiration-node-bg"
               draggable={false}
             />
-          </div>
-          <div className="inspiration-node-empty-actions relative z-10 mt-auto flex flex-col gap-2 px-3 pb-3 pt-2">
-            <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-white/80">
-              {nodeData.error || statusMessage(status, hasInput)}
-            </p>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                openStudio();
-              }}
-              className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-emerald-950 transition hover:bg-white"
-            >
-              <Search size={13} />
-              Find references
-            </button>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                openStudio({ expandDirectLink: true });
-              }}
-              className="inspiration-node-link-action nodrag flex w-full items-center justify-center gap-1.5 px-3 py-2 text-[9px] font-black uppercase tracking-[0.12em] transition"
-            >
-              <Link2 size={11} aria-hidden />
-              Already have a link?
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="node-content foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div ref={previewFrameRef} className="relative h-full w-full overflow-hidden bg-slate-950/70">
-            {originLabel ? (
-              <span className="absolute left-2 top-2 z-10 bg-black/58 px-2 py-1 text-[8px] font-black uppercase tracking-[0.08em] text-white/82 backdrop-blur-sm">
-                {originLabel}
-              </span>
-            ) : null}
-            {outputUrl ? (
-              <img src={inspirationCanvasUrl ?? outputUrl} alt="" className="h-full w-full object-contain" draggable={false} decoding="async" />
-            ) : selectedRef ? (
-              <img
-                src={selectedRef.thumbUrl || selectedRef.imageUrl}
-                alt=""
-                className="h-full w-full object-contain opacity-90"
-                draggable={false}
-              />
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              openStudio();
-            }}
-            className="foldder-frameless-action nodrag absolute bottom-3 right-3 z-10 flex items-center gap-1.5 rounded-none bg-black/55 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.1em] text-white/90 opacity-0 transition hover:bg-black/70 group-hover/node:opacity-100 focus-visible:opacity-100"
-          >
-            <Sparkles size={12} />
-            Change reference
-          </button>
-        </div>
-      )}
+          )}
 
-      <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
-        <span className="handle-label">Image</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
+          {isEmpty ? (
+            <>
+              <div className="inspiration-node-empty-hint" aria-hidden>
+                <span className="inspiration-node-empty-hint__title">Inspiration vacío</span>
+                <span className="inspiration-node-empty-hint__body">
+                  Conecta Prompt o Image y abre Studio.
+                </span>
+              </div>
+              <FoldderStudioModeCenterButton
+                label="Empezar"
+                title="Abrir Inspiration Studio"
+                onClick={() => openStudio()}
+              />
+            </>
+          ) : null}
+
+          {isSearching ? (
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
+              <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-white/95 backdrop-blur-sm">
+                Buscando referencias…
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        {hasDock ? (
+          <div className="inspiration-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Facet" value={facetLabel} />
+                  <FoldderNodeContentMetaRow label="Fuente" value={providerLabel} />
+                  <FoldderNodeContentMetaRow label="Referencia" value={referenceLabel} />
+                  <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="inspiration-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Abrir Studio"
+                  title="Abrir Inspiration Studio"
+                  onClick={() => openStudio()}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
+        ) : null}
       </div>
 
       {studioOpen ? (
@@ -1535,6 +1707,6 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
           onInsertFlow={insertFlow}
         />
       ) : null}
-    </div>
+    </StudioCanvasNodeShell>
   );
 });

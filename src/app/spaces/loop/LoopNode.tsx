@@ -706,6 +706,7 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
     // Modo 2: mapeo hueco→columna asignado en la UI de Loop (huecos sin asignar quedan estáticos).
     const popData = (getNodes().find((n) => n.id === id)?.data ?? {}) as LoopNodeData;
     const slotColumnMap = popData.designerSlotBindings ?? {};
+    const createEditables = popData.createEditablesOnGenerate ?? false;
 
     try {
       const rows: DesignerMaterializedRow[] = [];
@@ -716,17 +717,19 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
         patchSelf({ progressDone: i + 1 });
       }
 
-      const sub = buildDesignerGeneratedSubgraph(id, rows);
-      window.dispatchEvent(
-        new CustomEvent(LOOP_COMMIT_EVENT, {
-          detail: {
-            loopNodeId: id,
-            spaceName: label,
-            nodes: sub.nodes,
-            edges: sub.edges,
-          },
-        }),
-      );
+      if (createEditables) {
+        const sub = buildDesignerGeneratedSubgraph(id, rows);
+        window.dispatchEvent(
+          new CustomEvent(LOOP_COMMIT_EVENT, {
+            detail: {
+              loopNodeId: id,
+              spaceName: label,
+              nodes: sub.nodes,
+              edges: sub.edges,
+            },
+          }),
+        );
+      }
 
       // Fase 4b: rasterizar cada instancia y volcar M columnas × N filas al Dataset (si está activado).
       const outputSettings = nodeData.datasetOutput;
@@ -991,6 +994,7 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
     }
     const freshPop = (getNodes().find((n) => n.id === id)?.data ?? {}) as LoopNodeData;
     const fv = freshPop.formValues ?? {};
+    const createEditables = freshPop.createEditablesOnGenerate ?? false;
     const slotValues = resolveDesignerSlotValues({
       model: designerFormModel,
       textValues: fv,
@@ -1009,12 +1013,14 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
       const results = pageIds.map((pid) => byId[pid]).filter((u): u is string => Boolean(u));
       setDesignerFormResults(results);
 
-      const sub = buildDesignerGeneratedSubgraph(id, [{ rowIndex: 0, pages }]);
-      window.dispatchEvent(
-        new CustomEvent(LOOP_COMMIT_EVENT, {
-          detail: { loopNodeId: id, spaceName: label, nodes: sub.nodes, edges: sub.edges },
-        }),
-      );
+      if (createEditables) {
+        const sub = buildDesignerGeneratedSubgraph(id, [{ rowIndex: 0, pages }]);
+        window.dispatchEvent(
+          new CustomEvent(LOOP_COMMIT_EVENT, {
+            detail: { loopNodeId: id, spaceName: label, nodes: sub.nodes, edges: sub.edges },
+          }),
+        );
+      }
       patchSelf({ status: "done" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al generar la pieza Designer.");
@@ -1034,7 +1040,7 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
     patchSelf,
   ]);
 
-  /** Asigna (o limpia) la columna de un hueco dinámico; clave = `designerSlotKey`. */
+  /** Asigna (o limpia) la columna de un hueco dinámico; clave = `DesignerDynamicField.key`. */
   const onChangeDesignerSlotBinding = useCallback(
     (slotKey: string, fieldId: string) => {
       setNodes((nds) =>
@@ -1751,6 +1757,10 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
           onChangeDesignerFormValue={onChangeFormText}
           onAutofillDesignerForm={onAutofillDesignerForm}
           onGenerateDesignerForm={() => void onGenerateDesignerForm()}
+          createEditablesOnGenerate={nodeData.createEditablesOnGenerate ?? false}
+          onCreateEditablesOnGenerateChange={(value) =>
+            patchSelf({ createEditablesOnGenerate: value })
+          }
         />
       ) : null}
       {designerRasterReq ? (

@@ -9,6 +9,7 @@ import {
   FoldderTemplatePreviewGrid,
   type FoldderTemplatePreviewSource,
 } from "./studio-node/foldder-template-preview-grid";
+import { FoldderPreviewDeckStack } from "./studio-node/foldder-preview-deck-stack";
 
 export function SpaceNodeTemplatePreview({
   nodeId,
@@ -38,5 +39,9 @@ export function SpaceNodeTemplatePreview({
 
   if (sources.length === 0) return null;
 
-  return <FoldderTemplatePreviewGrid sources={sources} />;
+  return (
+    <FoldderPreviewDeckStack layerCount={sources.length} className="space-node-template-stack">
+      <FoldderTemplatePreviewGrid sources={sources} />
+    </FoldderPreviewDeckStack>
+  );
 }

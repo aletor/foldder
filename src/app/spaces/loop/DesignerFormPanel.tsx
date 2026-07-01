@@ -17,6 +17,8 @@ export interface DesignerFormPanelProps {
   onChangeValue: (slotKey: string, value: string) => void;
   onAutofill?: (rowIndex: number) => void;
   onGenerate: () => void;
+  createEditablesOnGenerate?: boolean;
+  onCreateEditablesOnGenerateChange?: (value: boolean) => void;
   shareToken?: string | null;
   shareBusy?: boolean;
   shareError?: string | null;
@@ -47,6 +49,8 @@ export function DesignerFormPanel({
   onChangeValue,
   onAutofill,
   onGenerate,
+  createEditablesOnGenerate = false,
+  onCreateEditablesOnGenerateChange,
   shareToken,
   shareBusy = false,
   shareError,
@@ -170,6 +174,18 @@ export function DesignerFormPanel({
           );
         })}
       </div>
+
+      {onCreateEditablesOnGenerateChange ? (
+        <label className="loop-studio-create-editables loop-studio-create-editables--form">
+          <input
+            type="checkbox"
+            checked={createEditablesOnGenerate}
+            onChange={(e) => onCreateEditablesOnGenerateChange(e.target.checked)}
+            disabled={busy}
+          />
+          <span>Crear editables</span>
+        </label>
+      ) : null}
 
       <button
         type="button"

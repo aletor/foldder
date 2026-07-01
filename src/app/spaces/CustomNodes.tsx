@@ -126,6 +126,8 @@ import {
   NodeLabel,
 } from "./foldder-node-ui";
 import { SpaceNodeTemplatePreview } from "./SpaceNodeTemplatePreview";
+import { SpaceNodeMediaPreviewGrid } from "./SpaceNodeMediaPreviewGrid";
+import { collectSpaceMediaPreviewItems } from "./space-node-preview";
 import { listPopulateDesignerTemplatesFromSpacePortal } from "./populate/populate-space-template";
 import { reconcileSpacePortalNode } from "./space-media-list";
 import { useSpacesMapCanvas } from "./spaces-map-canvas-context";
@@ -3663,135 +3665,215 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
 });
 
 const SPACE_ACCENT = "#8A5755";
+const SPACE_DOCK_MIN_CHROME = 180;
+const SPACE_CONNECTED_PREVIEW_MIN = 140;
+const SPACE_NODE_MAX_HEIGHT = 720;
 
 export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodeProps) {
-  const nodeData = data as BaseNodeData & { 
-    outputType?: string, 
-    inputType?: string,
-    spaceId?: string,
-    hasInput?: boolean,
-    hasOutput?: boolean,
-    internalCategories?: string[],
-    outputMode?: string,
-    mediaListOutput?: { items?: Array<{ url?: string; mediaType?: string }> },
+  const nodeData = data as BaseNodeData & {
+    outputType?: string;
+    inputType?: string;
+    spaceId?: string;
+    hasInput?: boolean;
+    hasOutput?: boolean;
+    internalCategories?: string[];
+    outputMode?: string;
+    mediaListOutput?: { items?: Array<{ url?: string; mediaType?: string }> };
   };
   const { setNodes, getNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const frameSyncKeyRef = useRef<string | null>(null);
   const spaceId = nodeData.spaceId;
 
-  // Refresh node when returning from an inner space (so preview updates)
   useEffect(() => {
     const onSpaceDataUpdated = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.spaceId === spaceId) {
-        setNodes(prev => prev.map(n => n.id === id ? {
-          ...n,
-          data: {
-            ...n.data,
-            ...(detail.outputType ? { outputType: detail.outputType } : {}),
-            ...(detail.outputValue != null ? { value: detail.outputValue } : {}),
-            ...(detail.outputMode ? { outputMode: detail.outputMode } : {}),
-            ...(detail.mediaListOutput ? { mediaListOutput: detail.mediaListOutput } : {}),
-            _ts: Date.now(),
-          },
-        } : n));
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.id === id
+              ? {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    ...(detail.outputType ? { outputType: detail.outputType } : {}),
+                    ...(detail.outputValue != null ? { value: detail.outputValue } : {}),
+                    ...(detail.outputMode ? { outputMode: detail.outputMode } : {}),
+                    ...(detail.mediaListOutput ? { mediaListOutput: detail.mediaListOutput } : {}),
+                    _ts: Date.now(),
+                  },
+                }
+              : n,
+          ),
+        );
       }
     };
-    window.addEventListener('space-data-updated', onSpaceDataUpdated);
-    return () => window.removeEventListener('space-data-updated', onSpaceDataUpdated);
+    window.addEventListener("space-data-updated", onSpaceDataUpdated);
+    return () => window.removeEventListener("space-data-updated", onSpaceDataUpdated);
   }, [id, spaceId, setNodes]);
 
   const onEnterSpace = () => {
-    // This will be handled by the parent component via a custom event or callback
     const targetId = nodeData.spaceId || nodeData.value;
-    const event = new CustomEvent('enter-space', { detail: { nodeId: id, spaceId: targetId } });
-    window.dispatchEvent(event);
+    window.dispatchEvent(new CustomEvent("enter-space", { detail: { nodeId: id, spaceId: targetId } }));
   };
 
   const getHandleClass = () => {
-    switch (nodeData.outputType) {
-      case 'brain': return 'handle-brain';
-      case 'image': return 'handle-image';
-      case 'video': return 'handle-video';
-      case 'prompt': return 'handle-prompt';
-      case 'mask': return 'handle-mask';
-      case 'url': return 'handle-emerald';
-      case 'json': return 'handle-sound';
-      default: return '';
+    switch (reconciledData.outputType) {
+      case "brain":
+        return "handle-brain";
+      case "image":
+        return "handle-image";
+      case "video":
+        return "handle-video";
+      case "prompt":
+        return "handle-prompt";
+      case "mask":
+        return "handle-mask";
+      case "url":
+        return "handle-emerald";
+      case "json":
+        return "handle-sound";
+      default:
+        return "";
     }
   };
 
   const getInputHandleClass = () => {
     switch (nodeData.inputType) {
-      case 'brain': return 'handle-brain';
-      case 'image': return 'handle-image';
-      case 'video': return 'handle-video';
-      case 'prompt': return 'handle-prompt';
-      case 'mask': return 'handle-mask';
-      case 'url': return 'handle-emerald';
-      case 'json': return 'handle-sound';
-      default: return '';
+      case "brain":
+        return "handle-brain";
+      case "image":
+        return "handle-image";
+      case "video":
+        return "handle-video";
+      case "prompt":
+        return "handle-prompt";
+      case "mask":
+        return "handle-mask";
+      case "url":
+        return "handle-emerald";
+      case "json":
+        return "handle-sound";
+      default:
+        return "";
     }
   };
 
-  const isMediaListOutput = nodeData.outputType === 'media_list';
-  const mediaListItems = nodeData.mediaListOutput?.items ?? [];
-  const previewThumb = mediaListItems.find((item) => item.url)?.url;
-
   const spacesMap = useSpacesMapCanvas();
-  const templateOutputCount = useMemo(() => {
-    const portal = reconcileSpacePortalNode(
-      { id, data: nodeData, type: "space", position: { x: 0, y: 0 } } as Node,
-      spacesMap,
-    );
-    return listPopulateDesignerTemplatesFromSpacePortal(portal, spacesMap).length;
-  }, [id, nodeData, spacesMap]);
+  const portalNode = useMemo(
+    () =>
+      reconcileSpacePortalNode(
+        { id, data: nodeData, type: "space", position: { x: 0, y: 0 } } as Node,
+        spacesMap,
+      ),
+    [id, nodeData, spacesMap],
+  );
+  const reconciledData = (portalNode.data ?? {}) as typeof nodeData;
 
+  const templateOutputCount = useMemo(
+    () => listPopulateDesignerTemplatesFromSpacePortal(portalNode, spacesMap).length,
+    [portalNode, spacesMap],
+  );
   const hasTemplateOutput = templateOutputCount > 0;
 
-  const hasMediaPreview = !hasTemplateOutput && Boolean(
-    (nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video')) ||
-    (isMediaListOutput && previewThumb),
+  const mediaPreviewItems = useMemo(
+    () => collectSpaceMediaPreviewItems(reconciledData as Record<string, unknown>),
+    [reconciledData],
   );
+  const hasMediaPreview = mediaPreviewItems.length > 0;
+  const hasPreviewVisual = hasTemplateOutput || hasMediaPreview;
+  const hasDock = hasPreviewVisual;
+  const showExteriorTile = hasDock;
 
-  const hasWiredNodes = useStore(
-    useCallback(
-      (s: ReactFlowState) => s.edges.some((e) => e.source === id || e.target === id),
-      [id],
-    ),
-  );
-
-  const hasDock = hasTemplateOutput || hasMediaPreview;
-  const showConnectedIcon = hasWiredNodes || hasDock;
+  const isMediaListOutput = reconciledData.outputType === "media_list";
+  const mediaListItems = reconciledData.mediaListOutput?.items ?? [];
 
   const outputLabel =
-    nodeData.outputType === "media_list"
+    reconciledData.outputType === "media_list"
       ? "Media List"
-      : nodeData.outputType
-        ? nodeData.outputType
+      : reconciledData.outputType
+        ? reconciledData.outputType
         : "—";
 
   const templatesLabel = hasTemplateOutput ? String(templateOutputCount) : "—";
   const mediaLabel =
-    isMediaListOutput && mediaListItems.length > 0
-      ? `${mediaListItems.length} item${mediaListItems.length === 1 ? "" : "s"}`
-      : hasMediaPreview
-        ? "1 preview"
-        : "—";
+    mediaPreviewItems.length > 0
+      ? `${mediaPreviewItems.length} capa${mediaPreviewItems.length === 1 ? "" : "s"}`
+      : "—";
 
   const blueprintLabel =
-    nodeData.internalCategories && nodeData.internalCategories.length > 0
-      ? nodeData.internalCategories.join(" · ")
+    reconciledData.internalCategories && reconciledData.internalCategories.length > 0
+      ? reconciledData.internalCategories.join(" · ")
       : "Vacío";
+
+  const headerTitle = nodeData.label?.trim() || "Nested Space";
+  const previewLine = hasTemplateOutput
+    ? `${templateOutputCount} template${templateOutputCount === 1 ? "" : "s"} · ${blueprintLabel}`
+    : hasMediaPreview
+      ? `${mediaPreviewItems.length} salida${mediaPreviewItems.length === 1 ? "" : "s"} · ${outputLabel}`
+      : "Sin contenido interno";
+
+  const statusLabel = hasDock ? "Listo" : "Vacío";
+
+  const spaceHandles = useMemo((): StudioCanvasNodeHandleSpec[] => {
+    const handles: StudioCanvasNodeHandleSpec[] = [];
+    if (nodeData.hasInput !== false) {
+      handles.push({
+        id: "in",
+        label: "Data In",
+        side: "left",
+        top: "50%",
+        type: "target",
+        dataType: foldderDataTypeFromHandleClass(getInputHandleClass()),
+      });
+    }
+    if (nodeData.hasOutput !== false) {
+      if (isMediaListOutput) {
+        handles.push({
+          id: "media_list",
+          label: "Media List",
+          side: "right",
+          type: "source",
+          dataType: "generic",
+          top: "50%",
+        });
+      } else {
+        handles.push({
+          id: "out",
+          label: "Result Out",
+          side: "right",
+          top: "50%",
+          type: "source",
+          dataType: foldderDataTypeFromHandleClass(getHandleClass()),
+        });
+      }
+    }
+    return handles;
+    // getHandleClass/getInputHandleClass depend on reconciled input/output types only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable for handle wiring
+  }, [
+    isMediaListOutput,
+    nodeData.hasInput,
+    nodeData.hasOutput,
+    nodeData.inputType,
+    reconciledData.outputType,
+  ]);
 
   useLayoutEffect(() => {
     const baseFrame = getNodeGridFrameForType("space");
     if (!baseFrame) return;
-    const syncKey = "space-base";
+    const syncKey = hasDock ? "space-dock" : "space-empty";
     if (frameSyncKeyRef.current === syncKey) return;
+
+    const targetFrame = hasDock
+      ? {
+          width: Math.max(baseFrame.width, 260),
+          height: SPACE_DOCK_MIN_CHROME + SPACE_CONNECTED_PREVIEW_MIN,
+        }
+      : baseFrame;
+
     const current = getNodes().find((n) => n.id === id);
-    if (current && !nodeFrameNeedsSync(current, baseFrame)) {
+    if (current && !nodeFrameNeedsSync(current, targetFrame)) {
       frameSyncKeyRef.current = syncKey;
       return;
     }
@@ -3799,147 +3881,126 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     setNodes((nds) =>
       nds.map((n) => {
         if (n.id !== id) return n;
-        if (!nodeFrameNeedsSync(n, baseFrame)) return n;
+        if (!nodeFrameNeedsSync(n, targetFrame)) return n;
         return {
           ...n,
-          width: baseFrame.width,
-          height: baseFrame.height,
-          measured: { width: baseFrame.width, height: baseFrame.height },
-          style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+          width: targetFrame.width,
+          height: targetFrame.height,
+          measured: { width: targetFrame.width, height: targetFrame.height },
+          style: {
+            ...(n.style as React.CSSProperties),
+            width: targetFrame.width,
+            height: targetFrame.height,
+          },
         };
       }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
-  }, [getNodes, id, setNodes, updateNodeInternals]);
+  }, [getNodes, hasDock, id, setNodes, updateNodeInternals]);
 
   return (
-    <div className="space-node-root relative cursor-grab active:cursor-grabbing">
+    <StudioCanvasNodeShell
+      nodeId={id}
+      nodeType="space"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="Nested Space"
+      title="NESTED SPACE"
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      handles={spaceHandles}
+      variant="frameless"
+      material="media"
+      exteriorTileMark={showExteriorTile}
+      className={`space-node foldder-frameless-label-dark cursor-grab active:cursor-grabbing${hasDock ? " space-node--has-content" : " space-node--empty"}${hasPreviewVisual ? " space-node--has-preview" : ""}${showExteriorTile ? " space-node--connected" : ""}`}
+      minWidth={hasDock ? 260 : 200}
+      style={
+        {
+          width: "100%",
+          height: "100%",
+          minWidth: hasDock ? 260 : 200,
+          minHeight: hasDock ? SPACE_DOCK_MIN_CHROME + SPACE_CONNECTED_PREVIEW_MIN : 300,
+          "--foldder-node-card-bg": SPACE_ACCENT,
+          "--foldder-frameless-glass-bg": SPACE_ACCENT,
+          "--foldder-frameless-accent": SPACE_ACCENT,
+        } as React.CSSProperties
+      }
+    >
+      <FoldderNodeResizer
+        minWidth={hasDock ? 260 : 200}
+        minHeight={120}
+        maxWidth={960}
+        maxHeight={SPACE_NODE_MAX_HEIGHT}
+        isVisible={selected}
+      />
+
       <div
-        className={`custom-node space-node foldder-node--frameless node--media group/node relative z-[4] ${hasDock ? "space-node--has-content" : "space-node--empty"}${showConnectedIcon ? " space-node--connected foldder-node--studio-touched" : ""}${hasMediaPreview ? " space-node--has-preview" : ""}`}
-        style={
-          {
-            minWidth: 200,
-            minHeight: 208,
-            "--foldder-node-card-bg": SPACE_ACCENT,
-            "--foldder-frameless-glass-bg": SPACE_ACCENT,
-            "--foldder-frameless-accent": SPACE_ACCENT,
-          } as React.CSSProperties
-        }
+        className={`node-content foldder-frameless-main space-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
-        <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={520} isVisible={selected} />
-        {showConnectedIcon ? <FoldderStudioTouchedMark nodeType="space" /> : null}
-        <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
-
-        <div className="node-header pointer-events-none">
-          <NodeIcon type="space" selected={selected} size={16} />
-          <FoldderNodeHeaderTitle className="sr-only">Space</FoldderNodeHeaderTitle>
-        </div>
-
-        {nodeData.hasInput !== false ? (
-          <div className="handle-wrapper handle-left nodrag">
-            <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
-            <span className="handle-label">Data In</span>
-          </div>
-        ) : null}
-
-        <div
-          className={`node-content foldder-frameless-main space-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
-        >
-          <div className="space-node-preview foldder-node-content-preview-area">
-            <div className="space-node-bg" aria-hidden />
-
-            {!hasDock ? (
+        <div className="space-node-preview foldder-node-content-preview-area">
+          {!hasPreviewVisual ? (
+            <>
+              <div className="space-node-bg" aria-hidden />
               <div className="space-node-empty-hint" aria-hidden>
+                <span className="space-node-empty-hint__title">Nested Space vacío</span>
                 <span className="space-node-empty-hint__body">
-                  Entra al Space para añadir nodos o conecta una salida interna.
+                  Entra al Space para añadir nodos o conecta salidas internas de imagen o vídeo.
                 </span>
               </div>
-            ) : null}
+              <FoldderStudioModeCenterButton
+                label="Entrar"
+                title="Entrar al Nested Space"
+                onClick={onEnterSpace}
+              />
+            </>
+          ) : (
+            <>
+              {hasTemplateOutput ? (
+                <div className="space-node-template-grid" aria-hidden={!hasTemplateOutput}>
+                  <SpaceNodeTemplatePreview nodeId={id} nodeData={reconciledData as Record<string, unknown>} />
+                </div>
+              ) : null}
 
-            {hasTemplateOutput ? (
-              <div className="space-node-template-grid" aria-hidden={!hasTemplateOutput}>
-                <SpaceNodeTemplatePreview nodeId={id} nodeData={nodeData as Record<string, unknown>} />
-              </div>
-            ) : null}
-
-            {hasMediaPreview ? (
-              <div className="space-node-media-preview">
-                {isMediaListOutput && previewThumb ? (
-                  <>
-                    <img src={previewThumb} className="h-full w-full object-cover" alt="Space collection" draggable={false} />
-                    {mediaListItems.length > 1 ? (
-                      <div className="pointer-events-none absolute top-3 right-3 z-[9] rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white">
-                        {mediaListItems.length} items
-                      </div>
-                    ) : null}
-                  </>
-                ) : nodeData.outputType === "video" ? (
-                  <video src={nodeData.value as string} className="h-full w-full object-cover" muted playsInline draggable={false} />
-                ) : (
-                  <img src={nodeData.value as string} className="h-full w-full object-cover" alt="Space output" draggable={false} />
-                )}
-              </div>
-            ) : null}
-
-            {!hasDock ? (
-              <FoldderStudioModeCenterButton label="Enter Space" onClick={onEnterSpace} />
-            ) : null}
-          </div>
-
-          {hasDock ? (
-            <div className="space-node-dock-wrap shrink-0">
-              <FoldderNodeContentDock>
-                <FoldderNodeContentDockMain>
-                  {hasTemplateOutput ? (
-                    <p className="foldder-node-content-dock-text">
-                      {templateOutputCount} template{templateOutputCount === 1 ? "" : "s"} · {blueprintLabel}
-                    </p>
-                  ) : (
-                    <p className="foldder-node-content-dock-text">
-                      Salida {outputLabel}
-                      {isMediaListOutput && mediaListItems.length > 0
-                        ? ` · ${mediaListItems.length} item${mediaListItems.length === 1 ? "" : "s"}`
-                        : ""}
-                    </p>
-                  )}
-                  <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
-                    {hasWiredNodes ? "Conectado al lienzo principal" : "Sin cables en el lienzo principal"}
-                  </p>
-                  <FoldderNodeContentMeta>
-                    <FoldderNodeContentMetaRow label="Templates" value={templatesLabel} />
-                    <FoldderNodeContentMetaRow label="Media" value={mediaLabel} />
-                    <FoldderNodeContentMetaRow label="Salida" value={outputLabel} />
-                    <FoldderNodeContentMetaRow label="Blueprint" value={blueprintLabel} />
-                    <FoldderNodeContentMetaRow
-                      label="Estado"
-                      value={hasWiredNodes ? "Conectado" : "Aislado"}
-                      variant="status"
-                    />
-                  </FoldderNodeContentMeta>
-                </FoldderNodeContentDockMain>
-                <FoldderNodeContentDockActions className="space-node-dock-actions">
-                  <FoldderStudioModeCenterButton variant="dock" label="Enter Space" onClick={onEnterSpace} />
-                </FoldderNodeContentDockActions>
-              </FoldderNodeContentDock>
-            </div>
-          ) : null}
+              {hasMediaPreview ? <SpaceNodeMediaPreviewGrid items={mediaPreviewItems} /> : null}
+            </>
+          )}
         </div>
 
-        {nodeData.hasOutput !== false ? (
-          isMediaListOutput ? (
-            <div className="handle-wrapper handle-right nodrag" style={{ top: "50%" }}>
-              <span className="handle-label">Media List</span>
-              <FoldderDataHandle type="source" position={Position.Right} id="media_list" dataType="generic" />
-            </div>
-          ) : (
-            <div className="handle-wrapper handle-right nodrag">
-              <span className="handle-label">Result Out</span>
-              <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
-            </div>
-          )
+        {hasDock ? (
+          <div className="space-node-dock-wrap shrink-0">
+            <FoldderNodeContentDock allowNodeDrag>
+              <FoldderNodeContentDockMain>
+                <p className="foldder-node-content-dock-text">{headerTitle}</p>
+                <p className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder">
+                  {previewLine}
+                </p>
+                <FoldderNodeContentMeta>
+                  <FoldderNodeContentMetaRow label="Templates" value={templatesLabel} />
+                  <FoldderNodeContentMetaRow label="Capas" value={mediaLabel} />
+                  <FoldderNodeContentMetaRow label="Salida" value={outputLabel} />
+                  <FoldderNodeContentMetaRow label="Blueprint" value={blueprintLabel} />
+                  {isMediaListOutput && mediaListItems.length > 0 ? (
+                    <FoldderNodeContentMetaRow
+                      label="Items"
+                      value={`${mediaListItems.length} item${mediaListItems.length === 1 ? "" : "s"}`}
+                      variant="optional"
+                    />
+                  ) : null}
+                  <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
+                </FoldderNodeContentMeta>
+              </FoldderNodeContentDockMain>
+              <FoldderNodeContentDockActions className="space-node-dock-actions">
+                <FoldderStudioModeCenterButton
+                  variant="dock"
+                  label="Entrar"
+                  title="Entrar al Nested Space"
+                  onClick={onEnterSpace}
+                />
+              </FoldderNodeContentDockActions>
+            </FoldderNodeContentDock>
+          </div>
         ) : null}
       </div>
-    </div>
+    </StudioCanvasNodeShell>
   );
 });
 

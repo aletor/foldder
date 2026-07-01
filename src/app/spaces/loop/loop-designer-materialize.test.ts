@@ -130,12 +130,21 @@ function pendingTextPage(slotLabel: string): DesignerPageState {
 describe("freezeDesignerPagesForRow (Modo 2 · huecos pendientes)", () => {
   it("resuelve el hueco pendiente con la columna mapeada por Loop", () => {
     const map = {
-      "slot::nombre": { listId: "l1", listKey: "jugadores", fieldId: "f_nombre", fieldKey: "nombre" },
+      "slot::nombre::text": { listId: "l1", listKey: "jugadores", fieldId: "f_nombre", fieldKey: "nombre" },
     };
     const frozen = freezeDesignerPagesForRow([pendingTextPage("Nombre")], dataset(), 1, map);
     const obj = frozen[0]!.objects[0] as FreehandObject & { text?: string; _designerDatasetBinding?: unknown };
     expect(obj.text).toBe("Cristiano");
     expect(obj._designerDatasetBinding).toBeUndefined();
+  });
+
+  it("acepta claves legacy sin sufijo ::kind", () => {
+    const map = {
+      "slot::nombre": { listId: "l1", listKey: "jugadores", fieldId: "f_nombre", fieldKey: "nombre" },
+    };
+    const frozen = freezeDesignerPagesForRow([pendingTextPage("Nombre")], dataset(), 1, map);
+    const obj = frozen[0]!.objects[0] as FreehandObject & { text?: string };
+    expect(obj.text).toBe("Cristiano");
   });
 
   it("sin mapeo, el hueco pendiente queda estático (texto de diseño) y sin binding", () => {
@@ -221,7 +230,7 @@ describe("freezeDesignerPagesForRow (objetos dentro de un clip / pegar dentro)",
 
   it("Modo 2: resuelve el hueco pendiente anidado con la columna mapeada", () => {
     const map = {
-      "slot::nombre": { listId: "l1", listKey: "jugadores", fieldId: "f_nombre", fieldKey: "nombre" },
+      "slot::nombre::text": { listId: "l1", listKey: "jugadores", fieldId: "f_nombre", fieldKey: "nombre" },
     };
     const frozen = freezeDesignerPagesForRow([clippedPendingTextPage("Nombre")], dataset(), 0, map);
     const container = frozen[0]!.objects[0] as FreehandObject & {
@@ -230,6 +239,43 @@ describe("freezeDesignerPagesForRow (objetos dentro de un clip / pegar dentro)",
     const inner = container.content![0]!;
     expect(inner.text).toBe("Messi");
     expect(inner._designerDatasetBinding).toBeUndefined();
+  });
+
+  it("Modo 2: resuelve huecos pendientes dentro de carpetas con clave folder::…", () => {
+    const inner = {
+      id: "t1",
+      name: "Nombre",
+      type: "text",
+      text: "PLACEHOLDER",
+      _designerDatasetBinding: { listId: "", listKey: "", fieldId: "", fieldKey: "", kind: "text", slotLabel: "Nombre" },
+    } as unknown as FreehandObject;
+    const folder = {
+      id: "folder1",
+      type: "groupContainer",
+      name: "Jugador1",
+      children: [inner],
+    } as unknown as FreehandObject;
+    const page = {
+      id: "tpl_folder",
+      slideKey: "slk_f",
+      format: "a4v",
+      objects: [folder],
+    } as unknown as DesignerPageState;
+    const map = {
+      "folder::jugador1::slot::nombre::text": {
+        listId: "l1",
+        listKey: "jugadores",
+        fieldId: "f_nombre",
+        fieldKey: "nombre",
+      },
+    };
+    const frozen = freezeDesignerPagesForRow([page], dataset(), 0, map);
+    const resolvedFolder = frozen[0]!.objects[0] as FreehandObject & {
+      children?: (FreehandObject & { text?: string; _designerDatasetBinding?: unknown })[];
+    };
+    const resolvedInner = resolvedFolder.children![0]!;
+    expect(resolvedInner.text).toBe("Messi");
+    expect(resolvedInner._designerDatasetBinding).toBeUndefined();
   });
 });
 
