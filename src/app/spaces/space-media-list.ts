@@ -482,7 +482,6 @@ export function rebuildSpaceMapEntryFromPortalCache(
   });
 
   return {
-    id: spaceId,
     name: spaceName,
     nodes,
     edges,
@@ -493,9 +492,8 @@ export function rebuildSpaceMapEntryFromPortalCache(
     hasInput: structure.hasInput,
     hasOutput: structure.hasOutput,
     internalCategories: structure.internalCategories,
-    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  };
+  } as SpaceMapEntryLike;
 }
 
 /**
