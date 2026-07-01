@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { isDynamoEnabled } from "@/lib/dynamo-utils";
 import { updateJsonStore, readJsonStore } from "@/lib/json-persistence";
-import { collectS3KeysFromProjectSpaces, collectS3KeysFromValue } from "@/lib/s3-media-hydrate";
+import { listGlobalDatasets } from "@/lib/dataset-store";
+import { planProjectS3Deletes } from "@/lib/project-s3-delete-plan";
 import { deleteFromS3 } from "@/lib/s3-utils";
 import {
   deleteDdbProject as deleteDdbProjectStore,
@@ -268,13 +269,40 @@ function projectBelongsToOwner(
   return normalizeOwnerEmail(project.ownerUserEmail) === ownerEmail;
 }
 
-function collectS3KeysFromProject(project: ProjectRecord): string[] {
-  return [
-    ...new Set([
-      ...collectS3KeysFromProjectSpaces(project.spaces || {}),
-      ...collectS3KeysFromValue(project.metadata || {}),
-    ]),
-  ];
+async function deleteProjectS3Media(args: {
+  ownerEmail: string;
+  ownerProjects: ProjectRecord[];
+  projectToDelete: ProjectRecord;
+}): Promise<{ failed: number; requested: number; retained: number; succeeded: number }> {
+  const globalDatasets = await listGlobalDatasets(args.ownerEmail);
+  const { deleteKeys, retainedKeys } = planProjectS3Deletes({
+    globalDatasets,
+    otherProjects: args.ownerProjects,
+    projectToDelete: args.projectToDelete,
+  });
+  if (retainedKeys.length > 0) {
+    console.log(
+      `[Cleanup] Skipping ${retainedKeys.length} S3 object(s) still referenced by other projects or global datasets.`,
+    );
+  }
+  let succeeded = 0;
+  let failed = 0;
+  for (const key of deleteKeys) {
+    try {
+      await deleteFromS3(key);
+      succeeded += 1;
+      console.log(`[Cleanup] Successfully removed: ${key}`);
+    } catch (error) {
+      failed += 1;
+      console.error(`[Cleanup] Failed to remove ${key}:`, error);
+    }
+  }
+  return {
+    failed,
+    requested: deleteKeys.length,
+    retained: retainedKeys.length,
+    succeeded,
+  };
 }
 
 async function recordProjectRouteTelemetry(args: {
@@ -935,17 +963,15 @@ export async function DELETE(req: Request) {
       }
       if (projectToDelete) {
         telemetryStats = summarizeSpacesProjectPayload(projectToDelete);
-        const s3Keys = collectS3KeysFromProject(projectToDelete);
-        s3DeleteRequested = s3Keys.length;
-        for (const key of s3Keys) {
-          try {
-            await deleteFromS3(key);
-            s3DeleteSucceeded += 1;
-          } catch (error) {
-            s3DeleteFailed += 1;
-            console.error(`[Cleanup] Failed to remove ${key}:`, error);
-          }
-        }
+        const ownerProjects = await readProjects(ownerEmail);
+        const s3Result = await deleteProjectS3Media({
+          ownerEmail,
+          ownerProjects,
+          projectToDelete,
+        });
+        s3DeleteRequested = s3Result.requested;
+        s3DeleteSucceeded = s3Result.succeeded;
+        s3DeleteFailed = s3Result.failed;
       }
 
       await deleteDdbProject(id);
@@ -986,23 +1012,14 @@ export async function DELETE(req: Request) {
       if (projectToDelete) {
         telemetryStats = summarizeSpacesProjectPayload(projectToDelete);
         console.log(`[Cleanup] Deleting project "${projectToDelete.name}"...`);
-
-        const s3Keys = collectS3KeysFromProject(projectToDelete);
-        s3DeleteRequested = s3Keys.length;
-
-        if (s3Keys.length > 0) {
-          console.log(`[Cleanup] Found ${s3Keys.length} assets across all spaces to remove from S3.`);
-          for (const key of s3Keys) {
-            try {
-              await deleteFromS3(key);
-              s3DeleteSucceeded += 1;
-              console.log(`[Cleanup] Successfully removed: ${key}`);
-            } catch (error) {
-              s3DeleteFailed += 1;
-              console.error(`[Cleanup] Failed to remove ${key}:`, error);
-            }
-          }
-        }
+        const s3Result = await deleteProjectS3Media({
+          ownerEmail,
+          ownerProjects: projects,
+          projectToDelete,
+        });
+        s3DeleteRequested = s3Result.requested;
+        s3DeleteSucceeded = s3Result.succeeded;
+        s3DeleteFailed = s3Result.failed;
       }
 
       const filtered = await writeProjects((currentProjects) =>

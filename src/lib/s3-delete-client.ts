@@ -3,7 +3,8 @@
  *
  * Product policy:
  * - removing a document/image from a project only removes the reference;
- * - media is physically deleted when the whole project is deleted;
+ * - media is physically deleted when the whole project is deleted, except objects
+ *   still referenced by another project or a global dataset catalog entry;
  * - manual object deletion lives in the protected admin manager.
  */
 

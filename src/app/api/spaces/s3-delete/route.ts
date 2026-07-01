@@ -6,7 +6,7 @@ import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
  *
  * Product policy:
  * - user-owned media is physically deleted when the whole project is deleted
- *   through DELETE /api/spaces;
+ *   through DELETE /api/spaces (skipping objects still referenced elsewhere);
  * - manual object deletion is only available through the admin manager.
  */
 export async function POST(req: NextRequest) {
