@@ -52,7 +52,7 @@ import {
 import { useDesignerSpaceId } from "@/contexts/DesignerSpaceIdContext";
 import { newDesignerAssetId, optimizeImageBlobToOptFormat } from "./designer-image-pipeline";
 import { exportDesignerDeFile, importDesignerDeFile } from "./designer-document-file";
-import { uploadImportedDesignerBlobUrlsToS3 } from "./designer-de-s3-hydrate";
+import { hydrateImportedDesignerPagesMedia } from "./designer-de-s3-hydrate";
 import {
   buildRichSpansForFrame,
   designerCanvasSessionKey,
@@ -2215,7 +2215,7 @@ export default function DesignerStudio({
         setDeImportHydrating(true);
         let finalPages = result.pages;
         try {
-          finalPages = await uploadImportedDesignerBlobUrlsToS3(result.pages, {
+          finalPages = await hydrateImportedDesignerPagesMedia(result.pages, {
             designerSpaceId: designerSpaceId ?? null,
           });
         } catch (upErr) {
@@ -2229,22 +2229,9 @@ export default function DesignerStudio({
         } finally {
           setDeImportHydrating(false);
         }
-        let pagesToSet = finalPages;
-        if (designerConnectedDataset) {
-          const loopListId = collectDatasetLoopListId(finalPages);
-          const loopActive =
-            !!loopListId && designerConnectedDataset.lists.some((list) => list.id === loopListId);
-          pagesToSet = loopActive
-            ? reconcileDatasetLoopPages(
-                finalPages,
-                designerConnectedDataset,
-                loopListId!,
-                result.activePageIndex,
-                duplicateDesignerPageState,
-              )
-            : applyDatasetToAllPages(finalPages, designerConnectedDataset);
-          lastDatasetSyncVersionRef.current = `${designerConnectedDataset.id}:${designerConnectedDataset.version}`;
-        }
+        // El .de ya trae el diseño resuelto (píxeles + bindings). No re-aplicar Dataset aquí:
+        // en producción podría sobrescribir imágenes importadas con URLs rotas del catálogo.
+        const pagesToSet = finalPages;
         setPages(pagesToSet);
         setActivePageIndex(result.activePageIndex);
         setDesignerPageHydrateNonce((n) => n + 1);

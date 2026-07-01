@@ -23,6 +23,8 @@ function isLikelyImageUrl(s: string): boolean {
   if (t.startsWith("data:image/")) return true;
   if (t.startsWith("blob:")) return true;
   if (t.startsWith("http://") || t.startsWith("https://")) return true;
+  if (t.startsWith("/api/spaces/s3-file") || t.startsWith("/api/spaces/s3-download")) return true;
+  if (t.startsWith("knowledge-files/")) return true;
   return false;
 }
 
@@ -92,6 +94,20 @@ async function urlToBlob(url: string): Promise<Blob> {
       /* CORS u otro: intentar proxy del espacio */
     }
     return fetchBlobViaSpacesProxy(u);
+  }
+  if (u.startsWith("/api/spaces/s3-file") || u.startsWith("/api/spaces/s3-download")) {
+    const res = await fetch(u);
+    if (!res.ok) {
+      throw new Error(`No se pudo descargar ${u.slice(0, 80)} (HTTP ${res.status})`);
+    }
+    return res.blob();
+  }
+  if (u.startsWith("knowledge-files/")) {
+    const res = await fetch(`/api/spaces/s3-file?key=${encodeURIComponent(u)}`);
+    if (!res.ok) {
+      throw new Error(`No se pudo descargar ${u.slice(0, 80)} (HTTP ${res.status})`);
+    }
+    return res.blob();
   }
   throw new Error(`No se puede empaquetar la URL: ${u.slice(0, 80)}…`);
 }

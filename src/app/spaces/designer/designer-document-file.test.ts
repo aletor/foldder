@@ -28,6 +28,11 @@ beforeEach(() => {
         if (!blob) throw new Error(`missing blob ${url}`);
         return { ok: true, blob: async () => blob } as Response;
       }
+      if (url.startsWith("/api/spaces/s3-file")) {
+        const base64 = TINY_PNG.split(",")[1] ?? "";
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        return { ok: true, blob: async () => new Blob([bytes], { type: "image/png" }) } as Response;
+      }
       throw new Error(`unexpected fetch ${url}`);
     }),
   );
@@ -145,6 +150,52 @@ function findObjectById(objects: FreehandObject[], id: string): FreehandObject |
 }
 
 describe("designer-document-file", () => {
+  it("empaqueta URLs /api/spaces/s3-file en assets del zip", async () => {
+    const s3Key = "knowledge-files/project-media/user/hash/project/img.jpg";
+    const s3Url = `/api/spaces/s3-file?key=${encodeURIComponent(s3Key)}`;
+    const pages: DesignerPageState[] = [
+      {
+        id: "page-s3",
+        format: DEFAULT_DESIGNER_PAGE_FORMAT,
+        objects: [
+          {
+            id: "frame1",
+            type: "rect",
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            isImageFrame: true,
+            imageFrameContent: {
+              src: s3Url,
+              s3Key,
+              originalWidth: 1,
+              originalHeight: 1,
+              scaleX: 1,
+              scaleY: 1,
+              offsetX: 0,
+              offsetY: 0,
+              fittingMode: "fill-proportional",
+            },
+          } as unknown as FreehandObject,
+        ],
+      },
+    ];
+
+    const blob = await packDesignerDeFile({
+      pages,
+      activePageIndex: 0,
+      autoImageOptimization: true,
+    });
+    const file = new File([blob], "s3.de", { type: "application/zip" });
+    const imported = await importDesignerDeFile(file);
+    const frame = imported.pages[0]?.objects[0] as {
+      imageFrameContent?: { src?: string; s3Key?: string };
+    };
+    expect(frame.imageFrameContent?.src).toMatch(/^blob:/);
+    expect(frame.imageFrameContent?.s3Key).toBeUndefined();
+  });
+
   it("roundtrip conserva bindings dinámicos, bucle y metadatos de slide", async () => {
     const pages = sampleDocumentPages();
     const blob = await packDesignerDeFile({

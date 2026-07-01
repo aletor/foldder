@@ -6,6 +6,10 @@ import type { DesignerPageState } from "./DesignerNode";
 import type { FreehandObject } from "../FreehandStudio";
 import { newDesignerAssetId, optimizeImageBlobToOptFormat } from "./designer-image-pipeline";
 import { readResponseJson } from "@/lib/read-response-json";
+import {
+  stableKnowledgeFileUrlFromKey,
+  tryExtractKnowledgeFilesKeyFromUrl,
+} from "@/lib/s3-media-hydrate";
 
 type UploadedMeta = {
   url: string;
@@ -15,6 +19,108 @@ type UploadedMeta = {
 
 function isBlobUrl(s: string): boolean {
   return s.trim().startsWith("blob:");
+}
+
+function persistableS3Meta(src: string): UploadedMeta | null {
+  const key = tryExtractKnowledgeFilesKeyFromUrl(src);
+  if (!key) return null;
+  const url = stableKnowledgeFileUrlFromKey(key);
+  if (!url) return null;
+  return { url, s3Key: key, assetId: newDesignerAssetId() };
+}
+
+function patchPersistableS3Src(
+  src: string | undefined,
+  patchFrameMeta: (meta: UploadedMeta) => Record<string, unknown> | null,
+): { src?: string; extra?: Record<string, unknown> } {
+  const raw = src?.trim();
+  if (!raw || isBlobUrl(raw)) return { src };
+  const meta = persistableS3Meta(raw);
+  if (!meta) return { src };
+  return { src: meta.url, extra: patchFrameMeta(meta) ?? undefined };
+}
+
+function patchObjectPersistableS3(o: FreehandObject): FreehandObject {
+  if (o.type === "image") {
+    const im = o as { src?: string };
+    const patched = patchPersistableS3Src(im.src, () => null);
+    if (patched.src && patched.src !== im.src) {
+      return { ...o, src: patched.src } as FreehandObject;
+    }
+    return o;
+  }
+  if (o.type === "rect" && o.isImageFrame && o.imageFrameContent) {
+    const c = o.imageFrameContent;
+    const patched = patchPersistableS3Src(c.src, (meta) => ({
+      ...c,
+      src: meta.url,
+      s3Key: meta.s3Key,
+      s3KeyOpt: meta.s3Key,
+      designerAssetId: meta.assetId,
+      s3KeyHr: undefined,
+      designerHrSourceMissing: false,
+    }));
+    if (patched.extra) {
+      return { ...o, imageFrameContent: patched.extra as typeof c } as FreehandObject;
+    }
+    return o;
+  }
+  if (o.type === "booleanGroup") {
+    let cachedResult = o.cachedResult;
+    if (cachedResult?.trim() && !isBlobUrl(cachedResult)) {
+      const meta = persistableS3Meta(cachedResult);
+      if (meta) cachedResult = meta.url;
+    }
+    return {
+      ...o,
+      cachedResult,
+      children: o.children.map((child) => patchObjectPersistableS3(child)),
+    } as FreehandObject;
+  }
+  if (o.type === "clippingContainer") {
+    return {
+      ...o,
+      mask: patchObjectPersistableS3(o.mask as FreehandObject),
+      content: o.content.map((child) => patchObjectPersistableS3(child)),
+    } as FreehandObject;
+  }
+  if (o.type === "groupContainer") {
+    return {
+      ...o,
+      children: o.children.map((child) => patchObjectPersistableS3(child)),
+    } as FreehandObject;
+  }
+  const lm = (o as { layerMask?: { src?: string } }).layerMask;
+  if (lm?.src?.trim() && !isBlobUrl(lm.src)) {
+    const meta = persistableS3Meta(lm.src);
+    if (meta) {
+      return { ...o, layerMask: { ...lm, src: meta.url } } as FreehandObject;
+    }
+  }
+  return o;
+}
+
+/** Restaura metadatos S3 en URLs estables ya persistidas (sin re-subir). */
+export function restorePersistableS3RefsInPages(pages: DesignerPageState[]): DesignerPageState[] {
+  return pages.map((page) => ({
+    ...page,
+    objects: (page.objects ?? []).map((obj) => patchObjectPersistableS3(obj)),
+    imageFrames: (page.imageFrames ?? []).map((frame) => {
+      const src = frame.imageContent?.src;
+      const patched = patchPersistableS3Src(src, (meta) => ({
+        ...(frame.imageContent ?? { src: meta.url }),
+        src: meta.url,
+      }));
+      if (!patched.src || patched.src === src || !frame.imageContent) return frame;
+      return {
+        ...frame,
+        imageContent: {
+          ...frame.imageContent,
+          src: patched.src,
+        },
+      };
+    }),
+  }));
 }
 
 function collectBlobUrlsFromObject(o: FreehandObject, out: Set<string>): void {
@@ -237,4 +343,15 @@ export async function uploadImportedDesignerBlobUrlsToS3(
   const next = applyDesignerBlobUploadMap(JSON.parse(JSON.stringify(pages)) as DesignerPageState[], map);
   revokeBlobUrls(blobUrls);
   return next;
+}
+
+/**
+ * Tras importar `.de`: conserva refs S3 ya persistibles y sube solo los `blob:` embebidos.
+ */
+export async function hydrateImportedDesignerPagesMedia(
+  pages: DesignerPageState[],
+  options: { designerSpaceId: string | null },
+): Promise<DesignerPageState[]> {
+  const restored = restorePersistableS3RefsInPages(pages);
+  return uploadImportedDesignerBlobUrlsToS3(restored, options);
 }
