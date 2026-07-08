@@ -1,5 +1,10 @@
 import {
+  GENOMA_GALLERY_GENERATE_IMAGE_COUNT,
+  GENOMA_GALLERY_PER_IMAGE_USD,
+} from "@/lib/genoma/genoma-gallery-cost";
+import {
   estimateGeminiImageGenerationUsd,
+  estimateGeminiUsd,
   estimateGeminiVeoVideoUsd,
   estimateOpenAiImageGenerationUsd,
   estimateOpenAITranscriptionUsd,
@@ -317,6 +322,48 @@ export function estimateWalletCostForRoute(
       outputTokens: 1600,
       multiplier: 1.8,
     });
+  }
+
+  if (route === "/api/spaces/genoma/crawl") {
+    if (body.enableLlm === false) return null;
+    const model = "gemini-2.5-flash";
+    const textCall = estimateGeminiUsd(model, 6500, 900);
+    const estimated = roundedUsd(textCall * 2.5 + 0.008);
+    return {
+      label: "Genoma · analizar web",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.5),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/spaces/genoma/ingest") {
+    if (body.enableLlm === false) return null;
+    const model = "gemini-2.5-flash";
+    const textCall = estimateGeminiUsd(model, 6500, 900);
+    const estimated = roundedUsd(textCall * 2 + 0.008);
+    return {
+      label: "Genoma · ingestar archivos",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.5),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/spaces/genoma/gallery/generate") {
+    const estimated = roundedUsd(GENOMA_GALLERY_PER_IMAGE_USD * GENOMA_GALLERY_GENERATE_IMAGE_COUNT);
+    return {
+      label: "Genoma · generar galería",
+      route,
+      category: "image",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.5),
+      tone: "confirm",
+    };
   }
 
   if (route === "/api/spaces/cine/analyze") {

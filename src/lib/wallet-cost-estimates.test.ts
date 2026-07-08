@@ -15,6 +15,9 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/runway/generate",
   "/api/seedance/video",
   "/api/spaces/assistant",
+  "/api/spaces/genoma/crawl",
+  "/api/spaces/genoma/ingest",
+  "/api/spaces/genoma/gallery/generate",
   "/api/spaces/cine/analyze",
   "/api/spaces/describe",
   "/api/spaces/matte",
@@ -43,6 +46,9 @@ function sampleBodyForRoute(route: string): Record<string, unknown> {
   if (route === "/api/spaces/guionista") return { task: "draft", idea: "Idea" };
   if (route === "/api/spaces/text-content") return { action: "correct", text: "Corrige esta frase." };
   if (route === "/api/spaces/assistant") return { prompt: "Create nodes", nodes: [], edges: [] };
+  if (route === "/api/spaces/genoma/crawl") return { url: "https://example.com", enableLlm: true };
+  if (route === "/api/spaces/genoma/ingest") return { enableLlm: true };
+  if (route === "/api/spaces/genoma/gallery/generate") return { genoma: { slots: {} } };
   if (route === "/api/spaces/cine/analyze") return { script: "INT. ROOM - DAY", mode: "scenes" };
   if (route === "/api/video-editor/render") {
     return { manifest: { durationSeconds: 30, settings: { fps: 30, width: 1920, height: 1080 } } };

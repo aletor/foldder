@@ -1,0 +1,125 @@
+import type { GalleryValue } from "./genoma-types";
+
+export const GENOMA_GALLERY_IMAGE_COUNT = 10;
+
+export type GalleryGenerateCategory =
+  | "people_mood"
+  | "places"
+  | "objects"
+  | "textures"
+  | "general";
+
+export type GalleryGenerateSlot = {
+  category: GalleryGenerateCategory;
+  categoryLabel: string;
+  categoryHint: string;
+  promptSuffix: string;
+};
+
+export const GALLERY_GENERATE_PLAN: GalleryGenerateSlot[] = [
+  {
+    category: "people_mood",
+    categoryLabel: "Personas & mood",
+    categoryHint: "Rostros, emoción, actitud y luz sobre personas.",
+    promptSuffix:
+      "Editorial portrait or human presence expressing brand mood. Focus on face, expression, cinematic lighting. No text, no logos.",
+  },
+  {
+    category: "people_mood",
+    categoryLabel: "Personas & mood",
+    categoryHint: "Segunda variación de personas y atmósfera emocional.",
+    promptSuffix:
+      "Candid human moment with emotional tone matching the brand. Natural or directed, never stock-corporate. No text, no logos.",
+  },
+  {
+    category: "places",
+    categoryLabel: "Lugares",
+    categoryHint: "Espacios, arquitectura o entornos que encajan con la marca.",
+    promptSuffix:
+      "Brand-aligned place or environment. Interior or exterior with narrative atmosphere. No text, no logos.",
+  },
+  {
+    category: "places",
+    categoryLabel: "Lugares",
+    categoryHint: "Segundo entorno — contraste o complemento del anterior.",
+    promptSuffix:
+      "Alternative location scene with same visual world. Architectural or landscape detail with mood. No text, no logos.",
+  },
+  {
+    category: "objects",
+    categoryLabel: "Objetos",
+    categoryHint: "Objetos simbólicos o de producto con tratamiento editorial.",
+    promptSuffix:
+      "Still life object study aligned with brand palette and lighting. Product or symbolic object. No text, no logos.",
+  },
+  {
+    category: "objects",
+    categoryLabel: "Objetos",
+    categoryHint: "Segundo objeto — otra escala o material.",
+    promptSuffix:
+      "Close object composition with brand tone. Material detail, shallow depth of field. No text, no logos.",
+  },
+  {
+    category: "textures",
+    categoryLabel: "Texturas",
+    categoryHint: "Superficies, materiales y tacto visual.",
+    promptSuffix:
+      "Abstract texture or material surface matching brand color and contrast. Macro detail. No text, no logos.",
+  },
+  {
+    category: "textures",
+    categoryLabel: "Texturas",
+    categoryHint: "Segunda textura — ritmo y contraste.",
+    promptSuffix:
+      "Alternative texture study: grain, fabric, light on surface. Editorial, not decorative. No text, no logos.",
+  },
+  {
+    category: "general",
+    categoryLabel: "General",
+    categoryHint: "Composición libre que sintetiza el tono visual global.",
+    promptSuffix:
+      "General brand atmosphere image synthesizing palette, light and mood. Editorial photography. No text, no logos.",
+  },
+  {
+    category: "general",
+    categoryLabel: "General",
+    categoryHint: "Variación general — otra lectura del mismo ADN visual.",
+    promptSuffix:
+      "Second general brand scene. Cohesive with visual world limits and traits. No text, no logos.",
+  },
+];
+
+export type GalleryGeneratedItem = GalleryValue["generated"][number];
+
+export function groupGeneratedByCategory(
+  items: GalleryGeneratedItem[],
+): Record<GalleryGenerateCategory, GalleryGeneratedItem[]> {
+  const grouped: Record<GalleryGenerateCategory, GalleryGeneratedItem[]> = {
+    people_mood: [],
+    places: [],
+    objects: [],
+    textures: [],
+    general: [],
+  };
+  for (const item of items) {
+    const category = item.category ?? "general";
+    grouped[category].push(item);
+  }
+  return grouped;
+}
+
+export const GALLERY_CATEGORY_ORDER: GalleryGenerateCategory[] = [
+  "people_mood",
+  "places",
+  "objects",
+  "textures",
+  "general",
+];
+
+export function categoryMeta(category: GalleryGenerateCategory): { label: string; hint: string } {
+  const slot = GALLERY_GENERATE_PLAN.find((entry) => entry.category === category);
+  return {
+    label: slot?.categoryLabel ?? category,
+    hint: slot?.categoryHint ?? "",
+  };
+}

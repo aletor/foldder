@@ -1,0 +1,910 @@
+/* Genoma studio — frameless light theme */
+
+.genoma-studio--v2 {
+  --genoma-v2-bg: #f6f5f2;
+  --genoma-v2-surface: transparent;
+  --genoma-v2-divider: rgba(26, 26, 26, 0.08);
+  --genoma-v2-border: rgba(26, 26, 26, 0.12);
+  --genoma-v2-text: #141414;
+  --genoma-v2-muted: rgba(20, 20, 20, 0.52);
+  --genoma-v2-accent: #141414;
+  --genoma-v2-font-light: 300;
+  --genoma-v2-font-title: 700;
+  background: var(--genoma-v2-bg);
+  color: var(--genoma-v2-text);
+  font-weight: var(--genoma-v2-font-light);
+  -webkit-font-smoothing: antialiased;
+}
+
+.genoma-studio--v2 .genoma-v2-board {
+  min-height: calc(100vh - 40px);
+}
+
+/* ── Header ── */
+.genoma-studio--v2 .genoma-v2-header {
+  padding: 28px 48px 20px;
+  background: var(--genoma-v2-bg);
+  border-bottom: 1px solid var(--genoma-v2-divider);
+  backdrop-filter: none;
+}
+
+.genoma-studio--v2 .genoma-v2-header__title {
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-header__status {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-live-dot {
+  background: #3d9a62;
+}
+
+.genoma-studio--v2 .genoma-v2-pill {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--genoma-v2-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(20, 20, 20, 0.25);
+}
+
+.genoma-studio--v2 .genoma-v2-pill:hover:not(:disabled) {
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-pill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.genoma-studio--v2 .genoma-v2-pill--pending {
+  text-decoration: none;
+  color: var(--genoma-v2-text);
+  font-weight: 500;
+}
+
+/* ── Grid & blocks (frameless) ── */
+.genoma-studio--v2 .genoma-v2-grid {
+  gap: 56px 48px;
+  padding: 40px 48px 64px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.genoma-studio--v2 .genoma-v2-col--left,
+.genoma-studio--v2 .genoma-v2-col--right {
+  gap: 48px;
+}
+
+.genoma-studio--v2 .genoma-v2-block {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-block--hero {
+  min-height: 320px;
+  justify-content: center;
+}
+
+.genoma-studio--v2 .genoma-v2-block__head {
+  gap: 10px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-v2-block__dot {
+  display: none;
+}
+
+.genoma-studio--v2 .genoma-v2-block__icon {
+  flex-shrink: 0;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-block__label {
+  font-size: 0.8125rem;
+  font-weight: var(--genoma-v2-font-title);
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-block__body {
+  font-weight: var(--genoma-v2-font-light);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.genoma-studio--v2 .genoma-v2-block__foot {
+  margin-top: 20px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── Typography hierarchy ── */
+.genoma-studio--v2 .genoma-v2-prose,
+.genoma-studio--v2 .genoma-v2-semantic__summary {
+  font-weight: var(--genoma-v2-font-light);
+  line-height: 1.6;
+}
+
+.genoma-studio--v2 .genoma-v2-type-row__family {
+  font-weight: 700;
+}
+
+.genoma-studio--v2 .genoma-v2-type-row__role {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 12px;
+}
+
+.genoma-studio--v2 strong {
+  font-weight: 600;
+}
+
+/* ── Chips & tags ── */
+.genoma-studio--v2 .genoma-v2-chip {
+  padding: 4px 0;
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--genoma-v2-divider);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-chip--muted {
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-chip--warn {
+  color: #9a5c2e;
+  border-bottom-color: rgba(154, 92, 46, 0.25);
+}
+
+.genoma-studio--v2 .genoma-v2-chip--locked {
+  color: var(--genoma-v2-muted);
+}
+
+/* ── Actions (text-first) ── */
+.genoma-studio--v2 .genoma-v2-btn {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--genoma-v2-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(20, 20, 20, 0.3);
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-v2-btn:hover {
+  text-decoration-color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-btn--ghost {
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-btn.is-active {
+  font-weight: 600;
+  color: var(--genoma-v2-text);
+  text-decoration: none;
+}
+
+.genoma-studio--v2 .genoma-v2-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.genoma-studio--v2 .genoma-v2-muted {
+  font-weight: var(--genoma-v2-font-light);
+  color: var(--genoma-v2-muted);
+  font-size: 0.875rem;
+}
+
+/* ── Inputs ── */
+.genoma-studio--v2 .genoma-v2-inline-input,
+.genoma-studio--v2 .genoma-v2-header__title {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--genoma-v2-border);
+  border-radius: 0;
+  padding: 6px 0;
+  font-weight: var(--genoma-v2-font-light);
+}
+
+.genoma-studio--v2 .genoma-v2-inline-input:focus,
+.genoma-studio--v2 .genoma-v2-header__title:focus {
+  outline: none;
+  border-bottom-color: var(--genoma-v2-text);
+}
+
+/* ── Logo (no frame) ── */
+.genoma-studio--v2 .genoma-v2-logo-plinth {
+  min-height: 280px;
+  padding: 32px 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-plinth--adaptive {
+  background: linear-gradient(180deg, #eceae6 0%, #e2e0db 100%);
+}
+
+.genoma-studio--v2 .genoma-v2-logo-plinth--neutral {
+  background: transparent;
+}
+
+/* ── Palette ── */
+.genoma-studio--v2 .genoma-v2-swatch {
+  border-radius: 0;
+  border: none;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.genoma-studio--v2 .genoma-v2-swatch.is-primary {
+  outline: 2px solid var(--genoma-v2-text);
+  outline-offset: 3px;
+}
+
+/* ── Tabs (underline) ── */
+.genoma-studio--v2 .genoma-v2-tabs {
+  gap: 24px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-v2-tab {
+  margin-bottom: -1px;
+  padding: 10px 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-tab.is-active {
+  color: var(--genoma-v2-text);
+  font-weight: 600;
+  border-bottom-color: var(--genoma-v2-text);
+  background: transparent;
+}
+
+.genoma-studio--v2 .genoma-v2-tab__count {
+  margin-left: 6px;
+  padding: 0;
+  background: transparent;
+  font-weight: 400;
+  color: var(--genoma-v2-muted);
+}
+
+/* ── Gallery ── */
+.genoma-studio--v2 .genoma-v2-gallery-item {
+  border-radius: 0;
+  border: none;
+  background: #eceae6;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-success {
+  border: none;
+  background: transparent;
+  color: #2d6a42;
+  padding: 0;
+  font-weight: 400;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-generate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-cost-hint {
+  margin: 0;
+  max-width: 220px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--genoma-v2-muted);
+}
+
+/* ── Evidence & expandable ── */
+.genoma-studio--v2 .genoma-v2-evidence {
+  border-top: 1px solid var(--genoma-v2-divider);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.genoma-studio--v2 .genoma-v2-evidence__label {
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-rules {
+  font-weight: var(--genoma-v2-font-light);
+}
+
+.genoma-studio--v2 .genoma-v2-rules--preview {
+  margin: 6px 0 0;
+  padding-left: 1rem;
+  font-size: 11px;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-rules--preview li {
+  margin-bottom: 2px;
+}
+
+/* ── Skeleton ── */
+.genoma-studio--v2 .genoma-v2-skeleton {
+  background: linear-gradient(90deg, #eceae6, #f0efec, #eceae6);
+  background-size: 200% 100%;
+  border-radius: 0;
+}
+
+/* ── Banners ── */
+.genoma-studio--v2 .genoma-v2-banner--error {
+  background: rgba(180, 60, 60, 0.06);
+  border: none;
+  border-left: 3px solid #b43c3c;
+  color: #8a2e2e;
+  font-weight: 400;
+}
+
+/* ── Crawl progress ── */
+.genoma-studio--v2 .genoma-crawl-progress {
+  margin: 0 48px;
+  padding: 24px 0;
+  background: transparent;
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__percent {
+  font-weight: 300;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__bar {
+  background: var(--genoma-v2-divider);
+  border-radius: 0;
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__bar-fill {
+  background: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__phase {
+  padding: 0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--genoma-v2-muted);
+  opacity: 1;
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__phase.is-active {
+  outline: none;
+  font-weight: 700;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__phase.is-done {
+  color: var(--genoma-v2-text);
+  background: transparent;
+  opacity: 0.55;
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__page,
+.genoma-studio--v2 .genoma-crawl-progress__llm-step {
+  font-weight: 300;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-crawl-progress__llm-step.is-running {
+  color: var(--genoma-v2-text);
+  font-weight: 600;
+}
+
+/* ── Entry screen ── */
+.genoma-studio--v2 .genoma-entry {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 64px 48px;
+}
+
+.genoma-studio--v2 .genoma-entry__title {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.genoma-studio--v2 .genoma-entry__copy {
+  font-weight: 300;
+}
+
+.genoma-studio--v2 .genoma-entry__input {
+  border: none;
+  border-bottom: 1px solid var(--genoma-v2-border);
+  border-radius: 0;
+  background: transparent;
+  font-weight: 300;
+}
+
+.genoma-studio--v2 .genoma-pill {
+  border: none;
+  background: transparent;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-type-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-v2-type-choice__meta {
+  font-weight: 300;
+  font-size: 13px;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-stack {
+  gap: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-grid {
+  gap: 4px;
+}
+
+.genoma-studio--v2 .genoma-v2-col--full {
+  padding-top: 16px;
+  border-top: 1px solid var(--genoma-v2-divider);
+}
+
+@media (max-width: 1100px) {
+  .genoma-studio--v2 .genoma-v2-grid,
+  .genoma-studio--v2 .genoma-v2-header,
+  .genoma-studio--v2 .genoma-crawl-progress {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .genoma-studio--v2 .genoma-crawl-progress {
+    margin-left: 24px;
+    margin-right: 24px;
+  }
+}
+
+/* ── Bento board: módulos rectangulares con aire (scroll permitido) ── */
+.genoma-studio--v2 .genoma-studio__board-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-bento-board {
+  flex: 1;
+  min-height: min-content;
+  display: flex;
+  flex-direction: column;
+}
+
+.genoma-studio--v2 .genoma-v2-bento-board .genoma-v2-header {
+  flex-shrink: 0;
+  padding: 18px 32px 14px;
+  margin: 0;
+  border-bottom: none;
+}
+
+.genoma-studio--v2 .genoma-v2-bento-board .genoma-v2-header__title {
+  font-size: 1.25rem;
+}
+
+.genoma-studio--v2 .genoma-v2-bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px;
+  padding: 4px 32px 64px;
+  max-width: 1560px;
+  margin: 0 auto;
+  width: 100%;
+  align-content: start;
+}
+
+.genoma-studio--v2 .genoma-v2-tile {
+  background: #faf9f7;
+  border-radius: 0;
+  padding: 24px 28px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--accent {
+  background: #e8e6e1;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--muted {
+  background: #f0eeea;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--logo {
+  grid-column: span 4;
+  grid-row: span 2;
+  min-height: 300px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--essence {
+  grid-column: span 5;
+  grid-row: span 2;
+  min-height: 300px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--typography {
+  grid-column: span 3;
+  min-height: 148px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--palette {
+  grid-column: span 3;
+  min-height: 148px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--voice {
+  grid-column: span 6;
+  min-height: 260px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--visual {
+  grid-column: span 6;
+  min-height: 260px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--gallery {
+  grid-column: span 12;
+  min-height: 520px;
+}
+
+.genoma-studio--v2 .genoma-v2-tile .genoma-v2-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-tile .genoma-v2-block--hero {
+  min-height: 0;
+  justify-content: flex-start;
+}
+
+.genoma-studio--v2 .genoma-v2-tile .genoma-v2-block__head {
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.06);
+}
+
+.genoma-studio--v2 .genoma-v2-tile .genoma-v2-block__label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.genoma-studio--v2 .genoma-v2-tile .genoma-v2-block__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-tile--logo .genoma-v2-logo-plinth {
+  flex: 1;
+  min-height: 200px;
+  padding: 28px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.genoma-studio--v2 .genoma-v2-tile--logo .genoma-v2-logo-plinth--adaptive {
+  background: linear-gradient(180deg, #2a2a30 0%, #141418 100%);
+}
+
+.genoma-studio--v2 .genoma-v2-tile--palette .genoma-v2-block__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.genoma-studio--v2 .genoma-v2-swatches--stack {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0;
+  flex: 1;
+  min-height: 96px;
+}
+
+.genoma-studio--v2 .genoma-v2-swatch--rect {
+  width: 100%;
+  height: auto;
+  flex: 1;
+  min-height: 22px;
+  border-radius: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-swatch--rect.genoma-v2-swatch--solo {
+  width: 100%;
+  min-height: 72px;
+}
+
+.genoma-studio--v2 .genoma-v2-block--bento-gallery .genoma-v2-block__body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery--bento {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-tone {
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-tone__label {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-tone__text {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-generated-matrix {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-category {
+  background: #eceae6;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 220px;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-category__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-category__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-v2-generated-category__hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-generated-category__imgs {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot,
+.genoma-studio--v2 .genoma-v2-generated-slot .genoma-v2-gallery-generated {
+  min-height: 0;
+  height: 100%;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot .genoma-v2-gallery-generated {
+  border-radius: 0;
+  overflow: hidden;
+  background: #ddd9d3;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot .genoma-v2-gallery-generated img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot__empty,
+.genoma-studio--v2 .genoma-v2-generated-slot__loading {
+  height: 100%;
+  min-height: 72px;
+  background: #ddd9d3;
+  border-radius: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot__loading {
+  background: linear-gradient(90deg, #ddd9d3, #eceae6, #ddd9d3);
+  background-size: 200% 100%;
+  animation: genoma-gallery-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes genoma-gallery-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-loading {
+  padding: 4px 0;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-loading__bar {
+  height: 4px;
+  background: var(--genoma-v2-divider);
+  overflow: hidden;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-loading__fill {
+  height: 100%;
+  background: var(--genoma-v2-text);
+  transition: width 0.35s ease;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-loading__message {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-loading__meta {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+}
+
+.genoma-studio--v2 .genoma-v2-tabs--compact {
+  margin-bottom: 0;
+  gap: 20px;
+}
+
+.genoma-studio--v2 .genoma-v2-harvested-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+}
+
+.genoma-studio--v2 .genoma-v2-harvested-strip .genoma-v2-gallery-item {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-cost-hint {
+  max-width: 100%;
+  font-size: 11px;
+}
+
+.genoma-studio--v2 .genoma-v2-bento-board .genoma-crawl-progress {
+  margin: 0 32px;
+  padding: 12px 0;
+}
+
+@media (max-width: 1200px) {
+  .genoma-studio--v2 .genoma-v2-bento-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .genoma-studio--v2 .genoma-v2-tile--logo,
+  .genoma-studio--v2 .genoma-v2-tile--essence {
+    grid-column: span 3;
+    grid-row: span 1;
+  }
+
+  .genoma-studio--v2 .genoma-v2-tile--typography,
+  .genoma-studio--v2 .genoma-v2-tile--palette {
+    grid-column: span 3;
+  }
+
+  .genoma-studio--v2 .genoma-v2-tile--voice,
+  .genoma-studio--v2 .genoma-v2-tile--visual {
+    grid-column: span 3;
+  }
+
+  .genoma-studio--v2 .genoma-v2-tile--gallery {
+    grid-column: span 6;
+  }
+
+  .genoma-studio--v2 .genoma-v2-generated-matrix {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .genoma-studio--v2 .genoma-v2-bento-grid {
+    grid-template-columns: 1fr;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+
+  .genoma-studio--v2 .genoma-v2-tile--logo,
+  .genoma-studio--v2 .genoma-v2-tile--essence,
+  .genoma-studio--v2 .genoma-v2-tile--typography,
+  .genoma-studio--v2 .genoma-v2-tile--palette,
+  .genoma-studio--v2 .genoma-v2-tile--voice,
+  .genoma-studio--v2 .genoma-v2-tile--visual,
+  .genoma-studio--v2 .genoma-v2-tile--gallery {
+    grid-column: span 1;
+    grid-row: span 1;
+  }
+
+  .genoma-studio--v2 .genoma-v2-generated-matrix {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+

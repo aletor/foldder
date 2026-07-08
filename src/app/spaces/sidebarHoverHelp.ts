@@ -108,6 +108,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Designer',
     line: 'Diseño completo: vectores, páginas, cajas de texto y marcos de imagen',
   },
+  genoma: {
+    title: 'Genoma',
+    line: 'ADN de marca editable: logo, paleta, tipografías, voz, galería y prohibiciones',
+  },
   presenter: {
     title: 'Presenter',
     line: 'Conecta Document del Designer: cada página es un slide con animaciones, transiciones y vídeos en imágenes',

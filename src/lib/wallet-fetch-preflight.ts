@@ -125,24 +125,22 @@ export async function runWalletFetchPreflight(input: {
   if (!estimate || estimate.reserveMicros <= 0) return null;
 
   const wallet = await readWalletStatus(input.fetcher);
-  if (!wallet || !wallet.configured) return null;
-
-  const account = wallet.account;
-  const availableMicros = account?.availableMicros ?? 0;
-  const blocked =
-    account?.status === "blocked" ||
-    account?.billingReviewRequired === true ||
-    availableMicros < estimate.reserveMicros;
-  const needsDecision = estimate.reserveMicros > 0 || blocked;
-  if (!needsDecision) return null;
+  const walletSnapshot: WalletStatusResponse = wallet ?? {
+    configured: false,
+    account: null,
+    recentEntries: [],
+    recentEntriesTruncated: false,
+    topupPackages: [],
+  };
 
   const decision = await requestWalletCostDecision({
     id: `${input.route}:${Date.now()}`,
     ...estimate,
-    wallet,
+    wallet: walletSnapshot,
   });
   if (decision.allowed) return null;
 
+  const availableMicros = walletSnapshot.account?.availableMicros ?? 0;
   dispatchWalletRefresh("preflight_blocked");
   if (decision.reason === "insufficient_balance") dispatchWalletOpen("insufficient_balance");
   return syntheticWalletResponse(
@@ -159,6 +157,34 @@ export async function runWalletFetchPreflight(input: {
     },
     decision.reason === "cancelled" ? 409 : 402,
   );
+}
+
+export async function fetchPostWithWalletPreflight(
+  route: string,
+  body: unknown,
+  init?: Omit<RequestInit, "method" | "body">,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const requestInit: RequestInit = {
+    ...init,
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  };
+  const fetcher = getOrigWindowFetch();
+  const blocked = await runWalletFetchPreflight({
+    route,
+    requestInput: route,
+    requestInit,
+    fetcher,
+  });
+  if (blocked) return blocked;
+
+  headers.set(FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER, "1");
+  return fetch(route, { ...requestInit, headers });
 }
 
 export async function notifyWalletFromApiResponse(response: Response): Promise<void> {

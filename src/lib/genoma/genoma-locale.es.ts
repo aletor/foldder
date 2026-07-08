@@ -1,0 +1,88 @@
+import type { SlotId } from "./genoma-types";
+
+export const genomaLocaleEs = {
+  essence: "Esencia",
+  voice: "Voz",
+  visualWorld: "Mundo visual",
+  typography: "Tipografía",
+  palette: "Paleta",
+  logo: "Logo",
+  gallery: "Galería",
+  harvested: "Cosecha",
+  generated: "Generadas",
+  pendingQueue: "Pendiente de ti",
+  confirm: "Confirmar",
+  confirmLogo: "Confirmar logo",
+  confirmPalette: "Confirmar paleta",
+  confirmTypography: "Confirmar tipografía",
+  confirmEssence: "Confirmar esencia",
+  confirmVoice: "Confirmar voz",
+  confirmVisualWorld: "Confirmar mundo visual",
+  confirmGallery: "Confirmar galería",
+  unlock: "Desbloquear",
+  revert: "Revertir",
+  locked: "Bloqueado",
+  you: "tú",
+  live: "Vivo",
+  tokens: "Tokens",
+  compiled: "Compilado",
+  generateGallery: "Generar set de estilo (10 imgs)",
+  generatingGallery: "Generando imágenes de estilo…",
+  generatingGalleryProgress: (current: number, total: number, category: string) =>
+    `Generando ${current}/${total}${category ? ` · ${category}` : ""}…`,
+  galleryToneLabel: "Tono de imagen",
+  galleryGeneratedSuccess: "Set de estilo listo — pestaña Generadas",
+  galleryGeneratedCount: (count: number) =>
+    `${count} imagen${count === 1 ? "" : "es"} de estilo listas — revisa por categoría`,
+  galleryGeneratedEmpty: "Pulsa «Generar set de estilo» para crear 10 referencias (personas, lugares, objetos, texturas y general).",
+  recalibrate: "Recalibrar estilo",
+  noLogo: "Sin logo todavía.",
+  noPalette: "Sin paleta.",
+  monochromePalette: "Paleta monocroma detectada — un solo tono dominante en la cosecha.",
+  noTypography: "Sin tipografías.",
+  noEssence: "Aún no hay una síntesis de esencia. Analiza la web o completa el bloque.",
+  noVoice: "Aún no hay una síntesis de voz. Analiza la web o completa el bloque.",
+  noVisualWorld: "Aún no hay suficientes imágenes para definir el mundo visual. Añade fotos, campañas o un manual de marca.",
+  noVisualWorldSynthesis:
+    "Aún no hay suficiente análisis visual. Añade imágenes o genera una galería de estilo.",
+  synthesisFallback: "Propuesta de respaldo — revisa antes de confirmar",
+  needsReview: "La síntesis necesita revisión",
+  promise: "Promesa",
+  purpose: "Propósito",
+  pov: "Punto de vista",
+  headlineDetected: "Headline detectado",
+  beliefs: "Creencias",
+  writingRules: "Reglas de escritura",
+  mood: "Mood",
+  visualTerritory: "Territorio visual",
+  limits: "Límites",
+  evidence: "Evidencia",
+  fedByGallery: "Se alimenta de",
+  images: "imágenes",
+  expandQuote: "Ver más",
+  collapseQuote: "Ver menos",
+  expandDetail: "Ver más",
+  collapseDetail: "Ver menos",
+  chooseColor: "Elegir color",
+  chooseFonts: "Elegir tipografías",
+  uploadLogo: "Súbelo",
+  specimen: "Aa",
+} as const;
+
+export const confirmLabelForSlot: Partial<Record<SlotId, string>> = {
+  logo: genomaLocaleEs.confirmLogo,
+  palette: genomaLocaleEs.confirmPalette,
+  typography: genomaLocaleEs.confirmTypography,
+  essence: genomaLocaleEs.confirmEssence,
+  voice: genomaLocaleEs.confirmVoice,
+  visualWorld: genomaLocaleEs.confirmVisualWorld,
+  gallery: genomaLocaleEs.confirmGallery,
+};
+
+export function formatProvenanceEs(detail?: string, type?: string): string {
+  if (!detail && !type) return "";
+  if (type === "user_input") return genomaLocaleEs.you;
+  const normalized = (detail ?? "").toLowerCase();
+  if (normalized.includes("tagline home") || normalized.includes("tagline-home")) return "tagline-home";
+  return detail || type || "";
+}

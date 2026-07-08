@@ -91,6 +91,14 @@ export const STUDIO_NODE_MANIFESTS = {
     ownsPortal: true,
     description: "Gestor de memoria creativa, fuentes, ADN, looks visuales y aprendizajes.",
   },
+  genoma: {
+    nodeType: "genoma",
+    label: "Genoma",
+    chrome: "brain",
+    modulePath: "src/app/spaces/genoma/GenomaStudio.tsx",
+    ownsPortal: true,
+    description: "ADN de marca editable con procedencia y confirmación por slot.",
+  },
   nanoBanana: {
     nodeType: "nanoBanana",
     appId: "nanoBanana",

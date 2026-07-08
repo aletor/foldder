@@ -159,4 +159,43 @@ describe("wallet-fetch-preflight", () => {
     expect(response).toBeNull();
     expect(eventFired).toBe(false);
   });
+
+  it("asks for confirmation on gallery generate even when wallet is not configured", async () => {
+    let requestedRoute = "";
+    const onDecision = (event: Event) => {
+      const detail = (event as CustomEvent<WalletCostDecisionEventDetail>).detail;
+      requestedRoute = detail.request.route;
+      detail.handled = true;
+      detail.resolve({ allowed: true, reason: "approved" });
+    };
+    window.addEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          configured: false,
+          account: null,
+          recentEntries: [],
+          recentEntriesTruncated: false,
+          topupPackages: [],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const response = await runWalletFetchPreflight({
+      route: "/api/spaces/genoma/gallery/generate",
+      requestInput: "/api/spaces/genoma/gallery/generate",
+      requestInit: {
+        method: "POST",
+        body: JSON.stringify({ genoma: { slots: {} } }),
+      },
+      fetcher,
+    });
+
+    window.removeEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
+    expect(response).toBeNull();
+    expect(requestedRoute).toBe("/api/spaces/genoma/gallery/generate");
+  });
 });

@@ -69,6 +69,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   dataset: DatasetNode,
   loop: LoopNode,
   populate: PopulateNode,
+  genoma: GenomaNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,
   urlImage: UrlImageNode,

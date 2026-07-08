@@ -44,6 +44,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
 
   // Tier 2b — 4×4 · datasets de proyecto
   dataset: { cols: 4, rows: 4 },
+  genoma: { cols: 4, rows: 4 },
 
   // Tier 3 — 4×3 · texto / contenido
   guionista: { cols: 4, rows: 3 },

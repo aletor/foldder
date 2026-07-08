@@ -85,6 +85,12 @@ function englishTitle(request: WalletCostDecisionRequest): string {
       return "Edit text";
     case "/api/spaces/assistant":
       return "Canvas assistant";
+    case "/api/spaces/genoma/crawl":
+      return "Analyze brand DNA";
+    case "/api/spaces/genoma/ingest":
+      return "Ingest brand files";
+    case "/api/spaces/genoma/gallery/generate":
+      return "Generate brand gallery";
     case "/api/spaces/cine/analyze":
       return "Analyze script";
     case "/api/video-editor/subtitles/transcribe":
@@ -131,6 +137,18 @@ function operationDescription(request: WalletCostDecisionRequest, language: Dial
       return es
         ? "La búsqueda puede verificar visualmente los resultados con Gemini. Se reserva el peor caso de hasta dos pasadas de verificación."
         : "Search may visually verify results with Gemini. Foldder reserves for the worst case: up to two verification passes.";
+    case "/api/spaces/genoma/crawl":
+      return es
+        ? "Genoma analiza la web (crawl + extracción) y sintetiza voz, valores y claim con Gemini. La reserva cubre varias llamadas de texto y, si aplica, etiquetado visual de logos."
+        : "Genoma crawls the site, extracts brand signals, and synthesizes voice, values, and claim with Gemini. The reserve covers multiple text calls and optional logo vision labeling.";
+    case "/api/spaces/genoma/ingest":
+      return es
+        ? "Genoma clasifica archivos (PDF, imágenes, docs) y puede sintetizar voz/valores con Gemini."
+        : "Genoma triages uploaded files (PDF, images, docs) and may synthesize voice/values with Gemini.";
+    case "/api/spaces/genoma/gallery/generate":
+      return es
+        ? "Se generarán 10 imágenes de estilo con IA (2 personas & mood, 2 lugares, 2 objetos, 2 texturas, 2 general) a ~0,02 $/imagen (~0,20 $ total). La reserva máxima aparece abajo; no se cobra hasta que confirmes."
+        : "Genoma will generate 10 style images with AI (2 people & mood, 2 places, 2 objects, 2 textures, 2 general) at ~$0.02/image (~$0.20 total). Max reserve is shown below; nothing is charged until you confirm.";
     case "/api/spaces/describe":
     case "/api/gemini/analyze-areas":
     case "/api/gemini/analyze-correction":
