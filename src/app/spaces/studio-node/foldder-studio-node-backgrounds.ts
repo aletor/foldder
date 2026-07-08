@@ -5,6 +5,7 @@
 export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   projectAssets: "/logo-folder.png",
   projectBrain: "/assets/nodes/brain-empty.jpg",
+  genoma: "/assets/nodes/brain-empty.jpg",
   brain: "/assets/nodes/brain-empty.jpg",
   cine: "/assets/nodes/cine-empty-red.png",
   designer: "/assets/nodes/designer-empty-lime.png",

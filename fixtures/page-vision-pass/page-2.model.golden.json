@@ -1,0 +1,85 @@
+{
+  "logoInstances": [
+    {
+      "variant": "horizontal",
+      "onBackground": "claro",
+      "textInLogo": "ATRESMEDIA SALES",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.95,
+      "bbox": [
+        0.308,
+        0.46,
+        0.69,
+        0.54
+      ]
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "ATRESMEDIA SALES",
+      "kind": "wordmark_logo",
+      "bbox": [
+        0.308,
+        0.46,
+        0.69,
+        0.54
+      ]
+    },
+    {
+      "text": "sales@atresmediatv.com / international-sales-atresmedia.com",
+      "kind": "dominio_pie",
+      "bbox": [
+        0.23,
+        0.955,
+        0.76,
+        0.965
+      ]
+    }
+  ],
+  "typographyRoles": [
+    {
+      "role": "display",
+      "sampleText": "ATRESMEDIA",
+      "styleObserved": "Sans-serif, negrita, mayúsculas, color negro",
+      "bbox": [
+        0.308,
+        0.478,
+        0.498,
+        0.508
+      ]
+    },
+    {
+      "role": "etiqueta",
+      "sampleText": "SALES",
+      "styleObserved": "Sans-serif, negrita, mayúsculas, sobre fondo degradado naranja a rosa",
+      "bbox": [
+        0.398,
+        0.508,
+        0.498,
+        0.538
+      ]
+    },
+    {
+      "role": "pie",
+      "sampleText": "sales@atresmediatv.com / international-sales-atresmedia.com",
+      "styleObserved": "Sans-serif, regular, minúsculas, color negro",
+      "bbox": [
+        0.23,
+        0.955,
+        0.76,
+        0.965
+      ]
+    }
+  ],
+  "brandSurfaces": [
+    [
+      0.395,
+      0.505,
+      0.5,
+      0.54
+    ]
+  ],
+  "images": [],
+  "pageKind": "asset_marca"
+}

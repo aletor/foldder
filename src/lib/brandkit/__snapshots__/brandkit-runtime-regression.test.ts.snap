@@ -1,0 +1,1427 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > defaultProjectAssets sin boardMeta no cambia salida guionista 1`] = `
+{
+  "audience": [],
+  "avoid": [],
+  "brainVersion": 1,
+  "brand": {
+    "colorAccent": null,
+    "colorPrimary": null,
+    "colorSecondary": null,
+    "logoNegative": null,
+    "logoPositive": null,
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "slice:voice",
+    "slice:content_dna",
+    "slice:knowledge",
+    "slice:approved_claims",
+    "slice:forbidden_claims",
+    "slice:article_structures",
+    "slice:safe_creative_rules",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_dna",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:product_language",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_integration",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:atmosphere",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:narrative",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:core_brain",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:layout",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:voice",
+      },
+      {
+        "id": "slice_2",
+        "kind": "context_slice",
+        "label": "slice:content_dna",
+      },
+      {
+        "id": "slice_3",
+        "kind": "context_slice",
+        "label": "slice:knowledge",
+      },
+      {
+        "id": "slice_4",
+        "kind": "context_slice",
+        "label": "slice:approved_claims",
+      },
+      {
+        "id": "slice_5",
+        "kind": "context_slice",
+        "label": "slice:forbidden_claims",
+      },
+      {
+        "id": "slice_6",
+        "kind": "context_slice",
+        "label": "slice:article_structures",
+      },
+      {
+        "id": "slice_7",
+        "kind": "context_slice",
+        "label": "slice:safe_creative_rules",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:voice",
+        "slice:content_dna",
+        "slice:knowledge",
+        "slice:approved_claims",
+        "slice:forbidden_claims",
+        "slice:article_structures",
+        "slice:safe_creative_rules",
+      ],
+      "summary": "Runtime context built for guionista using 7 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "targetNodeType": "guionista",
+  },
+  "evidence": [],
+  "knowledge": {
+    "corporateContext": "",
+    "documentTitles": [],
+    "documentsAnalyzed": 0,
+  },
+  "productContext": [],
+  "recommendations": [],
+  "targetNodeType": "guionista",
+  "voice": {
+    "approvedPhrases": [],
+    "examples": [],
+    "preferredTerms": [],
+    "tabooPhrases": [],
+    "traits": [],
+  },
+  "warnings": [],
+}
+`;
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > snapshot estable para cine 1`] = `
+{
+  "audience": [
+    {
+      "attentionTriggers": [],
+      "channel": "LinkedIn",
+      "id": "p1",
+      "name": "Director creativo",
+      "objections": [],
+      "pain": "Necesita coherencia de marca",
+      "proofNeeded": [],
+      "sophistication": "alta",
+      "tags": [
+        "B2B",
+      ],
+    },
+  ],
+  "avoid": [
+    "gratis para siempre",
+    "milagro",
+  ],
+  "brainVersion": 3,
+  "brand": {
+    "colorAccent": "#FF5500",
+    "colorPrimary": "#112233",
+    "colorSecondary": "#AABBCC",
+    "logoNegative": null,
+    "logoPositive": "data:image/png;base64,legacyLogoPositive",
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "useCase:brandkit_pr0_regression",
+    "slice:core_brain",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:voice",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:knowledge",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_dna",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:content_dna",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_creative_rules",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:approved_claims",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:forbidden_claims",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:core_brain",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:core_brain",
+      ],
+      "summary": "Runtime context built for cine (brandkit_pr0_regression) using 1 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "projectScopeId": "project-regression-1",
+    "targetNodeId": "node-regression-1",
+    "targetNodeType": "cine",
+    "useCase": "brandkit_pr0_regression",
+  },
+  "evidence": [],
+  "knowledge": {
+    "corporateContext": "Marca orientada a rendimiento y claridad.",
+    "documentsAnalyzed": 1,
+  },
+  "productContext": [
+    {
+      "audience": "Equipos creativos",
+      "channel": "web",
+      "claim": "Coherencia sin fricción",
+      "cta": "Probar Foldder",
+      "evidence": [
+        "doc-legacy-1",
+      ],
+      "id": "mb1",
+      "stage": "consideration",
+      "support": "Un solo BrandKit para todo el pipeline",
+    },
+  ],
+  "projectScopeId": "project-regression-1",
+  "recommendations": [],
+  "targetNodeId": "node-regression-1",
+  "targetNodeType": "cine",
+  "visualReferences": {
+    "environment": {
+      "category": "environment",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Espacios industriales limpios, luz natural.",
+      "ruleStatus": "proposed",
+    },
+    "objects": {
+      "category": "objects",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Herramientas de precisión, detalle macro.",
+      "ruleStatus": "proposed",
+    },
+    "people": {
+      "category": "people",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Profesionales en acción, nunca posando a cámara.",
+      "ruleStatus": "proposed",
+    },
+    "protagonist": {
+      "category": "protagonist",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Producto en primer plano, luz lateral suave.",
+      "ruleStatus": "proposed",
+    },
+    "textures": {
+      "category": "textures",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Metal cepillado y hormigón mate.",
+      "ruleStatus": "proposed",
+    },
+  },
+  "voice": {
+    "approvedPhrases": [
+      "rendimiento real",
+    ],
+    "examples": [
+      {
+        "id": "v1",
+        "kind": "approved_voice",
+        "text": "Hablamos claro, sin hype vacío.",
+      },
+    ],
+    "preferredTerms": [
+      "rendimiento",
+    ],
+    "tabooPhrases": [
+      "gratis para siempre",
+    ],
+    "traits": [
+      "directo",
+      "técnico",
+      "cercano",
+    ],
+  },
+  "warnings": [],
+}
+`;
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > snapshot estable para designer 1`] = `
+{
+  "audience": [
+    {
+      "attentionTriggers": [],
+      "channel": "LinkedIn",
+      "id": "p1",
+      "name": "Director creativo",
+      "objections": [],
+      "pain": "Necesita coherencia de marca",
+      "proofNeeded": [],
+      "sophistication": "alta",
+      "tags": [
+        "B2B",
+      ],
+    },
+  ],
+  "avoid": [
+    "gratis para siempre",
+    "milagro",
+  ],
+  "brainVersion": 3,
+  "brand": {
+    "colorAccent": "#FF5500",
+    "colorPrimary": "#112233",
+    "colorSecondary": "#AABBCC",
+    "logoNegative": null,
+    "logoPositive": "data:image/png;base64,legacyLogoPositive",
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "useCase:brandkit_pr0_regression",
+    "slice:brand",
+    "slice:visual_dna",
+    "slice:layout",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:voice",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:knowledge",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:content_dna",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_creative_rules",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:approved_claims",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:forbidden_claims",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:article_structures",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:product_language",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:brand",
+      },
+      {
+        "id": "slice_2",
+        "kind": "context_slice",
+        "label": "slice:visual_dna",
+      },
+      {
+        "id": "slice_3",
+        "kind": "context_slice",
+        "label": "slice:layout",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:brand",
+        "slice:visual_dna",
+        "slice:layout",
+      ],
+      "summary": "Runtime context built for designer (brandkit_pr0_regression) using 3 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "projectScopeId": "project-regression-1",
+    "targetNodeId": "node-regression-1",
+    "targetNodeType": "designer",
+    "useCase": "brandkit_pr0_regression",
+  },
+  "evidence": [],
+  "knowledge": {
+    "corporateContext": "Marca orientada a rendimiento y claridad.",
+    "documentsAnalyzed": 1,
+  },
+  "productContext": [
+    {
+      "audience": "Equipos creativos",
+      "channel": "web",
+      "claim": "Coherencia sin fricción",
+      "cta": "Probar Foldder",
+      "evidence": [
+        "doc-legacy-1",
+      ],
+      "id": "mb1",
+      "stage": "consideration",
+      "support": "Un solo BrandKit para todo el pipeline",
+    },
+  ],
+  "projectScopeId": "project-regression-1",
+  "recommendations": [],
+  "targetNodeId": "node-regression-1",
+  "targetNodeType": "designer",
+  "voice": {
+    "approvedPhrases": [
+      "rendimiento real",
+    ],
+    "examples": [
+      {
+        "id": "v1",
+        "kind": "approved_voice",
+        "text": "Hablamos claro, sin hype vacío.",
+      },
+    ],
+    "preferredTerms": [
+      "rendimiento",
+    ],
+    "tabooPhrases": [
+      "gratis para siempre",
+    ],
+    "traits": [
+      "directo",
+      "técnico",
+      "cercano",
+    ],
+  },
+  "warnings": [],
+}
+`;
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > snapshot estable para geminiVideo 1`] = `
+{
+  "audience": [
+    {
+      "attentionTriggers": [],
+      "channel": "LinkedIn",
+      "id": "p1",
+      "name": "Director creativo",
+      "objections": [],
+      "pain": "Necesita coherencia de marca",
+      "proofNeeded": [],
+      "sophistication": "alta",
+      "tags": [
+        "B2B",
+      ],
+    },
+  ],
+  "avoid": [
+    "gratis para siempre",
+    "milagro",
+  ],
+  "brainVersion": 3,
+  "brand": {
+    "colorAccent": "#FF5500",
+    "colorPrimary": "#112233",
+    "colorSecondary": "#AABBCC",
+    "logoNegative": null,
+    "logoPositive": "data:image/png;base64,legacyLogoPositive",
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "useCase:brandkit_pr0_regression",
+    "slice:atmosphere",
+    "slice:narrative",
+    "slice:visual_dna",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:voice",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:knowledge",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:content_dna",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_creative_rules",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:approved_claims",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:forbidden_claims",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:article_structures",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:atmosphere",
+      },
+      {
+        "id": "slice_2",
+        "kind": "context_slice",
+        "label": "slice:narrative",
+      },
+      {
+        "id": "slice_3",
+        "kind": "context_slice",
+        "label": "slice:visual_dna",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:atmosphere",
+        "slice:narrative",
+        "slice:visual_dna",
+      ],
+      "summary": "Runtime context built for geminiVideo (brandkit_pr0_regression) using 3 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "projectScopeId": "project-regression-1",
+    "targetNodeId": "node-regression-1",
+    "targetNodeType": "geminiVideo",
+    "useCase": "brandkit_pr0_regression",
+  },
+  "evidence": [],
+  "knowledge": {
+    "corporateContext": "Marca orientada a rendimiento y claridad.",
+    "documentsAnalyzed": 1,
+  },
+  "productContext": [
+    {
+      "audience": "Equipos creativos",
+      "channel": "web",
+      "claim": "Coherencia sin fricción",
+      "cta": "Probar Foldder",
+      "evidence": [
+        "doc-legacy-1",
+      ],
+      "id": "mb1",
+      "stage": "consideration",
+      "support": "Un solo BrandKit para todo el pipeline",
+    },
+  ],
+  "projectScopeId": "project-regression-1",
+  "recommendations": [],
+  "targetNodeId": "node-regression-1",
+  "targetNodeType": "geminiVideo",
+  "visualReferences": {
+    "environment": {
+      "category": "environment",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Espacios industriales limpios, luz natural.",
+      "ruleStatus": "proposed",
+    },
+    "objects": {
+      "category": "objects",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Herramientas de precisión, detalle macro.",
+      "ruleStatus": "proposed",
+    },
+    "people": {
+      "category": "people",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Profesionales en acción, nunca posando a cámara.",
+      "ruleStatus": "proposed",
+    },
+    "protagonist": {
+      "category": "protagonist",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Producto en primer plano, luz lateral suave.",
+      "ruleStatus": "proposed",
+    },
+    "textures": {
+      "category": "textures",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Metal cepillado y hormigón mate.",
+      "ruleStatus": "proposed",
+    },
+  },
+  "voice": {
+    "approvedPhrases": [
+      "rendimiento real",
+    ],
+    "examples": [
+      {
+        "id": "v1",
+        "kind": "approved_voice",
+        "text": "Hablamos claro, sin hype vacío.",
+      },
+    ],
+    "preferredTerms": [
+      "rendimiento",
+    ],
+    "tabooPhrases": [
+      "gratis para siempre",
+    ],
+    "traits": [
+      "directo",
+      "técnico",
+      "cercano",
+    ],
+  },
+  "warnings": [],
+}
+`;
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > snapshot estable para guionista 1`] = `
+{
+  "audience": [
+    {
+      "attentionTriggers": [],
+      "channel": "LinkedIn",
+      "id": "p1",
+      "name": "Director creativo",
+      "objections": [],
+      "pain": "Necesita coherencia de marca",
+      "proofNeeded": [],
+      "sophistication": "alta",
+      "tags": [
+        "B2B",
+      ],
+    },
+  ],
+  "avoid": [
+    "gratis para siempre",
+    "milagro",
+  ],
+  "brainVersion": 3,
+  "brand": {
+    "colorAccent": "#FF5500",
+    "colorPrimary": "#112233",
+    "colorSecondary": "#AABBCC",
+    "logoNegative": null,
+    "logoPositive": "data:image/png;base64,legacyLogoPositive",
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "useCase:brandkit_pr0_regression",
+    "slice:voice",
+    "slice:content_dna",
+    "slice:knowledge",
+    "slice:approved_claims",
+    "slice:forbidden_claims",
+    "slice:article_structures",
+    "slice:safe_creative_rules",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_dna",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:product_language",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_integration",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:atmosphere",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:narrative",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:core_brain",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:layout",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:voice",
+      },
+      {
+        "id": "slice_2",
+        "kind": "context_slice",
+        "label": "slice:content_dna",
+      },
+      {
+        "id": "slice_3",
+        "kind": "context_slice",
+        "label": "slice:knowledge",
+      },
+      {
+        "id": "slice_4",
+        "kind": "context_slice",
+        "label": "slice:approved_claims",
+      },
+      {
+        "id": "slice_5",
+        "kind": "context_slice",
+        "label": "slice:forbidden_claims",
+      },
+      {
+        "id": "slice_6",
+        "kind": "context_slice",
+        "label": "slice:article_structures",
+      },
+      {
+        "id": "slice_7",
+        "kind": "context_slice",
+        "label": "slice:safe_creative_rules",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:voice",
+        "slice:content_dna",
+        "slice:knowledge",
+        "slice:approved_claims",
+        "slice:forbidden_claims",
+        "slice:article_structures",
+        "slice:safe_creative_rules",
+      ],
+      "summary": "Runtime context built for guionista (brandkit_pr0_regression) using 7 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "projectScopeId": "project-regression-1",
+    "targetNodeId": "node-regression-1",
+    "targetNodeType": "guionista",
+    "useCase": "brandkit_pr0_regression",
+  },
+  "evidence": [],
+  "guionistaPack": {
+    "approvedClaims": [],
+    "articleStructures": [],
+    "contentPillars": [],
+    "corporateExcerpt": "Marca orientada a rendimiento y claridad.",
+    "forbiddenClaims": [],
+    "narrativeAngles": [],
+    "preferredFormats": [],
+    "topics": [],
+    "trendOpportunities": [],
+    "writingAvoid": [],
+    "writingDo": [],
+  },
+  "knowledge": {
+    "corporateContext": "Marca orientada a rendimiento y claridad.",
+    "documentTitles": [
+      {
+        "id": "doc-legacy-1",
+        "name": "BrandBook.pdf",
+        "scope": "core",
+      },
+    ],
+    "documentsAnalyzed": 1,
+  },
+  "productContext": [
+    {
+      "audience": "Equipos creativos",
+      "channel": "web",
+      "claim": "Coherencia sin fricción",
+      "cta": "Probar Foldder",
+      "evidence": [
+        "doc-legacy-1",
+      ],
+      "id": "mb1",
+      "stage": "consideration",
+      "support": "Un solo BrandKit para todo el pipeline",
+    },
+  ],
+  "projectScopeId": "project-regression-1",
+  "recommendations": [],
+  "targetNodeId": "node-regression-1",
+  "targetNodeType": "guionista",
+  "voice": {
+    "approvedPhrases": [
+      "rendimiento real",
+    ],
+    "examples": [
+      {
+        "id": "v1",
+        "kind": "approved_voice",
+        "text": "Hablamos claro, sin hype vacío.",
+      },
+    ],
+    "preferredTerms": [
+      "rendimiento",
+    ],
+    "tabooPhrases": [
+      "gratis para siempre",
+    ],
+    "traits": [
+      "directo",
+      "técnico",
+      "cercano",
+    ],
+  },
+  "warnings": [],
+}
+`;
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > snapshot estable para nanoBanana 1`] = `
+{
+  "audience": [
+    {
+      "attentionTriggers": [],
+      "channel": "LinkedIn",
+      "id": "p1",
+      "name": "Director creativo",
+      "objections": [],
+      "pain": "Necesita coherencia de marca",
+      "proofNeeded": [],
+      "sophistication": "alta",
+      "tags": [
+        "B2B",
+      ],
+    },
+  ],
+  "avoid": [
+    "gratis para siempre",
+    "milagro",
+  ],
+  "brainVersion": 3,
+  "brand": {
+    "colorAccent": "#FF5500",
+    "colorPrimary": "#112233",
+    "colorSecondary": "#AABBCC",
+    "logoNegative": null,
+    "logoPositive": "data:image/png;base64,legacyLogoPositive",
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "useCase:brandkit_pr0_regression",
+    "slice:core_brain",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:voice",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:knowledge",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_dna",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:content_dna",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_creative_rules",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:approved_claims",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:forbidden_claims",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:core_brain",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:core_brain",
+      ],
+      "summary": "Runtime context built for nanoBanana (brandkit_pr0_regression) using 1 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "projectScopeId": "project-regression-1",
+    "targetNodeId": "node-regression-1",
+    "targetNodeType": "nanoBanana",
+    "useCase": "brandkit_pr0_regression",
+  },
+  "evidence": [],
+  "knowledge": {
+    "corporateContext": "Marca orientada a rendimiento y claridad.",
+    "documentsAnalyzed": 1,
+  },
+  "productContext": [
+    {
+      "audience": "Equipos creativos",
+      "channel": "web",
+      "claim": "Coherencia sin fricción",
+      "cta": "Probar Foldder",
+      "evidence": [
+        "doc-legacy-1",
+      ],
+      "id": "mb1",
+      "stage": "consideration",
+      "support": "Un solo BrandKit para todo el pipeline",
+    },
+  ],
+  "projectScopeId": "project-regression-1",
+  "recommendations": [],
+  "targetNodeId": "node-regression-1",
+  "targetNodeType": "nanoBanana",
+  "visualReferences": {
+    "environment": {
+      "category": "environment",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Espacios industriales limpios, luz natural.",
+      "ruleStatus": "proposed",
+    },
+    "objects": {
+      "category": "objects",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Herramientas de precisión, detalle macro.",
+      "ruleStatus": "proposed",
+    },
+    "people": {
+      "category": "people",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Profesionales en acción, nunca posando a cámara.",
+      "ruleStatus": "proposed",
+    },
+    "protagonist": {
+      "category": "protagonist",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Producto en primer plano, luz lateral suave.",
+      "ruleStatus": "proposed",
+    },
+    "textures": {
+      "category": "textures",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Metal cepillado y hormigón mate.",
+      "ruleStatus": "proposed",
+    },
+  },
+  "voice": {
+    "approvedPhrases": [
+      "rendimiento real",
+    ],
+    "examples": [
+      {
+        "id": "v1",
+        "kind": "approved_voice",
+        "text": "Hablamos claro, sin hype vacío.",
+      },
+    ],
+    "preferredTerms": [
+      "rendimiento",
+    ],
+    "tabooPhrases": [
+      "gratis para siempre",
+    ],
+    "traits": [
+      "directo",
+      "técnico",
+      "cercano",
+    ],
+  },
+  "warnings": [],
+}
+`;
+
+exports[`T1 — buildBrainRuntimeContext regression (legacy assets, sin boardMeta) > snapshot estable para photoroom 1`] = `
+{
+  "audience": [
+    {
+      "attentionTriggers": [],
+      "channel": "LinkedIn",
+      "id": "p1",
+      "name": "Director creativo",
+      "objections": [],
+      "pain": "Necesita coherencia de marca",
+      "proofNeeded": [],
+      "sophistication": "alta",
+      "tags": [
+        "B2B",
+      ],
+    },
+  ],
+  "avoid": [
+    "gratis para siempre",
+    "milagro",
+  ],
+  "brainVersion": 3,
+  "brand": {
+    "colorAccent": "#FF5500",
+    "colorPrimary": "#112233",
+    "colorSecondary": "#AABBCC",
+    "logoNegative": null,
+    "logoPositive": "data:image/png;base64,legacyLogoPositive",
+  },
+  "confidence": 0.45,
+  "contextSlices": [
+    "useCase:brandkit_pr0_regression",
+    "slice:product_language",
+    "slice:visual_integration",
+  ],
+  "decisionTrace": {
+    "confidence": 0.45,
+    "discardedSignals": [
+      {
+        "id": "ignored_slice_1",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand",
+      },
+      {
+        "id": "ignored_slice_2",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:voice",
+      },
+      {
+        "id": "ignored_slice_3",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:knowledge",
+      },
+      {
+        "id": "ignored_slice_4",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:visual_dna",
+      },
+      {
+        "id": "ignored_slice_5",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:brand_visual_dna",
+      },
+      {
+        "id": "ignored_slice_6",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:content_dna",
+      },
+      {
+        "id": "ignored_slice_7",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_creative_rules",
+      },
+      {
+        "id": "ignored_slice_8",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:safe_generation",
+      },
+      {
+        "id": "ignored_slice_9",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:approved_claims",
+      },
+      {
+        "id": "ignored_slice_10",
+        "kind": "slice",
+        "reason": "available_but_not_used",
+        "summary": "slice:forbidden_claims",
+      },
+    ],
+    "inputs": [
+      {
+        "id": "slice_1",
+        "kind": "context_slice",
+        "label": "slice:product_language",
+      },
+      {
+        "id": "slice_2",
+        "kind": "context_slice",
+        "label": "slice:visual_integration",
+      },
+    ],
+    "kind": "runtime_context",
+    "outputSummary": {
+      "confidence": 0.45,
+      "contextSliceIds": [
+        "slice:product_language",
+        "slice:visual_integration",
+      ],
+      "summary": "Runtime context built for photoroom (brandkit_pr0_regression) using 2 slices and 0 evidence signals.",
+      "title": "Runtime Context",
+    },
+    "persistenceIntent": "ephemeral",
+    "projectScopeId": "project-regression-1",
+    "targetNodeId": "node-regression-1",
+    "targetNodeType": "photoroom",
+    "useCase": "brandkit_pr0_regression",
+  },
+  "evidence": [],
+  "knowledge": {
+    "corporateContext": "Marca orientada a rendimiento y claridad.",
+    "documentsAnalyzed": 1,
+  },
+  "productContext": [
+    {
+      "audience": "Equipos creativos",
+      "channel": "web",
+      "claim": "Coherencia sin fricción",
+      "cta": "Probar Foldder",
+      "evidence": [
+        "doc-legacy-1",
+      ],
+      "id": "mb1",
+      "stage": "consideration",
+      "support": "Un solo BrandKit para todo el pipeline",
+    },
+  ],
+  "projectScopeId": "project-regression-1",
+  "recommendations": [],
+  "targetNodeId": "node-regression-1",
+  "targetNodeType": "photoroom",
+  "visualReferences": {
+    "environment": {
+      "category": "environment",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Espacios industriales limpios, luz natural.",
+      "ruleStatus": "proposed",
+    },
+    "objects": {
+      "category": "objects",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Herramientas de precisión, detalle macro.",
+      "ruleStatus": "proposed",
+    },
+    "people": {
+      "category": "people",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Profesionales en acción, nunca posando a cámara.",
+      "ruleStatus": "proposed",
+    },
+    "protagonist": {
+      "category": "protagonist",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Producto en primer plano, luz lateral suave.",
+      "ruleStatus": "proposed",
+    },
+    "textures": {
+      "category": "textures",
+      "imageUrls": [],
+      "provisional": false,
+      "rule": "Metal cepillado y hormigón mate.",
+      "ruleStatus": "proposed",
+    },
+  },
+  "voice": {
+    "approvedPhrases": [
+      "rendimiento real",
+    ],
+    "examples": [
+      {
+        "id": "v1",
+        "kind": "approved_voice",
+        "text": "Hablamos claro, sin hype vacío.",
+      },
+    ],
+    "preferredTerms": [
+      "rendimiento",
+    ],
+    "tabooPhrases": [
+      "gratis para siempre",
+    ],
+    "traits": [
+      "directo",
+      "técnico",
+      "cercano",
+    ],
+  },
+  "warnings": [],
+}
+`;

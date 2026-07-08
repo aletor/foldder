@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
-import { countPdfImageObjects, extractVisualImagesFromPdfBuffer, MAX_PDF_VISUAL_IMAGES } from "@/lib/brain/pdf-visual-extract";
+import { hashPdfBuffer } from "@/lib/brain/pdf-brand-extract";
+import { appendPdfVisualKnowledgeDocuments } from "@/lib/brain/pdf-knowledge-visual-docs";
+import {
+  getKnowledgeFileExt,
+  isAllowedKnowledgeUpload,
+  knowledgeContentTypeForExt,
+  resolveKnowledgeContentType,
+} from "@/lib/brain/knowledge-upload-policy";
+import { buildUploadCheckpoints, type BrandPipelineCheckpointUpload } from "@/lib/brandkit/brand-pipeline-diagnostics";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 import { buildUserAssetObjectKey, requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { uploadBufferToS3Key } from "@/lib/s3-utils";
@@ -8,44 +16,7 @@ import { v4 as uuidv4 } from "uuid";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
-const ALLOWED_EXT = new Set(["pdf", "docx", "txt", "md", "rtf", "html", "htm", "jpg", "jpeg", "png", "webp"]);
-const ALLOWED_MIME = new Set([
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "application/rtf",
-  "text/plain",
-  "text/markdown",
-  "text/rtf",
-  "text/html",
-  "application/xhtml+xml",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
-
 export const runtime = "nodejs";
-
-function getExt(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-  return ext === "jpeg" ? "jpg" : ext;
-}
-
-function imageContentTypeForExt(ext: string): string {
-  if (ext === "png") return "image/png";
-  if (ext === "webp") return "image/webp";
-  return "image/jpeg";
-}
-
-function documentContentTypeForExt(ext: string): string {
-  if (ext === "pdf") return "application/pdf";
-  if (ext === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  if (ext === "txt") return "text/plain";
-  if (ext === "md") return "text/markdown";
-  if (ext === "rtf") return "application/rtf";
-  if (ext === "html" || ext === "htm") return "text/html";
-  return "application/octet-stream";
-}
 
 function filenameWithExtension(filename: string, ext: string): string {
   const base = (filename || `knowledge-image-${Date.now()}`)
@@ -88,18 +59,15 @@ export async function POST(req: NextRequest) {
       extractedImageCount: number;
       uploadedVisualCount: number;
       imageObjectCount: number;
+      renderError?: string;
     }> = [];
     for (const file of files) {
-      const ext = getExt(file.name);
-      const mime = (file.type || "application/octet-stream").toLowerCase();
-      const isImage = mime.startsWith("image/") || ["jpg", "png", "webp"].includes(ext);
+      const ext = getKnowledgeFileExt(file.name);
+      const mime = resolveKnowledgeContentType(file.name, file.type);
+      const isImage = mime.startsWith("image/") || ["jpg", "png", "webp", "avif"].includes(ext);
       const isHtml = ext === "html" || ext === "htm";
-      const isBrowserUnknownMime = mime === "application/octet-stream" && ALLOWED_EXT.has(ext);
 
-      if (
-        !ALLOWED_EXT.has(ext) ||
-        (!ALLOWED_MIME.has(mime) && !mime.startsWith("text/") && !isImage && !isHtml && !isBrowserUnknownMime)
-      ) {
+      if (!isAllowedKnowledgeUpload(file.name, file.type)) {
         rejected.push({ name: file.name, reason: "unsupported_type" });
         continue;
       }
@@ -111,10 +79,8 @@ export async function POST(req: NextRequest) {
 
       const buffer = Buffer.from(await file.arrayBuffer());
       const uploadMime = isImage && !mime.startsWith("image/")
-        ? imageContentTypeForExt(ext)
-        : mime === "application/octet-stream"
-          ? documentContentTypeForExt(ext)
-          : mime;
+        ? knowledgeContentTypeForExt(ext)
+        : mime;
       const normalized = isImage
         ? await normalizeUploadedImageForFoldder(buffer, uploadMime)
         : {
@@ -153,6 +119,7 @@ export async function POST(req: NextRequest) {
         },
       });
       const format = isImage ? "image" : ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : isHtml ? "html" : "txt";
+      const contentSha256 = format === "pdf" ? hashPdfBuffer(normalized.buffer) : undefined;
 
       uploadedDocs.push({
         id: uuidv4(),
@@ -166,83 +133,33 @@ export async function POST(req: NextRequest) {
         format,
         status: "Subido",
         uploadedAt: new Date().toISOString(),
+        ...(contentSha256 ? { contentSha256 } : {}),
       });
 
       if (format === "pdf") {
-        const imageObjectCount = countPdfImageObjects(buffer);
-        const extractedImages = await extractVisualImagesFromPdfBuffer(buffer, file.name);
-        const pdfVisualImages = extractedImages.slice(0, MAX_PDF_VISUAL_IMAGES);
-        pdfVisualDiagnostics.push({
-          name: file.name,
-          pageRenderCount: 0,
-          extractedImageCount: extractedImages.length,
-          uploadedVisualCount: pdfVisualImages.length,
-          imageObjectCount,
-        });
-        await recordApiUsage({
-          provider: "aws",
-          userEmail: usageUserEmail,
-          serviceId: "s3-knowledge",
+        const { visualDocs, diagnostic } = await appendPdfVisualKnowledgeDocuments({
+          pdfBuffer: normalized.buffer,
+          pdfName: file.name,
+          parentS3Key: s3Key,
+          userEmail: authState.user.email,
+          usageUserEmail,
+          scope,
+          contextKind,
           route: "/api/spaces/brain/knowledge/upload",
-          operation: "pdf_visual_extract",
-          costIsKnown: false,
-          costUsd: 0,
-          metadata: {
-            name: file.name,
-            pageRenderCount: 0,
-            extractedImageCount: extractedImages.length,
-            uploadedVisualCount: pdfVisualImages.length,
-            imageObjectCount,
-            maxVisualImages: MAX_PDF_VISUAL_IMAGES,
-            strategy: "embedded_pdf_images_only",
-          },
         });
-        for (const image of pdfVisualImages) {
-          const normalizedImage = await normalizeUploadedImageForFoldder(image.buffer, image.mime);
-          const imageName = filenameWithExtension(image.name, normalizedImage.ext);
-          const imageKey = buildUserAssetObjectKey({
-            userEmail: authState.user.email,
-            folder: "brain/knowledge/pdf-visuals",
-            filename: imageName,
-          });
-          await uploadBufferToS3Key(imageKey, normalizedImage.buffer, normalizedImage.contentType);
-          await recordApiUsage({
-            provider: "aws",
-            userEmail: usageUserEmail,
-            serviceId: "s3-knowledge",
-            route: "/api/spaces/brain/knowledge/upload",
-            operation: "put_object",
-            costIsKnown: false,
-            costUsd: 0,
-            bytes: normalizedImage.buffer.length,
-            metadata: {
-              key: imageKey,
-              mime: normalizedImage.contentType,
-              source: "pdf_image_extract",
-              parent: s3Key,
-              pdfImageObjectCount: imageObjectCount,
-              width: image.width,
-              height: image.height,
-              optimized: normalizedImage.optimized,
-              originalBytes: normalizedImage.originalBytes,
-            },
-          });
-          uploadedDocs.push({
-            id: uuidv4(),
-            name: image.name,
-            size: normalizedImage.buffer.length,
-            mime: normalizedImage.contentType,
-            scope,
-            contextKind,
-            s3Path: imageKey,
-            type: "image",
-            format: "image",
-            status: "Subido",
-            uploadedAt: new Date().toISOString(),
-          });
-        }
+        pdfVisualDiagnostics.push(diagnostic);
+        uploadedDocs.push(...visualDocs);
       }
     }
+
+    const brandPipelineUpload: BrandPipelineCheckpointUpload[] = buildUploadCheckpoints({
+      existingDocs: [],
+      addedDocs: uploadedDocs.map((doc) => ({
+        id: doc.id,
+        contentSha256: (doc as { contentSha256?: string }).contentSha256,
+        name: doc.name,
+      })),
+    });
 
     return NextResponse.json({
       message:
@@ -254,6 +171,7 @@ export async function POST(req: NextRequest) {
       documents: uploadedDocs,
       rejected,
       pdfVisualDiagnostics,
+      brandPipelineUpload,
     });
   } catch (error) {
     console.error("[brain/knowledge/upload]", error);

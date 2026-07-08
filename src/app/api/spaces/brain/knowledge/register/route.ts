@@ -7,11 +7,16 @@ import {
   isSafeKnowledgeFilesKey,
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
-import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
+import { BUCKET_NAME, getFromS3, s3Client } from "@/lib/s3-utils";
+import { hashPdfBuffer } from "@/lib/brain/pdf-brand-extract";
+import { appendPdfVisualKnowledgeDocuments } from "@/lib/brain/pdf-knowledge-visual-docs";
+import { buildUploadCheckpoints, type BrandPipelineCheckpointUpload } from "@/lib/brandkit/brand-pipeline-diagnostics";
 
 export const runtime = "nodejs";
 
 const MAX_DIRECT_UPLOAD_BYTES = 40 * 1024 * 1024;
+const S3_HEAD_RETRIES = 4;
+const S3_HEAD_RETRY_MS = 350;
 
 type RegisterItem = {
   key?: unknown;
@@ -29,7 +34,7 @@ function getExt(name: string): string {
 
 function docFormat(name: string, mime: string): "pdf" | "docx" | "txt" | "html" | "image" {
   const ext = getExt(name);
-  if (mime.startsWith("image/") || ["jpg", "png", "webp"].includes(ext)) return "image";
+  if (mime.startsWith("image/") || ["jpg", "png", "webp", "avif"].includes(ext)) return "image";
   if (ext === "pdf") return "pdf";
   if (ext === "docx") return "docx";
   if (ext === "html" || ext === "htm") return "html";
@@ -40,6 +45,23 @@ function normalizeContextKind(value: unknown): "competencia" | "mercado" | "refe
   return value === "competencia" || value === "mercado" || value === "referencia" || value === "general"
     ? value
     : undefined;
+}
+
+async function headUploadedObject(key: string) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < S3_HEAD_RETRIES; attempt += 1) {
+    try {
+      return await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+    } catch (error) {
+      lastError = error;
+      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      const name = (error as { name?: string })?.name;
+      const missing = status === 404 || name === "NotFound";
+      if (!missing || attempt === S3_HEAD_RETRIES - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, S3_HEAD_RETRY_MS * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 export async function POST(req: Request) {
@@ -55,6 +77,14 @@ export async function POST(req: Request) {
 
     const documents = [];
     const rejected: Array<{ name: string; reason: string }> = [];
+    const pdfVisualDiagnostics: Array<{
+      name: string;
+      pageRenderCount: number;
+      extractedImageCount: number;
+      uploadedVisualCount: number;
+      imageObjectCount: number;
+      renderError?: string;
+    }> = [];
 
     for (const item of items) {
       const key = typeof item.key === "string" ? item.key.trim() : "";
@@ -75,7 +105,7 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const head = await s3Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+      const head = await headUploadedObject(key);
       const size = Number(head.ContentLength ?? item.size ?? 0);
       const mime = (head.ContentType || requestedMime).toLowerCase();
       if (!Number.isFinite(size) || size <= 0) {
@@ -100,6 +130,12 @@ export async function POST(req: Request) {
       });
 
       const format = docFormat(name, mime);
+      let contentSha256: string | undefined;
+      let pdfBuffer: Buffer | undefined;
+      if (format === "pdf") {
+        pdfBuffer = await getFromS3(key);
+        contentSha256 = hashPdfBuffer(pdfBuffer);
+      }
       documents.push({
         id: uuidv4(),
         name,
@@ -112,8 +148,33 @@ export async function POST(req: Request) {
         format,
         status: "Subido",
         uploadedAt: new Date().toISOString(),
+        ...(contentSha256 ? { contentSha256 } : {}),
       });
+
+      if (format === "pdf" && pdfBuffer) {
+        const { visualDocs, diagnostic } = await appendPdfVisualKnowledgeDocuments({
+          pdfBuffer,
+          pdfName: name,
+          parentS3Key: key,
+          userEmail: authState.user.email,
+          usageUserEmail,
+          scope,
+          contextKind,
+          route: "/api/spaces/brain/knowledge/register",
+        });
+        pdfVisualDiagnostics.push(diagnostic);
+        documents.push(...visualDocs);
+      }
     }
+
+    const brandPipelineUpload: BrandPipelineCheckpointUpload[] = buildUploadCheckpoints({
+      existingDocs: [],
+      addedDocs: documents.map((doc) => ({
+        id: doc.id,
+        contentSha256: (doc as { contentSha256?: string }).contentSha256,
+        name: doc.name,
+      })),
+    });
 
     return NextResponse.json({
       message:
@@ -122,7 +183,8 @@ export async function POST(req: Request) {
           : `No compatible files were uploaded (${rejected.length} skipped).`,
       documents,
       rejected,
-      pdfVisualDiagnostics: [],
+      pdfVisualDiagnostics,
+      brandPipelineUpload,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to register file(s).";

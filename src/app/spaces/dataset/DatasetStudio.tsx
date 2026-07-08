@@ -50,6 +50,12 @@ import {
 import { exportDatasetFolddataFile, FOLDDER_FOLDDATA_EXTENSION } from "./dataset-folddata";
 import { DatasetAssistantPanel } from "./DatasetAssistantPanel";
 import { BrandKitDatasetPanel } from "../brandkit/BrandKitDatasetPanel";
+import { BrandKitLegacyMigrationBanner } from "../brandkit/BrandKitLegacyMigrationBanner";
+import {
+  detectLegacyBrandKitMigrationTarget,
+  isLegacyBrandKitConstantId,
+  migrateLegacyBrandKitDataset,
+} from "@/lib/brandkit/brandkit-legacy-migration";
 import { BRANDKIT_DATASET_SHEET_ID } from "../brandkit/brandkit-dataset-schema";
 import type { BrandKitDatasetLink } from "../brandkit/brandkit-dataset-schema";
 import {
@@ -79,7 +85,11 @@ type DatasetStudioProps = {
   onClose: () => void;
   brandKitLink?: BrandKitDatasetLink | null;
   assetsMetadata?: unknown;
-  onBrandKitApply?: (payload: { dataset: Dataset; assets: ProjectAssetsMetadata }) => void;
+  onBrandKitApply?: (payload: {
+    dataset: Dataset;
+    assets: ProjectAssetsMetadata;
+    link?: BrandKitDatasetLink;
+  }) => void;
   onOpenBrandKit?: () => void;
 };
 
@@ -126,6 +136,7 @@ export function DatasetStudio({
   const [globalRows, setGlobalRows] = useState<DatasetListItem[]>([]);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [legacyMigrating, setLegacyMigrating] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; right: number } | null>(null);
 
@@ -145,6 +156,10 @@ export function DatasetStudio({
     [activeList, dataset],
   );
   const gaps = isShared ? validation.gaps.filter((g) => g.listId == null) : listValidation.gaps;
+  const legacyMigration = useMemo(
+    () => detectLegacyBrandKitMigrationTarget(dataset, brandKitLink),
+    [dataset, brandKitLink],
+  );
 
   const apply = useCallback((next: Dataset) => onChange(next), [onChange]);
   const versionStale = remoteVersion != null && remoteVersion > dataset.version;
@@ -170,6 +185,18 @@ export function DatasetStudio({
     setAssistantUndo(null);
     setAssistantNotice(null);
   }, [apply, assistantUndo]);
+
+  const handleLegacyMigration = useCallback(() => {
+    if (!legacyMigration.brainNodeId || !assetsMetadata || !onBrandKitApply) return;
+    setLegacyMigrating(true);
+    try {
+      const result = migrateLegacyBrandKitDataset(dataset, legacyMigration.brainNodeId, assetsMetadata);
+      onBrandKitApply({ dataset: result.dataset, assets: result.assets, link: result.link });
+      setActiveSheetId(BRANDKIT_DATASET_SHEET_ID);
+    } finally {
+      setLegacyMigrating(false);
+    }
+  }, [assetsMetadata, dataset, legacyMigration.brainNodeId, onBrandKitApply]);
 
   const showScopeNotice = useCallback((message: string, kind: "success" | "error") => {
     setScopeNoticeKind(kind);
@@ -550,6 +577,15 @@ export function DatasetStudio({
         ) : null}
 
         <main className={`custom-scrollbar min-w-0 flex-1 ${isBrandKit ? "overflow-hidden p-0" : "overflow-auto px-4 py-4 md:px-6 md:py-5"}`}>
+          {legacyMigration.needsMigration && onBrandKitApply && assetsMetadata ? (
+            <div className={isBrandKit ? "px-4 pt-4" : "mb-4"}>
+              <BrandKitLegacyMigrationBanner
+                legacyCount={legacyMigration.legacyCount}
+                onMigrate={handleLegacyMigration}
+                migrating={legacyMigrating}
+              />
+            </div>
+          ) : null}
           {isBrandKit && brandKitLink && onBrandKitApply ? (
             <BrandKitDatasetPanel
               dataset={dataset}
@@ -776,6 +812,7 @@ function SharedSheet({
         <div className="divide-y divide-white/10 border border-white/10">
           {sharedFields.map((field) => {
             const gap = cellHasGap(gaps, null, null, field.id);
+            const legacyReadOnly = isLegacyBrandKitConstantId(field.id);
             return (
               <div
                 key={field.id}
@@ -785,14 +822,19 @@ function SharedSheet({
               >
                 <span className="min-w-[120px] shrink-0 text-[10px] font-black uppercase tracking-[0.08em] text-white/55">
                   {field.label}
+                  {legacyReadOnly ? <span className="ml-1 text-[9px] text-amber-200/80">legacy</span> : null}
                   {field.required ? <span className="text-rose-400/80">*</span> : null}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <CellEditor
-                    field={field}
-                    value={dataset.constants.values[field.id] ?? emptyValueForType(field.type, field.options)}
-                    onChange={(value) => apply(setConstant(dataset, field.id, value))}
-                  />
+                  {legacyReadOnly ? (
+                    <p className="text-[11px] text-white/45">Solo lectura · migra al bloque Marca · BrandKit</p>
+                  ) : (
+                    <CellEditor
+                      field={field}
+                      value={dataset.constants.values[field.id] ?? emptyValueForType(field.type, field.options)}
+                      onChange={(value) => apply(setConstant(dataset, field.id, value))}
+                    />
+                  )}
                 </div>
               </div>
             );

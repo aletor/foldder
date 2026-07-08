@@ -1,0 +1,93 @@
+{
+  "measured": true,
+  "generatedAt": "2026-07-07T12:17:22.494Z",
+  "cases": {
+    "oaro": {
+      "measured": true,
+      "llmCallsAtIngest": 1,
+      "batchFallbackUsed": false,
+      "interactiveLatencyMs": 23291,
+      "batchLatencyMs": 17849,
+      "latencyMs": 23291,
+      "estimatedCostUsd": 0.0009,
+      "logoPath": "render_crop",
+      "prepassMs": 8667,
+      "renderMs": 3969,
+      "batchLongEdgePx": 640,
+      "batchJpegQuality": 65,
+      "batchImagePayloadBytes": 61028,
+      "batchImagePayloadBytesByPage": {
+        "1": 8333,
+        "2": 15000,
+        "3": 14896,
+        "4": 15518,
+        "17": 7281
+      },
+      "candidatesTokenCount": 2456,
+      "finishReason": "STOP",
+      "geminiModel": "gemini-2.5-flash-lite",
+      "nivel0BaselineLlmCalls": 7,
+      "selectedPages": 5,
+      "contentSha256": "1403be85f4441e86ed9536195f210dcf1179920d543b08fafa2875f650de66fa",
+      "fileName": "sample-brand-deck.pdf"
+    },
+    "catalogo26": {
+      "measured": true,
+      "llmCallsAtIngest": 1,
+      "batchFallbackUsed": false,
+      "interactiveLatencyMs": 18507,
+      "batchLatencyMs": 10592,
+      "latencyMs": 18507,
+      "estimatedCostUsd": 0.00078885,
+      "logoPath": "render_crop",
+      "prepassMs": 6457,
+      "renderMs": 7635,
+      "batchLongEdgePx": 640,
+      "batchJpegQuality": 65,
+      "batchImagePayloadBytes": 120058,
+      "batchImagePayloadBytesByPage": {
+        "1": 52500,
+        "2": 4803,
+        "3": 29247,
+        "4": 30055,
+        "130": 3453
+      },
+      "candidatesTokenCount": 2082,
+      "finishReason": "STOP",
+      "geminiModel": "gemini-2.5-flash-lite",
+      "nivel0BaselineLlmCalls": 7,
+      "selectedPages": 5,
+      "contentSha256": "f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434",
+      "fileName": "catalogo26.pdf"
+    },
+    "einf": {
+      "measured": true,
+      "llmCallsAtIngest": 1,
+      "batchFallbackUsed": false,
+      "interactiveLatencyMs": 15389,
+      "batchLatencyMs": 11163,
+      "latencyMs": 15389,
+      "estimatedCostUsd": 0.00075915,
+      "logoPath": "render_crop",
+      "prepassMs": 5105,
+      "renderMs": 3953,
+      "batchLongEdgePx": 640,
+      "batchJpegQuality": 65,
+      "batchImagePayloadBytes": 124052,
+      "batchImagePayloadBytesByPage": {
+        "1": 8174,
+        "2": 23097,
+        "3": 16774,
+        "4": 43347,
+        "190": 32660
+      },
+      "candidatesTokenCount": 1983,
+      "finishReason": "STOP",
+      "geminiModel": "gemini-2.5-flash-lite",
+      "nivel0BaselineLlmCalls": 7,
+      "selectedPages": 5,
+      "contentSha256": "7f779ce9b0b06d1d97eedd97e548e697e74c3fa9541d8be0dde524814964d22d",
+      "fileName": "einf_2023_atresmedia.pdf"
+    }
+  }
+}

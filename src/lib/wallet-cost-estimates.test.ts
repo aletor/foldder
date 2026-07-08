@@ -24,6 +24,8 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/spaces/video-matte",
   "/api/video-editor/render",
   "/api/video-editor/subtitles/transcribe",
+  "/api/spaces/genoma/visual/generate",
+  "/api/spaces/genoma/logo/vectorize",
 ] as const;
 
 function sampleBodyForRoute(route: string): Record<string, unknown> {
@@ -46,6 +48,8 @@ function sampleBodyForRoute(route: string): Record<string, unknown> {
     return { manifest: { durationSeconds: 30, settings: { fps: 30, width: 1920, height: 1080 } } };
   }
   if (route === "/api/video-editor/subtitles/transcribe") return { durationSeconds: 120 };
+  if (route === "/api/spaces/genoma/visual/generate") return { axes: { sujeto: "personas" } };
+  if (route === "/api/spaces/genoma/logo/vectorize") return { logoUrl: "https://example.com/logo.png", logoSignature: "abc" };
   return {};
 }
 

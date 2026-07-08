@@ -206,6 +206,7 @@ import type { DesignerDatasetFieldBinding, DesignerDatasetPropertyBinding } from
 import { DesignerDatasetPropertyLink } from "./designer/DesignerDatasetPropertyLink";
 import { isPendingDesignerBinding, makePendingDesignerBinding } from "./designer/designer-dataset-binding";
 import { isBrandKitConstantId } from "./brandkit/brandkit-logic";
+import { filterBrandKitConstantsForPicker } from "@/lib/brandkit/brandkit-legacy-migration";
 import {
   applyDesignerDatasetPropertyBindings,
   dragGestureDatasetPropertyKeys,
@@ -13124,12 +13125,15 @@ export function FreehandStudioCanvas({
 
   const designerDatasetBrandKitFields = useMemo(() => {
     if (!designerConnectedDataset || designerDatasetFieldKind === null) return [];
-    return (designerConnectedDataset.constants.fields ?? []).filter(
+    const brainNodeId =
+      designerDatasetBinding?.source === "node" ? designerDatasetBinding.nodeId ?? null : null;
+    const filtered = (designerConnectedDataset.constants.fields ?? []).filter(
       (f) =>
         isBrandKitConstantId(f.id) &&
         (designerDatasetFieldKind === "image" ? f.type === "image" : f.type === "text"),
     );
-  }, [designerConnectedDataset, designerDatasetFieldKind]);
+    return filterBrandKitConstantsForPicker(filtered, brainNodeId);
+  }, [designerConnectedDataset, designerDatasetFieldKind, designerDatasetBinding]);
 
   const designerActiveBrandKitConstantId = useMemo(() => {
     const activeNodeBinding =

@@ -685,6 +685,21 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       memberIds: 'string[] (child node ids)',
     }
   },
+  genoma: {
+    type: 'genoma',
+    label: 'Genoma',
+    description:
+      'Libro de estilo vivo: rankea evidencia de marca (tipografía, logo, color, voz, universo visual) y el usuario corona con un tap. Sin merge — solo lista ordenada y corona. Suelta PDFs e imágenes para construir el genoma.',
+    inputs: [],
+    outputs: [
+      { id: 'brand', label: 'Marca', type: 'brain' as HandleType },
+      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
+    ],
+    dataSchema: {
+      label: 'string (título opcional en la tarjeta)',
+      genome: 'Genome (candidatos rankeados + coronas en node.data)',
+    },
+  },
 };
 
 /**
@@ -723,6 +738,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   projectBrain:
     "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
+  genoma:
+    "label (título opcional); genome en node.data (candidatos + coronas); abre libro full-bleed; salidas brand (brain) y dataset",
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:

@@ -86,6 +86,8 @@ function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: numb
         <SidebarRasterIcon src={rasterSrc} size={size} />
       ) : type === 'projectBrain' ? (
         <TopbarGlyphBrain size={size} className="shrink-0 text-white" />
+      ) : type === 'genoma' ? (
+        <TopbarGlyphBrain size={size} className="shrink-0 text-[#FFBD1B]" />
       ) : (
         <NodeIcon type={type} size={size} colorOverride="#ffffff" />
       )}
@@ -107,11 +109,13 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'loop') return 'border-[#fd52eb] group-hover/tile:border-[#fd52eb]';
   if (type === 'populate') return 'border-[#33ffcc] group-hover/tile:border-[#33ffcc]';
   if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
+  if (type === 'genoma') return 'border-[#FFBD1B]/70 group-hover/tile:border-[#FFBD1B]';
   return fallback;
 }
 
 const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'projectBrain', label: 'BrandKit' },
+  { type: 'genoma', label: 'Genoma' },
   { type: 'guionista', label: 'Guionista' },
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },

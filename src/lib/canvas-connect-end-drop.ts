@@ -1,5 +1,6 @@
 import { EMPTY_DEVELOP_SETTINGS } from "@/app/spaces/lightroom/lightroom-develop-settings";
 import { NODE_REGISTRY } from "@/app/spaces/nodeRegistry";
+import { emptyGenome } from "@/lib/genoma/model/trait";
 
 /**
  * Centro del conector en coordenadas del flujo (para alinear nodos creados al soltar la conexión).
@@ -207,6 +208,8 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "Video Editor" };
     case "projectBrain":
       return { label: "Brain" };
+    case "genoma":
+      return { label: "Genoma", genome: emptyGenome() };
     case "projectAssets":
       return { label: "Assets" };
     case "notes":

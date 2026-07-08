@@ -1,0 +1,359 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "catalogo26",
+      "file": "catalogo26.pdf",
+      "sha256": "f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434",
+      "kind": "native",
+      "sector": "media",
+      "groundTruth": [
+        {
+          "page": 1,
+          "bboxPage": [
+            0.808,
+            0.864,
+            0.949,
+            0.894
+          ],
+          "role": "primary",
+          "variant": "horizontal",
+          "notes": "ATRESMEDIA SALES pie portada"
+        },
+        {
+          "page": 130,
+          "bboxPage": [
+            0.808,
+            0.864,
+            0.949,
+            0.894
+          ],
+          "role": "secondary",
+          "variant": "horizontal",
+          "notes": "contraportada"
+        },
+        {
+          "page": 1,
+          "bboxPage": [
+            0.53659,
+            0.178033,
+            0.79856,
+            0.324517
+          ],
+          "role": "primary",
+          "variant": "full"
+        }
+      ]
+    },
+    {
+      "id": "oaro-deck",
+      "file": "oaro-deck.pdf",
+      "sha256": "1403be85f4441e86ed9536195f210dcf1179920d543b08fafa2875f650de66fa",
+      "kind": "mixed",
+      "sector": "startup",
+      "groundTruth": [
+        {
+          "page": 1,
+          "bboxPage": [
+            0.088895,
+            0.146711,
+            0.35545,
+            0.327186
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 2,
+          "bboxPage": [
+            0.821055,
+            0.077219,
+            0.953502,
+            0.193478
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 3,
+          "bboxPage": [
+            0.819522,
+            0.083887,
+            0.943615,
+            0.199111
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 4,
+          "bboxPage": [
+            0.827882,
+            0.09238,
+            0.957092,
+            0.197989
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 6,
+          "bboxPage": [
+            0.826002,
+            0.089466,
+            0.950113,
+            0.170958
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 7,
+          "bboxPage": [
+            0.829019,
+            0.090696,
+            0.933971,
+            0.183745
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 9,
+          "bboxPage": [
+            0.806349,
+            0.078848,
+            0.937366,
+            0.19896
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 10,
+          "bboxPage": [
+            0.820282,
+            0.096458,
+            0.928726,
+            0.187273
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 11,
+          "bboxPage": [
+            0.812384,
+            0.084815,
+            0.940068,
+            0.19159
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 12,
+          "bboxPage": [
+            0.810217,
+            0.073839,
+            0.946979,
+            0.202431
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 13,
+          "bboxPage": [
+            0.835278,
+            0.069271,
+            0.963086,
+            0.202441
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 17,
+          "bboxPage": [
+            0.415863,
+            0.151747,
+            0.57121,
+            0.255903
+          ],
+          "role": "primary",
+          "variant": "full"
+        }
+      ]
+    },
+    {
+      "id": "esade-pitch",
+      "file": "esade-pitch.pdf",
+      "sha256": "c96df8c15bf399d4c56d108d8ec0700e79b6328e61b1975874711f3da6106776",
+      "kind": "native",
+      "sector": "education",
+      "groundTruth": [
+        {
+          "page": 1,
+          "bboxPage": [
+            0.040033,
+            0.167524,
+            0.329199,
+            0.331055
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 2,
+          "bboxPage": [
+            0.806958,
+            0.881641,
+            0.98172,
+            0.975651
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 3,
+          "bboxPage": [
+            0.807892,
+            0.86531,
+            0.984711,
+            0.98125
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 4,
+          "bboxPage": [
+            0.80932,
+            0.886458,
+            0.981824,
+            0.972222
+          ],
+          "role": "primary",
+          "variant": "full"
+        }
+      ]
+    },
+    {
+      "id": "lean-finance",
+      "file": "lean-finance.pdf",
+      "sha256": "a6fff239c22b4277b22ce92928ad50fc1dd10471689a73710a16de7896c9993d",
+      "kind": "mixed",
+      "sector": "fintech",
+      "groundTruth": [
+        {
+          "page": 1,
+          "bboxPage": [
+            0.67289,
+            0.864237,
+            0.964164,
+            0.972577
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 8,
+          "bboxPage": [
+            0.28061,
+            0.351556,
+            0.746033,
+            0.492542
+          ],
+          "role": "primary",
+          "variant": "full"
+        }
+      ]
+    },
+    {
+      "id": "bulls-brose",
+      "file": "bulls-brose.pdf",
+      "sha256": "b724159475ca671393eb3feadde995bb2c3cd396b11a998f25f422e4b4204ddf",
+      "kind": "flattened",
+      "sector": "automotive",
+      "groundTruth": [
+        {
+          "page": 1,
+          "bboxPage": [
+            0.06,
+            0.03,
+            0.28,
+            0.11
+          ],
+          "role": "primary",
+          "variant": "horizontal",
+          "notes": "BULLS/BROSE cabecera portada — revisar en anotador"
+        },
+        {
+          "page": 1,
+          "bboxPage": [
+            0.318852,
+            0.12204,
+            0.756248,
+            0.356097
+          ],
+          "role": "primary",
+          "variant": "full"
+        }
+      ]
+    },
+    {
+      "id": "nike-nrc",
+      "file": "nike-nrc.pdf",
+      "sha256": "209de8cb3b449d0fe98265fc6fe7215ed90fb01bfd27da4b688efc5a60d52fa8",
+      "kind": "flattened",
+      "sector": "sport",
+      "groundTruth": [
+        {
+          "page": 1,
+          "bboxPage": [
+            0.083779,
+            0.829443,
+            0.256276,
+            0.938568
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 2,
+          "bboxPage": [
+            0.418984,
+            0.749646,
+            0.571355,
+            0.850403
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 4,
+          "bboxPage": [
+            0.459318,
+            0.941931,
+            0.540133,
+            1
+          ],
+          "role": "primary",
+          "variant": "full"
+        },
+        {
+          "page": 6,
+          "bboxPage": [
+            0.461999,
+            0.941211,
+            0.542676,
+            1
+          ],
+          "role": "primary",
+          "variant": "full"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "contract": "2026-07-07-nivel1-slim-7",
+  "pageTag": "PV-P1",
+  "pageNumber": 1,
+  "logoInstances": [
+    {
+      "variant": "horizontal",
+      "onBackground": "oscuro",
+      "textInLogo": "ATRESMEDIA SALES",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.95,
+      "bbox": [0.67, 0.84, 0.93, 0.91]
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "ATRESMEDIA SALES",
+      "kind": "wordmark_logo",
+      "bbox": [0.67, 0.84, 0.93, 0.91]
+    }
+  ],
+  "typographyRoles": [
+    { "role": "display", "bbox": [0.04, 0.82, 0.24, 0.95], "styleObserved": "sans bold gradient" }
+  ],
+  "pageKind": "portada"
+}

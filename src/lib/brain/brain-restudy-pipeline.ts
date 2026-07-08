@@ -173,6 +173,9 @@ export async function runBrainRestudyPipeline(input: {
           body: JSON.stringify({
             documents: docsPayload,
             strategy: working.strategy,
+            brainMeta: working.brainMeta,
+            brand: working.brand,
+            previousCorporateContext: working.knowledge.corporateContext,
             projectId: input.projectId,
             workspaceId: input.workspaceId ?? undefined,
           }),
@@ -181,6 +184,8 @@ export async function runBrainRestudyPipeline(input: {
           documents?: ProjectAssetsMetadata["knowledge"]["documents"];
           strategy?: ProjectAssetsMetadata["strategy"];
           corporateContext?: string;
+          brainMeta?: ProjectAssetsMetadata["brainMeta"];
+          brand?: ProjectAssetsMetadata["brand"];
           error?: string;
         };
         if (!res.ok) {
@@ -199,6 +204,8 @@ export async function runBrainRestudyPipeline(input: {
               corporateContext: json.corporateContext ?? working.knowledge.corporateContext,
             },
             strategy: json.strategy ?? working.strategy,
+            ...(json.brainMeta ? { brainMeta: json.brainMeta } : {}),
+            ...(json.brand ? { brand: { ...working.brand, ...json.brand } } : {}),
           });
           const after = working.knowledge.documents.filter((d) => d.scope === "core");
           coreAnalyzed = after.filter((d) => d.status === "Analizado").length;

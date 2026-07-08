@@ -53,6 +53,7 @@ import {
 import { buildDatasetPreview } from "./dataset-project";
 import { isFoldderLibraryPreviewData } from "../library-drag-preview";
 import { patchDatasetNodeAfterBrandKitEdit } from "../brandkit/brandkit-dataset-sync";
+import type { BrandKitDatasetLink } from "../brandkit/brandkit-dataset-schema";
 import type { ProjectAssetsMetadata } from "../project-assets-metadata";
 
 const DATASET_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("dataset");
@@ -425,10 +426,10 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   const commitBrandKit = useCallback(
-    (payload: { dataset: Dataset; assets: ProjectAssetsMetadata }) => {
+    (payload: { dataset: Dataset; assets: ProjectAssetsMetadata; link?: BrandKitDatasetLink }) => {
       setStudioDataset(payload.dataset);
       onAssetsMetadataChange?.(payload.assets);
-      const link = nodeData.brandKitLink;
+      const link = payload.link ?? nodeData.brandKitLink;
       if (!link) return;
 
       if (nodeData.datasetRef?.datasetId) {
@@ -850,7 +851,7 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
               projectScopeId={projectScopeId}
               brandKitLink={nodeData.brandKitLink ?? null}
               assetsMetadata={assetsMetadata}
-              onBrandKitApply={nodeData.brandKitLink ? commitBrandKit : undefined}
+              onBrandKitApply={assetsMetadata ? commitBrandKit : undefined}
               onOpenBrandKit={openProjectBrain}
               onChange={commitDataset}
               onScopeChange={handleScopeChange}

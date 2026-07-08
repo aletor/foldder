@@ -7,8 +7,6 @@ import {
   estimateOpenAIUsd,
   estimateOpenAIEmbeddingUsd,
 } from "@/lib/pricing-config";
-import { auth } from "@/lib/auth";
-
 export {
   estimateGeminiImageGenerationUsd,
   estimateGeminiUsd,
@@ -395,6 +393,7 @@ export async function resolveUsageUserEmailFromRequest(req: Request): Promise<st
   if (process.env.NODE_ENV !== "production" && devCode === "6666") {
     return "dev-bypass@local.foldder";
   }
+  const { auth } = await import("@/lib/auth");
   const session = await auth();
   const email = session?.user?.email?.trim().toLowerCase();
   return email || undefined;

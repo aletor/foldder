@@ -1,8 +1,7 @@
 import crypto from "crypto";
-import path from "path";
 import sharp from "sharp";
-import { pathToFileURL } from "url";
 import zlib from "zlib";
+import { configurePdfJsForNodeServer, pdfJsGetDocumentInit } from "@/lib/brain/pdfjs-server";
 
 export const MAX_PDF_VISUAL_IMAGES = 5;
 
@@ -10,9 +9,21 @@ const MAX_PDF_IMAGE_CANDIDATES = 120;
 const MIN_EXTRACTED_IMAGE_DIMENSION = 96;
 const STRONG_EXTRACTED_IMAGE_DIMENSION = 180;
 const STRONG_EXTRACTED_IMAGE_AREA = 45_000;
-const PDFJS_WASM_URL = pathToFileURL(path.join(process.cwd(), "node_modules", "pdfjs-dist", "wasm") + path.sep).href;
 
 export type PdfVisualImage = { name: string; buffer: Buffer; mime: string; width?: number; height?: number };
+
+export type PdfEmbeddedRasterImage = {
+  buffer: Buffer;
+  width: number;
+  height: number;
+  pageNumber: number;
+  mime: string;
+  contentHash: string;
+};
+
+export const LOGO_EMBEDDED_MIN_SIDE = 20;
+export const LOGO_EMBEDDED_MAX_SIDE = 420;
+export const LOGO_EMBEDDED_MAX_AREA = 80_000;
 
 type PdfVisualCandidate = PdfVisualImage & {
   area: number;
@@ -193,6 +204,7 @@ function getPdfJsObject(page: unknown, objectName: string): Promise<unknown> {
 async function convertPdfJsImageToUploadable(
   image: unknown,
 ): Promise<{ buffer: Buffer; height: number; mime: string; width: number } | null> {
+  if (image == null || typeof image !== "object") return null;
   const imageLike = image as {
     data?: Uint8Array | Uint8ClampedArray;
     height?: number;
@@ -232,19 +244,14 @@ async function extractDecodedImagesFromPdfBuffer(
 ): Promise<PdfVisualCandidate[]> {
   const candidates: PdfVisualCandidate[] = [];
   try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdfjs = await configurePdfJsForNodeServer();
     const ops = pdfjs.OPS as Record<string, number | undefined>;
     const imageOps = new Set(
       [ops.paintImageXObject, ops.paintInlineImageXObject, ops.paintJpegXObject].filter(
         (value): value is number => typeof value === "number",
       ),
     );
-    const pdf = await pdfjs.getDocument({
-      data: new Uint8Array(buffer),
-      disableWorker: true,
-      isEvalSupported: false,
-      wasmUrl: PDFJS_WASM_URL,
-    } as unknown as Parameters<typeof pdfjs.getDocument>[0]).promise;
+    const pdf = await pdfjs.getDocument(pdfJsGetDocumentInit(buffer) as Parameters<typeof pdfjs.getDocument>[0]).promise;
 
     let scannedImages = 0;
     try {
@@ -279,6 +286,91 @@ async function extractDecodedImagesFromPdfBuffer(
     console.warn("[brain/pdf-visual-extract] PDF embedded image decode failed:", error);
   }
   return candidates;
+}
+
+export function isLogoSizedEmbeddedImage(width: number, height: number): boolean {
+  if (width < LOGO_EMBEDDED_MIN_SIDE || height < LOGO_EMBEDDED_MIN_SIDE) return false;
+  if (width > LOGO_EMBEDDED_MAX_SIDE || height > LOGO_EMBEDDED_MAX_SIDE) return false;
+  if (width * height > LOGO_EMBEDDED_MAX_AREA) return false;
+  const ratio = Math.max(width, height) / Math.max(1, Math.min(width, height));
+  return ratio <= 8;
+}
+
+/** Imágenes raster embebidas en PDF (XObject) filtradas a escala de logo. */
+export async function extractEmbeddedRasterImagesFromPdf(
+  buffer: Buffer,
+  options?: { maxPages?: number; maxScans?: number },
+): Promise<PdfEmbeddedRasterImage[]> {
+  const maxPages = options?.maxPages ?? 20;
+  const maxScans = options?.maxScans ?? 80;
+  const images: PdfEmbeddedRasterImage[] = [];
+  const seen = new Set<string>();
+
+  try {
+    const pdfjs = await configurePdfJsForNodeServer();
+    const ops = pdfjs.OPS as Record<string, number | undefined>;
+    const imageOps = new Set(
+      [ops.paintImageXObject, ops.paintInlineImageXObject, ops.paintJpegXObject].filter(
+        (value): value is number => typeof value === "number",
+      ),
+    );
+    const pdf = await pdfjs.getDocument(pdfJsGetDocumentInit(buffer) as Parameters<typeof pdfjs.getDocument>[0]).promise;
+
+    let scannedImages = 0;
+    try {
+      const pageLimit = Math.min(pdf.numPages, maxPages);
+      for (let pageNumber = 1; pageNumber <= pageLimit && scannedImages < maxScans; pageNumber += 1) {
+        let page;
+        let operatorList;
+        try {
+          page = await pdf.getPage(pageNumber);
+          operatorList = await page.getOperatorList();
+        } catch (pageError) {
+          console.warn(
+            `[brain/pdf-visual-extract] skip page ${pageNumber} operator list:`,
+            pageError,
+          );
+          continue;
+        }
+        for (let index = 0; index < operatorList.fnArray.length && scannedImages < maxScans; index += 1) {
+          const op = operatorList.fnArray[index];
+          if (!imageOps.has(op)) continue;
+          scannedImages += 1;
+          try {
+            const args = operatorList.argsArray[index] ?? [];
+            const inlineImage = op === ops.paintInlineImageXObject ? args[0] : null;
+            const image =
+              inlineImage || (typeof args[0] === "string" ? await getPdfJsObject(page, args[0]) : null);
+            const converted = await convertPdfJsImageToUploadable(image);
+            if (!converted) continue;
+            if (!isLogoSizedEmbeddedImage(converted.width, converted.height)) continue;
+            const contentHash = crypto.createHash("sha256").update(converted.buffer).digest("hex");
+            if (seen.has(contentHash)) continue;
+            seen.add(contentHash);
+            images.push({
+              buffer: converted.buffer,
+              width: converted.width,
+              height: converted.height,
+              pageNumber,
+              mime: converted.mime,
+              contentHash,
+            });
+          } catch (imageError) {
+            console.warn(
+              `[brain/pdf-visual-extract] skip embedded image p${pageNumber} idx${index}:`,
+              imageError,
+            );
+          }
+        }
+      }
+    } finally {
+      await pdf.destroy();
+    }
+  } catch (error) {
+    console.warn("[brain/pdf-visual-extract] embedded raster logo scan failed:", error);
+  }
+
+  return images;
 }
 
 export async function extractVisualImagesFromPdfBuffer(buffer: Buffer, originalName: string): Promise<PdfVisualImage[]> {

@@ -38,7 +38,7 @@ describe("brandkit-dataset-sync", () => {
     expect(messagesList?.cards.length).toBe(2);
   });
 
-  it("sync bidireccional: editar dataset actualiza assets", () => {
+  it("sync v1: editar listas del dataset no escribe en assets (solo constants)", () => {
     const assets = defaultProjectAssets();
     assets.strategy.approvedPhrases = ["Uno", "Dos"];
 
@@ -73,7 +73,7 @@ describe("brandkit-dataset-sync", () => {
 
     const nextAssets = syncBrandKitDatasetToAssets(editedDataset, link, assets);
     expect(nextAssets.knowledge.corporateContext).toBe("Nuevo contexto");
-    expect(nextAssets.strategy.approvedPhrases).toEqual(["Claim editado"]);
+    expect(nextAssets.strategy.approvedPhrases).toEqual(["Uno", "Dos"]);
   });
 
   it("applyBrandKitDatasetEdit mantiene par dataset+assets alineado", () => {

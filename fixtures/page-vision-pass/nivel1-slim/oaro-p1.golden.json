@@ -1,0 +1,27 @@
+{
+  "contract": "2026-07-07-nivel1-slim-7",
+  "pageTag": "PV-P1",
+  "pageNumber": 1,
+  "logoInstances": [
+    {
+      "variant": "horizontal",
+      "onBackground": "oscuro",
+      "textInLogo": "OARO",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.95,
+      "bbox": [0.1, 0.05, 0.3, 0.1]
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "OARO",
+      "kind": "wordmark_logo",
+      "bbox": [0.1, 0.05, 0.3, 0.1]
+    }
+  ],
+  "typographyRoles": [
+    { "role": "display", "bbox": [0.1, 0.52, 0.39, 0.77], "styleObserved": "sans-serif bold white" }
+  ],
+  "pageKind": "portada"
+}

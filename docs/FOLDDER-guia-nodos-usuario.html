@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FOLDDER — Guía de nodos</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm 22mm 16mm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.55;
+      color: #1a1a1f;
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 12mm 0;
+    }
+    h1 {
+      font-size: 26pt;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 6pt;
+      color: #0b0f14;
+    }
+    .subtitle {
+      font-size: 12pt;
+      color: #4a5568;
+      margin-bottom: 24pt;
+      border-bottom: 2px solid #0ac38a;
+      padding-bottom: 14pt;
+    }
+    h2 {
+      font-size: 15pt;
+      margin: 22pt 0 8pt;
+      color: #0b0f14;
+      page-break-after: avoid;
+    }
+    h3 {
+      font-size: 11.5pt;
+      margin: 14pt 0 6pt;
+      color: #2d3748;
+      page-break-after: avoid;
+    }
+    p { margin: 0 0 8pt; }
+    ul, ol { margin: 0 0 10pt; padding-left: 18pt; }
+    li { margin-bottom: 4pt; }
+    .lead {
+      font-size: 11.5pt;
+      color: #2d3748;
+      margin-bottom: 16pt;
+    }
+    .category {
+      background: #f7fafc;
+      border-left: 4px solid #0ac38a;
+      padding: 10pt 12pt;
+      margin: 18pt 0 12pt;
+      page-break-inside: avoid;
+    }
+    .category h2 { margin-top: 0; }
+    .node {
+      margin-bottom: 16pt;
+      page-break-inside: avoid;
+    }
+    .node-name {
+      font-size: 12pt;
+      font-weight: 700;
+      color: #0b0f14;
+      margin-bottom: 4pt;
+    }
+    .node-tag {
+      display: inline-block;
+      font-size: 8pt;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2pt 6pt;
+      border-radius: 3pt;
+      margin-left: 6pt;
+      vertical-align: middle;
+    }
+    .tag-studio { background: #e6fffa; color: #047857; }
+    .tag-tool { background: #edf2f7; color: #4a5568; }
+    .tag-export { background: #fef3c7; color: #92400e; }
+    .uses {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6pt;
+      padding: 8pt 10pt;
+      margin-top: 6pt;
+    }
+    .uses strong { color: #047857; }
+    .flow-box {
+      background: #0b0f14;
+      color: #e2e8f0;
+      padding: 12pt 14pt;
+      border-radius: 8pt;
+      font-size: 9.5pt;
+      margin: 10pt 0 16pt;
+      line-height: 1.65;
+    }
+    .flow-box em { color: #0ac38a; font-style: normal; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9.5pt;
+      margin: 10pt 0 16pt;
+    }
+    th, td {
+      border: 1px solid #e2e8f0;
+      padding: 6pt 8pt;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f7fafc; font-weight: 600; }
+    .footer-note {
+      margin-top: 24pt;
+      padding-top: 12pt;
+      border-top: 1px solid #e2e8f0;
+      font-size: 9pt;
+      color: #718096;
+    }
+    .toc { margin-bottom: 20pt; }
+    .toc li { margin-bottom: 3pt; }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>FOLDDER</h1>
+  <p class="subtitle">Guía de nodos — Qué puedes crear y cómo combinarlos</p>
+
+  <p class="lead">
+    FOLDDER organiza tu trabajo creativo como un <strong>lienzo visual</strong>: cada bloque es un nodo
+    (texto, imagen, vídeo, diseño, datos…) y las flechas conectan la salida de uno con la entrada del siguiente.
+    Muchos nodos abren un <strong>Studio</strong> a pantalla completa con herramientas avanzadas; otros se usan
+    directamente en la tarjeta del lienzo.
+  </p>
+
+  <h2>Antes de empezar</h2>
+  <ul>
+    <li><strong>Conectar nodos:</strong> arrastra desde un punto de salida (derecha) hacia un punto de entrada (izquierda) del nodo destino.</li>
+    <li><strong>Abrir Studio:</strong> pulsa el botón central del nodo o haz doble clic en nodos con panel propio.</li>
+    <li><strong>BrandKit:</strong> identidad del proyecto (logo, colores, tono). Conéctalo a diseño, textos e imágenes para mantener coherencia.</li>
+    <li><strong>Dataset:</strong> tabla con filas (productos, personas, variantes…) y datos fijos compartidos. Base de personalización masiva.</li>
+    <li><strong>Lista de medios:</strong> paquete de imágenes y vídeos listos para exportar o montar en secuencia.</li>
+  </ul>
+
+  <div class="flow-box">
+    <strong>Flujo típico de campaña</strong><br />
+    <em>BrandKit</em> → <em>Dataset</em> → <em>Designer</em> (plantilla) → <em>Loop</em> o <em>Populate</em> → <em>Export Multimedia</em><br /><br />
+    <strong>Flujo audiovisual</strong><br />
+    <em>Guionista</em> → <em>Cine</em> → <em>Image Creation</em> → <em>Video Creation</em> → <em>Video Editor</em>
+  </div>
+
+  <h2>Índice</h2>
+  <ol class="toc">
+    <li>Producción principal</li>
+    <li>Datos y personalización</li>
+    <li>Texto e ideas</li>
+    <li>Imagen</li>
+    <li>Vídeo</li>
+    <li>Exportación</li>
+    <li>Organización del lienzo</li>
+    <li>Combinaciones recomendadas</li>
+  </ol>
+
+  <!-- ========== PRODUCCIÓN PRINCIPAL ========== -->
+  <div class="category">
+    <h2>1. Producción principal</h2>
+    <p>Núcleo para campañas, contenido editorial y piezas audiovisuales completas.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">BrandKit <span class="node-tag tag-studio">Studio</span></div>
+    <p>Centro de identidad del proyecto: logo, colores, documentos de referencia y tono de marca. No genera piezas por sí solo, pero alimenta casi todo lo demás.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> mantener la misma identidad en diseños, guiones e imágenes; actualizar el logo una vez y que se refleje en todos los diseños enlazados.<br />
+      <strong>Conecta con:</strong> Designer, Guionista, Cine, Image Creation, Dataset.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Guionista <span class="node-tag tag-studio">Studio</span></div>
+    <p>Convierte ideas en textos listos para publicar o rodar: posts, artículos, guiones, escenas, slides, campañas o reescrituras. Genera varias versiones y enfoques editoriales.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> redactar con tono de marca, preparar guiones para vídeo, estructurar presentaciones.<br />
+      <strong>Conecta con:</strong> Cine (preproducción), Prompt e Image Creation (texto para generar).
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Cine <span class="node-tag tag-studio">Studio</span></div>
+    <p>Preproducción audiovisual completa: a partir de un guion obtienes personajes, fondos, escenas, storyboard, imágenes de referencia y plan de vídeo. Todo se empaqueta en una lista de medios.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> spots, fashion films, vídeos de producto, contenido social con storyboard previo.<br />
+      <strong>Modos:</strong> cortometraje, publicidad, moda, documental, producto, videoclip, marca, social.<br />
+      <strong>Conecta con:</strong> Image Creation, Video Creation, Export Multimedia, Video Editor.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Designer <span class="node-tag tag-studio">Studio</span></div>
+    <p>Estudio de diseño multipágina: texto, imágenes, formas y maquetación profesional. Puedes crear catálogos, posts, packaging, slides imprimibles o plantillas reutilizables.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> piezas gráficas con varias páginas; plantillas que se rellenan con datos; recibir capas de una foto descompuesta (Layerizer).<br />
+      <strong>Conecta con:</strong> Presenter (presentación), Populate y Loop (personalización), Export Multimedia.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Image Creation <span class="node-tag tag-studio">Studio</span></div>
+    <p>Genera y edita imágenes con inteligencia artificial: desde cero con una descripción, o partiendo de hasta cuatro imágenes de referencia (estilo, composición, retrato…).</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> creatividades, variaciones de producto, retratos, escenas para vídeo, iteraciones rápidas.<br />
+      <strong>Conecta con:</strong> Inspiration (referencias), Crop, Background Removal, Layerizer, Video Creation, Export.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Video Creation <span class="node-tag tag-studio">Studio</span></div>
+    <p>Genera vídeos con IA a partir de un prompt, de una imagen inicial, o animando entre dos imágenes (inicio y fin). Incluye presets de cámara, estilo e iluminación.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> clips cortos para redes, animar frames de Cine o Image Creation, motion sobre una imagen fija.<br />
+      <strong>Nota:</strong> el servicio puede rechazar ciertos contenidos por sus políticas de seguridad (personas, marcas, contenido sensible). En ese caso prueba otra imagen o un prompt más neutro.<br />
+      <strong>Conecta con:</strong> Video Editor, Export Multimedia, VFX Generator.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Presenter <span class="node-tag tag-studio">Studio</span></div>
+    <p>Convierte un diseño multipágina de Designer en presentación interactiva: animaciones por pasos, transiciones entre slides y posibilidad de colocar vídeos sobre imágenes. Enlaces para compartir.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> pitch decks, presentaciones de campaña, portfolios animados.<br />
+      <strong>Requiere:</strong> un Designer conectado con documento multipágina.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Video Editor <span class="node-tag tag-studio">Studio</span></div>
+    <p>Montaje en línea de tiempo: une varios vídeos o importa una lista de medios completa. Pistas de vídeo y audio, subtítulos automáticos y render final.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> pieza final de campaña, secuencia de clips generados en Cine o Loop, montaje con subtítulos.<br />
+      <strong>Conecta con:</strong> salida de Cine, Loop, Populate o Export Multimedia.
+    </div>
+  </div>
+
+  <!-- ========== DATOS ========== -->
+  <div class="category">
+    <h2>2. Datos y personalización</h2>
+    <p>Automatiza la producción de muchas piezas distintas a partir de una tabla de datos.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Dataset <span class="node-tag tag-studio">Studio</span></div>
+    <p>Tabla del proyecto con filas (cada fila = un producto, persona, variante…) y constantes compartidas (legal, URL, tagline). Es la fuente de datos para personalizar diseños e imágenes.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> catálogos, campañas con muchas variantes, datos que cambian pero la plantilla se mantiene.<br />
+      <strong>Conecta con:</strong> Loop, Populate, Designer.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Loop <span class="node-tag tag-studio">Studio</span></div>
+    <p>Produce <strong>una pieza por cada fila</strong> del Dataset usando una plantilla conectada (Image Creation o Designer). Ejecuta todo el lote de forma automática y entrega una lista de medios.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> 50 posts distintos, 100 tarjetas de producto, variaciones masivas sin intervención manual.<br />
+      <strong>Ejemplo:</strong> Dataset (productos) + Designer (plantilla) → Loop → Export Multimedia.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Populate <span class="node-tag tag-studio">Studio</span></div>
+    <p>Personalización <strong>guiada por persona</strong>: conectas plantillas Designer y un Dataset; cada usuario elige sus datos y genera su pieza mediante un formulario público (enlace compartible).</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> eventos, merchandising personalizado, campañas UGC, tarjetas con nombre y foto del asistente.<br />
+      <strong>Diferencia con Loop:</strong> Loop = todas las filas automáticamente; Populate = cada persona elige qué generar.<br />
+      <strong>Formulario público:</strong> enlace tipo foldder.com/f/… con preview antes de generar.
+    </div>
+  </div>
+
+  <!-- ========== TEXTO ========== -->
+  <div class="category">
+    <h2>3. Texto e ideas</h2>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Prompt <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Campo de texto libre que alimenta generadores de imagen, vídeo o Guionista. Puedes ponerle un título visible («Estilo», «Color de ojos»…).</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Notes <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Nota adhesiva con texto enriquecido. Útil para briefings, restricciones o contexto que luego conectas a otros nodos.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Concat <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Junta varios textos en uno solo (sin IA). Por ejemplo: Prompt + Notes + salida de Guionista → un único prompt para Image Creation.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Enhance <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Mejora un prompt breve convirtiéndolo en una descripción detallada lista para generar imágenes o vídeos.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Image Describer <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Mira una imagen y escribe qué contiene. Útil para «copiar el estilo» de una referencia en texto y luego generar algo similar.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Inspiration <span class="node-tag tag-studio">Studio</span></div>
+    <p>Busca referencias visuales con licencia (Pexels, Unsplash, Are.na) a partir de una idea o de una imagen conectada. También puedes pegar un enlace directo a una imagen.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> moodboards, buscar estilo antes de generar, encontrar texturas o paletas.<br />
+      <strong>Conecta con:</strong> Image Creation, Layerizer, Crop.
+    </div>
+  </div>
+
+  <!-- ========== IMAGEN ========== -->
+  <div class="category">
+    <h2>4. Imagen — edición y preparación</h2>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Image Advanced <span class="node-tag tag-studio">Studio</span></div>
+    <p>Edición por capas sobre una imagen base que no se pierde: cada corrección se apunta y puedes iterar sin destruir el original.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> revisiones con cliente, muchas iteraciones sobre la misma foto base.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Layerizer <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Descompone una foto compuesta en capas separadas (personas, objetos, texto…) y las envía a Designer listas para reordenar. También puede limpiar el fondo.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> fotomontajes, catálogos a partir de una imagen compuesta, recomposición en Designer.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">BG Removal <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Quita el fondo de retratos y personas, dejando PNG transparente. Ajustes de suavizado y expansión del recorte.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Crop <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Recorta y reencuadra imágenes (libre, cuadrado, horizontal 16:9, vertical 9:16 para Stories).</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Painter <span class="node-tag tag-studio">Studio</span></div>
+    <p>Lienzo de dibujo libre: bocetos, anotaciones o máscaras manuales para efectos visuales.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Lightroom <span class="node-tag tag-studio">Studio</span></div>
+    <p>Revelado de fotos RAW en el navegador: exposición, curvas, color, máscaras locales y recorte. Sin IA — flujo fotográfico clásico.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> fotógrafos que quieren revelar RAW antes de diseñar o generar sobre la imagen.
+    </div>
+  </div>
+
+  <!-- ========== VÍDEO EXTRA ========== -->
+  <div class="category">
+    <h2>5. Vídeo — opciones adicionales</h2>
+  </div>
+
+  <div class="node">
+    <div class="node-name">VFX Generator <span class="node-tag tag-studio">Studio</span></div>
+    <p>Aplica efectos visuales generativos sobre un vídeo existente, con prompt e imagen de referencia opcional.</p>
+  </div>
+
+  <!-- ========== EXPORT ========== -->
+  <div class="category">
+    <h2>6. Exportación y archivos</h2>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Export Multimedia <span class="node-tag tag-export">Studio</span></div>
+    <p>Recibe listas de medios de Cine, Loop o Populate: revisa en rejilla, filtra, descarga todo ordenado o exporta un manifiesto.</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Export <span class="node-tag tag-export">Lienzo</span></div>
+    <p>Descarga una pieza concreta: PNG/JPG (imagen), PDF multipágina (Designer) o MP4 (vídeo).</p>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Foldder (Assets) <span class="node-tag tag-tool">Lienzo</span></div>
+    <p>Acceso al inventario de medios del proyecto: todo lo importado, generado y exportado. Misma función que el icono Foldder de la barra inferior.</p>
+  </div>
+
+  <!-- ========== ORGANIZACIÓN ========== -->
+  <div class="category">
+    <h2>7. Organización del lienzo</h2>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Nested Space</div>
+    <p>Sub-lienzo dentro del proyecto: agrupa un pipeline en un módulo reutilizable. Puedes «entrar» y salir como si fuera otra pantalla.</p>
+    <div class="uses">
+      <strong>Ideal para:</strong> campañas complejas, separar fases (concepto / producción / export), recibir resultados de Loop organizados.
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Grupo de nodos</div>
+    <p>Marco visual para agrupar bloques del lienzo (atajo G). Solo organización — no ejecuta nada por sí solo.</p>
+  </div>
+
+  <!-- ========== COMBINACIONES ========== -->
+  <div class="category">
+    <h2>8. Combinaciones recomendadas</h2>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Objetivo</th>
+        <th>Recorrido sugerido</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Catálogo de productos (muchas piezas)</td>
+        <td>BrandKit → Dataset → Designer (plantilla) → Loop → Export Multimedia</td>
+      </tr>
+      <tr>
+        <td>Tarjeta personalizada por asistente</td>
+        <td>BrandKit → Dataset → Designer → Populate → formulario público</td>
+      </tr>
+      <tr>
+        <td>Spot con storyboard</td>
+        <td>Guionista → Cine → Image Creation → Video Creation → Video Editor</td>
+      </tr>
+      <tr>
+        <td>Presentación de campaña</td>
+        <td>Designer → Presenter → (opcional) Video Creation desde slides</td>
+      </tr>
+      <tr>
+        <td>Desde foto compuesta a diseño editable</td>
+        <td>Inspiration o Media → Layerizer → Designer → Export</td>
+      </tr>
+      <tr>
+        <td>Retrato para redes</td>
+        <td>Media → BG Removal → Enhance + Prompt → Image Creation → Crop → Export</td>
+      </tr>
+      <tr>
+        <td>Fotografía RAW profesional</td>
+        <td>Lightroom → Crop → Designer o Image Creation → Export</td>
+      </tr>
+      <tr>
+        <td>Referencias antes de generar</td>
+        <td>Inspiration → Image Creation → Video Creation</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Resumen visual — qué abre Studio</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Nodo</th>
+        <th>Panel completo (Studio)</th>
+        <th>Qué obtienes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>BrandKit</td><td>Sí</td><td>Identidad y conocimiento del proyecto</td></tr>
+      <tr><td>Guionista</td><td>Sí</td><td>Textos y guiones versionados</td></tr>
+      <tr><td>Cine</td><td>Sí</td><td>Storyboard y lista de medios</td></tr>
+      <tr><td>Designer</td><td>Sí</td><td>Diseño multipágina</td></tr>
+      <tr><td>Image Creation</td><td>Sí</td><td>Imagen generada o editada</td></tr>
+      <tr><td>Video Creation</td><td>Sí</td><td>Clip de vídeo</td></tr>
+      <tr><td>Presenter</td><td>Sí</td><td>Presentación compartible</td></tr>
+      <tr><td>Video Editor</td><td>Sí</td><td>Vídeo montado</td></tr>
+      <tr><td>Dataset / Loop / Populate</td><td>Sí</td><td>Datos y personalización</td></tr>
+      <tr><td>Inspiration</td><td>Sí</td><td>Imagen de referencia</td></tr>
+      <tr><td>Export Multimedia</td><td>Sí</td><td>Descarga masiva</td></tr>
+      <tr><td>Lightroom</td><td>Sí</td><td>Foto revelada</td></tr>
+      <tr><td>Prompt, Crop, Enhance…</td><td>No</td><td>Se usan en la tarjeta del lienzo</td></tr>
+    </tbody>
+  </table>
+
+  <p class="footer-note">
+    FOLDDER — Guía de nodos para usuarios · foldder.com · Documento generado en junio 2026.<br />
+    Los nombres de nodos en la aplicación pueden aparecer en inglés (p. ej. «Video Creation», «Image Creation»); en esta guía se usan los nombres de la barra lateral en español cuando existen.
+  </p>
+
+</body>
+</html>

@@ -71,7 +71,7 @@ export function brandKitFilledFieldCount(brand: Constants | undefined | null): n
 
 /**
  * Inyecta los campos de los BrandKits conectados como constantes (namespaced) en un Dataset.
- * Si `base` es null, devuelve un Dataset sintético solo-constantes. No muta `base`.
+ * @deprecated Preferir `syncBrandKitAssetsToDataset` + bloque Marca · BrandKit (A2/A3).
  */
 export function mergeBrandKitsIntoConstants(
   base: Dataset | null | undefined,
@@ -123,9 +123,7 @@ export interface BrainBrandLike {
 
 /**
  * Inyecta la MARCA de un nodo Brain conectado (logo + colores) como constantes vinculables en el
- * Designer, reutilizando el mismo puente que BrandKit (id namespaced `bk:<brainNodeId>:<campo>`).
- * Así un mismo color/logo editado UNA vez en Brain se vincula a cualquier objeto del Designer.
- * Solo aporta los campos con contenido (evita opciones vacías en el selector). No muta `base`.
+ * Designer. Puente legacy de 4–5 campos; omitir si el Dataset ya tiene `brandKitLink` moderno (A3).
  */
 export function mergeBrainBrandIntoConstants(
   base: Dataset | null | undefined,

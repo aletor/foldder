@@ -824,6 +824,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   designer: 'freehand',
   presenter: 'presenter',
   projectBrain: 'brain',
+  genoma: 'brain',
   projectAssets: 'foldderApp',
   inspiration: 'lightbulb',
   notes: 'notes',

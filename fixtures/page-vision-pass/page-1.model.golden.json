@@ -1,0 +1,86 @@
+{
+  "logoInstances": [
+    {
+      "variant": "horizontal",
+      "onBackground": "oscuro",
+      "textInLogo": "OARO",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.95,
+      "bbox": [
+        0.06,
+        0.04,
+        0.28,
+        0.1
+      ]
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "OARO",
+      "kind": "wordmark_logo",
+      "bbox": [
+        0.06,
+        0.04,
+        0.28,
+        0.1
+      ]
+    }
+  ],
+  "typographyRoles": [
+    {
+      "role": "titular",
+      "sampleText": "Strategic Plan",
+      "styleObserved": "Texto sans-serif, negrita, color blanco",
+      "bbox": [
+        0.72,
+        0.04,
+        0.93,
+        0.07
+      ]
+    },
+    {
+      "role": "titular",
+      "sampleText": "2025-2028",
+      "styleObserved": "Texto sans-serif, negrita, color gris",
+      "bbox": [
+        0.72,
+        0.07,
+        0.93,
+        0.1
+      ]
+    },
+    {
+      "role": "display",
+      "sampleText": "Verify, Connect, Engage",
+      "styleObserved": "Texto sans-serif, muy grande, negrita, color blanco",
+      "bbox": [
+        0.06,
+        0.51,
+        0.39,
+        0.75
+      ]
+    },
+    {
+      "role": "cuerpo",
+      "sampleText": "OARO is designed to be among the safest, smartest, and most compliant ticketing infrastructures in the industry.",
+      "styleObserved": "Texto sans-serif, regular, color gris",
+      "bbox": [
+        0.59,
+        0.68,
+        0.93,
+        0.79
+      ]
+    }
+  ],
+  "brandSurfaces": [
+    [
+      0,
+      0,
+      1,
+      1
+    ]
+  ],
+  "images": [],
+  "pageKind": "portada"
+}

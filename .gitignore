@@ -57,3 +57,19 @@ next-env.d.ts
 
 # portable Node bundle (no subir)
 .node-portable/
+
+# Logo benchmark golden set (PDFs de clientes) + cache de visión
+/golden-set/
+/vision-cache/
+
+# Logo intake persistencia local (fallback DynamoDB)
+/data/genoma-brand-logo/
+/data/logo-intake-events.jsonl
+/data/logo-intake-batches/
+
+# Scripts / diagnóstico local
+/tmp/
+/benchmark-runs/
+/fixtures/page-vision-pass/runs/
+/public/fixtures/page-vision-pass/runs/
+/fixtures/brandkit/*.pdf

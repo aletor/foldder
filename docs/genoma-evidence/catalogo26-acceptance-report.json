@@ -1,0 +1,58 @@
+{
+  "pathFilterDiff": {
+    "beforeCount": 17,
+    "afterCount": 17,
+    "rejected": [],
+    "acceptedRules": [
+      "accepted",
+      "orphan_glyph_emitted"
+    ]
+  },
+  "wordmarkIntegrity": {
+    "ok": true,
+    "detail": "wordmark integrity ✓ · ATRESMEDIA SALES"
+  },
+  "variants": [
+    {
+      "variant": "positive",
+      "sourcePageNumber": 2,
+      "assetOrigin": "vector_native"
+    },
+    {
+      "variant": "negative",
+      "sourcePageNumber": 1,
+      "assetOrigin": "vector_native"
+    }
+  ],
+  "logoPrimary": {
+    "assetOrigin": "vector_native",
+    "persistence": "persistencia ×4",
+    "variantCount": 2
+  },
+  "identity": {
+    "emitterBrand": "ATRESMEDIA",
+    "contentNames": [
+      "LAS HIJAS DE LA CRIADA",
+      "¿A QUÉ ESTÁS ESPERANDO?"
+    ],
+    "auditPath": "fixtures/page-vision-pass/runs/f9e683edde0a-2026-07-07T06-37-27-385Z.audit.json"
+  },
+  "voice": {
+    "tagline": [
+      "ATRESMEDIA"
+    ],
+    "tone": [
+      "clara",
+      "profesional"
+    ],
+    "absolute": [],
+    "forbidden": [
+      "Santuario, una enorme cúpula diseñada para evitar que la contaminación del aire"
+    ]
+  },
+  "vectorizeGate": {
+    "jobCreated": false,
+    "blockedReason": "vector_native / SVG nativo — fail-closed"
+  },
+  "crowned": true
+}

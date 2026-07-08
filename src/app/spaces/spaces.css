@@ -17436,3 +17436,225 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 }
+
+/* Genoma · panel de profundidad (···) — frameless, portal fijo */
+.genoma-depth-trigger-wrap {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+}
+
+.genoma-depth-trigger-wrap--dark .genoma-depth-trigger {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.genoma-depth-trigger-wrap--dark .genoma-depth-trigger:hover {
+  color: #ffbd1b;
+}
+
+.genoma-depth-trigger {
+  border: 0;
+  background: transparent;
+  padding: 4px 6px;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  color: var(--text-muted, rgba(31, 35, 40, 0.55));
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.genoma-depth-trigger:hover {
+  color: var(--text-main, #1f2328);
+}
+
+.genoma-depth-popover__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10040;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.genoma-depth-popover {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0;
+  border: 1px solid rgba(31, 35, 40, 0.12);
+  background: var(--foldder-frameless-glass-bg, #f4f3f0);
+  backdrop-filter: blur(var(--foldder-frameless-glass-blur, 24px));
+  -webkit-backdrop-filter: blur(var(--foldder-frameless-glass-blur, 24px));
+  box-shadow: none;
+  color: var(--foldder-frameless-text-primary, #1f2328);
+  font-size: 13px;
+}
+
+.genoma-depth-popover__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(31, 35, 40, 0.08);
+}
+
+.genoma-depth-popover__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+.genoma-depth-popover__close {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+  cursor: pointer;
+}
+
+.genoma-depth-popover__close:hover {
+  color: var(--foldder-frameless-text-primary, #1f2328);
+}
+
+.genoma-depth-popover__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.genoma-depth-popover__empty {
+  padding: 16px;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+}
+
+.genoma-depth-popover__row {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(31, 35, 40, 0.06);
+}
+
+.genoma-depth-popover__row:last-child {
+  border-bottom: 0;
+}
+
+.genoma-depth-popover__row-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.genoma-depth-popover__swatch {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 0;
+}
+
+.genoma-depth-popover__logo {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.genoma-depth-popover__row-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.genoma-depth-popover__row-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.genoma-depth-popover__score {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+}
+
+.genoma-depth-popover__sublabel {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+}
+
+.genoma-depth-popover__signals {
+  margin: 8px 0 0;
+  padding: 0 0 0 14px;
+  font-size: 11px;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+}
+
+.genoma-depth-popover__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.genoma-depth-popover__action {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--foldder-frameless-text-primary, #1f2328);
+  cursor: pointer;
+}
+
+.genoma-depth-popover__action:hover:not(:disabled) {
+  color: var(--secondary, #ffbd1b);
+}
+
+.genoma-depth-popover__action:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.genoma-depth-popover__action--primary {
+  color: var(--primary, #6c5ce7);
+}
+
+.genoma-depth-popover__status {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+}
+
+.genoma-depth-popover__sources {
+  padding: 10px 16px 14px;
+  border-top: 1px solid rgba(31, 35, 40, 0.08);
+}
+
+.genoma-depth-popover__sources-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+
+.genoma-depth-popover__sources-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
+}

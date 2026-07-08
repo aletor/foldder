@@ -71,6 +71,9 @@ export type KnowledgeDocumentEntry = {
     reliability: number;
     usedInPieces: string[];
   };
+  /** SHA-256 del binario original — idempotencia de extracción visual de marca. */
+  contentSha256?: string;
+  brandExtractVersion?: string;
 };
 
 export type ProjectBrandKit = {
@@ -78,6 +81,10 @@ export type ProjectBrandKit = {
   logoPositive: string | null;
   /** data URL imagen logo en negativo (fondo oscuro) */
   logoNegative: string | null;
+  /** Clave S3 del SVG vectorizado (L6, solo tras validar logo.primary) */
+  logoPrimaryVector?: string | null;
+  /** pHash del mark validado por el usuario (ranking + guardia L6). */
+  logoSignature?: string | null;
   /** Hex `#RRGGBB` o null si el usuario aún no definió el color */
   colorPrimary: string | null;
   colorSecondary: string | null;
@@ -98,6 +105,13 @@ export type BrainDiscoveredBrandAsset = {
   sourceName?: string;
   confidence?: number;
   discoveredAt: string;
+  /** L1 cluster — firma perceptual del mark aislado (bits). */
+  logoPHash?: string;
+  pageCount?: number;
+  documentCount?: number;
+  sourceDocumentIds?: string[];
+  clusterScore?: number;
+  polarity?: "positive" | "negative";
 };
 
 export type BrainVisualGeneralLook = {
@@ -792,6 +806,25 @@ function normalizeDiscoveredBrandAsset(raw: unknown): BrainDiscoveredBrandAsset 
     ...(typeof o.confidence === "number" && Number.isFinite(o.confidence)
       ? { confidence: Math.max(0, Math.min(1, o.confidence)) }
       : {}),
+    ...(typeof o.logoPHash === "string" && o.logoPHash.trim() ? { logoPHash: o.logoPHash.trim().slice(0, 4096) } : {}),
+    ...(typeof o.pageCount === "number" && Number.isFinite(o.pageCount)
+      ? { pageCount: Math.max(0, Math.round(o.pageCount)) }
+      : {}),
+    ...(typeof o.documentCount === "number" && Number.isFinite(o.documentCount)
+      ? { documentCount: Math.max(0, Math.round(o.documentCount)) }
+      : {}),
+    ...(Array.isArray(o.sourceDocumentIds)
+      ? {
+          sourceDocumentIds: o.sourceDocumentIds
+            .filter((x): x is string => typeof x === "string" && x.trim())
+            .map((x) => x.trim().slice(0, 180))
+            .slice(0, 40),
+        }
+      : {}),
+    ...(typeof o.clusterScore === "number" && Number.isFinite(o.clusterScore)
+      ? { clusterScore: Math.max(0, Math.min(1, o.clusterScore)) }
+      : {}),
+    ...(o.polarity === "positive" || o.polarity === "negative" ? { polarity: o.polarity } : {}),
     discoveredAt: typeof o.discoveredAt === "string" && o.discoveredAt.trim() ? o.discoveredAt.trim() : new Date().toISOString(),
   };
 }
@@ -1031,6 +1064,12 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
     const b = brandIn as Record<string, unknown>;
     if (b.logoPositive === null || typeof b.logoPositive === "string") brand.logoPositive = b.logoPositive as string | null;
     if (b.logoNegative === null || typeof b.logoNegative === "string") brand.logoNegative = b.logoNegative as string | null;
+    if (b.logoPrimaryVector === null || typeof b.logoPrimaryVector === "string") {
+      brand.logoPrimaryVector = b.logoPrimaryVector as string | null;
+    }
+    if (b.logoSignature === null || typeof b.logoSignature === "string") {
+      brand.logoSignature = b.logoSignature as string | null;
+    }
     for (const key of ["colorPrimary", "colorSecondary", "colorAccent"] as const) {
       if (b[key] === null) {
         brand[key] = null;

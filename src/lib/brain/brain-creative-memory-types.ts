@@ -84,6 +84,16 @@ export type BrainMeta = {
   brandLocked?: boolean;
   analysisStatus: BrainMetaAnalysisStatus;
   staleReasons: string[];
+  /** Sidecar Brand Board (interpretación UI). Aditivo; proyectos legacy no lo tienen. */
+  boardMeta?: import("@/lib/brandkit/types").BrandKitBoardMeta;
+  /** Checkpoints del pipeline logo/marca desde PDF (Paso 0 instrumentación). */
+  brandPipelineDiagnostics?: import("@/lib/brandkit/brand-pipeline-diagnostics").BrandPipelineDiagnostics;
+  /** Metadata sidecar de proyección BrandKit → Dataset (status/sourceId por fila). */
+  brandKitDatasetRowMeta?: import("@/lib/brandkit/dataset-projection").BrandKitDatasetProjectionSidecar;
+  /** Firmas de logo descartadas por el usuario (adenda L6). */
+  rejectedLogoSignatures?: string[];
+  /** Tras analyze ambiguo (≥2 clusters), abrir picker una vez en el Board. */
+  pendingLogoPicker?: boolean;
 };
 
 export type ContentDna = {
@@ -226,6 +236,8 @@ export type BrainRuntimeContext = {
   traceSummary?: string;
   /** Trace estructurada opcional; la persistencia la decide el caller. */
   decisionTrace?: BrainDecisionTrace;
+  /** Referencias visuales por categoría (A1, solo nodos generativos). */
+  visualReferences?: import("@/lib/brandkit/visual-references-runtime").VisualReferencesRuntime;
 };
 
 export const VISUAL_SIGNAL_SOURCE_PRIORITY = [

@@ -5,6 +5,11 @@ import type {
   BrainRuntimeVisualDnaLayer,
 } from "./brain-creative-memory-types";
 import { getBrainFreshnessSummary, getBrainVersion, normalizeBrainMeta } from "./brain-meta";
+import { pickValidatedBrandState } from "@/lib/brandkit/pick-validated-brand-state";
+import {
+  buildVisualReferencesRuntime,
+  isGenerativeVisualNodeType,
+} from "@/lib/brandkit/visual-references-runtime";
 import { normalizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/normalize";
 import type { VisualDnaLayer } from "@/lib/brain/visual-dna-slot/types";
 import { buildSelectedVisualDnaSlotRuntimeView, summarizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/runtime-layer";
@@ -51,7 +56,8 @@ export function buildBrainRuntimeContext(input: {
   void input.flowNodes;
   void input.flowEdges;
   const meta = normalizeBrainMeta(input.assets.brainMeta ?? undefined);
-  const strategy = input.assets.strategy;
+  const runtimeAssets = pickValidatedBrandState(input.assets);
+  const strategy = runtimeAssets.strategy;
   const slices: string[] = [];
   const warnings: string[] = [];
 
@@ -140,7 +146,7 @@ export function buildBrainRuntimeContext(input: {
   const knowledge =
     guionista
       ? {
-          corporateContext: input.assets.knowledge.corporateContext,
+          corporateContext: runtimeAssets.knowledge.corporateContext,
           documentsAnalyzed: input.assets.knowledge.documents.filter((d) => d.status === "Analizado").length,
           documentTitles: input.assets.knowledge.documents
             .filter((d) => d.status === "Analizado")
@@ -148,7 +154,7 @@ export function buildBrainRuntimeContext(input: {
             .map((d) => ({ id: d.id, name: d.name, scope: d.scope })),
         }
       : {
-          corporateContext: input.assets.knowledge.corporateContext,
+          corporateContext: runtimeAssets.knowledge.corporateContext,
           documentsAnalyzed: input.assets.knowledge.documents.filter((d) => d.status === "Analizado").length,
         };
 
@@ -158,7 +164,7 @@ export function buildBrainRuntimeContext(input: {
     projectScopeId: input.projectScopeId,
     brainVersion: getBrainVersion(meta),
     contextSlices: slices,
-    brand: input.assets.brand,
+    brand: runtimeAssets.brand,
     voice: {
       examples: strategy.voiceExamples,
       traits: strategy.languageTraits,
@@ -173,7 +179,7 @@ export function buildBrainRuntimeContext(input: {
     productContext: strategy.messageBlueprints?.slice(0, 6),
     audience: strategy.personas,
     recommendations: strategy.approvedPatterns,
-    ...(guionista ? { guionistaPack: buildGuionistaPack(input.assets) } : {}),
+    ...(guionista ? { guionistaPack: buildGuionistaPack(runtimeAssets) } : {}),
     ...(visualDnaSlotsSummary?.length ? { visualDnaSlotsSummary } : {}),
     ...(selectedVisualDnaSlot ? { selectedVisualDnaSlot } : {}),
     ...(input.selectedVisualDnaLayer && selectedVisualDnaSlot
@@ -233,10 +239,15 @@ export function buildBrainRuntimeContext(input: {
     ignoredSlices,
   });
 
+  const visualReferences = isGenerativeVisualNodeType(input.targetNodeType)
+    ? buildVisualReferencesRuntime(input.assets, meta.boardMeta)
+    : undefined;
+
   return {
     ...runtimeContext,
     traceId: decisionTrace.id,
     traceSummary: decisionTrace.outputSummary.summary,
     decisionTrace,
+    ...(visualReferences ? { visualReferences } : {}),
   };
 }

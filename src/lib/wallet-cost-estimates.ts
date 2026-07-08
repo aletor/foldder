@@ -362,5 +362,42 @@ export function estimateWalletCostForRoute(
     };
   }
 
+  if (route === "/api/spaces/genoma/visual/generate") {
+    const estimated = estimateGeminiImageGenerationUsd("flash31", "1k");
+    return {
+      label: "Genoma · imagen de referencia",
+      route,
+      category: "image",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.15),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/spaces/genoma/logo/vectorize") {
+    const estimated = 0.05;
+    return {
+      label: "Genoma · vectorizar logo",
+      route,
+      category: "utility",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.2),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/spaces/genoma/ingest") {
+    const kind = stringValue(body.paidAnalysisKind, "pdf");
+    const estimated = kind === "url" ? 0.012 : 0.045;
+    return {
+      label: kind === "url" ? "Genoma · refinado de voz (web)" : "Genoma · análisis de marca (PDF)",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "confirm",
+    };
+  }
+
   return null;
 }

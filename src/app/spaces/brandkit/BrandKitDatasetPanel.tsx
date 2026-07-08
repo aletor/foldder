@@ -1,14 +1,11 @@
 "use client";
 
 import React, { useCallback, useMemo, useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import type { Dataset, FieldDef, FieldValue } from "@/app/spaces/dataset/dataset-types";
 import {
-  addCard,
   emptyValueForType,
-  removeCard,
   setConstant,
-  updateCard,
 } from "@/app/spaces/dataset/dataset-logic";
 import { DatasetImageCell } from "@/app/spaces/dataset/dataset-image-cell";
 import {
@@ -21,8 +18,12 @@ import {
   brandKitMessagesListSchema,
   type BrandKitDatasetLink,
 } from "./brandkit-dataset-schema";
-import { applyBrandKitDatasetEdit } from "./brandkit-dataset-sync";
+import { applyBrandKitDatasetEdit, refreshBrandKitDatasetFromAssets } from "./brandkit-dataset-sync";
 import type { ProjectAssetsMetadata } from "@/app/spaces/project-assets-metadata";
+import { normalizeProjectAssets } from "@/app/spaces/project-assets-metadata";
+import { interpretationStatusLabelEs } from "@/lib/brandkit/brand-board-labels";
+import type { BrandKitDatasetRowMeta } from "@/lib/brandkit/dataset-projection";
+import type { InterpretationStatus } from "@/lib/brandkit/types";
 
 type BrandTabId =
   | "context"
@@ -83,6 +84,23 @@ function TextAreaEditor({
       onChange={(e) => onChange(e.target.value)}
       className="min-h-[96px] w-full resize-y border border-white/10 bg-black/25 px-3 py-2 text-[12px] leading-relaxed text-white/90 outline-none focus:border-[var(--foldder-studio-accent,#14b8a6)]/45"
     />
+  );
+}
+
+function statusTone(status: InterpretationStatus): string {
+  if (status === "validated") return "text-emerald-300/90";
+  if (status === "proposed") return "text-amber-300/90";
+  if (status === "conflict") return "text-rose-300/90";
+  if (status === "rejected") return "text-white/35";
+  return "text-white/40";
+}
+
+function RowMetaBadge({ meta }: { meta?: BrandKitDatasetRowMeta }) {
+  if (!meta) return null;
+  return (
+    <span className={`text-[9px] font-black uppercase tracking-[0.08em] ${statusTone(meta.status)}`}>
+      {interpretationStatusLabelEs(meta.status)}
+    </span>
   );
 }
 
@@ -161,6 +179,16 @@ export function BrandKitDatasetPanel({
   const galleryCategoryField = gallerySchema[0]!;
   const galleryImageField = gallerySchema[1]!;
 
+  const rowMetaSidecar = useMemo(() => {
+    const assets = normalizeProjectAssets(assetsMetadata);
+    return assets.brainMeta?.brandKitDatasetRowMeta;
+  }, [assetsMetadata]);
+
+  const handleRefreshFromBrandKit = useCallback(() => {
+    const refreshed = refreshBrandKitDatasetFromAssets(dataset, link, assetsMetadata);
+    onApply({ dataset: refreshed.dataset, assets: refreshed.assets });
+  }, [assetsMetadata, dataset, link, onApply]);
+
   const setConstantValue = useCallback(
     (fieldId: keyof typeof BRANDKIT_DATASET_FIELD_IDS, value: FieldValue) => {
       const constantId = brandKitDatasetConstantId(brainNodeId, BRANDKIT_DATASET_FIELD_IDS[fieldId]);
@@ -176,18 +204,28 @@ export function BrandKitDatasetPanel({
           <p className="text-[10px] font-black uppercase tracking-[0.1em] text-white/80">
             Marca · BrandKit
           </p>
-          <p className="text-[11px] text-white/45">Sincronizado en vivo con BrandKit</p>
+          <p className="text-[11px] text-white/45">Constants editables · listas solo lectura (editar en BrandKit)</p>
         </div>
-        {onOpenBrandKit ? (
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={onOpenBrandKit}
+            onClick={handleRefreshFromBrandKit}
             className="inline-flex items-center gap-1.5 border border-white/15 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.08em] text-white/70 hover:bg-white/[0.06] hover:text-white"
           >
-            <ExternalLink size={12} />
-            Abrir BrandKit
+            <RefreshCw size={12} />
+            Actualizar desde BrandKit
           </button>
-        ) : null}
+          {onOpenBrandKit ? (
+            <button
+              type="button"
+              onClick={onOpenBrandKit}
+              className="inline-flex items-center gap-1.5 border border-white/15 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.08em] text-white/70 hover:bg-white/[0.06] hover:text-white"
+            >
+              <ExternalLink size={12} />
+              Editar en BrandKit
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <nav className="flex shrink-0 divide-x divide-white/10 overflow-x-auto border-b border-white/10">
@@ -227,50 +265,21 @@ export function BrandKitDatasetPanel({
         {activeTab === "messages" ? (
           <div className="space-y-2">
             <p className="text-[10px] text-white/45">
-              Máximo {BRANDKIT_DATASET_MAX_MESSAGES} mensajes · {(messagesList?.cards.length ?? 0)}/
+              Solo lectura · edita mensajes en BrandKit · {(messagesList?.cards.length ?? 0)}/
               {BRANDKIT_DATASET_MAX_MESSAGES}
             </p>
             {(messagesList?.cards ?? []).map((card) => (
-              <div key={card.id} className="flex items-start gap-2 border border-white/10 bg-black/20 p-2">
-                <textarea
-                  value={
-                    readFieldText(card.values[messageField.id] ?? emptyValueForType("text"))
-                  }
-                  onChange={(e) => {
-                    if (!messagesList) return;
-                    commit(
-                      updateCard(dataset, messagesList.id, card.id, {
-                        [messageField.id]: { type: "text", value: e.target.value },
-                      }),
-                    );
-                  }}
-                  rows={2}
-                  className="min-h-[56px] flex-1 resize-y border border-white/10 bg-transparent px-2 py-1.5 text-[12px] text-white/90 outline-none focus:border-[var(--foldder-studio-accent,#14b8a6)]/45"
-                />
-                <button
-                  type="button"
-                  onClick={() => messagesList && commit(removeCard(dataset, messagesList.id, card.id))}
-                  className="shrink-0 px-2 py-1 text-[9px] font-black uppercase tracking-[0.08em] text-rose-300/80 hover:text-rose-200"
-                >
-                  Quitar
-                </button>
+              <div key={card.id} className="border border-white/10 bg-black/20 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <RowMetaBadge meta={rowMetaSidecar?.lists.messages[card.id]} />
+                </div>
+                <p className="text-[12px] leading-relaxed text-white/90">
+                  {readFieldText(card.values[messageField.id] ?? emptyValueForType("text"))}
+                </p>
               </div>
             ))}
-            {(messagesList?.cards.length ?? 0) < BRANDKIT_DATASET_MAX_MESSAGES ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (!messagesList) return;
-                  commit(
-                    addCard(dataset, messagesList.id, {
-                      [messageField.id]: emptyValueForType("text"),
-                    }),
-                  );
-                }}
-                className="w-full border border-dashed border-white/15 py-2 text-[10px] font-black uppercase tracking-[0.08em] text-white/45 hover:border-[var(--foldder-studio-accent,#14b8a6)]/40 hover:text-[var(--foldder-studio-accent,#14b8a6)]"
-              >
-                Añadir mensaje
-              </button>
+            {!messagesList?.cards.length ? (
+              <p className="text-[11px] text-white/40">Sin mensajes proyectados. Usa «Actualizar desde BrandKit».</p>
             ) : null}
           </div>
         ) : null}
@@ -349,78 +358,26 @@ export function BrandKitDatasetPanel({
                 Fotos de ejemplo
               </p>
               <p className="mb-3 text-[10px] text-white/45">
-                Máximo {BRANDKIT_DATASET_MAX_GALLERY} · {(galleryList?.cards.length ?? 0)}/
-                {BRANDKIT_DATASET_MAX_GALLERY}
+                Solo lectura · {(galleryList?.cards.length ?? 0)}/{BRANDKIT_DATASET_MAX_GALLERY}
               </p>
               <div className="space-y-2">
                 {(galleryList?.cards ?? []).map((card) => (
-                  <div key={card.id} className="grid gap-2 border border-white/10 bg-black/20 p-3 md:grid-cols-[140px_1fr_auto]">
-                    <select
-                      value={readFieldSelect(
-                        card.values[galleryCategoryField.id],
-                        BRANDKIT_GALLERY_CATEGORIES[0],
-                      )}
-                      onChange={(e) => {
-                        if (!galleryList) return;
-                        commit(
-                          updateCard(dataset, galleryList.id, card.id, {
-                            ...card.values,
-                            [galleryCategoryField.id]: { type: "select", value: e.target.value },
-                          }),
-                        );
-                      }}
-                      className="border border-white/10 bg-black/30 px-2 py-2 text-[11px] text-white/85 outline-none"
-                    >
-                      {BRANDKIT_GALLERY_CATEGORIES.map((category) => (
-                        <option key={category} value={category}>
-                          {category}
-                        </option>
-                      ))}
-                    </select>
+                  <div key={card.id} className="grid gap-2 border border-white/10 bg-black/20 p-3 md:grid-cols-[140px_1fr]">
+                    <div>
+                      <RowMetaBadge meta={rowMetaSidecar?.lists.gallery[card.id]} />
+                      <p className="mt-2 text-[10px] uppercase text-white/55">
+                        {readFieldSelect(card.values[galleryCategoryField.id], BRANDKIT_GALLERY_CATEGORIES[0])}
+                      </p>
+                    </div>
                     <DatasetImageCell
-                      value={
-                        card.values[galleryImageField.id] ??
-                        emptyValueForType("image")
-                      }
-                      onChange={(next) => {
-                        if (!galleryList) return;
-                        commit(
-                          updateCard(dataset, galleryList.id, card.id, {
-                            ...card.values,
-                            [galleryImageField.id]: next,
-                          }),
-                        );
-                      }}
+                      value={card.values[galleryImageField.id] ?? emptyValueForType("image")}
+                      onChange={() => undefined}
                       compact
                     />
-                    <button
-                      type="button"
-                      onClick={() => galleryList && commit(removeCard(dataset, galleryList.id, card.id))}
-                      className="self-start px-2 py-1 text-[9px] font-black uppercase tracking-[0.08em] text-rose-300/80 hover:text-rose-200"
-                    >
-                      Quitar
-                    </button>
                   </div>
                 ))}
-                {(galleryList?.cards.length ?? 0) < BRANDKIT_DATASET_MAX_GALLERY ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!galleryList) return;
-                      commit(
-                        addCard(dataset, galleryList.id, {
-                          [galleryCategoryField.id]: {
-                            type: "select",
-                            value: BRANDKIT_GALLERY_CATEGORIES[0],
-                          },
-                          [galleryImageField.id]: emptyValueForType("image"),
-                        }),
-                      );
-                    }}
-                    className="w-full border border-dashed border-white/15 py-2 text-[10px] font-black uppercase tracking-[0.08em] text-white/45 hover:border-[var(--foldder-studio-accent,#14b8a6)]/40 hover:text-[var(--foldder-studio-accent,#14b8a6)]"
-                  >
-                    Añadir foto de ejemplo
-                  </button>
+                {!galleryList?.cards.length ? (
+                  <p className="text-[11px] text-white/40">Sin imágenes proyectadas.</p>
                 ) : null}
               </div>
             </div>

@@ -20,6 +20,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'BrandKit',
     line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre el BrandKit para editar',
   },
+  genoma: {
+    title: 'Genoma',
+    line: 'Libro de estilo vivo: evidencia rankeada y coronación con un tap; sin merge de Brain',
+  },
   projectAssets: {
     title: 'Foldder',
     line: 'Contenedor vivo del proyecto: Imported Media, Generated Media, Media Files y Exports',

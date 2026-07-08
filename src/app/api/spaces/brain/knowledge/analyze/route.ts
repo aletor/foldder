@@ -31,6 +31,9 @@ import {
   type BrainVoiceExample,
   defaultBrainVisualStyle,
   type KnowledgeDocumentEntry,
+  type ProjectBrandKit,
+  normalizeProjectAssets,
+  type ProjectAssetsMetadata,
 } from "@/app/spaces/project-assets-metadata";
 import { enrichStrategyCreativeMemory } from "@/lib/brain/brain-strategy-creative-enrich";
 import {
@@ -40,6 +43,38 @@ import {
 } from "@/lib/brain/brain-meta";
 import { canWriteBrainScope } from "@/lib/brain/brain-scope-policy";
 import { BRAIN_STALE_REASON } from "@/lib/brain/brain-stale-reasons";
+import { applyGuardedAnalyzeMerge, applyTypographyLlmSynthesisSidecar } from "@/lib/brandkit/guarded-merge";
+import { shouldPromptLogoPicker } from "@/lib/brandkit/logo-candidates";
+import {
+  emptyBrandPipelineDiagnosticsPatch,
+  mergeBrandPipelineDiagnostics,
+  resolvePdfBrandExtractSkipMotivo,
+  type BrandPipelineCheckpointExtract,
+  type BrandPipelineCheckpointMerge,
+  type BrandPipelineCheckpointSkip,
+  type BrandPipelineDiagnosticsPatch,
+} from "@/lib/brandkit/brand-pipeline-diagnostics";
+import {
+  applyLogoCandidateSidecar,
+  mergeDiscoveredLogoClusterAssets,
+  mergeDiscoveredLogoClustersIntoStrategy,
+} from "@/lib/brandkit/logo-cluster-projection";
+import {
+  buildDiscoveredLogoAssetFromCluster,
+  detectLogoClustersForBrandKit,
+} from "@/lib/brain/pdf-logo-clusters";
+import { detectShapeLogoCandidatesFromBrandImages } from "@/lib/brain/logo-shape-detect";
+import type { BrainDiscoveredBrandAsset } from "@/app/spaces/project-assets-metadata";
+import { createRunId } from "@/lib/brandkit/run-event-adapter";
+import {
+  extractBrandKitFromPdfBuffer,
+  hashPdfBuffer,
+  PDF_BRAND_EXTRACT_VERSION,
+  shouldSkipPdfBrandExtract,
+  type PdfBrandExtractResult,
+} from "@/lib/brain/pdf-brand-extract";
+import { buildUserAssetObjectKey } from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 import {
   mergeBlueprintsPreferPrevious,
   mergeFactsAndEvidenceWithPriority,
@@ -87,6 +122,8 @@ type BrainDoc = {
     reliability: number;
     usedInPieces: string[];
   };
+  contentSha256?: string;
+  brandExtractVersion?: string;
 };
 
 let openAiClient: OpenAI | null = null;
@@ -893,7 +930,7 @@ async function buildAutofillStrategy(
         {
           role: "system",
           content:
-            "Eres estratega de marca. Debes autocompletar VOZ, PERSONAS, MENSAJES y ESTILO VISUAL tras analizar documentos. Devuelve SOLO JSON con este shape: {\"voiceExamples\":[{\"kind\":\"approved_voice|forbidden_voice|good_piece|bad_piece\",\"label\":\"string\",\"text\":\"string\"}],\"tabooPhrases\":[\"string\"],\"approvedPhrases\":[\"string\"],\"languageTraits\":[\"string\"],\"syntaxPatterns\":[\"string\"],\"preferredTerms\":[\"string\"],\"forbiddenTerms\":[\"string\"],\"channelIntensity\":[{\"channel\":\"string\",\"intensity\":0}],\"allowAbsoluteClaims\":false,\"funnelMessages\":[{\"stage\":\"awareness|consideration|conversion|retention\",\"text\":\"string\"}],\"messageBlueprints\":[{\"claim\":\"string\",\"support\":\"string\",\"audience\":\"string\",\"channel\":\"string\",\"stage\":\"awareness|consideration|conversion|retention\",\"cta\":\"string\",\"evidence\":[\"string\"]}],\"personaIds\":[\"string\"],\"visualStyle\":{\"protagonist\":{\"description\":\"string\",\"prompt\":\"string\"},\"environment\":{\"description\":\"string\",\"prompt\":\"string\"},\"textures\":{\"description\":\"string\",\"prompt\":\"string\"},\"people\":{\"description\":\"string\",\"prompt\":\"string\"}}}. Reglas: 1) El tono sale de CORE, no de CONTEXTO. 2) CONTEXTO solo aporta mercado/benchmark. 3) Si faltan datos, devuelve frases conservadoras y concretas (no inventes datos). 4) Cada description debe ser un párrafo corto (1-2 frases) y nunca vacío. 5) Si la evidencia es limitada, produce la mejor hipótesis visual plausible y explícita.",
+            "Eres estratega de marca. Debes autocompletar VOZ, PERSONAS, MENSAJES y ESTILO VISUAL tras analizar documentos. IMPORTANTE: el idioma de salida es español de España (es-ES), independientemente del idioma de las fuentes. Los languageTraits deben ir en sentence case en español (p. ej. «formal», «confiable», «analítico»), nunca en inglés ni en MAYÚSCULAS. Devuelve SOLO JSON con este shape: {\"voiceExamples\":[{\"kind\":\"approved_voice|forbidden_voice|good_piece|bad_piece\",\"label\":\"string\",\"text\":\"string\"}],\"tabooPhrases\":[\"string\"],\"approvedPhrases\":[\"string\"],\"languageTraits\":[\"string\"],\"syntaxPatterns\":[\"string\"],\"preferredTerms\":[\"string\"],\"forbiddenTerms\":[\"string\"],\"channelIntensity\":[{\"channel\":\"string\",\"intensity\":0}],\"allowAbsoluteClaims\":false,\"funnelMessages\":[{\"stage\":\"awareness|consideration|conversion|retention\",\"text\":\"string\"}],\"messageBlueprints\":[{\"claim\":\"string\",\"support\":\"string\",\"audience\":\"string\",\"channel\":\"string\",\"stage\":\"awareness|consideration|conversion|retention\",\"cta\":\"string\",\"evidence\":[\"string\"]}],\"personaIds\":[\"string\"],\"visualStyle\":{\"protagonist\":{\"description\":\"string\",\"prompt\":\"string\"},\"environment\":{\"description\":\"string\",\"prompt\":\"string\"},\"textures\":{\"description\":\"string\",\"prompt\":\"string\"},\"people\":{\"description\":\"string\",\"prompt\":\"string\"}}}. Reglas: 1) El tono sale de CORE, no de CONTEXTO. 2) CONTEXTO solo aporta mercado/benchmark. 3) Si faltan datos, devuelve frases conservadoras y concretas (no inventes datos). 4) Cada description debe ser un párrafo corto (1-2 frases) en español y nunca vacío. 5) Si la evidencia es limitada, produce la mejor hipótesis visual plausible y explícita en español.",
         },
         {
           role: "user",
@@ -1086,6 +1123,352 @@ function requiresVisualSignalsUpgrade(doc: BrainDoc): boolean {
   return protagonist.length + environment.length + textures.length + people.length === 0;
 }
 
+type AnalyzeRequestBody = {
+  documents?: BrainDoc[];
+  strategy?: BrainStrategy;
+  projectId?: string;
+  workspaceId?: string;
+  brainMeta?: unknown;
+  brand?: ProjectBrandKit;
+  previousCorporateContext?: string;
+  /** Fuerza re-extracción de marca desde PDF (ignora skip idempotente). */
+  forceReextractBrand?: boolean;
+};
+
+function buildPreviousAssetsForGuardedMerge(
+  body: AnalyzeRequestBody,
+  knowledgeDocs: KnowledgeDocumentEntry[],
+  meta: ReturnType<typeof normalizeBrainMeta>,
+): ProjectAssetsMetadata {
+  return normalizeProjectAssets({
+    brand: body.brand,
+    knowledge: {
+      corporateContext: typeof body.previousCorporateContext === "string" ? body.previousCorporateContext : "",
+      documents: knowledgeDocs,
+    },
+    strategy: body.strategy,
+    brainMeta: meta,
+  });
+}
+
+type PdfBrandMergePayload = {
+  candidateBrand: Partial<ProjectBrandKit>;
+  typography: PdfBrandExtractResult["typography"];
+  typographySource?: PdfBrandExtractResult["typographySource"];
+  discoveredLogoAssets: BrainDiscoveredBrandAsset[];
+};
+
+function mergePdfTypographySource(
+  prev?: PdfBrandExtractResult["typographySource"],
+  next?: PdfBrandExtractResult["typographySource"],
+): PdfBrandExtractResult["typographySource"] {
+  if (prev === "pdf-embedded" || next === "pdf-embedded") return "pdf-embedded";
+  return next ?? prev;
+}
+
+function isPdfKnowledgeDoc(doc: BrainDoc): boolean {
+  return doc.format === "pdf" || doc.mime === "application/pdf";
+}
+
+type PdfBrandExtractPassResult = {
+  merge: PdfBrandMergePayload | null;
+  docUpdates: Map<string, Pick<BrainDoc, "contentSha256" | "brandExtractVersion">>;
+  patch: BrandPipelineDiagnosticsPatch;
+};
+
+async function runPdfBrandExtractPass(input: {
+  docs: Array<{ doc: BrainDoc; idx: number }>;
+  forceReextract: boolean;
+  userEmail: string;
+}): Promise<PdfBrandExtractPassResult> {
+  const patch = emptyBrandPipelineDiagnosticsPatch();
+  const docUpdates = new Map<string, Pick<BrainDoc, "contentSha256" | "brandExtractVersion">>();
+  let merge: PdfBrandMergePayload | null = null;
+  const skipRows: BrandPipelineCheckpointSkip[] = [];
+  const extractRows: BrandPipelineCheckpointExtract[] = [];
+  const at = new Date().toISOString();
+
+  for (const { doc, idx } of input.docs) {
+    if (!isPdfKnowledgeDoc(doc)) continue;
+    if (!doc.s3Path) continue;
+    try {
+      const allowed = await canUserAccessKnowledgeFileKey(input.userEmail, doc.s3Path);
+      if (!allowed) continue;
+      const fileBuffer = await getFromS3(doc.s3Path);
+      const contentSha256 = hashPdfBuffer(fileBuffer);
+      const skipBrandExtract = shouldSkipPdfBrandExtract({
+        contentSha256,
+        previousContentSha256: doc.contentSha256,
+        previousBrandExtractVersion: doc.brandExtractVersion,
+        forceReextract: input.forceReextract,
+      });
+      skipRows.push({
+        at,
+        docId: doc.id,
+        docName: doc.name,
+        skip: skipBrandExtract,
+        motivo: resolvePdfBrandExtractSkipMotivo({ skip: skipBrandExtract, forceReextract: input.forceReextract }),
+        previousVersion: doc.brandExtractVersion ?? null,
+        currentVersion: PDF_BRAND_EXTRACT_VERSION,
+        contentSha256,
+      });
+
+      if (skipBrandExtract) {
+        extractRows.push({
+          at,
+          docId: doc.id,
+          docName: doc.name,
+          paginas: 0,
+          fontFamilies: 0,
+          colorOps: 0,
+          logoCandidates: 0,
+          skipped: true,
+        });
+        docUpdates.set(String(idx), {
+          contentSha256,
+          brandExtractVersion: doc.brandExtractVersion ?? PDF_BRAND_EXTRACT_VERSION,
+        });
+        continue;
+      }
+
+      const extractedBrand = await extractBrandKitFromPdfBuffer(fileBuffer, doc.name, {
+        userEmail: input.userEmail,
+        route: "/api/spaces/brain/knowledge/analyze",
+      });
+      const persisted = await persistPdfBrandExtractForAnalyze({
+        extracted: extractedBrand,
+        doc,
+        userEmail: input.userEmail,
+        fileBuffer,
+      });
+      merge = merge
+        ? {
+            candidateBrand: { ...merge.candidateBrand, ...persisted.candidateBrand },
+            typography: persisted.typography.primary ? persisted.typography : merge.typography,
+            typographySource: mergePdfTypographySource(merge.typographySource, extractedBrand.typographySource),
+            discoveredLogoAssets: mergeDiscoveredLogoClusterAssets(
+              merge.discoveredLogoAssets,
+              persisted.discoveredLogoAssets,
+            ),
+          }
+        : {
+            ...persisted,
+            typographySource: extractedBrand.typographySource,
+          };
+      extractRows.push({
+        at,
+        docId: doc.id,
+        docName: doc.name,
+        paginas: extractedBrand.diagnostics.paginas,
+        fontFamilies: extractedBrand.diagnostics.fontFamilies,
+        colorOps: extractedBrand.diagnostics.colorOps,
+        logoCandidates: merge.discoveredLogoAssets.length || extractedBrand.diagnostics.logoCandidates,
+      });
+      docUpdates.set(String(idx), {
+        contentSha256,
+        brandExtractVersion: PDF_BRAND_EXTRACT_VERSION,
+      });
+    } catch (pdfBrandError) {
+      const message = pdfBrandError instanceof Error ? pdfBrandError.message : String(pdfBrandError);
+      console.error(`[brain/knowledge/analyze] pdf brand extract failed for ${doc.id}:`, pdfBrandError);
+      extractRows.push({
+        at,
+        docId: doc.id,
+        docName: doc.name,
+        paginas: 0,
+        fontFamilies: 0,
+        colorOps: 0,
+        logoCandidates: 0,
+        skipped: true,
+        error: message.slice(0, 500),
+      });
+    }
+  }
+
+  if (skipRows.length) patch.analyzeSkip = skipRows;
+  if (extractRows.length) patch.extract = extractRows;
+  return { merge, docUpdates, patch };
+}
+
+async function appendShapeLogoCandidates(input: {
+  merge: PdfBrandMergePayload | null;
+  docs: BrainDoc[];
+  userEmail: string;
+}): Promise<PdfBrandMergePayload | null> {
+  const shapeAssets = await detectShapeLogoCandidatesFromBrandImages({
+    docs: input.docs,
+    userEmail: input.userEmail,
+    canAccess: (s3Path) => canUserAccessKnowledgeFileKey(input.userEmail, s3Path),
+  });
+  if (!shapeAssets.length && !input.merge) return input.merge;
+  const base: PdfBrandMergePayload = input.merge ?? {
+    candidateBrand: {},
+    typography: {},
+    discoveredLogoAssets: [],
+  };
+  return {
+    ...base,
+    discoveredLogoAssets: mergeDiscoveredLogoClusterAssets(base.discoveredLogoAssets, shapeAssets),
+  };
+}
+
+async function persistPdfBrandExtractForAnalyze(input: {
+  extracted: PdfBrandExtractResult;
+  doc: BrainDoc;
+  userEmail: string;
+  fileBuffer: Buffer;
+}): Promise<PdfBrandMergePayload> {
+  const candidateBrand: Partial<ProjectBrandKit> = { ...input.extracted.brand };
+  const shaFolder = input.extracted.contentSha256.slice(0, 16);
+  for (const logo of input.extracted.logos) {
+    try {
+      const key = buildUserAssetObjectKey({
+        userEmail: input.userEmail,
+        folder: `brain/brand/logos/${shaFolder}`,
+        filename: `${logo.variant}-p${logo.pageNumber}.png`,
+      });
+      await uploadBufferToS3Key(key, logo.buffer, logo.mime);
+      if (logo.variant === "positive") candidateBrand.logoPositive = key;
+      if (logo.variant === "negative") candidateBrand.logoNegative = key;
+    } catch (logoUploadError) {
+      console.error(
+        `[brain/knowledge/analyze] logo upload failed (${logo.variant}, doc ${input.doc.id}):`,
+        logoUploadError,
+      );
+    }
+  }
+
+  const discoveredLogoAssets: BrainDiscoveredBrandAsset[] = [];
+  try {
+    const clusterPass = await detectLogoClustersForBrandKit(input.fileBuffer);
+    for (const cluster of clusterPass.clusters) {
+      try {
+        const key = buildUserAssetObjectKey({
+          userEmail: input.userEmail,
+          folder: `brain/brand/logo-clusters/${cluster.clusterId}`,
+          filename: `master-p${cluster.pageNumber}.png`,
+        });
+        await uploadBufferToS3Key(key, cluster.buffer, cluster.mime);
+        discoveredLogoAssets.push(
+          buildDiscoveredLogoAssetFromCluster({
+            cluster,
+            imageRef: key,
+            documentId: input.doc.id,
+            documentName: input.doc.name,
+          }),
+        );
+      } catch (clusterUploadError) {
+        console.error(
+          `[brain/knowledge/analyze] logo cluster upload failed (${cluster.clusterId}):`,
+          clusterUploadError,
+        );
+      }
+    }
+  } catch (clusterDetectError) {
+    console.error(`[brain/knowledge/analyze] logo cluster detect failed for ${input.doc.id}:`, clusterDetectError);
+  }
+
+  return { candidateBrand, typography: input.extracted.typography, discoveredLogoAssets };
+}
+
+function mergeTypographyIntoStrategy(
+  strategy: BrainStrategy,
+  typography: PdfBrandExtractResult["typography"],
+): BrainStrategy {
+  if (!typography.primary && !typography.secondary) return strategy;
+  const prev = strategy as BrainStrategy & { typography?: Record<string, unknown> };
+  return {
+    ...strategy,
+    typography: {
+      ...(prev.typography ?? {}),
+      ...(typography.primary ? { primary: typography.primary } : {}),
+      ...(typography.secondary ? { secondary: typography.secondary } : {}),
+    },
+  } as BrainStrategy;
+}
+
+function applyGuardedAnalyzeResponse(input: {
+  body: AnalyzeRequestBody;
+  knowledgeDocs: KnowledgeDocumentEntry[];
+  meta: ReturnType<typeof normalizeBrainMeta>;
+  strategy: BrainStrategy;
+  corporateContext: string;
+  candidateBrand?: Partial<ProjectBrandKit>;
+  typographySource?: PdfBrandExtractResult["typographySource"];
+  discoveredLogoAssets?: BrainDiscoveredBrandAsset[];
+  pipelinePatch?: BrandPipelineDiagnosticsPatch;
+}): {
+  strategy: BrainStrategy;
+  corporateContext: string;
+  brainMeta: ReturnType<typeof normalizeBrainMeta>;
+  brand: ProjectBrandKit;
+} {
+  const previous = buildPreviousAssetsForGuardedMerge(input.body, input.knowledgeDocs, input.meta);
+  const allowBrandWrites = canWriteBrainScope("brand", previous);
+  const strategyWithClusters = input.discoveredLogoAssets?.length
+    ? mergeDiscoveredLogoClustersIntoStrategy(input.strategy, input.discoveredLogoAssets)
+    : input.strategy;
+  const guarded = applyGuardedAnalyzeMerge({
+    previous,
+    candidateStrategy: strategyWithClusters,
+    candidateCorporateContext: input.corporateContext,
+    candidateBrand: input.candidateBrand,
+    options: {
+      sourceId: createRunId("analyze"),
+      evidenceKind:
+        input.candidateBrand?.colorPrimary ||
+        input.candidateBrand?.logoPositive ||
+        input.candidateBrand?.logoNegative
+          ? "pdf-embedded"
+          : "pdf-llm",
+      allowBrandWrites,
+    },
+  });
+  const boardMetaWithCandidates = applyLogoCandidateSidecar(
+    input.typographySource === "llm-synthesis"
+      ? applyTypographyLlmSynthesisSidecar(guarded.boardMeta, {
+          sourceId: createRunId("typography-vision"),
+        })
+      : guarded.boardMeta,
+    input.discoveredLogoAssets ?? [],
+    previous.brainMeta?.rejectedLogoSignatures,
+  );
+  const mergeCheckpoint: BrandPipelineCheckpointMerge = {
+    at: new Date().toISOString(),
+    allowBrandWrites: guarded.allowBrandWrites,
+    sourceId: createRunId("merge"),
+    fields: guarded.mergeFieldLogs,
+  };
+  const pipelinePatch: BrandPipelineDiagnosticsPatch = {
+    ...(input.pipelinePatch ?? {}),
+    merge: [...(input.pipelinePatch?.merge ?? []), mergeCheckpoint],
+  };
+  const mergedAssetsForPicker = {
+    ...guarded.assets,
+    brainMeta: {
+      ...guarded.assets.brainMeta,
+      boardMeta: boardMetaWithCandidates,
+    },
+  };
+  const pendingLogoPicker = shouldPromptLogoPicker(mergedAssetsForPicker, boardMetaWithCandidates);
+  return {
+    strategy: guarded.assets.strategy,
+    corporateContext: guarded.assets.knowledge.corporateContext ?? "",
+    brainMeta: normalizeBrainMeta({
+      ...input.meta,
+      boardMeta: boardMetaWithCandidates,
+      rejectedLogoSignatures:
+        guarded.assets.brainMeta?.rejectedLogoSignatures ?? previous.brainMeta?.rejectedLogoSignatures,
+      ...(pendingLogoPicker ? { pendingLogoPicker: true } : {}),
+      brandPipelineDiagnostics: mergeBrandPipelineDiagnostics(
+        input.meta.brandPipelineDiagnostics,
+        pipelinePatch,
+      ),
+    }),
+    brand: guarded.assets.brand,
+  };
+}
+
 export async function POST(req: NextRequest) {
   const usageTasks: AnalyzeUsageQueue = [];
   try {
@@ -1094,13 +1477,7 @@ export async function POST(req: NextRequest) {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
     const usageUserEmail = authState.user.email;
-    const body = (await req.json()) as {
-      documents?: BrainDoc[];
-      strategy?: BrainStrategy;
-      projectId?: string;
-      workspaceId?: string;
-      brainMeta?: unknown;
-    };
+    const body = (await req.json()) as AnalyzeRequestBody;
     const docs = Array.isArray(body.documents) ? body.documents : [];
     const nextDocs = [...docs];
     const ctx = {
@@ -1122,6 +1499,17 @@ export async function POST(req: NextRequest) {
         }),
       );
 
+    let pipelinePatch = emptyBrandPipelineDiagnosticsPatch();
+    const appendPipelinePatch = (
+      base: BrandPipelineDiagnosticsPatch,
+      next: BrandPipelineDiagnosticsPatch,
+    ): BrandPipelineDiagnosticsPatch => ({
+      upload: [...(base.upload ?? []), ...(next.upload ?? [])],
+      analyzeSkip: [...(base.analyzeSkip ?? []), ...(next.analyzeSkip ?? [])],
+      extract: [...(base.extract ?? []), ...(next.extract ?? [])],
+      merge: [...(base.merge ?? []), ...(next.merge ?? [])],
+    });
+
     const onExtractUsage: BrainOpenAiChatUsageHook = (model, u) => {
       if (!u) return;
       enqueueOpenAiUsage(usageTasks, {
@@ -1141,29 +1529,69 @@ export async function POST(req: NextRequest) {
 
     if (pendingIdx.length === 0) {
       const knowledgeDocs = nextDocs.filter((doc) => doc.brainSourceScope !== "capsule");
+      let pdfBrandMerge: PdfBrandMergePayload | null = null;
+      if (body.forceReextractBrand) {
+        const pdfTargets = knowledgeDocs
+          .map((doc, idx) => ({ doc, idx }))
+          .filter(({ doc }) => isPdfKnowledgeDoc(doc));
+        const brandPass = await runPdfBrandExtractPass({
+          docs: pdfTargets,
+          forceReextract: true,
+          userEmail: usageUserEmail,
+        });
+        pipelinePatch = appendPipelinePatch(pipelinePatch, brandPass.patch);
+        pdfBrandMerge = brandPass.merge;
+        for (const { idx } of pdfTargets) {
+          const update = brandPass.docUpdates.get(String(idx));
+          if (update) nextDocs[idx] = { ...nextDocs[idx], ...update };
+        }
+        pdfBrandMerge = await appendShapeLogoCandidates({
+          merge: pdfBrandMerge,
+          docs: knowledgeDocs,
+          userEmail: usageUserEmail,
+        });
+      }
       const autofill = await buildAutofillStrategy(knowledgeDocs, usageTasks, ctx);
       const meta = normalizeBrainMeta(body.brainMeta);
       const corporateContext = buildReadableCorporateContext(knowledgeDocs);
       let strategy = body.strategy ?? mergeStrategy(undefined, autofill);
       if (canWriteBrainScope("brand", { brainMeta: meta })) {
         strategy = mergeStrategy(body.strategy, autofill);
+        if (pdfBrandMerge) {
+          strategy = mergeTypographyIntoStrategy(strategy, pdfBrandMerge.typography);
+        }
         strategy = enrichStrategyCreativeMemory(strategy, {
           brainMeta: meta,
           knowledgeDocuments: knowledgeDocs as KnowledgeDocumentEntry[],
           corporateContext,
         });
       }
+      const guarded = applyGuardedAnalyzeResponse({
+        body,
+        knowledgeDocs: knowledgeDocs as KnowledgeDocumentEntry[],
+        meta,
+        strategy,
+        corporateContext,
+        candidateBrand: pdfBrandMerge?.candidateBrand,
+        typographySource: pdfBrandMerge?.typographySource,
+        discoveredLogoAssets: pdfBrandMerge?.discoveredLogoAssets,
+        pipelinePatch,
+      });
       await Promise.all(usageTasks);
       return NextResponse.json({
-        message: "No pending documents to analyze.",
+        message: body.forceReextractBrand
+          ? "Re-análisis de marca desde PDF completado."
+          : "No pending documents to analyze.",
         documents: nextDocs,
-        corporateContext,
-        strategy,
-        brainMeta: meta,
+        corporateContext: guarded.corporateContext,
+        strategy: guarded.strategy,
+        brainMeta: guarded.brainMeta,
+        brand: guarded.brand,
       });
     }
 
     const analyzedDocIds: string[] = [];
+    let pdfBrandMerge: PdfBrandMergePayload | null = null;
     for (const { idx } of pendingIdx) {
       const doc = nextDocs[idx];
       try {
@@ -1171,6 +1599,23 @@ export async function POST(req: NextRequest) {
         const allowed = await canUserAccessKnowledgeFileKey(usageUserEmail, doc.s3Path);
         if (!allowed) throw new Error("Forbidden document asset");
         const fileBuffer = await getFromS3(doc.s3Path);
+
+        let contentSha256: string | undefined;
+        let brandExtractVersion: string | undefined;
+        if (isPdfKnowledgeDoc(doc)) {
+          const brandPass = await runPdfBrandExtractPass({
+            docs: [{ doc, idx }],
+            forceReextract: Boolean(body.forceReextractBrand),
+            userEmail: usageUserEmail,
+          });
+          pipelinePatch = appendPipelinePatch(pipelinePatch, brandPass.patch);
+          if (brandPass.merge) pdfBrandMerge = brandPass.merge;
+          const update = brandPass.docUpdates.get(String(idx));
+          if (update) {
+            contentSha256 = update.contentSha256;
+            brandExtractVersion = update.brandExtractVersion;
+          }
+        }
 
         let extractedData: Record<string, unknown>;
         let analysisProvider: BrainDoc["analysisProvider"] = "openai";
@@ -1257,6 +1702,8 @@ export async function POST(req: NextRequest) {
           analysisOrigin,
           analysisReliability,
           isReliableForGeneration,
+          contentSha256: contentSha256 ?? doc.contentSha256,
+          brandExtractVersion: brandExtractVersion ?? doc.brandExtractVersion,
         };
         analyzedDocIds.push(doc.id);
       } catch (docError) {
@@ -1282,6 +1729,11 @@ export async function POST(req: NextRequest) {
     }
 
     const knowledgeDocs = nextDocs.filter((doc) => doc.brainSourceScope !== "capsule");
+    pdfBrandMerge = await appendShapeLogoCandidates({
+      merge: pdfBrandMerge,
+      docs: knowledgeDocs,
+      userEmail: usageUserEmail,
+    });
     const corporateContext = buildReadableCorporateContext(knowledgeDocs);
     const autofill = await buildAutofillStrategy(knowledgeDocs, usageTasks, ctx);
     let meta = touchBrainMetaAfterKnowledgeAnalysis(normalizeBrainMeta(body.brainMeta), analyzedDocIds.length);
@@ -1291,20 +1743,35 @@ export async function POST(req: NextRequest) {
     let strategy = body.strategy ?? mergeStrategy(undefined, autofill);
     if (canWriteBrainScope("brand", { brainMeta: meta })) {
       strategy = mergeStrategy(body.strategy, autofill);
+      if (pdfBrandMerge) {
+        strategy = mergeTypographyIntoStrategy(strategy, pdfBrandMerge.typography);
+      }
       strategy = enrichStrategyCreativeMemory(strategy, {
         brainMeta: meta,
         knowledgeDocuments: knowledgeDocs as KnowledgeDocumentEntry[],
         corporateContext,
       });
     }
+    const guarded = applyGuardedAnalyzeResponse({
+      body,
+      knowledgeDocs: knowledgeDocs as KnowledgeDocumentEntry[],
+      meta,
+      strategy,
+      corporateContext,
+      candidateBrand: pdfBrandMerge?.candidateBrand,
+      typographySource: pdfBrandMerge?.typographySource,
+      discoveredLogoAssets: pdfBrandMerge?.discoveredLogoAssets,
+      pipelinePatch,
+    });
     await Promise.all(usageTasks);
     return NextResponse.json({
       message: `Analyzed ${analyzedDocIds.length} documents.`,
       analyzedDocIds,
       documents: nextDocs,
-      corporateContext,
-      strategy,
-      brainMeta: meta,
+      corporateContext: guarded.corporateContext,
+      strategy: guarded.strategy,
+      brainMeta: guarded.brainMeta,
+      brand: guarded.brand,
     });
   } catch (error) {
     if (error instanceof ApiServiceDisabledError) {

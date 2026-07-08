@@ -1,0 +1,36 @@
+{
+  "logoInstances": [
+    {
+      "bbox": [0.05, 0.02, 0.35, 0.08],
+      "variant": "horizontal",
+      "onBackground": "oscuro",
+      "textInLogo": "ATRESMEDIA SALES",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.94
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "atresmediatv.com",
+      "kind": "dominio_pie",
+      "bbox": [0.28, 0.955, 0.72, 0.985]
+    },
+    {
+      "text": "ATRESMEDIA SALES",
+      "kind": "wordmark_logo",
+      "bbox": [0.05, 0.02, 0.35, 0.08]
+    }
+  ],
+  "typographyRoles": [
+    {
+      "role": "titular",
+      "sampleText": "unknown",
+      "bbox": [0.08, 0.12, 0.55, 0.18],
+      "styleObserved": "sans condensada, mayúsculas, bold"
+    }
+  ],
+  "brandSurfaces": [[0, 0.88, 1, 1], [0, 0, 1, 0.1]],
+  "images": [],
+  "pageKind": "portada"
+}

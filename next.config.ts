@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["sharp"],
+  serverExternalPackages: ["sharp", "pdfjs-dist", "@hyzyla/pdfium"],
   turbopack: {},
   async redirects() {
     return [{ source: "/home_v2", destination: "/", permanent: true }];

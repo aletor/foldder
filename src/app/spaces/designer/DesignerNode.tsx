@@ -54,8 +54,10 @@ import {
   brainBrandSignature,
   mergeBrainBrandIntoConstants,
 } from "@/app/spaces/brandkit/brandkit-logic";
+import { shouldUseLegacyBrainBrandMerge } from "@/lib/brandkit/brandkit-legacy-migration";
 import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import { normalizeProjectAssets } from "../project-assets-metadata";
+import type { GenomaNodeData } from "../genoma/GenomaNode";
 import {
   applyDatasetToAllPages,
   collectDatasetLoopListId,
@@ -170,14 +172,27 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       [id],
     ),
   );
+  const brainSourceNode = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>) => {
+        if (!brainNodeId) return null;
+        return state.nodeLookup.get(brainNodeId) ?? state.nodes.find((n) => n.id === brainNodeId) ?? null;
+      },
+      [brainNodeId],
+    ),
+    shallow,
+  );
   const brainConnected = !!brainNodeId;
   const brainCanvasCtx = useProjectBrainCanvas();
-  const brainBrand = useMemo(
-    () => (brainNodeId ? normalizeProjectAssets(brainCanvasCtx?.assetsMetadata).brand : null),
-    [brainNodeId, brainCanvasCtx?.assetsMetadata],
-  );
+  const brainBrand = useMemo(() => {
+    if (!brainNodeId) return null;
+    if (brainSourceNode?.type === "genoma") {
+      return (brainSourceNode.data as GenomaNodeData).brandKit ?? null;
+    }
+    return normalizeProjectAssets(brainCanvasCtx?.assetsMetadata).brand;
+  }, [brainNodeId, brainSourceNode, brainCanvasCtx?.assetsMetadata]);
   const brainBrandSig = useMemo(() => brainBrandSignature(brainNodeId, brainBrand), [brainNodeId, brainBrand]);
-  const { datasetConnected, connectedDataset, datasetLoading } = useDesignerConnectedDataset(id);
+  const { datasetConnected, connectedDataset, datasetLoading, brandKitLink } = useDesignerConnectedDataset(id);
   /**
    * Dataset efectivo: el conectado + la marca del BrandKit (Brain) conectado —logo/colores—
    * inyectados como constantes namespaced. Es lo que se aplica a las páginas y se pasa al estudio,
@@ -186,12 +201,19 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
    */
   const effectiveDataset = useMemo(
     () => {
-      if (brainNodeId && brainBrand) return mergeBrainBrandIntoConstants(connectedDataset, brainNodeId, brainBrand);
+      const useLegacyMerge = shouldUseLegacyBrainBrandMerge({
+        brainNodeId,
+        connectedDataset,
+        brandKitLink,
+      });
+      if (brainNodeId && brainBrand && useLegacyMerge) {
+        return mergeBrainBrandIntoConstants(connectedDataset, brainNodeId, brainBrand);
+      }
       return connectedDataset;
     },
     // brainBrandSig captura el cambio de contenido sin re-fusionar en cada tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [connectedDataset, brainBrandSig],
+    [connectedDataset, brainBrandSig, brandKitLink, brainNodeId],
   );
   const currentNodeFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),

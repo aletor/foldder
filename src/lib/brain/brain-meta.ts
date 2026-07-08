@@ -1,4 +1,6 @@
 import type { BrainMeta, BrainMetaAnalysisStatus } from "./brain-creative-memory-types";
+import { normalizeBrandPipelineDiagnostics } from "@/lib/brandkit/brand-pipeline-diagnostics";
+import { normalizeBrandKitBoardMeta } from "@/lib/brandkit/interpretation";
 import { filterOutStaleReasons, KNOWLEDGE_STALE_REASONS, VISUAL_STALE_REASONS } from "./brain-stale-reasons";
 
 export function normalizeBrainMeta(raw: unknown): BrainMeta {
@@ -15,6 +17,13 @@ export function normalizeBrainMeta(raw: unknown): BrainMeta {
   const staleReasons = Array.isArray(r.staleReasons)
     ? (r.staleReasons.map((x) => String(x).trim()).filter(Boolean) as string[])
     : [];
+  const boardMeta =
+    r.boardMeta !== undefined ? normalizeBrandKitBoardMeta(r.boardMeta) : undefined;
+  const brandPipelineDiagnostics = normalizeBrandPipelineDiagnostics(r.brandPipelineDiagnostics);
+  const rejectedLogoSignatures = Array.isArray(r.rejectedLogoSignatures)
+    ? r.rejectedLogoSignatures.map((x) => String(x).trim()).filter(Boolean)
+    : undefined;
+
   return {
     brainVersion,
     lastSavedAt: typeof r.lastSavedAt === "string" ? r.lastSavedAt : undefined,
@@ -27,6 +36,10 @@ export function normalizeBrainMeta(raw: unknown): BrainMeta {
     brandLocked: r.brandLocked === true,
     analysisStatus,
     staleReasons,
+    ...(boardMeta ? { boardMeta } : {}),
+    ...(brandPipelineDiagnostics ? { brandPipelineDiagnostics } : {}),
+    ...(rejectedLogoSignatures?.length ? { rejectedLogoSignatures } : {}),
+    ...(r.pendingLogoPicker === true ? { pendingLogoPicker: true } : {}),
   };
 }
 

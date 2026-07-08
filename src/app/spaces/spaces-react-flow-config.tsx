@@ -41,6 +41,7 @@ import { LightroomNode } from "./lightroom/LightroomNode";
 import { DatasetNode } from "./dataset/DatasetNode";
 import { LoopNode } from "./loop/LoopNode";
 import { PopulateNode } from "./populate/PopulateNode";
+import { GenomaNode } from "./genoma/GenomaNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -81,6 +82,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   crop: CropNode,
   designer: DesignerNode,
   projectBrain: ProjectBrainNode,
+  genoma: GenomaNode,
   projectAssets: ProjectAssetsNode,
   presenter: PresenterNode,
   canvasGroup: CanvasGroupNode,

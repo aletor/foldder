@@ -1,0 +1,11 @@
+/** Error cuando el usuario autorizó análisis de pago pero la visión no devolvió resultado. */
+export class GenomaVisionPassError extends Error {
+  readonly code = "genoma_vision_pass_failed" as const;
+  billedCostUsd?: number;
+  billedUsage?: import("./page-vision-batch-gemini-usage").PageVisionGeminiUsageSnapshot;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "GenomaVisionPassError";
+  }
+}

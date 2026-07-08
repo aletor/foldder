@@ -29,6 +29,9 @@ export function getAiRequestLabelForPathname(pathname: string): string | null {
     { test: /^\/api\/spaces\/search$/, label: "Búsqueda" },
     { test: /^\/api\/video-editor\/render$/, label: "Render" },
     { test: /^\/api\/video-editor\/subtitles\/transcribe$/, label: "Subtítulos" },
+    { test: /^\/api\/spaces\/genoma\/ingest$/, label: "Genoma" },
+    { test: /^\/api\/spaces\/genoma\/visual\/generate$/, label: "Genoma" },
+    { test: /^\/api\/spaces\/genoma\/logo\/vectorize$/, label: "Genoma" },
     { test: /^\/api\/inspiration\/search$/, label: "Inspiration" },
   ];
 

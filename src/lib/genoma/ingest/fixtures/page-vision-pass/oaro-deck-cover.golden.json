@@ -1,0 +1,31 @@
+{
+  "logoInstances": [
+    {
+      "bbox": [0.04, 0.03, 0.32, 0.12],
+      "variant": "horizontal",
+      "onBackground": "claro",
+      "textInLogo": "OARO",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.91
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "oaro.io",
+      "kind": "dominio_pie",
+      "bbox": [0.72, 0.94, 0.96, 0.985]
+    }
+  ],
+  "typographyRoles": [
+    {
+      "role": "display",
+      "sampleText": "Securing connections",
+      "bbox": [0.08, 0.22, 0.72, 0.34],
+      "styleObserved": "sans geométrica, bold, tracking moderado"
+    }
+  ],
+  "brandSurfaces": [[0, 0, 1, 0.18]],
+  "images": [],
+  "pageKind": "portada"
+}

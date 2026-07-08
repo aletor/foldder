@@ -1,8 +1,7 @@
 /**
- * BrandKit — "objeto inteligente" de marca, editable en un único punto y referenciable
- * en vivo desde cualquier Designer (logo, colores, handle). Internamente es un bloque de
- * `Constants` del Dataset con 4 campos fijos (v1), de modo que reutiliza por completo la
- * resolución de bindings que ya existe (constantes → propiedad/contenido del Designer).
+ * BrandKit — objeto de marca legacy (4 constantes fijas).
+ * @deprecated Usar bloque «Marca · BrandKit» del Dataset (`brandkit-dataset-schema`) conectado a projectBrain.
+ * Se conserva para compatibilidad de bindings `bk:<nodeId>:logo|primaryColor|…` hasta migrar.
  */
 
 import type { Constants, FieldDef } from "@/app/spaces/dataset/dataset-types";

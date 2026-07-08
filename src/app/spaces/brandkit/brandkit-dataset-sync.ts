@@ -12,7 +12,6 @@ import {
   BRANDKIT_DATASET_MAX_GALLERY,
   BRANDKIT_DATASET_MAX_MESSAGES,
   BRANDKIT_GALLERY_LIST_NAME,
-  BRANDKIT_GALLERY_CATEGORIES,
   BRANDKIT_MESSAGES_LIST_NAME,
   brandKitDatasetConstantDefs,
   brandKitDatasetConstantId,
@@ -22,18 +21,14 @@ import {
   brandKitMessagesListSchema,
   type BrandKitDatasetFieldId,
   type BrandKitDatasetLink,
-  type BrandKitGalleryCategory,
 } from "./brandkit-dataset-schema";
 import {
-  resolveBrandKitDatasetColors,
-  resolveBrandKitDatasetContext,
-  resolveBrandKitDatasetGallery,
-  resolveBrandKitDatasetLogos,
-  resolveBrandKitDatasetMessage,
-  resolveBrandKitDatasetTone,
-  resolveBrandKitDatasetVisualSlotUrl,
   toPlainBrandText,
 } from "./brandkit-dataset-projections";
+import {
+  attachBrandKitDatasetProjectionSidecar,
+  buildBrandKitDatasetProjection,
+} from "@/lib/brandkit/dataset-projection";
 
 const CONTEXT_MAX = 480;
 const TONE_MAX_LINES = 12;
@@ -98,22 +93,6 @@ export function filterUserFacingLists(dataset: Dataset, link?: BrandKitDatasetLi
 export function countBrandKitSharedConstants(dataset: Dataset, brainNodeId: string): number {
   const prefix = `bk:${brainNodeId}:`;
   return dataset.constants.fields.filter((field) => field.id.startsWith(prefix)).length;
-}
-
-function collectMessageCandidates(assets: ProjectAssetsMetadata): string[] {
-  const strategy = assets.strategy;
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (raw: string) => {
-    const text = resolveBrandKitDatasetMessage(raw);
-    if (!text || seen.has(text.toLowerCase())) return;
-    seen.add(text.toLowerCase());
-    out.push(text);
-  };
-  for (const phrase of strategy.approvedPhrases) push(phrase);
-  for (const blueprint of strategy.messageBlueprints) push(blueprint.claim);
-  for (const funnel of strategy.funnelMessages) push(funnel.text);
-  return out.slice(0, BRANDKIT_DATASET_MAX_MESSAGES);
 }
 
 function parseToneToAssets(toneText: string, assets: ProjectAssetsMetadata): ProjectAssetsMetadata {
@@ -217,50 +196,33 @@ export function syncBrandKitAssetsToDataset(
   dataset: Dataset,
   brainNodeId: string,
   rawAssets: unknown,
-): { dataset: Dataset; link: BrandKitDatasetLink } {
+): { dataset: Dataset; link: BrandKitDatasetLink; assets: ProjectAssetsMetadata } {
   const assets = normalizeProjectAssets(rawAssets);
   const { dataset: structured, link } = ensureBrandKitDatasetStructure(dataset, brainNodeId);
+  const projection = buildBrandKitDatasetProjection(assets, assets.brainMeta?.boardMeta, brainNodeId);
+  const assetsWithSidecar = attachBrandKitDatasetProjectionSidecar(assets, projection);
 
   const values = { ...structured.constants.values };
-  const context = resolveBrandKitDatasetContext(assets);
-  const tone = resolveBrandKitDatasetTone(assets);
-  const colors = resolveBrandKitDatasetColors(assets);
-  const logos = resolveBrandKitDatasetLogos(assets);
-
-  values[brandKitDatasetConstantId(brainNodeId, "context")] = textValue(context);
-  values[brandKitDatasetConstantId(brainNodeId, "tone")] = textValue(tone);
-  values[brandKitDatasetConstantId(brainNodeId, "color_primary")] = colorValue(colors.primary);
-  values[brandKitDatasetConstantId(brainNodeId, "color_secondary")] = colorValue(colors.secondary);
-  values[brandKitDatasetConstantId(brainNodeId, "color_accent")] = colorValue(colors.accent);
-  values[brandKitDatasetConstantId(brainNodeId, "logo_positive")] = imageValue(logos.positive);
-  values[brandKitDatasetConstantId(brainNodeId, "logo_negative")] = imageValue(logos.negative);
-
-  for (const slotKey of ["environment", "textures", "people", "objects", "protagonist"] as const) {
-    const fieldId = slotFieldIdForKey(slotKey);
-    values[brandKitDatasetConstantId(brainNodeId, fieldId)] = imageValue(
-      resolveBrandKitDatasetVisualSlotUrl(assets, slotKey),
-    );
+  for (const row of projection.constants) {
+    if (row.text !== undefined) values[row.constantId] = textValue(row.text);
+    else if (row.color !== undefined) values[row.constantId] = colorValue(row.color);
+    else if (row.imageUrl !== undefined) values[row.constantId] = imageValue(row.imageUrl);
   }
 
   const messageField = brandKitMessagesListSchema()[0]!;
-  const messages = collectMessageCandidates(assets);
-  const messageCards: Card[] = messages.map((message) => ({
-    id: genId("bkmsg"),
-    values: { [messageField.id]: textValue(message) },
+  const messageCards: Card[] = projection.lists.messages.map((row) => ({
+    id: row.rowId.startsWith("bkmsg_") ? row.rowId : genId("bkmsg"),
+    values: { [messageField.id]: textValue(row.message) },
   }));
 
   const gallerySchema = brandKitGalleryListSchema();
   const categoryField = gallerySchema[0]!;
   const imageField = gallerySchema[1]!;
-  const gallery = resolveBrandKitDatasetGallery(assets, BRANDKIT_DATASET_MAX_GALLERY);
-  const galleryCards: Card[] = gallery.map((entry) => ({
-    id: entry.id || genId("bkgal"),
+  const galleryCards: Card[] = projection.lists.gallery.map((row) => ({
+    id: row.rowId || genId("bkgal"),
     values: {
-      [categoryField.id]: {
-        type: "select",
-        value: entry.category,
-      },
-      [imageField.id]: imageValue(entry.imageUrl),
+      [categoryField.id]: { type: "select", value: row.category },
+      [imageField.id]: imageValue(row.imageUrl),
     },
   }));
 
@@ -272,12 +234,23 @@ export function syncBrandKitAssetsToDataset(
 
   return {
     link,
+    assets: assetsWithSidecar,
     dataset: normalizeDataset({
       ...structured,
       constants: { fields: structured.constants.fields, values },
       lists,
     }),
   };
+}
+
+/** Fuerza reproyección BrandKit → Dataset («Actualizar desde BrandKit»). */
+export function refreshBrandKitDatasetFromAssets(
+  dataset: Dataset,
+  link: BrandKitDatasetLink,
+  rawAssets: unknown,
+): { dataset: Dataset; assets: ProjectAssetsMetadata; link: BrandKitDatasetLink } {
+  const synced = syncBrandKitAssetsToDataset(dataset, link.brainNodeId, rawAssets);
+  return { dataset: synced.dataset, assets: synced.assets, link: synced.link };
 }
 
 /** Parche de node.data al conectar BrandKit → Dataset. */
@@ -315,7 +288,7 @@ export function patchDatasetNodeAfterBrandKitEdit(
   };
 }
 
-/** Extrae cambios del bloque Marca del Dataset → assets (sin mutar dataset). */
+/** Extrae cambios del bloque Marca del Dataset → assets (solo constants; listas read-only v1). */
 export function syncBrandKitDatasetToAssets(
   dataset: Dataset,
   link: BrandKitDatasetLink,
@@ -362,44 +335,11 @@ export function syncBrandKitDatasetToAssets(
     };
   }
 
-  const messagesList = normalized.lists.find((l) => l.id === link.messagesListId);
-  const messageFieldId = brandKitMessagesListSchema()[0]?.id ?? "message";
-  const approvedPhrases = (messagesList?.cards ?? [])
-    .map((card) => readTextValue(card.values[messageFieldId]))
-    .filter(Boolean)
-    .slice(0, BRANDKIT_DATASET_MAX_MESSAGES);
-
-  const galleryList = normalized.lists.find((l) => l.id === link.galleryListId);
-  const gallerySchema = brandKitGalleryListSchema();
-  const categoryFieldId = gallerySchema[0]?.id ?? "category";
-  const imageFieldId = gallerySchema[1]?.id ?? "image";
-  const brandPublicGallery = (galleryList?.cards ?? [])
-    .map((card) => {
-      const categoryRaw = card.values[categoryFieldId];
-      const category =
-        categoryRaw?.type === "select" &&
-        (BRANDKIT_GALLERY_CATEGORIES as readonly string[]).includes(categoryRaw.value)
-          ? (categoryRaw.value as BrandKitGalleryCategory)
-          : "environment";
-      const imageUrl = readImageUrl(card.values[imageFieldId]);
-      if (!imageUrl) return null;
-      return {
-        id: card.id,
-        category,
-        imageUrl,
-        label: undefined,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x != null)
-    .slice(0, BRANDKIT_DATASET_MAX_GALLERY);
-
   return normalizeProjectAssets({
     ...next,
     strategy: {
       ...next.strategy,
       visualStyle,
-      approvedPhrases,
-      brandPublicGallery,
     },
   });
 }
@@ -465,5 +405,5 @@ export function applyBrandKitDatasetEdit(
 ): { dataset: Dataset; assets: ProjectAssetsMetadata; link: BrandKitDatasetLink } {
   const assets = syncBrandKitDatasetToAssets(dataset, link, rawAssets);
   const synced = syncBrandKitAssetsToDataset(dataset, link.brainNodeId, assets);
-  return { dataset: synced.dataset, assets, link: synced.link };
+  return { dataset: synced.dataset, assets: synced.assets, link: synced.link };
 }

@@ -185,9 +185,22 @@ export function areNodesConnectable(
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'image') return true;
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'url') return true;
 
-  // BrandKit → Dataset (input dedicado en Dataset).
+  // BrandKit / Genoma → Dataset (input dedicado en Dataset).
   if (targetNode.type === "dataset" && connection.targetHandle === "brandkit") {
-    return sourceNode.type === "projectBrain" && connection.sourceHandle === "brain";
+    return (
+      (sourceNode.type === "projectBrain" && connection.sourceHandle === "brain") ||
+      (sourceNode.type === "genoma" && connection.sourceHandle === "brand")
+    );
+  }
+
+  // Genoma brand → brain inputs (Designer, etc.).
+  if (sourceNode.type === "genoma" && connection.sourceHandle === "brand" && targetHandleType === "brain") {
+    return true;
+  }
+
+  // Genoma dataset → dataset inputs.
+  if (sourceNode.type === "genoma" && connection.sourceHandle === "dataset" && targetHandleType === "dataset") {
+    return true;
   }
 
   // Brain handle should only connect to brain-compatible inputs.

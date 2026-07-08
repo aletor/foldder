@@ -1,0 +1,54 @@
+{
+  "logoInstances": [
+    {
+      "bbox": [0.05, 0.02, 0.28, 0.07],
+      "variant": "horizontal",
+      "onBackground": "oscuro",
+      "textInLogo": "ATRESMEDIA SALES",
+      "isComplete": true,
+      "cutEdges": [],
+      "confidence": 0.92
+    }
+  ],
+  "brandNameEvidence": [
+    {
+      "text": "Ágata y Lola",
+      "kind": "titulo_prominente",
+      "bbox": [0.52, 0.08, 0.94, 0.16]
+    },
+    {
+      "text": "atresmediatv.com",
+      "kind": "dominio_pie",
+      "bbox": [0.3, 0.955, 0.7, 0.985]
+    }
+  ],
+  "typographyRoles": [
+    {
+      "role": "display",
+      "sampleText": "Ágata y Lola",
+      "bbox": [0.52, 0.08, 0.94, 0.16],
+      "styleObserved": "serif editorial, título de producto"
+    }
+  ],
+  "brandSurfaces": [[0, 0.9, 1, 1]],
+  "images": [
+    {
+      "bbox": [0.05, 0.18, 0.48, 0.72],
+      "visualDna": {
+        "sujeto": "2 adultos 30-45, pareja en primer plano",
+        "ropa": "chaqueta de cuero negra, vestido burdeos años 50",
+        "lugar": "calle nocturna con niebla, ambientación de época",
+        "animo": "dramático, tensión romántica",
+        "estiloArtistico": "cartel cinematográfico, retoque editorial",
+        "encuadre": "plano medio, composición triangular",
+        "luzTratamiento": "clave baja, luz dura lateral, contraste alto",
+        "paletaAprox": ["#1a1f2e", "#7a2030", "#c9a86a"],
+        "texturas": "humo, grano fílmico, tejido",
+        "vozVisual": "premium, narrativo, no stock"
+      },
+      "esFotoDeProducto": true,
+      "confidence": 0.89
+    }
+  ],
+  "pageKind": "ficha_contenido"
+}

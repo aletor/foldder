@@ -2,14 +2,15 @@
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { NodeResizer, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
-import {
-  BRAIN_ADN_COMPLETENESS_TOOLTIP_ES,
-  computeAdnScore,
-} from "@/lib/brain/brain-adn-score";
 import { listDownstreamBrainClients } from "@/lib/brain/brain-canvas-brain-links";
 import { collectVisualImageAssetRefs } from "@/lib/brain/brain-visual-analysis";
 import type { StoredLearningCandidate } from "@/lib/brain/learning-candidate-schema";
 import { learningRowMatchesCanvasNode } from "@/lib/brain/brain-connected-signals-ui";
+import {
+  BRANDKIT_BOOK_COMPLETENESS_TOOLTIP_ES,
+  buildBrandKitCardView,
+  hasBrandKitCardContent,
+} from "@/lib/brandkit/brandkit-card-projection";
 import { readResponseJson } from "@/lib/read-response-json";
 import { getNodeGridFrameForType, growCanvasDimensionToGrid } from "./canvas-grid-layout";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./studio-node/studio-canvas-node";
 import { hasFoldderStudioTouched } from "./studio-node/foldder-studio-touched";
 import { resolveFoldderNodeStudioBackground } from "./studio-node/foldder-studio-node-backgrounds";
+import { BrandKitCardFace } from "./brandkit/BrandKitCardFace";
 
 const PROJECT_BRAIN_HANDLES: StudioCanvasNodeHandleSpec[] = [
   {
@@ -72,7 +74,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const updateNodeInternals = useUpdateNodeInternals();
   const frameSyncKeyRef = useRef<string | null>(null);
   const assets = useMemo(() => normalizeProjectAssets(ctx?.assetsMetadata), [ctx?.assetsMetadata]);
-  const adn = useMemo(() => computeAdnScore(assets), [assets]);
+  const cardView = useMemo(() => buildBrandKitCardView(assets), [assets]);
 
   const visualRefCount = useMemo(() => collectVisualImageAssetRefs(assets).length, [assets]);
   const hasLogo = Boolean(assets.brand.logoPositive || assets.brand.logoNegative);
@@ -148,8 +150,9 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
     ? nodeData.label.trim()
     : "BrandKit";
   const hasConnections = brainClients.length > 0;
-  const hasContent = activeCount > 0 || hasPreview || adn.total > 0;
-  const hasDock = hasContent || hasConnections || pendingCount > 0;
+  const hasBrandFace = hasBrandKitCardContent(assets);
+  const hasContent = hasBrandFace || hasConnections || pendingCount > 0;
+  const hasDock = hasContent;
   const isEmpty = !hasDock;
   const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
   const showConnectedIcon = hasConnections;
@@ -159,20 +162,23 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const activosLabel = `${activeCount} activo${activeCount === 1 ? "" : "s"}`;
   const pendientesLabel = pendingCount > 0 ? String(pendingCount) : "—";
   const salidaLabel = hasConnections ? nodesLabel : "—";
-  const adnLabel = `ADN ${adn.total}`;
+  const libroLabel = `${cardView.completenessPercent}%`;
+  const tonePreview = cardView.toneLine ?? cardView.tagline ?? "Marca en progreso";
   const statusLabel = pendingCount > 0
     ? hasConnections
       ? "Pendientes · Conectado"
       : "Pendientes"
-    : hasConnections
-      ? "Conectado"
-      : hasContent
-        ? adn.total >= 80
-          ? "Completo"
-          : "Configurado"
-        : "Vacío";
+    : cardView.review.conflicts > 0
+      ? "Conflicto"
+      : hasConnections
+        ? "Conectado"
+        : hasContent
+          ? cardView.completenessPercent >= 80
+            ? "Libro listo"
+            : "En curso"
+          : "Vacío";
   const previewLine = hasContent
-    ? `${adnLabel} · ${activosLabel}${hasConnections ? ` · ${nodesLabel}` : ""}`
+    ? `Libro ${libroLabel} · ${tonePreview}${hasConnections ? ` · ${nodesLabel}` : ""}`
     : hasConnections
       ? `Salida conectada a ${nodesLabel}`
       : "Define marca, voz y referencias visuales.";
@@ -203,7 +209,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
     }
 
     const measuredHeight = resolveBrandkitNodeHeight({ baseHeight: baseFrame.height, hasDock: true });
-    const syncKey = `brandkit-content:${hasPreview ? "preview" : "meta"}:${hasConnections ? "connected" : "idle"}:${measuredHeight}:${activeCount}:${pendingCount}`;
+    const syncKey = `brandkit-content:${hasPreview ? "preview" : "meta"}:${hasConnections ? "connected" : "idle"}:${measuredHeight}:${activeCount}:${pendingCount}:${cardView.completenessPercent}`;
     if (frameSyncKeyRef.current === syncKey) return;
 
     frameSyncKeyRef.current = syncKey;
@@ -231,6 +237,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
     activeCount,
+    cardView.completenessPercent,
     hasConnections,
     hasPreview,
     id,
@@ -250,7 +257,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       title="BRANDKIT"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
       minWidth={200}
-      className={`project-brain-node foldder-frameless-label-dark${hasDock ? " project-brain-node--has-content" : " project-brain-node--empty"}${hasPreview ? " project-brain-node--has-preview" : ""}${hasConnections ? " project-brain-node--connected" : ""}`}
+      className={`project-brain-node foldder-frameless-label-dark${hasDock ? " project-brain-node--has-content project-brain-node--brand-face" : " project-brain-node--empty"}${hasPreview ? " project-brain-node--has-preview" : ""}${hasConnections ? " project-brain-node--connected" : ""}${cardView.review.conflicts > 0 ? " project-brain-node--conflict" : ""}`}
       handles={PROJECT_BRAIN_HANDLES}
       variant="frameless"
       material="media"
@@ -272,13 +279,17 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       <div
         className={`node-content foldder-frameless-main project-brain-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
-        <div className="project-brain-node-preview-area foldder-node-content-preview-area">
+        <div
+          className="project-brain-node-preview-area foldder-node-content-preview-area"
+          onDoubleClick={openStudio}
+          title="Doble clic para abrir BrandKit Studio"
+        >
           {hasPreview ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={atmosphereImage!}
               alt=""
-              className="project-brain-node-preview-img"
+              className="project-brain-node-preview-img brandkit-card-face__backdrop"
               draggable={false}
             />
           ) : (
@@ -305,7 +316,9 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
                 onClick={openStudio}
               />
             </>
-          ) : null}
+          ) : (
+            <BrandKitCardFace view={cardView} />
+          )}
         </div>
 
         {hasDock ? (
@@ -315,12 +328,12 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
                 <p className="foldder-node-content-dock-text">{headerTitle}</p>
                 <p
                   className="foldder-node-content-dock-text foldder-node-content-dock-text--placeholder"
-                  title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
+                  title={BRANDKIT_BOOK_COMPLETENESS_TOOLTIP_ES}
                 >
                   {previewLine}
                 </p>
                 <FoldderNodeContentMeta>
-                  <FoldderNodeContentMetaRow label="ADN" value={adnLabel} />
+                  <FoldderNodeContentMetaRow label="Libro" value={libroLabel} />
                   <FoldderNodeContentMetaRow label="Activos" value={activosLabel} />
                   <FoldderNodeContentMetaRow label="Salida" value={salidaLabel} />
                   <FoldderNodeContentMetaRow label="Pendientes" value={pendientesLabel} />

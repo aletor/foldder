@@ -1,0 +1,984 @@
+{
+  "version": "2026-07-06-page-structured-3",
+  "dpi": 144,
+  "contentSha256": "f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434",
+  "fileName": "catalogo26.pdf",
+  "totalPages": 130,
+  "selectedPages": [
+    1,
+    2,
+    3,
+    4,
+    128,
+    129,
+    130
+  ],
+  "pages": [
+    {
+      "pageNumber": 1,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 1,
+        "logoInstances": [
+          {
+            "variant": "horizontal",
+            "onBackground": "oscuro",
+            "textInLogo": "ATRESMEDIA SALES",
+            "isComplete": true,
+            "cutEdges": [],
+            "confidence": 0.95,
+            "bbox": [
+              0.7,
+              0.83,
+              0.94,
+              0.9
+            ]
+          }
+        ],
+        "brandNameEvidence": [
+          {
+            "text": "ATRESMEDIA SALES",
+            "kind": "wordmark_logo",
+            "bbox": [
+              0.7,
+              0.83,
+              0.94,
+              0.9
+            ]
+          }
+        ],
+        "typographyRoles": [
+          {
+            "role": "display",
+            "sampleText": "2026",
+            "styleObserved": "Grande, negrita, sans-serif, color degradado naranja a blanco.",
+            "bbox": [
+              0.04,
+              0.82,
+              0.24,
+              0.95
+            ]
+          },
+          {
+            "role": "titular",
+            "sampleText": "CATÁLOGO CATALOGUE",
+            "styleObserved": "Negrita, sans-serif, color naranja.",
+            "bbox": [
+              0.26,
+              0.84,
+              0.6,
+              0.89
+            ]
+          }
+        ],
+        "brandSurfaces": [
+          [
+            0,
+            0.79,
+            1,
+            1
+          ]
+        ],
+        "images": [
+          {
+            "visualDna": {
+              "sujeto": "Grupo de jóvenes, estudiantes",
+              "ropa": "Casual, colorida",
+              "lugar": "Aula o pasillo escolar",
+              "animo": "Alegre, juvenil, enérgico",
+              "estiloArtistico": "Fotografía promocional, vibrante",
+              "encuadre": "Plano medio, grupal",
+              "luzTratamiento": "Brillante, natural",
+              "paletaAprox": [
+                "#FFD700",
+                "#FF69B4",
+                "#00BFFF"
+              ],
+              "texturas": "Suave, limpia",
+              "vozVisual": "Fresca, dinámica"
+            },
+            "esFotoDeProducto": true,
+            "confidence": 0.9,
+            "bbox": [
+              0,
+              0,
+              0.28,
+              0.2
+            ]
+          },
+          {
+            "visualDna": {
+              "sujeto": "Hombre con cámara, osos, montañas",
+              "ropa": "Ropa de aventura, camisa de cuadros",
+              "lugar": "Naturaleza salvaje, montañas",
+              "animo": "Aventurero, explorador, serio",
+              "estiloArtistico": "Fotografía documental, realista",
+              "encuadre": "Plano medio, con paisaje",
+              "luzTratamiento": "Luz natural, diurna",
+              "paletaAprox": [
+                "#8B4513",
+                "#A9A9A9",
+                "#2F4F4F"
+              ],
+              "texturas": "Rugosa, natural",
+              "vozVisual": "Realista, emocionante"
+            },
+            "esFotoDeProducto": true,
+            "confidence": 0.9,
+            "bbox": [
+              0.28,
+              0,
+              0.6,
+              0.28
+            ]
+          },
+          {
+            "visualDna": {
+              "sujeto": "Pareja (hombre y mujer), con fondo gráfico de órganos",
+              "ropa": "Casual, colorida",
+              "lugar": "Estudio, fondo gráfico",
+              "animo": "Intenso, dramático, misterioso",
+              "estiloArtistico": "Gráfico, con elementos de diseño",
+              "encuadre": "Plano medio superior",
+              "luzTratamiento": "Iluminación de estudio, vibrante",
+              "paletaAprox": [
+                "#FF00FF",
+                "#00FFFF",
+                "#FF4500"
+              ],
+              "texturas": "Gráfica, digital",
+              "vozVisual": "Impactante, moderna"
+            },
+            "esFotoDeProducto": true,
+            "confidence": 0.9,
+            "bbox": [
+              0.6,
+              0,
+              0.9,
+              0.28
+            ]
+          },
+          {
+            "visualDna": {
+              "sujeto": "Tres personas (dos hombres, una mujer) en un ambiente de época",
+              "ropa": "Vestuario de época, elegante",
+              "lugar": "Interior, posiblemente una mansión o casa antigua",
+              "animo": "Dramático, serio, romántico",
+              "estiloArtistico": "Fotografía cinematográfica, clásica",
+              "encuadre": "Plano medio, grupal",
+              "luzTratamiento": "Iluminación suave, cálida",
+              "paletaAprox": [
+                "#8B0000",
+                "#D2B48C",
+                "#4682B4"
+              ],
+              "texturas": "Suave, telas finas",
+              "vozVisual": "Clásica, emotiva"
+            },
+            "esFotoDeProducto": true,
+            "confidence": 0.9,
+            "bbox": [
+              0.38,
+              0.37,
+              0.68,
+              0.67
+            ]
+          }
+        ],
+        "pageKind": "portada"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p1",
+      "retried": false
+    },
+    {
+      "pageNumber": 2,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 2,
+        "logoInstances": [
+          {
+            "variant": "horizontal",
+            "onBackground": "claro",
+            "textInLogo": "ATRESMEDIA SALES",
+            "isComplete": true,
+            "cutEdges": [],
+            "confidence": 0.95,
+            "bbox": [
+              0.308,
+              0.46,
+              0.69,
+              0.54
+            ]
+          }
+        ],
+        "brandNameEvidence": [
+          {
+            "text": "sales@atresmediatv.com / international-sales-atresmedia.com",
+            "kind": "dominio_pie",
+            "bbox": [
+              0.23,
+              0.955,
+              0.77,
+              0.968
+            ]
+          }
+        ],
+        "typographyRoles": [
+          {
+            "role": "pie",
+            "sampleText": "sales@atresmediatv.com / international-sales-atresmedia.com",
+            "styleObserved": "Texto pequeño, en minúsculas, color negro, sin serifa.",
+            "bbox": [
+              0.23,
+              0.955,
+              0.77,
+              0.968
+            ]
+          }
+        ],
+        "brandSurfaces": [],
+        "images": [],
+        "pageKind": "asset_marca"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p2",
+      "retried": false
+    },
+    {
+      "pageNumber": 3,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 3,
+        "logoInstances": [],
+        "brandNameEvidence": [],
+        "typographyRoles": [
+          {
+            "role": "titular",
+            "sampleText": "DRAMA / THRILLER",
+            "styleObserved": "Sans-serif, mayúscula, negrita, blanco sobre fondo oscuro",
+            "bbox": [
+              0.08,
+              0.03,
+              0.29,
+              0.05
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "LAS HIJAS DE LA CRIADA THE MAID'S DAUGHTERS",
+            "styleObserved": "Sans-serif, regular, negro",
+            "bbox": [
+              0.08,
+              0.08,
+              0.49,
+              0.09
+            ]
+          },
+          {
+            "role": "etiqueta",
+            "sampleText": "8",
+            "styleObserved": "Sans-serif, regular, negro",
+            "bbox": [
+              0.91,
+              0.08,
+              0.92,
+              0.09
+            ]
+          },
+          {
+            "role": "titular",
+            "sampleText": "COMEDIA / COMEDY",
+            "styleObserved": "Sans-serif, mayúscula, negrita, blanco sobre fondo oscuro",
+            "bbox": [
+              0.08,
+              0.76,
+              0.29,
+              0.78
+            ]
+          }
+        ],
+        "brandSurfaces": [
+          [
+            0.08,
+            0.03,
+            0.92,
+            0.06
+          ],
+          [
+            0.08,
+            0.76,
+            0.92,
+            0.79
+          ]
+        ],
+        "images": [],
+        "pageKind": "indice"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p3",
+      "retried": false
+    },
+    {
+      "pageNumber": 4,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 4,
+        "logoInstances": [],
+        "brandNameEvidence": [],
+        "typographyRoles": [
+          {
+            "role": "titular",
+            "sampleText": "SERIES DIGITALES / DIGITAL SERIES",
+            "styleObserved": "Sans-serif, bold, uppercase, black text.",
+            "bbox": [
+              0.07,
+              0.24,
+              0.42,
+              0.26
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "CUERPO DE ELITE",
+            "styleObserved": "Sans-serif, regular, uppercase, black text.",
+            "bbox": [
+              0.07,
+              0.1,
+              0.23,
+              0.11
+            ]
+          },
+          {
+            "role": "etiqueta",
+            "sampleText": "HEROES WANTED",
+            "styleObserved": "Sans-serif, regular, uppercase, light grey text.",
+            "bbox": [
+              0.25,
+              0.1,
+              0.39,
+              0.11
+            ]
+          },
+          {
+            "role": "pie",
+            "sampleText": "72",
+            "styleObserved": "Sans-serif, regular, black text.",
+            "bbox": [
+              0.89,
+              0.1,
+              0.91,
+              0.11
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "CONTACTOS CONTACTS",
+            "styleObserved": "Sans-serif, regular, uppercase, black text.",
+            "bbox": [
+              0.07,
+              0.94,
+              0.22,
+              0.95
+            ]
+          }
+        ],
+        "brandSurfaces": [
+          [
+            0,
+            0.265,
+            1,
+            0.285
+          ],
+          [
+            0,
+            0.465,
+            1,
+            0.485
+          ],
+          [
+            0,
+            0.665,
+            1,
+            0.685
+          ],
+          [
+            0,
+            0.865,
+            1,
+            0.885
+          ]
+        ],
+        "images": [],
+        "pageKind": "indice"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p4",
+      "retried": false
+    },
+    {
+      "pageNumber": 128,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 128,
+        "logoInstances": [],
+        "brandNameEvidence": [
+          {
+            "text": "sales@atresmediatv.com",
+            "kind": "dominio_pie",
+            "bbox": [
+              0.1,
+              0.87,
+              0.34,
+              0.885
+            ]
+          },
+          {
+            "text": "international-sales-atresmedia.com",
+            "kind": "dominio_pie",
+            "bbox": [
+              0.1,
+              0.895,
+              0.43,
+              0.91
+            ]
+          },
+          {
+            "text": "CONTACTOS / CONTACTS",
+            "kind": "titulo_prominente",
+            "bbox": [
+              0.93,
+              0.63,
+              0.96,
+              0.88
+            ]
+          }
+        ],
+        "typographyRoles": [
+          {
+            "role": "titular",
+            "sampleText": "REBECA FERNÁNDEZ",
+            "styleObserved": "sans-serif, bold, uppercase, blanco",
+            "bbox": [
+              0.47,
+              0.1,
+              0.72,
+              0.115
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Directora Ventas para Europa",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.125,
+              0.68,
+              0.135
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Sales Director for Europe",
+            "styleObserved": "sans-serif, italic, blanco",
+            "bbox": [
+              0.47,
+              0.14,
+              0.66,
+              0.15
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Email: rebeca.fernandezr@atresmediatv.com",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.17,
+              0.84,
+              0.18
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Phone: +34 91 623 08 84",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.19,
+              0.64,
+              0.2
+            ]
+          },
+          {
+            "role": "titular",
+            "sampleText": "ISMAEL RAMIRO MORENO",
+            "styleObserved": "sans-serif, bold, uppercase, blanco",
+            "bbox": [
+              0.47,
+              0.25,
+              0.78,
+              0.265
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Mánager de Ventas",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.275,
+              0.6,
+              0.285
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Sales Manager",
+            "styleObserved": "sans-serif, italic, blanco",
+            "bbox": [
+              0.47,
+              0.29,
+              0.58,
+              0.3
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Email: ismael.ramiro@atresmediatv.com",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.32,
+              0.8,
+              0.33
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Phone: +34 689 19 90 55",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.34,
+              0.64,
+              0.35
+            ]
+          },
+          {
+            "role": "titular",
+            "sampleText": "MANUEL GARCÍA FERNÁNDEZ",
+            "styleObserved": "sans-serif, bold, uppercase, blanco",
+            "bbox": [
+              0.47,
+              0.4,
+              0.79,
+              0.415
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Responsable de Materiales",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.425,
+              0.67,
+              0.435
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Materials Manager",
+            "styleObserved": "sans-serif, italic, blanco",
+            "bbox": [
+              0.47,
+              0.44,
+              0.6,
+              0.45
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Email: manuel.garcia@atresmediatv.com",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.47,
+              0.8,
+              0.48
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Phone: +34 91 623 02 54",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.49,
+              0.64,
+              0.5
+            ]
+          },
+          {
+            "role": "titular",
+            "sampleText": "LAURA AGUADO",
+            "styleObserved": "sans-serif, bold, uppercase, blanco",
+            "bbox": [
+              0.47,
+              0.55,
+              0.66,
+              0.565
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Responsable de Marketing",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.575,
+              0.67,
+              0.585
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Marketing International Sales",
+            "styleObserved": "sans-serif, italic, blanco",
+            "bbox": [
+              0.47,
+              0.59,
+              0.7,
+              0.6
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Email: laura.aguado@atresmediatv.com",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.62,
+              0.8,
+              0.63
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Phone: +34 91 623 25 02",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.47,
+              0.64,
+              0.64,
+              0.65
+            ]
+          },
+          {
+            "role": "pie",
+            "sampleText": "sales@atresmediatv.com",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.1,
+              0.87,
+              0.34,
+              0.885
+            ]
+          },
+          {
+            "role": "pie",
+            "sampleText": "international-sales-atresmedia.com",
+            "styleObserved": "sans-serif, regular, blanco",
+            "bbox": [
+              0.1,
+              0.895,
+              0.43,
+              0.91
+            ]
+          },
+          {
+            "role": "etiqueta",
+            "sampleText": "129",
+            "styleObserved": "sans-serif, regular, blanco, rotado",
+            "bbox": [
+              0.93,
+              0.95,
+              0.96,
+              0.965
+            ]
+          }
+        ],
+        "brandSurfaces": [
+          [
+            0.9,
+            0,
+            1,
+            1
+          ]
+        ],
+        "images": [
+          {
+            "visualDna": {
+              "sujeto": "mujer, mediana edad, sonriendo",
+              "ropa": "chaqueta oscura",
+              "lugar": "estudio, fondo oscuro",
+              "animo": "profesional, amigable",
+              "estiloArtistico": "fotografía de retrato, corporativa",
+              "encuadre": "primer plano, busto",
+              "luzTratamiento": "luz suave, frontal",
+              "paletaAprox": [
+                "#222222",
+                "#AAAAAA",
+                "#FFFFFF"
+              ],
+              "texturas": "piel, tela",
+              "vozVisual": "profesional, accesible"
+            },
+            "esFotoDeProducto": false,
+            "confidence": 0.95,
+            "bbox": [
+              0.1,
+              0.1,
+              0.4,
+              0.21
+            ]
+          },
+          {
+            "visualDna": {
+              "sujeto": "hombre, mediana edad, gafas, mirando al frente",
+              "ropa": "camisa, chaqueta",
+              "lugar": "estudio, fondo oscuro",
+              "animo": "serio, profesional",
+              "estiloArtistico": "fotografía de retrato, corporativa",
+              "encuadre": "primer plano, busto",
+              "luzTratamiento": "luz suave, frontal",
+              "paletaAprox": [
+                "#222222",
+                "#AAAAAA",
+                "#FFFFFF"
+              ],
+              "texturas": "piel, tela, pelo",
+              "vozVisual": "profesional, directo"
+            },
+            "esFotoDeProducto": false,
+            "confidence": 0.95,
+            "bbox": [
+              0.1,
+              0.25,
+              0.4,
+              0.36
+            ]
+          },
+          {
+            "visualDna": {
+              "sujeto": "hombre joven, sonriendo",
+              "ropa": "camiseta",
+              "lugar": "estudio, fondo oscuro",
+              "animo": "amigable, juvenil",
+              "estiloArtistico": "fotografía de retrato, corporativa",
+              "encuadre": "primer plano, busto",
+              "luzTratamiento": "luz suave, frontal",
+              "paletaAprox": [
+                "#222222",
+                "#AAAAAA",
+                "#FFFFFF"
+              ],
+              "texturas": "piel, pelo",
+              "vozVisual": "accesible, moderno"
+            },
+            "esFotoDeProducto": false,
+            "confidence": 0.95,
+            "bbox": [
+              0.1,
+              0.4,
+              0.4,
+              0.51
+            ]
+          },
+          {
+            "visualDna": {
+              "sujeto": "mujer joven, sonriendo",
+              "ropa": "blusa oscura",
+              "lugar": "estudio, fondo oscuro",
+              "animo": "amigable, profesional",
+              "estiloArtistico": "fotografía de retrato, corporativa",
+              "encuadre": "primer plano, busto",
+              "luzTratamiento": "luz suave, frontal",
+              "paletaAprox": [
+                "#222222",
+                "#AAAAAA",
+                "#FFFFFF"
+              ],
+              "texturas": "piel, pelo",
+              "vozVisual": "profesional, cercana"
+            },
+            "esFotoDeProducto": false,
+            "confidence": 0.95,
+            "bbox": [
+              0.1,
+              0.55,
+              0.4,
+              0.66
+            ]
+          }
+        ],
+        "pageKind": "ficha_contenido"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p128",
+      "retried": false
+    },
+    {
+      "pageNumber": 129,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 129,
+        "logoInstances": [
+          {
+            "variant": "horizontal",
+            "onBackground": "claro",
+            "textInLogo": "ATRESMEDIA SALES",
+            "isComplete": true,
+            "cutEdges": [],
+            "confidence": 0.95,
+            "bbox": [
+              0.3,
+              0.45,
+              0.68,
+              0.55
+            ]
+          }
+        ],
+        "brandNameEvidence": [
+          {
+            "text": "ATRESMEDIA SALES",
+            "kind": "wordmark_logo",
+            "bbox": [
+              0.3,
+              0.45,
+              0.68,
+              0.55
+            ]
+          }
+        ],
+        "typographyRoles": [
+          {
+            "role": "etiqueta",
+            "sampleText": "2026",
+            "styleObserved": "sans-serif, negro, negrita",
+            "bbox": [
+              0.07,
+              0.85,
+              0.13,
+              0.865
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Un trabajo de todo el equipo de",
+            "styleObserved": "sans-serif, negro, regular",
+            "bbox": [
+              0.07,
+              0.88,
+              0.47,
+              0.9
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "Con la colaboración del",
+            "styleObserved": "sans-serif, negro, regular",
+            "bbox": [
+              0.07,
+              0.91,
+              0.28,
+              0.925
+            ]
+          },
+          {
+            "role": "cuerpo",
+            "sampleText": "ÁREA DE IMAGEN Y CREATIVIDAD DE ATRESMEDIA.",
+            "styleObserved": "sans-serif, negro, regular, mayúsculas",
+            "bbox": [
+              0.07,
+              0.93,
+              0.75,
+              0.945
+            ]
+          }
+        ],
+        "brandSurfaces": [],
+        "images": [],
+        "pageKind": "contraportada"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p129",
+      "retried": false
+    },
+    {
+      "pageNumber": 130,
+      "ok": true,
+      "result": {
+        "version": "2026-07-06-page-structured-3",
+        "page": 130,
+        "logoInstances": [
+          {
+            "variant": "horizontal",
+            "onBackground": "oscuro",
+            "textInLogo": "ATRESMEDIA SALES",
+            "isComplete": true,
+            "cutEdges": [],
+            "confidence": 0.95,
+            "bbox": [
+              0.33,
+              0.85,
+              0.67,
+              0.91
+            ]
+          }
+        ],
+        "brandNameEvidence": [
+          {
+            "text": "ATRESMEDIA SALES",
+            "kind": "wordmark_logo",
+            "bbox": [
+              0.33,
+              0.85,
+              0.67,
+              0.91
+            ]
+          }
+        ],
+        "typographyRoles": [],
+        "brandSurfaces": [
+          [
+            0,
+            0,
+            1,
+            1
+          ]
+        ],
+        "images": [],
+        "pageKind": "asset_marca"
+      },
+      "rejected": [],
+      "warnings": [],
+      "cacheKey": "genoma:page-vision:2026-07-06-page-structured-3:dpi144:f9e683edde0a2a98ff0dad4417514cb4e933a503add1940eccd6ff5fd9703434:p130",
+      "retried": false
+    }
+  ],
+  "generatedAt": "2026-07-06T20:15:13.151Z"
+}

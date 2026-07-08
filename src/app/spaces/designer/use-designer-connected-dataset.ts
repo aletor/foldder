@@ -6,9 +6,11 @@ import { shallow } from "zustand/shallow";
 import { fetchGlobalDataset } from "@/app/spaces/dataset/dataset-api";
 import { normalizeDataset } from "@/app/spaces/dataset/dataset-migrate";
 import type { Dataset, DatasetNodeData } from "@/app/spaces/dataset/dataset-types";
+import type { BrandKitDatasetLink } from "@/app/spaces/brandkit/brandkit-dataset-schema";
 
 type DatasetSourceSnapshot = {
   sourceNodeId: string;
+  brandKitLink: BrandKitDatasetLink | null;
   /**
    * Referencia cruda al dataset inline (sin normalizar). Su identidad solo cambia cuando el nodo
    * Dataset reescribe `data.dataset` (es decir, en una edición real), no en cada tick del store.
@@ -50,6 +52,7 @@ function selectConnectedDatasetSource(
   const data = (source.data ?? {}) as DatasetNodeData;
   return {
     sourceNodeId: source.id,
+    brandKitLink: data.brandKitLink ?? null,
     inlineDatasetRaw: data.dataset ?? null,
     inlineVersion: data.dataset?.version ?? null,
     datasetRefId: data.datasetRef?.datasetId ?? null,
@@ -64,6 +67,7 @@ export type DesignerConnectedDatasetState = {
   datasetConnected: boolean;
   connectedDataset: Dataset | null;
   datasetLoading: boolean;
+  brandKitLink: BrandKitDatasetLink | null;
 };
 
 export function useDesignerConnectedDataset(designerNodeId: string): DesignerConnectedDatasetState {
@@ -133,5 +137,6 @@ export function useDesignerConnectedDataset(designerNodeId: string): DesignerCon
     datasetConnected: !!sourceSnapshot,
     connectedDataset: inlineDataset ?? fetchedDataset,
     datasetLoading,
+    brandKitLink: sourceSnapshot?.brandKitLink ?? null,
   };
 }

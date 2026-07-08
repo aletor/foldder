@@ -91,6 +91,10 @@ function englishTitle(request: WalletCostDecisionRequest): string {
       return "Transcribe subtitles";
     case "/api/video-editor/render":
       return "Render video";
+    case "/api/spaces/genoma/ingest":
+      return request.label.toLowerCase().includes("pdf")
+        ? "Genoma brand analysis (PDF)"
+        : "Genoma voice refinement (web)";
     default:
       return request.label;
   }
@@ -147,6 +151,10 @@ function operationDescription(request: WalletCostDecisionRequest, language: Dial
       return es
         ? "Esta operación usa un proveedor externo para procesar la imagen o el vídeo. Si falla, la reserva se libera."
         : "This operation uses an external provider to process the image or video. If it fails, the reserve is released.";
+    case "/api/spaces/genoma/ingest":
+      return es
+        ? "Al soltar un documento nuevo, Genoma usa visión multimodal (paleta, logo, tipografía, universo visual) y puede refinar la voz. Solo se cobra en el primer análisis; un reenvío duplicado no vuelve a llamar a la API."
+        : "When you drop a new document, Genoma uses multimodal vision (palette, logo, typography, visual universe) and may refine voice. Only the first analysis is charged; a duplicate re-upload does not call the API again.";
     default:
       return es
         ? "Esta acción usa una API de pago. Foldder reserva saldo antes de llamar al proveedor y lo ajusta al finalizar."

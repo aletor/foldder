@@ -22,6 +22,7 @@ import {
   Unlock,
   X,
   XIcon,
+  ArrowLeft,
 } from "lucide-react";
 import {
   AUDIENCE_PERSONA_CATALOG,
@@ -65,6 +66,13 @@ import {
   buildVisualStyleFromVisionAnalyses,
   mergeVisualStyleWithVisionDerivedDescriptions,
 } from "@/lib/brain/brain-visual-style-from-vision";
+import { applyGuardedVisualStyleMerge } from "@/lib/brandkit/guarded-merge";
+import {
+  buildUploadCheckpoints,
+  formatMergeOutcomeEs,
+  mergeBrandPipelineDiagnostics,
+} from "@/lib/brandkit/brand-pipeline-diagnostics";
+import { createRunId } from "@/lib/brandkit/run-event-adapter";
 import { countVisualImageAnalysisDisposition, getPendingLearningProvenanceUi } from "@/lib/brain/brain-learning-provenance";
 import { readResponseJson } from "@/lib/read-response-json";
 import { hasVisualLearningReviewBundle } from "@/lib/brain/brain-visual-review-constants";
@@ -101,6 +109,7 @@ import {
   resolveLearningPendingAnchorNodeId,
 } from "@/lib/brain/brain-connected-signals-ui";
 import type { VisualReanalyzeDiagnosticRow } from "@/lib/brain/brain-visual-reanalyze-diagnostics";
+import { describeKnowledgeUploadError, resolveKnowledgeContentType } from "@/lib/brain/knowledge-upload-policy";
 import {
   BRAIN_TELEMETRY_SYNCED_EVENT,
   type BrainTelemetrySyncedEventDetail,
@@ -117,7 +126,17 @@ import {
   BrainStudioMetricsBar,
   BrainStudioSubTabBar,
   BrainStudioTabBar,
+  BRAIN_STUDIO_PRIMARY_TABS,
+  type BrainPrimarySectionTab,
 } from "./brain/BrainStudioChrome";
+import { BrandBoardPanel } from "./brandkit/BrandBoardPanel";
+import {
+  BrandBoardLandingChromeBridge,
+  type BrandBoardDepthTarget,
+} from "./brandkit/BrandBoardLandingChrome";
+import { BrandKitProvider } from "./brandkit/BrandKitProvider";
+import type { RefCategory } from "@/lib/brandkit/types";
+import { isLegacyAtmosphereEntryEnabled } from "@/lib/brandkit/brand-board-flags";
 import type { BrandVisualDnaStoredBundle } from "@/lib/brain/brand-visual-dna/types";
 import {
   BRAIN_BRAND_LOCKED_MESSAGE,
@@ -527,10 +546,37 @@ function compactBrainDocumentForKnowledgeAnalyze(doc: KnowledgeDocumentEntry): K
 }
 
 function compactBrainDocumentForVisualRequest(doc: KnowledgeDocumentEntry): KnowledgeDocumentEntry {
+  const isImageDoc =
+    doc.mime?.toLowerCase().startsWith("image/") || doc.type === "image" || doc.format === "image";
+  if (!isImageDoc) {
+    return {
+      id: doc.id,
+      name: doc.name,
+      mime: doc.mime,
+      scope: doc.scope,
+      type: doc.type,
+      format: doc.format,
+      status: doc.status,
+      uploadedAt: doc.uploadedAt,
+      ...(doc.s3Path?.trim() ? { s3Path: doc.s3Path.trim() } : {}),
+      ...(doc.brainSourceScope ? { brainSourceScope: doc.brainSourceScope } : {}),
+      ...(doc.contextKind ? { contextKind: doc.contextKind } : {}),
+    };
+  }
   const hasRemoteImage = Boolean(doc.s3Path?.trim() || doc.originalSourceUrl?.trim());
   return {
-    ...doc,
-    ...(hasRemoteImage ? { dataUrl: undefined } : {}),
+    id: doc.id,
+    name: doc.name,
+    mime: doc.mime,
+    scope: doc.scope,
+    type: doc.type,
+    format: doc.format,
+    status: doc.status,
+    uploadedAt: doc.uploadedAt,
+    ...(doc.s3Path?.trim() ? { s3Path: doc.s3Path.trim() } : {}),
+    ...(doc.brainSourceScope ? { brainSourceScope: doc.brainSourceScope } : {}),
+    ...(doc.contextKind ? { contextKind: doc.contextKind } : {}),
+    ...(hasRemoteImage || !doc.dataUrl?.startsWith("data:image") ? {} : { dataUrl: doc.dataUrl }),
   };
 }
 
@@ -551,14 +597,40 @@ function compactStrategyForBrainApi(strategy: ProjectAssetsMetadata["strategy"])
   };
 }
 
+/** Solo campos que usa `/api/spaces/brain/visual/reanalyze` (evita PDF text + collages en el POST). */
+function compactStrategyForVisualReanalyzeRequest(
+  strategy: ProjectAssetsMetadata["strategy"],
+): ProjectAssetsMetadata["strategy"] {
+  const visualReferenceAnalysis = strategy.visualReferenceAnalysis
+    ? {
+        analyses: strategy.visualReferenceAnalysis.analyses,
+        aggregated: strategy.visualReferenceAnalysis.aggregated,
+        lastAnalyzedAt: strategy.visualReferenceAnalysis.lastAnalyzedAt,
+        analyzerVersion: strategy.visualReferenceAnalysis.analyzerVersion,
+        lastVisionProviderId: strategy.visualReferenceAnalysis.lastVisionProviderId,
+      }
+    : undefined;
+  return {
+    visualStyle: strategy.visualStyle,
+    visualReferenceAnalysis,
+  } as ProjectAssetsMetadata["strategy"];
+}
+
 function compactAssetsForVisualRequest(assets: ProjectAssetsMetadata): ProjectAssetsMetadata {
   return normalizeProjectAssets({
     ...assets,
+    brand: {
+      ...assets.brand,
+      logoPositive: assets.brand.logoPositive,
+      logoNegative: assets.brand.logoNegative,
+    },
     knowledge: {
       ...assets.knowledge,
+      corporateContext: "",
+      urls: [],
       documents: assets.knowledge.documents.map(compactBrainDocumentForVisualRequest),
     },
-    strategy: compactStrategyForBrainApi(assets.strategy),
+    strategy: compactStrategyForVisualReanalyzeRequest(assets.strategy),
   });
 }
 
@@ -917,7 +989,7 @@ function resolveBrainPrimarySection(section: BrainMainSection): BrainPrimarySect
   }
 }
 
-type OverviewSubView = "atmosphere" | "resumen";
+type OverviewSubView = "atmosphere" | "libro" | "resumen";
 type DnaSubTab = "dna" | "voice" | "messages" | "personas" | "facts" | "visual";
 type DiagnosticsSubTab = "diagnostics" | "connected_nodes" | "decision_traces";
 type VisualSubTab = "visual_refs" | "brand_visual_dna";
@@ -935,7 +1007,7 @@ function resolveDiagnosticsSubTab(section: BrainMainSection): DiagnosticsSubTab 
   return "diagnostics";
 }
 
-type Props = {
+type ProjectBrainFullscreenProps = {
   open: boolean;
   onClose: () => void;
   assetsMetadata: unknown;
@@ -957,7 +1029,11 @@ type Props = {
   /** Persistir proyecto (incluye capa visual); mismo flujo que guardar en el lienzo. */
   onSaveProjectFromBrain?: () => Promise<boolean>;
   isSavingProject?: boolean;
+  /** Board v1: landing Board + profundidad vía menú ···. Default = studio legacy completo. */
+  presentation?: "full-studio" | "brand-board-landing";
 };
+
+export type { ProjectBrainFullscreenProps };
 
 type BrainChatMessage = {
   id: string;
@@ -993,6 +1069,14 @@ type BrainKnowledgeUploadResponse = {
     extractedImageCount?: number;
     uploadedVisualCount?: number;
     renderError?: string;
+  }>;
+  brandPipelineUpload?: Array<{
+    at?: string;
+    docId?: string;
+    docName?: string;
+    contentSha256?: string;
+    dedupe?: boolean;
+    dedupeDocId?: string;
   }>;
   error?: string;
 };
@@ -1040,12 +1124,13 @@ async function uploadBrainKnowledgeFiles(
         merged.rejected?.push({ name: file.name, reason: "file_too_large" });
         continue;
       }
+      const resolvedMime = resolveKnowledgeContentType(file.name, file.type);
       const ticketResponse = await fetch("/api/spaces/brain/knowledge/upload-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filename: file.name,
-          contentType: file.type || "application/octet-stream",
+          contentType: resolvedMime,
           size: file.size,
         }),
       });
@@ -1056,12 +1141,14 @@ async function uploadBrainKnowledgeFiles(
         maxBytes?: number;
       }>(ticketResponse, "POST /api/spaces/brain/knowledge/upload-url");
       if (!ticketResponse.ok || !ticket?.uploadUrl || !ticket.key) {
-        throw new Error(ticket?.error || "No se pudo preparar la subida S3.");
+        throw new Error(
+          describeKnowledgeUploadError(ticket?.error || "No se pudo preparar la subida S3.", file.name),
+        );
       }
       onProgress(`Subiendo ${file.name} (${formatSize(file.size)}) a S3…`);
       const putResponse = await fetch(ticket.uploadUrl, {
         method: "PUT",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
+        headers: { "Content-Type": resolvedMime },
         body: file,
       });
       if (!putResponse.ok) {
@@ -1071,7 +1158,7 @@ async function uploadBrainKnowledgeFiles(
         key: ticket.key,
         name: file.name,
         size: file.size,
-        mime: file.type || "application/octet-stream",
+        mime: resolvedMime,
         scope,
         contextKind: scope === "context" ? "general" : undefined,
       });
@@ -1470,7 +1557,7 @@ function ColorField({
 type KnowledgeIngestJob =
   | { kind: "upload"; scope: "core" | "context"; files: File[]; brainSourceScope?: KnowledgeDocumentEntry["brainSourceScope"] }
   | { kind: "url"; scope: "core" | "context"; url: string; brainSourceScope?: KnowledgeDocumentEntry["brainSourceScope"] }
-  | { kind: "analyze" };
+  | { kind: "analyze"; forceReextractBrand?: boolean };
 
 export function ProjectBrainFullscreen({
   open,
@@ -1487,7 +1574,9 @@ export function ProjectBrainFullscreen({
   onBrainAssetsFullReset,
   onSaveProjectFromBrain,
   isSavingProject = false,
-}: Props) {
+  presentation = "full-studio",
+}: ProjectBrainFullscreenProps) {
+  const isBrandBoardLanding = presentation === "brand-board-landing";
   const assets = useMemo(() => normalizeProjectAssets(assetsMetadata), [assetsMetadata]);
   const brandSummary = useMemo(() => buildBrainBrandSummary(assets), [assets]);
   const decisionTraces = useMemo(
@@ -1611,6 +1700,9 @@ export function ProjectBrainFullscreen({
 
   const [activeTab, setActiveTab] = useState<BrainMainSection>("overview");
   const [overviewSubView, setOverviewSubView] = useState<OverviewSubView>("atmosphere");
+  const [boardSurface, setBoardSurface] = useState<"board" | "depth">("board");
+  const [boardReviewOpen, setBoardReviewOpen] = useState(false);
+  const [boardDragDepth, setBoardDragDepth] = useState(0);
   const [atmosphereCanvasMode, setAtmosphereCanvasMode] = useState<"fusion" | "project">("fusion");
   const [brainIdentityEditorOpen, setBrainIdentityEditorOpen] = useState(false);
   /** Tarjeta «Contexto de marca» en ADN: vista corta + Ver más. */
@@ -1622,11 +1714,23 @@ export function ProjectBrainFullscreen({
   const prevOpenRef = useRef(false);
   useEffect(() => {
     if (open && !prevOpenRef.current) {
-      setActiveTab(initialSection ?? "overview");
-      setOverviewSubView(initialSection === "overview" || !initialSection ? "atmosphere" : "resumen");
+      if (isBrandBoardLanding) {
+        setBoardSurface("board");
+        setBoardReviewOpen(false);
+        setBoardDragDepth(0);
+        if (initialSection && initialSection !== "overview") {
+          setActiveTab(initialSection);
+          setBoardSurface("depth");
+        } else {
+          setActiveTab("sources");
+        }
+      } else {
+        setActiveTab(initialSection ?? "overview");
+        setOverviewSubView(initialSection === "overview" || !initialSection ? "atmosphere" : "resumen");
+      }
     }
     prevOpenRef.current = open;
-  }, [open, initialSection]);
+  }, [open, initialSection, isBrandBoardLanding]);
 
   useEffect(() => {
     if (activeTab !== "dna") setDnaBrandContextExpanded(false);
@@ -1650,7 +1754,10 @@ export function ProjectBrainFullscreen({
   const [activeFilter, setActiveFilter] = useState("all");
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
-  const [message, setMessage] = useState<{ text: string; type: MessageType }>({ text: "", type: "" });
+  const [message, setMessage] = useState<{ text: string; type: MessageType; undo?: () => void }>({
+    text: "",
+    type: "",
+  });
   const [pendingLearnings, setPendingLearnings] = useState<StoredLearningCandidate[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [telemetryByNodeId, setTelemetryByNodeId] = useState<
@@ -1790,6 +1897,12 @@ export function ProjectBrainFullscreen({
     setMessage({ text: msg, type });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setMessage({ text: "", type: "" }), 4200);
+  }, []);
+
+  const showUndoToast = useCallback((msg: string, undo: () => void, durationMs = 10_000) => {
+    setMessage({ text: msg, type: "success", undo });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setMessage({ text: "", type: "" }), durationMs);
   }, []);
   const brandLocked = Boolean(assets.brainMeta?.brandLocked);
   const brandWriteBlockReason = getBrainScopeWriteBlockReason("brand", assets);
@@ -3209,10 +3322,20 @@ export function ProjectBrainFullscreen({
     try {
       const pid = (projectId?.trim() || "__local__").trim();
       const debug = process.env.NODE_ENV === "development";
+      let requestBody: string;
+      try {
+        requestBody = JSON.stringify({
+          projectId: pid,
+          assets: compactAssetsForVisualRequest(base),
+          debug,
+        });
+      } catch {
+        throw new Error("Demasiados datos embebidos para enviar la reanalización visual al servidor.");
+      }
       const res = await fetch("/api/spaces/brain/visual/reanalyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: pid, assets: compactAssetsForVisualRequest(base), debug }),
+        body: requestBody,
       });
       const json = (await readResponseJson<{
         visualReferenceAnalysis?: ProjectAssetsMetadata["strategy"]["visualReferenceAnalysis"];
@@ -3228,11 +3351,19 @@ export function ProjectBrainFullscreen({
         patch((a) => {
           const canMergeBrandVisualDna = canWriteBrainScope("brand", a);
           const derived = buildVisualStyleFromVisionAnalyses(nextVisualLayer.analyses ?? []);
-          const visualStyle = derived
+          const rawVisualStyle = derived
             ? mergeVisualStyleWithVisionDerivedDescriptions(a.strategy.visualStyle, derived)
             : a.strategy.visualStyle;
+          const guardedVisual = applyGuardedVisualStyleMerge(a, rawVisualStyle, {
+            sourceId: createRunId("reanalyze-vs"),
+            evidenceKind: "image-analysis",
+          });
           let meta = touchBrainMetaAfterVisualAnalysis(a.brainMeta, {
             synthesizedBrandVisualDna: Boolean(json.brandVisualDna && canMergeBrandVisualDna),
+          });
+          meta = normalizeBrainMeta({
+            ...meta,
+            boardMeta: guardedVisual.boardMeta,
           });
           if (json.provider === "mock") {
             meta = markBrainStale(meta, [BRAIN_STALE_REASON.REMOTE_ANALYSIS_FAILED_FALLBACK_USED]);
@@ -3242,7 +3373,7 @@ export function ProjectBrainFullscreen({
             strategy: {
               ...a.strategy,
               visualReferenceAnalysis: preserveGeneratedVisualCollage(nextVisualLayer, a.strategy.visualReferenceAnalysis),
-              visualStyle,
+              visualStyle: guardedVisual.visualStyle,
               ...(json.brandVisualDna && canMergeBrandVisualDna ? { brandVisualDna: json.brandVisualDna } : {}),
             },
             brainMeta: meta,
@@ -3287,17 +3418,30 @@ export function ProjectBrainFullscreen({
           : "Visión remota no disponible; análisis simulado. Conecta Gemini/OpenAI Vision para análisis real.",
         "info",
       );
-    } catch {
+    } catch (error) {
+      let fallbackOk = false;
       try {
         runVisualReferenceReanalysis(base, [BRAIN_STALE_REASON.REMOTE_ANALYSIS_FAILED_FALLBACK_USED]);
         onVisualReferenceAnalysisDirty?.();
+        fallbackOk = true;
       } catch {
         /* ignore */
       }
-      showToast(
-        "No se pudo reanalizar con el servidor; análisis simulado. Conecta Gemini/OpenAI Vision para análisis real.",
-        "error",
-      );
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("[brain/visual/reanalyze client]", error);
+      if (fallbackOk) {
+        showToast(
+          detail.includes("Demasiados datos") || /fetch|network|load failed/i.test(detail)
+            ? "Visión remota no disponible (petición demasiado grande o error de red). Análisis local aplicado."
+            : `Visión remota no disponible. Análisis local aplicado.${detail ? ` (${detail.slice(0, 100)})` : ""}`,
+          "info",
+        );
+      } else {
+        showToast(
+          "No se pudo reanalizar referencias visuales. Reintenta desde Diagnóstico.",
+          "error",
+        );
+      }
     } finally {
       setVisualReanalyzing(false);
       void syncVisualDnaSlotsAndGenerateMosaics({
@@ -3307,14 +3451,15 @@ export function ProjectBrainFullscreen({
     }
   }, [brandLocked, projectId, runVisualReferenceReanalysis, showToast, onVisualReferenceAnalysisDirty, patch, syncVisualDnaSlotsAndGenerateMosaics]);
 
-  const handleSaveVisualAnalysis = useCallback(async () => {
+  const handleSaveVisualAnalysis = useCallback(async (): Promise<boolean> => {
     if (!onSaveProjectFromBrain) {
       showToast("Usa «Guardar proyecto» en la barra del espacio para persistir el análisis.", "info");
-      return;
+      return false;
     }
     const ok = await onSaveProjectFromBrain();
     if (ok) showToast("Proyecto guardado; el análisis visual quedó persistido.", "success");
     else showToast("No se pudo guardar el proyecto.", "error");
+    return ok;
   }, [onSaveProjectFromBrain, showToast]);
 
   const handleQueueVisualLearnings = useCallback(async () => {
@@ -3443,9 +3588,7 @@ export function ProjectBrainFullscreen({
               setKnowledgePipelineDetail,
             );
             const pdfDiagnostics = data?.pdfVisualDiagnostics ?? [];
-            const pdfRenderFailed = pdfDiagnostics.find(
-              (row) => (row.pageRenderCount ?? 0) === 0 && (row.extractedImageCount ?? 0) > 0,
-            );
+            const pdfRenderFailed = pdfDiagnostics.find((row) => Boolean(row.renderError?.trim()));
             const added = (data?.documents || []).map((doc) => ({
               ...doc,
               brainSourceScope: semanticScope,
@@ -3526,6 +3669,20 @@ export function ProjectBrainFullscreen({
               );
             }
             if (added.length > 0) {
+              const uploadCheckpoints = buildUploadCheckpoints({
+                existingDocs: meta.knowledge.documents,
+                addedDocs: added,
+              });
+              patch((a) => ({
+                ...a,
+                brainMeta: normalizeBrainMeta({
+                  ...a.brainMeta,
+                  brandPipelineDiagnostics: mergeBrandPipelineDiagnostics(
+                    a.brainMeta?.brandPipelineDiagnostics,
+                    { upload: uploadCheckpoints },
+                  ),
+                }),
+              }));
               if (semanticScope === "capsule" && addedImages) {
                 setKnowledgePipelineDetail("Looks visuales: analizando cápsula visual con visión remota…");
                 try {
@@ -3544,7 +3701,13 @@ export function ProjectBrainFullscreen({
                 }
               } else {
                 if (addedImages) visionAfterKnowledgeIngestRef.current = true;
-                knowledgeIngestQueueRef.current.push({ kind: "analyze" });
+                const addedBrandPdf = semanticScope === "brand" && added.some(
+                  (doc) => doc.format === "pdf" || (doc.mime || "").toLowerCase() === "application/pdf",
+                );
+                knowledgeIngestQueueRef.current.push({
+                  kind: "analyze",
+                  ...(addedBrandPdf ? { forceReextractBrand: true } : {}),
+                });
                 setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
                 const q = knowledgeIngestQueueRef.current.length;
                 setKnowledgePipelineDetail(
@@ -3666,8 +3829,11 @@ export function ProjectBrainFullscreen({
             const runVisionAfter = visionAfterKnowledgeIngestRef.current;
             const snap = normalizeProjectAssets(assetsMetadataRef.current);
             const pendingDocs = snap.knowledge.documents.filter((d) => d.status !== "Analizado").length;
+            const forceBrand = job.kind === "analyze" && job.forceReextractBrand === true;
             setKnowledgePipelineDetail(
-              `Analizando conocimiento con IA: ${snap.knowledge.documents.length} documento(s) en pozo · ${pendingDocs} pendiente(s) de “Analizado”…`,
+              forceBrand
+                ? "Reextrayendo logo, paleta y tipografía desde PDF (ignorando caché)…"
+                : `Analizando conocimiento con IA: ${snap.knowledge.documents.length} documento(s) en pozo · ${pendingDocs} pendiente(s) de “Analizado”…`,
             );
             let mergedForVision: ProjectAssetsMetadata = snap;
             try {
@@ -3678,6 +3844,9 @@ export function ProjectBrainFullscreen({
                   documents: snap.knowledge.documents.map(compactBrainDocumentForKnowledgeAnalyze),
                   strategy: compactStrategyForBrainApi(snap.strategy),
                   brainMeta: snap.brainMeta,
+                  brand: snap.brand,
+                  previousCorporateContext: snap.knowledge.corporateContext,
+                  forceReextractBrand: forceBrand,
                 }),
               });
               const data = await readResponseJson<{
@@ -3687,6 +3856,7 @@ export function ProjectBrainFullscreen({
                 corporateContext?: string;
                 strategy?: ProjectAssetsMetadata["strategy"];
                 brainMeta?: ProjectAssetsMetadata["brainMeta"];
+                brand?: ProjectAssetsMetadata["brand"];
               }>(response, "POST /api/spaces/brain/knowledge/analyze");
               if (!response.ok) throw new Error(data?.error || "Error analizando documentos");
               setKnowledgePipelineDetail(
@@ -3702,12 +3872,29 @@ export function ProjectBrainFullscreen({
                 const canMergeStrategy = canWriteBrainScope("brand", snap);
                 const derived = buildVisualStyleFromVisionAnalyses(snap.strategy.visualReferenceAnalysis?.analyses);
                 const baseVs = data.strategy.visualStyle ?? defaultBrainVisualStyle();
-                const visualStyle = derived ? mergeVisualStyleWithVisionDerivedDescriptions(baseVs, derived) : baseVs;
+                const rawVisualStyle = derived
+                  ? mergeVisualStyleWithVisionDerivedDescriptions(baseVs, derived)
+                  : baseVs;
+                const assetsForVisualGuard = normalizeProjectAssets({
+                  ...snap,
+                  knowledge: { ...snap.knowledge, documents: mergedDocs, corporateContext: mergedCc },
+                  strategy: data.strategy,
+                  ...(data.brainMeta ? { brainMeta: normalizeBrainMeta(data.brainMeta) } : {}),
+                });
+                const guardedVisual = applyGuardedVisualStyleMerge(assetsForVisualGuard, rawVisualStyle, {
+                  sourceId: createRunId("analyze-vs"),
+                  evidenceKind: "image-analysis",
+                });
                 const liveForStrategy = normalizeProjectAssets(assetsMetadataRef.current);
                 const strategyForApply = mergeKnowledgeStrategyPreservingVisualPipelines(
-                  { ...data.strategy, visualStyle },
+                  { ...data.strategy, visualStyle: guardedVisual.visualStyle },
                   liveForStrategy.strategy,
                 );
+                const mergedBrainMeta = normalizeBrainMeta({
+                  ...(data.brainMeta ?? snap.brainMeta),
+                  boardMeta: guardedVisual.boardMeta,
+                  brandLocked: Boolean(snap.brainMeta?.brandLocked),
+                });
                 if (canMergeStrategy) {
                   setStrategy(strategyForApply);
                 } else {
@@ -3717,16 +3904,17 @@ export function ProjectBrainFullscreen({
                   ...snap,
                   knowledge: { ...snap.knowledge, documents: mergedDocs, corporateContext: mergedCc },
                   strategy: canMergeStrategy ? strategyForApply : liveForStrategy.strategy,
-                  ...(data.brainMeta
-                    ? { brainMeta: normalizeBrainMeta({ ...data.brainMeta, brandLocked: Boolean(snap.brainMeta?.brandLocked) }) }
-                    : {}),
+                  brainMeta: mergedBrainMeta,
+                  ...(canMergeStrategy && data.brand ? { brand: { ...snap.brand, ...data.brand } } : {}),
                 });
-                if (data.brainMeta) {
-                  patch((a) => ({
-                    ...a,
-                    brainMeta: normalizeBrainMeta({ ...data.brainMeta, brandLocked: a.brainMeta?.brandLocked }),
-                  }));
-                }
+                patch((a) => ({
+                  ...a,
+                  ...(canMergeStrategy && data.brand ? { brand: { ...a.brand, ...data.brand } } : {}),
+                  brainMeta: normalizeBrainMeta({
+                    ...mergedBrainMeta,
+                    brandLocked: a.brainMeta?.brandLocked,
+                  }),
+                }));
                 if (!briefPersonaId && data.strategy.personas[0]?.id) {
                   setBriefPersonaId(data.strategy.personas[0].id);
                 }
@@ -3737,11 +3925,15 @@ export function ProjectBrainFullscreen({
                   ...(data?.brainMeta
                     ? { brainMeta: normalizeBrainMeta({ ...data.brainMeta, brandLocked: Boolean(snap.brainMeta?.brandLocked) }) }
                     : {}),
+                  ...(data?.brand ? { brand: { ...snap.brand, ...data.brand } } : {}),
                 });
-                if (data?.brainMeta) {
+                if (data?.brainMeta || data?.brand) {
                   patch((a) => ({
                     ...a,
-                    brainMeta: normalizeBrainMeta({ ...data.brainMeta, brandLocked: a.brainMeta?.brandLocked }),
+                    ...(data?.brand ? { brand: { ...a.brand, ...data.brand } } : {}),
+                    ...(data?.brainMeta
+                      ? { brainMeta: normalizeBrainMeta({ ...data.brainMeta, brandLocked: a.brainMeta?.brandLocked }) }
+                      : {}),
                   }));
                 }
               }
@@ -3837,6 +4029,27 @@ export function ProjectBrainFullscreen({
     setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
     void runKnowledgeIngestPump();
   }, [runKnowledgeIngestPump]);
+
+  const handleReanalyzeBrandFromPdfs = useCallback(() => {
+    const snap = normalizeProjectAssets(assetsMetadataRef.current);
+    const pdfDocs = snap.knowledge.documents.filter(
+      (d) => d.format === "pdf" || (d.mime || "").toLowerCase() === "application/pdf",
+    );
+    if (pdfDocs.length === 0) {
+      showToast("No hay PDFs en el pozo para reextraer marca.", "info");
+      return;
+    }
+    if (
+      !confirm(
+        `Volver a extraer logo, paleta y tipografía de ${pdfDocs.length} PDF(s). Ignora la caché de extracción y puede consumir créditos. ¿Continuar?`,
+      )
+    ) {
+      return;
+    }
+    knowledgeIngestQueueRef.current.push({ kind: "analyze", forceReextractBrand: true });
+    setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+    void runKnowledgeIngestPump();
+  }, [runKnowledgeIngestPump, showToast]);
 
   const handleOpenOriginal = useCallback(
     async (doc: KnowledgeDocumentEntry) => {
@@ -4757,7 +4970,10 @@ export function ProjectBrainFullscreen({
 
   const openScopedFilePicker = useCallback(
     (semanticScope: NonNullable<KnowledgeDocumentEntry["brainSourceScope"]>) => {
-      if (knowledgeIngestLocked) return;
+      if (knowledgeIngestLocked) {
+        showToast("Espera a que termine la ingesta en curso.", "info");
+        return;
+      }
       if (semanticScope === "brand" && brandLocked) {
         showToast("Marca bloqueada. Puedes usarla, pero no añadir nuevas fuentes.", "info");
         return;
@@ -4767,8 +4983,8 @@ export function ProjectBrainFullscreen({
       input.multiple = true;
       input.accept =
         semanticScope === "capsule"
-          ? ".jpg,.jpeg,.png,.webp"
-          : ".pdf,.docx,.txt,.md,.rtf,.jpg,.jpeg,.png,.webp";
+          ? ".jpg,.jpeg,.png,.webp,.avif"
+          : ".pdf,.docx,.txt,.md,.rtf,.jpg,.jpeg,.png,.webp,.avif";
       input.onchange = () => {
         const files = Array.from(input.files ?? []);
         if (!files.length) return;
@@ -4795,7 +5011,10 @@ export function ProjectBrainFullscreen({
       ev.preventDefault();
       setIsDraggingCoreFiles(false);
       setIsDraggingContextFiles(false);
-      if (knowledgeIngestLocked) return;
+      if (knowledgeIngestLocked) {
+        showToast("Espera a que termine la ingesta en curso.", "info");
+        return;
+      }
       if (semanticScope === "brand" && brandLocked) {
         showToast("Marca bloqueada. Puedes usarla, pero no añadir nuevas fuentes.", "info");
         return;
@@ -4806,7 +5025,10 @@ export function ProjectBrainFullscreen({
       if (semanticScope === "capsule" && picked.length !== files.length) {
         showToast("Looks visuales solo acepta imágenes.", "info");
       }
-      if (!picked.length) return;
+      if (!picked.length) {
+        showToast("No se detectaron archivos. Arrastra desde Finder o haz clic en la zona de subida.", "info");
+        return;
+      }
       enqueueKnowledgeUpload(semanticScope === "brand" ? "core" : "context", picked, semanticScope);
     },
     [brandLocked, enqueueKnowledgeUpload, knowledgeIngestLocked, showToast],
@@ -4827,9 +5049,102 @@ export function ProjectBrainFullscreen({
     [patch],
   );
 
+  const openBoardDepth = useCallback((target: BrandBoardDepthTarget) => {
+    if (target === "pending-review") {
+      setBoardReviewOpen(true);
+      return;
+    }
+    setBoardReviewOpen(false);
+    if (target === "overview") {
+      setActiveTab("overview");
+      setOverviewSubView("atmosphere");
+    } else if (target === "sources") {
+      setActiveTab("sources");
+    } else {
+      setActiveTab(target as BrainMainSection);
+    }
+    setBoardSurface("depth");
+  }, []);
+
+  const handleBoardAddUrl = useCallback(
+    (url: string) => {
+      if (knowledgeIngestLocked) {
+        showToast("Espera a que termine la ingesta en curso.", "info");
+        return;
+      }
+      if (brandLocked) {
+        showToast("Marca bloqueada. Puedes usarla, pero no añadir fuentes.", "info");
+        return;
+      }
+      const normalized = tryNormalizeUrl(url);
+      if (!normalized) {
+        showToast("Introduce una URL válida (https://…)", "error");
+        return;
+      }
+      const snap = normalizeProjectAssets(assetsMetadataRef.current);
+      if (isKnowledgeUrlAlreadyIngested(normalized, snap.knowledge.documents, snap.knowledge.urls)) {
+        showToast("Esa URL ya está en la lista.", "info");
+        return;
+      }
+      knowledgeIngestQueueRef.current.push({
+        kind: "url",
+        scope: "core",
+        url: normalized,
+        brainSourceScope: "brand",
+      });
+      setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+      void runKnowledgeIngestPump();
+    },
+    [brandLocked, knowledgeIngestLocked, runKnowledgeIngestPump, showToast],
+  );
+
+  const handleBoardDragEnter = useCallback(() => {
+    setBoardDragDepth((depth) => depth + 1);
+  }, []);
+
+  const handleBoardDragLeave = useCallback(() => {
+    setBoardDragDepth((depth) => Math.max(0, depth - 1));
+  }, []);
+
+  const handleBoardDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      handleDropScopedFiles(event, "brand");
+      setBoardDragDepth(0);
+    },
+    [handleDropScopedFiles],
+  );
+
+  const handleRecategorizeReference = useCallback(
+    (from: RefCategory, to: RefCategory, imageUrl: string) => {
+      patch((current) => ({
+        ...current,
+        strategy: {
+          ...current.strategy,
+          visualStyle: {
+            ...current.strategy.visualStyle,
+            [to]: {
+              ...current.strategy.visualStyle[to],
+              imageUrl,
+              source: "manual",
+            },
+            [from]: {
+              ...current.strategy.visualStyle[from],
+              imageUrl:
+                current.strategy.visualStyle[from]?.imageUrl === imageUrl
+                  ? null
+                  : (current.strategy.visualStyle[from]?.imageUrl ?? null),
+            },
+          },
+        },
+      }));
+    },
+    [patch],
+  );
+
   if (!open) return null;
 
   const isOverviewResumen = activeTab === "overview" && overviewSubView === "resumen";
+  const isOverviewLibro = activeTab === "overview" && overviewSubView === "libro";
   const isAtmosphereMode = activeTab === "overview" && overviewSubView === "atmosphere";
   const primarySection = resolveBrainPrimarySection(activeTab);
   const brandRecord = assets.brand as Record<string, unknown>;
@@ -4841,7 +5156,6 @@ export function ProjectBrainFullscreen({
     stringFromBrand("name") ??
     stringFromBrand("title") ??
     stringFromBrand("brandName") ??
-    stringFromBrand("claim") ??
     "Proyecto activo";
   const brandClaim =
     stringFromBrand("claim") ??
@@ -5169,6 +5483,18 @@ export function ProjectBrainFullscreen({
   );
 
   const shell = (
+    <BrandKitProvider
+      assets={assets}
+      pipeline={{
+        busy: knowledgeIngestLocked,
+        detail: knowledgePipelineDetail,
+        queued: knowledgePipelineQueued,
+      }}
+      onAssetsPatch={patch}
+      onLogoCrowned={({ undo }) => {
+        showUndoToast("Logo validado. El resto se descartó.", undo);
+      }}
+    >
     <div
       className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
       data-foldder-studio-panel
@@ -5179,13 +5505,96 @@ export function ProjectBrainFullscreen({
       aria-label="BrandKit studio"
       style={{ ["--foldder-studio-accent" as string]: "#5E8E70" }}
     >
+      {message.text ? (
+        <div
+          role="status"
+          className={`fixed left-1/2 top-11 z-[100100] flex max-w-[min(460px,92vw)] -translate-x-1/2 items-center gap-3 border px-3 py-2 text-[11px] font-medium ${
+            message.type === "error"
+              ? "border-rose-400/40 bg-rose-950/90 text-rose-200"
+              : message.type === "success"
+                ? "border-emerald-400/40 bg-emerald-950/90 text-emerald-200"
+                : "border-amber-400/40 bg-amber-950/90 text-amber-200"
+          }`}
+        >
+          <span className="flex-1 text-center">{message.text}</span>
+          {message.undo ? (
+            <button
+              type="button"
+              onClick={() => {
+                message.undo?.();
+                setMessage({ text: "", type: "" });
+                if (toastTimer.current) clearTimeout(toastTimer.current);
+              }}
+              className="shrink-0 text-[10px] font-black uppercase tracking-wide underline underline-offset-2"
+            >
+              Deshacer
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isBrandBoardLanding && boardSurface === "board" ? (
+        <>
+          <BrandBoardLandingChromeBridge
+            projectName={projectDisplayName}
+            onClose={onClose}
+            onOpenDepth={openBoardDepth}
+            pendingLearningsCount={pendingLearnings.length}
+          />
+          {boardReviewOpen ? (
+            <div className="fixed inset-0 z-[100105] flex items-end justify-center bg-black/50 p-4 sm:items-center">
+              <div className="w-full max-w-md rounded-[14px] border border-white/12 bg-[#121820] p-4 shadow-2xl">
+                <p className="text-[11px] font-black uppercase tracking-[0.12em] text-white/45">Por revisar</p>
+                <p className="mt-2 text-[12px] leading-relaxed text-white/72">
+                  Toca los elementos con punto o badge en el Board para validar propuestas o resolver conflictos.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setBoardReviewOpen(false)}
+                  className="mt-4 w-full rounded-[10px] border border-white/12 bg-white/[0.06] px-3 py-2 text-[11px] font-bold text-white/82"
+                >
+                  Volver al Board
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <BrandBoardPanel
+              projectName={projectDisplayName}
+              brandSummary={brandSummary}
+              needsSaveBeforeExport={visualReferenceAnalysisDirty}
+              onRequestSave={handleSaveVisualAnalysis}
+              onOpenSources={() => openBoardDepth("sources")}
+              ingestLocked={knowledgeIngestLocked}
+              boardDragActive={boardDragDepth > 0}
+              onBoardDragEnter={handleBoardDragEnter}
+              onBoardDragLeave={handleBoardDragLeave}
+              onDropFiles={handleBoardDrop}
+              onPickFiles={() => openScopedFilePicker("brand")}
+              onAddUrl={handleBoardAddUrl}
+              onRecategorizeReference={handleRecategorizeReference}
+            />
+          </div>
+        </>
+      ) : (
+        <>
       <FoldderStudioHeader
         nodeType="projectBrain"
         nodeLabel="BrandKit"
         subtitle={projectDisplayName}
-        onClose={onClose}
+        onClose={isBrandBoardLanding && boardSurface === "depth" ? () => setBoardSurface("board") : onClose}
         actions={
           <>
+            {isBrandBoardLanding && boardSurface === "depth" ? (
+              <button
+                type="button"
+                onClick={() => setBoardSurface("board")}
+                className={foldderStudioHeaderActionClassName("text-white/78 hover:text-white")}
+              >
+                <ArrowLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                Board
+              </button>
+            ) : null}
             {visualReferenceAnalysisDirty && onSaveProjectFromBrain ? (
               <button
                 type="button"
@@ -5201,26 +5610,35 @@ export function ProjectBrainFullscreen({
                 Guardar
               </button>
             ) : null}
-            <button
-              type="button"
-              disabled={knowledgeIngestLocked || brandLocked}
-              onClick={() => handleResetBrainCompletely()}
-              title={
-                knowledgeIngestLocked
-                  ? "Espera a que termine la ingesta"
-                  : brandLocked
-                    ? "Marca bloqueada: desbloquéala antes de reiniciar el BrandKit"
-                    : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
-              }
-              className={`${foldderStudioHeaderActionClassName()} text-rose-300 hover:text-rose-100`}
-            >
-              <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
-              <span className="hidden sm:inline">Reiniciar</span>
-            </button>
+            {!isBrandBoardLanding ? (
+              <button
+                type="button"
+                disabled={knowledgeIngestLocked || brandLocked}
+                onClick={() => handleResetBrainCompletely()}
+                title={
+                  knowledgeIngestLocked
+                    ? "Espera a que termine la ingesta"
+                    : brandLocked
+                      ? "Marca bloqueada: desbloquéala antes de reiniciar el BrandKit"
+                      : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
+                }
+                className={`${foldderStudioHeaderActionClassName()} text-rose-300 hover:text-rose-100`}
+              >
+                <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+                <span className="hidden sm:inline">Reiniciar</span>
+              </button>
+            ) : null}
           </>
         }
       />
       <BrainStudioTabBar
+        tabs={
+          isBrandBoardLanding
+            ? BRAIN_STUDIO_PRIMARY_TABS.filter(
+                (tab) => tab.id !== "overview" || isLegacyAtmosphereEntryEnabled(),
+              )
+            : undefined
+        }
         activeTab={primarySection}
         onTabChange={(tab) => {
           if (tab === "overview") {
@@ -5239,18 +5657,29 @@ export function ProjectBrainFullscreen({
           setActiveTab(tab);
         }}
       />
-      <BrainStudioMetricsBar
-        adnScore={adn.total}
-        connectedNodesCount={brainClients.length}
-        pendingLearningsCount={pendingLearnings.length}
-      />
-      {primarySection === "overview" ? (
+      {!isBrandBoardLanding ? (
+        <BrainStudioMetricsBar
+          adnScore={adn.total}
+          connectedNodesCount={brainClients.length}
+          pendingLearningsCount={pendingLearnings.length}
+        />
+      ) : null}
+      {!isBrandBoardLanding && primarySection === "overview" ? (
         <BrainStudioSubTabBar
           ariaLabel="Vistas de atmósfera"
           tabs={[
             { id: "atmosphere", label: "Atmósfera", testId: "brain-subtab-atmosphere" },
+            { id: "libro", label: "Libro de marca", testId: "brain-subtab-libro" },
             { id: "resumen", label: "Resumen", testId: "brain-subtab-resumen" },
           ]}
+          activeTab={overviewSubView}
+          onTabChange={setOverviewSubView}
+        />
+      ) : null}
+      {isBrandBoardLanding && primarySection === "overview" && isLegacyAtmosphereEntryEnabled() ? (
+        <BrainStudioSubTabBar
+          ariaLabel="Vistas de atmósfera"
+          tabs={[{ id: "atmosphere", label: "Atmósfera", testId: "brain-subtab-atmosphere" }]}
           activeTab={overviewSubView}
           onTabChange={setOverviewSubView}
         />
@@ -5299,21 +5728,6 @@ export function ProjectBrainFullscreen({
           onTabChange={(tab) => setActiveTab(tab as BrainMainSection)}
         />
       ) : null}
-
-      {message.text && (
-        <div
-          role="status"
-          className={`fixed left-1/2 top-11 z-[100100] max-w-[min(460px,92vw)] -translate-x-1/2 border px-3 py-2 text-center text-[11px] font-medium ${
-            message.type === "error"
-              ? "border-rose-400/40 bg-rose-950/90 text-rose-200"
-              : message.type === "success"
-                ? "border-emerald-400/40 bg-emerald-950/90 text-emerald-200"
-                : "border-amber-400/40 bg-amber-950/90 text-amber-200"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
 
       <div
         className={`relative min-h-0 flex-1 overflow-hidden ${isAtmosphereMode ? "" : "bg-[#0b0f14]"}`}
@@ -5550,6 +5964,19 @@ export function ProjectBrainFullscreen({
                       <p className="mt-1 text-[11px] text-zinc-700">
                         {assets.knowledge.documents.length} archivo(s) · {assets.knowledge.urls.length} enlace(s) · {imageKnowledgeAnalyzed}/{imageDocCount} imagen(es) analizadas.
                       </p>
+                      <button
+                        type="button"
+                        onClick={handleReanalyzeBrandFromPdfs}
+                        disabled={knowledgeIngestLocked || brandLocked}
+                        title={
+                          brandLocked
+                            ? "Marca bloqueada: desbloquéala antes de reanalizar."
+                            : "Fuerza re-extracción de logo, paleta y tipografía desde PDF"
+                        }
+                        className="mt-2 mr-2 rounded-[5px] border border-violet-200 bg-violet-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-violet-900 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Reanalizar marca
+                      </button>
                       <button
                         type="button"
                         onClick={handleClearKnowledgeSources}
@@ -5892,10 +6319,23 @@ export function ProjectBrainFullscreen({
                   <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-zinc-600">
                     Salud del ADN, telemetría y detalles técnicos. Esta sección no cambia el ADN ni las fuentes.
                   </p>
+                  {isBrandBoardLanding ? (
+                    <button
+                      type="button"
+                      disabled={knowledgeIngestLocked || brandLocked}
+                      onClick={() => handleResetBrainCompletely()}
+                      className="mt-3 inline-flex items-center gap-2 rounded-[8px] border border-rose-300 bg-rose-50 px-3 py-2 text-[11px] font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      Reiniciar BrandKit
+                    </button>
+                  ) : null}
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div className="rounded-[5px] border border-zinc-200 bg-white p-3 shadow-sm">
-                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">ADN</p>
+                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">
+                      {isBrandBoardLanding ? "Señales analizadas" : "ADN"}
+                    </p>
                     <p className="mt-1 text-xl font-black text-zinc-900">{adn.total}/100</p>
                   </div>
                   <div className="rounded-[5px] border border-zinc-200 bg-white p-3 shadow-sm">
@@ -5922,10 +6362,110 @@ export function ProjectBrainFullscreen({
                     <li>Aprendizajes pendientes: {pendingLearnings.length}</li>
                   </ul>
                 </section>
+                {assets.brainMeta?.brandPipelineDiagnostics ? (
+                  <section className="rounded-[5px] border border-violet-200 bg-violet-50/40 p-4">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-900">
+                      Pipeline marca (PDF)
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-violet-950/80">
+                      Checkpoints de upload, skip, extracción y merge. Última actualización:{" "}
+                      {assets.brainMeta.brandPipelineDiagnostics.lastUpdatedAt.slice(0, 19).replace("T", " ")}
+                    </p>
+                    <div className="mt-3 space-y-3">
+                      {(assets.brainMeta.brandPipelineDiagnostics.upload?.length ?? 0) > 0 ? (
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-wide text-zinc-600">1 · Upload</p>
+                          <ul className="mt-1 space-y-1 text-[10px] text-zinc-800">
+                            {[...(assets.brainMeta.brandPipelineDiagnostics.upload ?? [])]
+                              .slice(-4)
+                              .reverse()
+                              .map((row) => (
+                                <li key={`${row.at}-${row.docId}`} className="rounded border border-white/80 bg-white/70 px-2 py-1">
+                                  {row.docName || row.docId.slice(0, 8)} · hash{" "}
+                                  {row.contentSha256 ? row.contentSha256.slice(0, 12) : "—"} · dedupe{" "}
+                                  {row.dedupe ? "sí" : "no"}
+                                  {row.dedupeDocId ? ` (${row.dedupeDocId.slice(0, 8)})` : ""}
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {(assets.brainMeta.brandPipelineDiagnostics.analyzeSkip?.length ?? 0) > 0 ? (
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-wide text-zinc-600">2 · Analyze / skip</p>
+                          <ul className="mt-1 space-y-1 text-[10px] text-zinc-800">
+                            {[...(assets.brainMeta.brandPipelineDiagnostics.analyzeSkip ?? [])]
+                              .slice(-4)
+                              .reverse()
+                              .map((row) => (
+                                <li key={`${row.at}-${row.docId}`} className="rounded border border-white/80 bg-white/70 px-2 py-1">
+                                  {row.docName || row.docId.slice(0, 8)} · skip {row.skip ? "sí" : "no"} · {row.motivo} · v
+                                  {row.previousVersion || "—"} → {row.currentVersion}
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {(assets.brainMeta.brandPipelineDiagnostics.extract?.length ?? 0) > 0 ? (
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-wide text-zinc-600">3 · Extract</p>
+                          <ul className="mt-1 space-y-1 text-[10px] text-zinc-800">
+                            {[...(assets.brainMeta.brandPipelineDiagnostics.extract ?? [])]
+                              .slice(-4)
+                              .reverse()
+                              .map((row) => (
+                                <li key={`${row.at}-${row.docId}`} className="rounded border border-white/80 bg-white/70 px-2 py-1">
+                                  {row.docName || row.docId.slice(0, 8)}
+                                  {row.skipped
+                                    ? " · omitido"
+                                    : ` · ${row.paginas} pág · ${row.fontFamilies} fuentes · ${row.colorOps} ops · ${row.logoCandidates} logos`}
+                                </li>
+                              ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {(assets.brainMeta.brandPipelineDiagnostics.merge?.length ?? 0) > 0 ? (
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-wide text-zinc-600">4 · Merge</p>
+                          {[...(assets.brainMeta.brandPipelineDiagnostics.merge ?? [])]
+                            .slice(-2)
+                            .reverse()
+                            .map((row) => (
+                              <div key={row.at} className="mt-1 rounded border border-white/80 bg-white/70 px-2 py-1.5">
+                                <p className="text-[10px] font-bold text-zinc-800">
+                                  allowBrandWrites: {row.allowBrandWrites ? "sí" : "no"}
+                                </p>
+                                <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto text-[9px] text-zinc-700">
+                                  {row.fields
+                                    .filter((f) => f.outcome !== "descartado_igual")
+                                    .slice(0, 16)
+                                    .map((f) => (
+                                      <li key={`${row.at}-${f.key}`}>
+                                        {f.key}: {formatMergeOutcomeEs(f.outcome)}
+                                      </li>
+                                    ))}
+                                </ul>
+                              </div>
+                            ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             )}
 
             {activeTab === "decision_traces" && renderDecisionTracesPanel()}
+
+            {isOverviewLibro && !isBrandBoardLanding ? (
+              <BrandBoardPanel
+                projectName={projectDisplayName}
+                brandSummary={brandSummary}
+                needsSaveBeforeExport={visualReferenceAnalysisDirty}
+                onRequestSave={handleSaveVisualAnalysis}
+                onOpenSources={() => setActiveTab("sources")}
+              />
+            ) : null}
 
             {isOverviewResumen && (
               <div className="space-y-6">
@@ -7820,7 +8360,10 @@ export function ProjectBrainFullscreen({
         )}
       </div>
       </div>
+        </>
+      )}
 
+      {!(isBrandBoardLanding && boardSurface === "board") ? (
       <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 bg-black/30 px-3 py-2 text-[10px] text-white/45 sm:px-4">
         <p className="flex items-center gap-1.5">
           <span className="inline-block h-1.5 w-1.5 shrink-0 bg-emerald-400" aria-hidden data-foldder-keep-round />
@@ -7829,7 +8372,9 @@ export function ProjectBrainFullscreen({
           </span>
         </p>
       </footer>
+      ) : null}
     </div>
+    </BrandKitProvider>
   );
 
   if (typeof document === "undefined") return null;

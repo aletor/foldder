@@ -31,6 +31,7 @@ const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/spaces/brain/knowledge/update/route.ts", services: ['"openai-embeddings"'] },
   { route: "src/app/api/spaces/brain/visual/mosaic-intelligence/route.ts", services: ["GEMINI_VISION_ANALYSIS_SERVICE_ID"] },
   { route: "src/app/api/spaces/brain/visual/reanalyze/route.ts", services: ['"openai-vision-analysis"', '"gemini-vision-analysis"'] },
+  { route: "src/app/api/spaces/brain/brand/synthesize-voice-examples/route.ts", services: ['"openai-brain-analyze"'] },
   { route: "src/app/api/spaces/cine/analyze/route.ts", services: ['"openai-cine-analyze"'] },
   { route: "src/app/api/spaces/datasets/assistant/route.ts", services: ['"openai-dataset-assistant"'] },
   { route: "src/app/api/spaces/datasets/assistant/enrich/route.ts", services: ['"openai-dataset-assistant"'] },
@@ -74,6 +75,8 @@ const WALLET_GATED_SYNC_ENDPOINTS = [
   "src/app/api/spaces/guionista/route.ts",
   "src/app/api/spaces/text-content/route.ts",
   "src/app/api/spaces/video-matte/route.ts",
+  "src/app/api/spaces/genoma/visual/generate/route.ts",
+  "src/app/api/spaces/genoma/logo/vectorize/route.ts",
   "src/app/api/video-editor/subtitles/transcribe/route.ts",
 ] as const;
 

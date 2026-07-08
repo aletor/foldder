@@ -82,6 +82,8 @@ import {
   NOTE_WIDTH,
 } from "./NotesSticky";
 import { ProjectBrainFullscreen, type BrainMainSection } from "./ProjectBrainFullscreen";
+import { BrandBoardStudio } from "./brandkit/BrandBoardStudio";
+import { isBrandBoardAsLandingEnabled } from "@/lib/brandkit/brand-board-flags";
 import { ProjectAssetsFullscreen } from "./ProjectAssetsFullscreen";
 import { PerformanceHud } from "./PerformanceHud";
 import {
@@ -6999,6 +7001,27 @@ export function SpacesContent() {
         )}
 
         {isAuthenticated && (
+          isBrandBoardAsLandingEnabled() ? (
+            <BrandBoardStudio
+              open={projectBrainOpen}
+              onClose={() => {
+                setProjectBrainOpen(false);
+                setBrainInitialSection(null);
+              }}
+              assetsMetadata={metadata.assets}
+              projectId={activeProjectId}
+              workspaceId={projectScopeId}
+              canvasNodes={nodes}
+              canvasEdges={edges}
+              initialSection={brainInitialSection}
+              visualReferenceAnalysisDirty={visualReferenceAnalysisDirty}
+              onVisualReferenceAnalysisDirty={() => setVisualReferenceAnalysisDirty(true)}
+              onBrainAssetsFullReset={() => setVisualReferenceAnalysisDirty(false)}
+              onSaveProjectFromBrain={() => saveProject(undefined, { silentError: true })}
+              isSavingProject={isSaving}
+              onAssetsMetadataChange={onBrainAssetsMetadataChange}
+            />
+          ) : (
           <ProjectBrainFullscreen
             open={projectBrainOpen}
             onClose={() => {
@@ -7018,6 +7041,7 @@ export function SpacesContent() {
             isSavingProject={isSaving}
             onAssetsMetadataChange={onBrainAssetsMetadataChange}
           />
+          )
         )}
 
         {isAuthenticated && (

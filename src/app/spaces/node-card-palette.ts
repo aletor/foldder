@@ -6,6 +6,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   designer: "#8A8B58",
   urlImage: "#383522",
   projectBrain: "#5E8E70",
+  genoma: "#FFBD1B",
   promptInput: "#4F8A82",
   mediaInput: "#4C7E8F",
   mediaDescriber: "#fc329f",
