@@ -26,6 +26,12 @@ import type { GenomaStreamEvent } from "../crawl/types";
 import type { GenomaCrawlOptions } from "../crawl/crawl-options";
 import { triageGenomaFilename, type GenomaIngestTriageItem } from "./triage";
 import { uploadGenomaIngestFile } from "./upload-genoma-file";
+import { bufferContentSha256 } from "./paid-operations-server";
+import {
+  releaseGenomaIngestAnalysisCharge,
+  reserveGenomaIngestAnalysisCharge,
+  settleGenomaIngestAnalysisCharge,
+} from "./genoma-ingest-wallet";
 import { inferImageFormat } from "../crawl/url-utils";
 
 const NOW = () => new Date().toISOString();
@@ -236,13 +242,22 @@ export async function* runGenomaIngest(
             status: "running",
             detail: "Detectando logo en el deck…",
           };
+          const deckSha = bufferContentSha256(file.buffer);
+          let visionCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
           try {
+            visionCharge = await reserveGenomaIngestAnalysisCharge({
+              userEmail: options.userEmail,
+              contentSignature: deckSha,
+              kind: "deck_logo",
+            });
             const vision = await extractLogoCandidatesFromDeckPdf({
               buffer: file.buffer,
               fileName: file.name,
               userEmail: options.userEmail ?? "",
               route: "/api/spaces/genoma/ingest",
             });
+            await settleGenomaIngestAnalysisCharge(visionCharge, "deck_logo");
+            visionCharge = null;
             if (vision?.candidates.length) {
               logoCandidates.push(...vision.candidates);
             }
@@ -264,6 +279,7 @@ export async function* runGenomaIngest(
                   : (vision?.visionDetail ?? "Sin logo claro en el deck"),
             };
           } catch (error) {
+            await releaseGenomaIngestAnalysisCharge(visionCharge, error);
             console.error("[genoma/ingest/pdf_logo_vision]", error);
             yield {
               type: "llm_progress",

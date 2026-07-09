@@ -43,6 +43,7 @@ export const genomaLocaleEs = {
   logoPageSignal: (page: number, total: number) => `pág. ${page}${total > 0 ? ` de ${total}` : ""}`,
   adjustLogoArea: "Ajustar área",
   logoCropPreview: "Vista previa del recorte",
+  logoTrimToContent: "Ajustar a contenido",
   logoMultiSourceReview: "Nueva fuente — elige el logo de tu marca",
   noPalette: "Sin paleta.",
   monochromePalette: "Paleta monocroma detectada — un solo tono dominante en la cosecha.",

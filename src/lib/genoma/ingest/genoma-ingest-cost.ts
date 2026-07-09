@@ -4,21 +4,29 @@
  */
 
 export const GENOMA_PDF_INGEST_ANALYSIS_USD = 0.045;
+export const GENOMA_DECK_LOGO_VISION_USD = 0.012;
 export const GENOMA_URL_INGEST_VOICE_USD = 0.012;
 
-export type GenomaIngestPaidKind = "pdf" | "url";
+export type GenomaIngestPaidKind = "pdf" | "url" | "deck_logo";
 
 export function estimateGenomaIngestAnalysisUsd(kind: GenomaIngestPaidKind): number {
+  if (kind === "deck_logo") return GENOMA_DECK_LOGO_VISION_USD;
   return kind === "pdf" ? GENOMA_PDF_INGEST_ANALYSIS_USD : GENOMA_URL_INGEST_VOICE_USD;
 }
 
 export function genomaIngestAnalysisLabel(kind: GenomaIngestPaidKind): string {
+  if (kind === "deck_logo") return "Genoma · logo en deck (PDF)";
   return kind === "pdf"
     ? "Genoma · análisis de marca (PDF)"
     : "Genoma · refinado de voz (web)";
 }
 
 export function genomaIngestAnalysisDescription(kind: GenomaIngestPaidKind, language: "es" | "en"): string {
+  if (kind === "deck_logo") {
+    return language === "es"
+      ? "Visión multimodal sobre la portada del deck para detectar y recortar el logo."
+      : "Multimodal vision on the deck cover to detect and crop the logo.";
+  }
   if (kind === "pdf") {
     return language === "es"
       ? "Una llamada de visión multimodal sobre las páginas renderizadas (paleta, logo, tipografía y universo visual) más refinado de voz. Solo en el primer análisis de este documento."

@@ -9,7 +9,7 @@ import {
   resizeBBoxPage,
   type BboxHandle,
 } from "@/lib/genoma/logo-intake/bbox-ui";
-import { extractPreviewDataUrl, loadPageCanvas } from "@/lib/genoma/logo-intake/bbox-editor-client";
+import { extractPreviewDataUrl, loadPageCanvas, trimBBoxOnPage } from "@/lib/genoma/logo-intake/bbox-editor-client";
 import type { LogoValue } from "@/lib/genoma/genoma-types";
 import { isValidBboxPage, logoSourceBboxToPageTuple } from "@/lib/genoma/genoma-logo-bbox";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
@@ -198,6 +198,18 @@ export function GenomaLogoBboxEditor({
     }
   }, []);
 
+  const trimToContent = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !page) return;
+    const trimmed = trimBBoxOnPage({
+      pageCanvas: canvas,
+      pageWidth: page.width,
+      pageHeight: page.height,
+      bboxPage,
+    });
+    if (trimmed) setBboxPage(trimmed);
+  }, [bboxPage, page]);
+
   const save = useCallback(async () => {
     if (!logo.sourcePdfSha256 || !logo.sourcePageNumber) return;
     const normalized = normalizeBBoxPage(bboxPage);
@@ -300,6 +312,9 @@ export function GenomaLogoBboxEditor({
                 <span className="genoma-v2-muted">…</span>
               )}
             </div>
+            <GenomaFoldderButton variant="muted" disabled={busy || loading} onClick={trimToContent}>
+              {genomaLocaleEs.logoTrimToContent}
+            </GenomaFoldderButton>
           </aside>
         </div>
       ) : null}
