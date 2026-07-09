@@ -1,4 +1,5 @@
 import { countPdfPagesInBuffer } from "@/lib/brain/pdf-brand-extract";
+import { isLikelyBrandManualPdf } from "./genoma-pdf-brand-manual-detect";
 
 const DECK_NAME_RE = /deck|pitch|investor|presentaci[oó]n|slides|one-?pager|dossier/i;
 const HEX_IN_TEXT_RE = /#([0-9a-fA-F]{6})\b/;
@@ -26,6 +27,7 @@ export async function isLikelyDeckPdf(
   fileName: string,
   textSample = "",
 ): Promise<boolean> {
+  if (isLikelyBrandManualPdf(fileName, textSample)) return false;
   const h = await analyzeDeckPdfHeuristics(buffer, fileName, textSample);
   if (h.nameLooksLikeDeck) return true;
   if (h.pageCount >= 6) return true;

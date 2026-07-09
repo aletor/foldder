@@ -20,7 +20,11 @@ import {
 import { buildLogoSlotPatch, isExplicitPdfLogoAsset } from "../genoma-logo-policy";
 import { isLikelyDeckPdf } from "../genoma-pdf-deck";
 import { extractLogoCandidatesFromDeckPdf } from "../genoma-pdf-logo-vision";
-import { buildPaletteValue, rankLogoCandidates } from "../crawl/scoring";
+import {
+  extractBrandManualVisualsFromPdf,
+  isLikelyBrandManualPdf,
+} from "../genoma-pdf-brand-manual";
+import { buildPaletteValue, buildTypographyValue, rankLogoCandidates } from "../crawl/scoring";
 import { hexColorsFromCss } from "../crawl/parsers";
 import type { GenomaStreamEvent } from "../crawl/types";
 import type { GenomaCrawlOptions } from "../crawl/crawl-options";
@@ -145,6 +149,7 @@ export async function* runGenomaIngest(
   const logoCandidates: Candidate<LogoValue>[] = [];
   const galleryItems: GalleryValue["harvested"] = [];
   const paletteSignals: { hex: string; provenance: Provenance; weight?: number }[] = [];
+  const typographyFamilies: string[] = [];
   let corpusParts: string[] = [];
   let brandName: string | undefined;
 
@@ -217,9 +222,64 @@ export async function* runGenomaIngest(
           // scanned PDF or unsupported — gallery-only path
         }
 
-        const likelyDeck = await isLikelyDeckPdf(file.buffer, file.name, trimmedText);
+        const likelyBrandManual = isLikelyBrandManualPdf(file.name, trimmedText);
+        const likelyDeck = !likelyBrandManual && (await isLikelyDeckPdf(file.buffer, file.name, trimmedText));
 
         const pdfVisionOn = options?.pdfLogoVisionEnabled === true && Boolean(options?.userEmail);
+
+        if (likelyBrandManual) {
+          yield {
+            type: "llm_progress",
+            step: "pdf_brand_vision",
+            status: "running",
+            detail: pdfVisionOn ? "Analizando manual de marca…" : "Extrayendo paleta y tipografía del PDF…",
+          };
+          const manualSha = bufferContentSha256(file.buffer);
+          let manualCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
+          try {
+            if (pdfVisionOn) {
+              manualCharge = await reserveGenomaIngestAnalysisCharge({
+                userEmail: options.userEmail,
+                contentSignature: manualSha,
+                kind: "brand_manual",
+              });
+            }
+            const manual = await extractBrandManualVisualsFromPdf({
+              buffer: file.buffer,
+              fileName: file.name,
+              userEmail: options.userEmail ?? "",
+              route: "/api/spaces/genoma/ingest",
+              visionEnabled: pdfVisionOn,
+            });
+            if (pdfVisionOn) {
+              await settleGenomaIngestAnalysisCharge(manualCharge, "brand_manual");
+              manualCharge = null;
+            }
+            if (manual.logoCandidates.length) logoCandidates.push(...manual.logoCandidates);
+            paletteSignals.push(...manual.paletteSignals);
+            typographyFamilies.push(...manual.typographyFamilies);
+            sourceMeta = {
+              contentSha256: manual.contentSha256,
+              pdfStorageKey: manual.pdfStorageKey,
+              pageCount: manual.totalPages,
+            };
+            yield {
+              type: "llm_progress",
+              step: "pdf_brand_vision",
+              status: "done",
+              detail: manual.visionDetail ?? "Manual de marca procesado",
+            };
+          } catch (error) {
+            await releaseGenomaIngestAnalysisCharge(manualCharge, error);
+            console.error("[genoma/ingest/pdf_brand_vision]", error);
+            yield {
+              type: "llm_progress",
+              step: "pdf_brand_vision",
+              status: "failed",
+              detail: "No pude analizar el manual de marca",
+            };
+          }
+        }
 
         if (likelyDeck && !pdfVisionOn) {
           yield {
@@ -386,6 +446,20 @@ export async function* runGenomaIngest(
         value: paletteBuilt.value,
         provenance: paletteBuilt.provenance,
         confidence: 0.7,
+      }),
+    };
+  }
+
+  const typographyBuilt = buildTypographyValue(typographyFamilies);
+  if (typographyBuilt) {
+    yield {
+      type: "slot_update",
+      slotId: "typography",
+      patch: slotPatch({
+        status: "resolved",
+        value: typographyBuilt.value,
+        provenance: typographyBuilt.provenance,
+        confidence: 0.68,
       }),
     };
   }

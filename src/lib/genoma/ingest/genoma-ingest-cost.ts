@@ -5,17 +5,20 @@
 
 export const GENOMA_PDF_INGEST_ANALYSIS_USD = 0.045;
 export const GENOMA_DECK_LOGO_VISION_USD = 0.012;
+export const GENOMA_BRAND_MANUAL_VISION_USD = 0.038;
 export const GENOMA_URL_INGEST_VOICE_USD = 0.012;
 
-export type GenomaIngestPaidKind = "pdf" | "url" | "deck_logo";
+export type GenomaIngestPaidKind = "pdf" | "url" | "deck_logo" | "brand_manual";
 
 export function estimateGenomaIngestAnalysisUsd(kind: GenomaIngestPaidKind): number {
   if (kind === "deck_logo") return GENOMA_DECK_LOGO_VISION_USD;
+  if (kind === "brand_manual") return GENOMA_BRAND_MANUAL_VISION_USD;
   return kind === "pdf" ? GENOMA_PDF_INGEST_ANALYSIS_USD : GENOMA_URL_INGEST_VOICE_USD;
 }
 
 export function genomaIngestAnalysisLabel(kind: GenomaIngestPaidKind): string {
   if (kind === "deck_logo") return "Genoma · logo en deck (PDF)";
+  if (kind === "brand_manual") return "Genoma · manual de marca (PDF)";
   return kind === "pdf"
     ? "Genoma · análisis de marca (PDF)"
     : "Genoma · refinado de voz (web)";
@@ -26,6 +29,11 @@ export function genomaIngestAnalysisDescription(kind: GenomaIngestPaidKind, lang
     return language === "es"
       ? "Visión multimodal sobre la portada del deck para detectar y recortar el logo."
       : "Multimodal vision on the deck cover to detect and crop the logo.";
+  }
+  if (kind === "brand_manual") {
+    return language === "es"
+      ? "Visión multimodal del manual (logo, paleta y tipografía) más extracción del render PDF."
+      : "Multimodal vision on the brand manual (logo, palette, typography) plus PDF render extraction.";
   }
   if (kind === "pdf") {
     return language === "es"

@@ -21,3 +21,10 @@ describe("deckLogoVisionPageNumbers", () => {
     expect(deckLogoVisionPageNumbers(16)).toEqual([1, 2, 16]);
   });
 });
+
+describe("isLikelyDeckPdf with brand manual guard", () => {
+  it("returns false for 6-page brand manuals", async () => {
+    const text = "logotypes pantone typographie charte graphique marque";
+    expect(await isLikelyDeckPdf(Buffer.from("x"), "manual.pdf", text)).toBe(false);
+  });
+});
