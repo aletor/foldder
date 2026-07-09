@@ -18,6 +18,8 @@ import {
   buildResolvedEssenceFromIngest,
 } from "../genoma-essence-headline";
 import { buildLogoSlotPatch, isExplicitPdfLogoAsset } from "../genoma-logo-policy";
+import { isLikelyDeckPdf } from "../genoma-pdf-deck";
+import { extractLogoCandidatesFromDeckPdf } from "../genoma-pdf-logo-vision";
 import { buildPaletteValue, rankLogoCandidates } from "../crawl/scoring";
 import { hexColorsFromCss } from "../crawl/parsers";
 import type { GenomaStreamEvent } from "../crawl/types";
@@ -74,6 +76,37 @@ function logoCandidateFromUpload(
       variants: [],
     },
   };
+}
+
+function rankUploadedLogoCandidates(candidates: Candidate<LogoValue>[]): Candidate<LogoValue>[] {
+  const uploads = candidates.filter((candidate) => candidate.value.detectionMethod !== "vision_bbox");
+  if (!uploads.length) return [];
+  const ranked = rankLogoCandidates(
+    uploads.map((candidate) => ({
+      url: candidate.value.previewUrl ?? candidate.value.assetId,
+      score: candidate.score,
+      provenance: candidate.provenance,
+      format: candidate.value.format,
+      widthHint: candidate.value.width,
+      heightHint: candidate.value.height,
+    })),
+  );
+  return ranked.map((rankedCandidate, index) => {
+    const original = uploads.find(
+      (candidate) =>
+        (candidate.value.previewUrl ?? candidate.value.assetId) ===
+        (rankedCandidate.value.previewUrl ?? rankedCandidate.value.assetId),
+    );
+    return original ? { ...original, score: rankedCandidate.score } : rankedCandidate;
+  });
+}
+
+function mergeRankedLogoCandidates(candidates: Candidate<LogoValue>[]): Candidate<LogoValue>[] {
+  const vision = candidates
+    .filter((candidate) => candidate.value.detectionMethod === "vision_bbox")
+    .sort((a, b) => b.score - a.score);
+  const uploads = rankUploadedLogoCandidates(candidates);
+  return [...vision, ...uploads].sort((a, b) => b.score - a.score);
 }
 
 export async function* runGenomaIngest(
@@ -159,9 +192,88 @@ export async function* runGenomaIngest(
     }
 
     if (triage.kind === "brand_document") {
-      yield { type: "source_added", kind: "file", ref: file.name };
+      let sourceMeta:
+        | { contentSha256: string; pdfStorageKey: string; pageCount: number }
+        | undefined;
 
       if (file.mime === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        let trimmedText = "";
+        try {
+          const text = await parseBrainDocument(file.buffer, file.name, file.mime || "application/octet-stream");
+          trimmedText = text.trim();
+          if (trimmedText.length >= 40) corpusParts.push(trimmedText.slice(0, 12_000));
+          if (!brandName) {
+            const firstLine = trimmedText.split("\n").find((line) => line.trim().length > 2)?.trim();
+            if (firstLine && firstLine.length <= 80) brandName = firstLine;
+          }
+          paletteSignals.push(...hexColorsFromCss(trimmedText, file.name).map((c) => ({ ...c, weight: 0.4 })));
+        } catch {
+          // scanned PDF or unsupported — gallery-only path
+        }
+
+        const likelyDeck = await isLikelyDeckPdf(file.buffer, file.name, trimmedText);
+
+        const pdfVisionOn = options?.pdfLogoVisionEnabled === true && Boolean(options?.userEmail);
+
+        if (likelyDeck && !pdfVisionOn) {
+          yield {
+            type: "llm_progress",
+            step: "pdf_logo_vision",
+            status: "skipped",
+            detail:
+              options?.pdfLogoVisionSkipReason ??
+              options?.llmSkipReason ??
+              "IA desactivada — sin visión de logo en deck",
+          };
+        }
+
+        const deckPdf = pdfVisionOn && likelyDeck;
+
+        if (deckPdf) {
+          yield {
+            type: "llm_progress",
+            step: "pdf_logo_vision",
+            status: "running",
+            detail: "Detectando logo en el deck…",
+          };
+          try {
+            const vision = await extractLogoCandidatesFromDeckPdf({
+              buffer: file.buffer,
+              fileName: file.name,
+              userEmail: options.userEmail ?? "",
+              route: "/api/spaces/genoma/ingest",
+            });
+            if (vision?.candidates.length) {
+              logoCandidates.push(...vision.candidates);
+            }
+            if (vision) {
+              sourceMeta = {
+                contentSha256: vision.contentSha256,
+                pdfStorageKey: vision.pdfStorageKey,
+                pageCount: vision.totalPages,
+              };
+            }
+            yield {
+              type: "llm_progress",
+              step: "pdf_logo_vision",
+              status: "done",
+              detail:
+                vision?.candidates.length
+                  ? (vision.visionDetail ??
+                    `${vision.candidates.length} candidatos · ${vision.pagesWithLogo} pág.`)
+                  : (vision?.visionDetail ?? "Sin logo claro en el deck"),
+            };
+          } catch (error) {
+            console.error("[genoma/ingest/pdf_logo_vision]", error);
+            yield {
+              type: "llm_progress",
+              step: "pdf_logo_vision",
+              status: "failed",
+              detail: "No pude analizar el logo del deck",
+            };
+          }
+        }
+
         const pdfImages = await extractVisualImagesFromPdfBuffer(file.buffer, file.name).catch(() => []);
         for (const img of pdfImages) {
           const uploaded = await uploadGenomaIngestFile({
@@ -189,20 +301,29 @@ export async function* runGenomaIngest(
             );
           }
         }
+      } else {
+        try {
+          const text = await parseBrainDocument(file.buffer, file.name, file.mime || "application/octet-stream");
+          const trimmed = text.trim();
+          if (trimmed.length >= 40) corpusParts.push(trimmed.slice(0, 12_000));
+          if (!brandName) {
+            const firstLine = trimmed.split("\n").find((line) => line.trim().length > 2)?.trim();
+            if (firstLine && firstLine.length <= 80) brandName = firstLine;
+          }
+          paletteSignals.push(...hexColorsFromCss(trimmed, file.name).map((c) => ({ ...c, weight: 0.4 })));
+        } catch {
+          // unsupported document
+        }
       }
 
-      try {
-        const text = await parseBrainDocument(file.buffer, file.name, file.mime || "application/octet-stream");
-        const trimmed = text.trim();
-        if (trimmed.length >= 40) corpusParts.push(trimmed.slice(0, 12_000));
-        if (!brandName) {
-          const firstLine = trimmed.split("\n").find((line) => line.trim().length > 2)?.trim();
-          if (firstLine && firstLine.length <= 80) brandName = firstLine;
-        }
-        paletteSignals.push(...hexColorsFromCss(trimmed, file.name).map((c) => ({ ...c, weight: 0.4 })));
-      } catch {
-        // scanned PDF or unsupported — gallery-only path
-      }
+      yield {
+        type: "source_added",
+        kind: "file",
+        ref: file.name,
+        contentSha256: sourceMeta?.contentSha256,
+        pdfStorageKey: sourceMeta?.pdfStorageKey,
+        pageCount: sourceMeta?.pageCount,
+      };
     }
   }
 
@@ -216,24 +337,20 @@ export async function* runGenomaIngest(
 
   yield { type: "progress", phase: "visual", step: 3, totalSteps: 5, message: "Logo y paleta…" };
 
-  let rankedLogos = rankLogoCandidates(
-    logoCandidates.map((c) => ({
-      url: c.value.previewUrl ?? c.value.assetId,
-      score: c.score,
-      provenance: c.provenance,
-      format: c.value.format,
-      widthHint: c.value.width,
-      heightHint: c.value.height,
-    })),
-  );
+  let rankedLogos = mergeRankedLogoCandidates(logoCandidates);
 
-  if (rankedLogos.length && options?.llmEnabled) {
+  const labelTargets = rankedLogos.filter((candidate) => candidate.value.detectionMethod !== "vision_bbox");
+  if (labelTargets.length && options?.llmEnabled) {
     yield { type: "llm_progress", step: "logo_vision", status: "running", detail: "Etiquetando logos…" };
-    rankedLogos = await labelLogoCandidatesWithVision(rankedLogos, {
+    const labeled = await labelLogoCandidatesWithVision(labelTargets, {
       userEmail: options?.userEmail,
       route: "/api/spaces/genoma/ingest",
       onLlmCostUsd: options?.onLlmCostUsd,
     });
+    rankedLogos = mergeRankedLogoCandidates([
+      ...rankedLogos.filter((candidate) => candidate.value.detectionMethod === "vision_bbox"),
+      ...labeled,
+    ]);
     yield { type: "llm_progress", step: "logo_vision", status: "done", detail: `${rankedLogos.length} candidatos` };
   }
 

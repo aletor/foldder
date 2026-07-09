@@ -2,7 +2,7 @@ import type { Provenance, SlotId, SlotState } from "../genoma-types";
 
 export type GenomaCrawlPhaseId = "connect" | "crawl" | "visual" | "copy" | "llm" | "finalize";
 
-export type GenomaLlmStepId = "voice" | "values" | "oneliner" | "logo_vision" | "batch";
+export type GenomaLlmStepId = "voice" | "values" | "oneliner" | "logo_vision" | "pdf_logo_vision" | "batch";
 
 export type GenomaLlmBatchSubstep = "essence" | "voice" | "visualWorld";
 
@@ -20,7 +20,14 @@ export type GenomaStreamEvent =
     }
   | { type: "brand_name"; value: string; provenance: Provenance }
   | { type: "slot_update"; slotId: SlotId; patch: Partial<SlotState<unknown>> }
-  | { type: "source_added"; kind: "url" | "file"; ref: string }
+  | {
+      type: "source_added";
+      kind: "url" | "file";
+      ref: string;
+      contentSha256?: string;
+      pdfStorageKey?: string;
+      pageCount?: number;
+    }
   | { type: "triage_plan"; items: { name: string; kind: string; action: string }[] }
   | { type: "done"; jobId: string }
   | { type: "error"; message: string };

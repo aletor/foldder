@@ -44,7 +44,17 @@ export function applyGenomaStreamEvent(
   if (event.type === "source_added") {
     return {
       ...doc,
-      sources: [...doc.sources, { kind: event.kind, ref: event.ref, ts: NOW() }],
+      sources: [
+        ...doc.sources,
+        {
+          kind: event.kind,
+          ref: event.ref,
+          ts: NOW(),
+          contentSha256: event.contentSha256,
+          pdfStorageKey: event.pdfStorageKey,
+          pageCount: event.pageCount,
+        },
+      ],
       updatedAt: NOW(),
     };
   }

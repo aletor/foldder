@@ -26,6 +26,15 @@ export type PageVisionPassSelectionPlan = {
   estimatedCalls: number;
 };
 
+/** Ingesta v2 deck: portada + pág. 2 + cierre (máx. 3 llamadas LLM). */
+export function deckLogoVisionPageNumbers(totalPages: number): number[] {
+  if (totalPages <= 0) return [];
+  const picked = new Set<number>([1]);
+  if (totalPages >= 2) picked.add(2);
+  if (totalPages >= 3) picked.add(totalPages);
+  return [...picked].sort((a, b) => a - b);
+}
+
 /** Portada, 2–4, contraportada y las dos anteriores. */
 export function guaranteedVisionPageNumbers(totalPages: number): number[] {
   if (totalPages <= 0) return [];

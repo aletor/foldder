@@ -124,4 +124,21 @@ describe("buildLogoSlotPatch", () => {
     ];
     expect(shouldAutoResolveLogo(candidates).auto).toBe(true);
   });
+
+  it("treats vision bbox logos as strong provenance", () => {
+    expect(
+      isStrongLogoProvenance(
+        { type: "pdf_xobject", detail: "visión" },
+        {
+          assetId: "x",
+          format: "png",
+          width: 1,
+          height: 1,
+          background: "transparent",
+          variants: [],
+          detectionMethod: "vision_bbox",
+        },
+      ),
+    ).toBe(true);
+  });
 });

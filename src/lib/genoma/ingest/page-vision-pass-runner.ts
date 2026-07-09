@@ -8,7 +8,11 @@ import { countPdfPagesInBuffer } from "@/lib/brain/pdf-brand-extract";
 import { renderPdfPages } from "@/lib/brain/pdf-page-render";
 import { clusterPdfPagesByLayout } from "./page-vision-pass-page-clusters";
 import { invokePageVisionPassModel } from "./page-vision-pass-invoker";
-import { selectPageVisionPassPages, guaranteedVisionPageNumbers } from "./page-vision-pass-selection";
+import {
+  deckLogoVisionPageNumbers,
+  selectPageVisionPassPages,
+  guaranteedVisionPageNumbers,
+} from "./page-vision-pass-selection";
 import {
   validatePageVisionPass,
   type PageVisionParseRejection,
@@ -111,7 +115,7 @@ export type PageVisionPassRunAudit = {
   batchInvokeError?: string;
 };
 
-export type PageVisionSelectionScope = "stratified" | "guaranteed-only";
+export type PageVisionSelectionScope = "stratified" | "guaranteed-only" | "deck-logo-cover";
 
 export type RunPageVisionPassForPdfInput = {
   buffer: Buffer;
@@ -124,6 +128,8 @@ export type RunPageVisionPassForPdfInput = {
   writeGoldenPages?: number[];
   /** Ingesta app: solo portada + anclas; script: muestreo estratificado completo. */
   selectionScope?: PageVisionSelectionScope;
+  /** Si se define, sustituye la selección automática (p. ej. deck logo: [1,2,last]). */
+  forcedPageNumbers?: number[];
 };
 
 async function analyzeOnePage(input: {
@@ -181,19 +187,34 @@ export async function runPageVisionPassForPdf(
   const totalPages = await countPdfPagesInBuffer(input.buffer, maxPages);
   const clusters = await clusterPdfPagesByLayout(input.buffer, totalPages, maxPages);
   const guaranteed = guaranteedVisionPageNumbers(totalPages);
-  const plan =
-    input.selectionScope === "guaranteed-only"
+  const deckLogoPages = deckLogoVisionPageNumbers(totalPages);
+  const forcedPages = (input.forcedPageNumbers ?? []).filter((page) => page >= 1 && page <= totalPages);
+  const plan = forcedPages.length
+    ? {
+        guaranteed: forcedPages,
+        sampled: [] as number[],
+        selected: [...new Set(forcedPages)].sort((a, b) => a - b),
+        estimatedCalls: forcedPages.length,
+      }
+    : input.selectionScope === "deck-logo-cover"
       ? {
-          guaranteed,
+          guaranteed: deckLogoPages,
           sampled: [] as number[],
-          selected: guaranteed,
-          estimatedCalls: guaranteed.length,
+          selected: deckLogoPages,
+          estimatedCalls: deckLogoPages.length,
         }
-      : selectPageVisionPassPages({
-          totalPages,
-          templateClusters: clusters,
-          pagesPerCluster: 2,
-        });
+      : input.selectionScope === "guaranteed-only"
+        ? {
+            guaranteed,
+            sampled: [] as number[],
+            selected: guaranteed,
+            estimatedCalls: guaranteed.length,
+          }
+        : selectPageVisionPassPages({
+            totalPages,
+            templateClusters: clusters,
+            pagesPerCluster: 2,
+          });
 
   const rendered = await renderPdfPages(input.buffer, {
     maxPages: totalPages,
@@ -237,6 +258,11 @@ export async function runPageVisionPassForPdf(
       cacheKey: pageVisionPassCacheKey(input.contentSha256, pageNumber),
       retried,
     });
+
+    if (input.selectionScope === "deck-logo-cover" && pageNumber === 1) {
+      const page1 = pages.find((entry) => entry.pageNumber === 1);
+      if (page1?.ok && (page1.result?.logoInstances.length ?? 0) > 0) break;
+    }
   }
 
   const runAudit: PageVisionPassRunAudit = {

@@ -63,10 +63,13 @@ export async function runPageVisionPassNivel1ForPdf(
   const maxPages = input.maxPages ?? 200;
   const totalPages = await countPdfPagesInBuffer(input.buffer, maxPages);
 
-  const selectedPages = selectNivel1GuaranteedVisionPages({
-    totalPages,
-    maxPages: NIVEL1_MAX_PAGES,
-  });
+  const forcedPages = (input.forcedPageNumbers ?? []).filter((page) => page >= 1 && page <= totalPages);
+  const selectedPages = forcedPages.length
+    ? [...new Set(forcedPages)].sort((a, b) => a - b)
+    : selectNivel1GuaranteedVisionPages({
+        totalPages,
+        maxPages: NIVEL1_MAX_PAGES,
+      });
 
   const prepassPromise = runPageVisionPrepass({
     buffer: input.buffer,

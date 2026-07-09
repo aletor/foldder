@@ -78,6 +78,15 @@ export interface SlotState<T = unknown> {
 
 export type LogoVariantKind = "principal" | "mono" | "negativo" | "icono";
 
+export type LogoDetectionMethod = "vision_bbox" | "upload" | "web" | "adjusted";
+
+export interface LogoSourceBbox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface LogoValue {
   assetId: string;
   previewUrl?: string;
@@ -86,6 +95,12 @@ export interface LogoValue {
   height: number;
   background: "transparent" | "solid";
   variants: { kind: LogoVariantKind; assetId: string; previewUrl?: string }[];
+  sourcePageNumber?: number;
+  sourceBbox?: LogoSourceBbox;
+  sourceDocName?: string;
+  sourcePdfSha256?: string;
+  totalDocPages?: number;
+  detectionMethod?: LogoDetectionMethod;
 }
 
 export interface PaletteValue {
@@ -185,6 +200,9 @@ export interface SourceRef {
   ref: string;
   ts: string;
   authoritative?: boolean;
+  contentSha256?: string;
+  pdfStorageKey?: string;
+  pageCount?: number;
 }
 
 export interface GenomaDocument {

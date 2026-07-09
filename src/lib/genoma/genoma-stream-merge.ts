@@ -7,7 +7,8 @@ import {
   semanticCandidateFingerprint,
 } from "./genoma-reconcile";
 import { applyLockedSlotPolicy } from "./genoma-source-policy";
-import { finalizeLogoCandidateSlot } from "./genoma-logo-policy";
+import { genomaLocaleEs } from "./genoma-locale.es";
+import { finalizeLogoCandidateSlot, logoCandidateFingerprint, logosAreSameFamily } from "./genoma-logo-policy";
 import { rankHarvestedGalleryItems, rankLogoCandidatesMultiSource } from "./genoma-visual-rank";
 
 export type GenomaStreamMergeOptions = {
@@ -23,6 +24,9 @@ function hasSubstantiveSlotContent(slot: SlotState<unknown>): boolean {
 }
 
 function candidateKey(candidate: Candidate<unknown>, slotId?: SlotId): string {
+  if (slotId === "logo") {
+    return logoCandidateFingerprint(candidate as Candidate<LogoValue>);
+  }
   const value = candidate.value as Record<string, unknown> | null;
   if (value && typeof value.assetId === "string") return `asset:${value.assetId}`;
   if (slotId && isSemanticTextSlot(slotId)) {
@@ -51,7 +55,15 @@ function mergeCandidates(
   slotId?: SlotId,
 ): Candidate<unknown>[] {
   if (slotId === "logo") {
-    return [...existing, ...incoming].slice(0, 24);
+    const seen = new Set(existing.map((candidate) => candidateKey(candidate, slotId)));
+    const merged = [...existing];
+    for (const candidate of incoming) {
+      const key = candidateKey(candidate, slotId);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(candidate);
+    }
+    return merged.sort((a, b) => b.score - a.score).slice(0, 24);
   }
   const seen = new Set(existing.map((candidate) => candidateKey(candidate, slotId)));
   const merged = [...existing];
@@ -176,7 +188,7 @@ export function mergeSlotStreamPatch(
         needsReviewReason:
           nextPatch.needsReviewReason ??
           current.needsReviewReason ??
-          "Nueva fuente — elige la mejor opción",
+          genomaLocaleEs.logoMultiSourceReview,
       };
     }
   } else if (nextPatch.candidates?.length) {
@@ -187,6 +199,27 @@ export function mergeSlotStreamPatch(
         options?.sources ?? [],
       );
     }
+  }
+
+  if (
+    additive &&
+    hasIncomingValue &&
+    hasCurrentValue &&
+    slotId === "logo" &&
+    logosAreSameFamily(current.value as LogoValue, incomingValue as LogoValue)
+  ) {
+    return finishMerge(
+      slotId,
+      {
+        ...current,
+        confidence: Math.max(
+          current.confidence,
+          typeof nextPatch.confidence === "number" ? nextPatch.confidence : 0.72,
+        ),
+        updatedAt: nextPatch.updatedAt ?? new Date().toISOString(),
+      },
+      options?.sources ?? [],
+    );
   }
 
   if (
@@ -237,7 +270,7 @@ export function mergeSlotStreamPatch(
         value: undefined,
         candidates,
         confidence: Math.max(current.confidence, incoming.score),
-        needsReviewReason: "Nueva fuente — elige la mejor opción",
+        needsReviewReason: genomaLocaleEs.logoMultiSourceReview,
         updatedAt: nextPatch.updatedAt ?? new Date().toISOString(),
       },
       options?.sources ?? [],

@@ -201,6 +201,53 @@ describe("mergeSlotStreamPatch", () => {
     expect(merged?.candidates.length).toBeGreaterThan(0);
   });
 
+  it("opens logo picker when a second source proposes a different logo", () => {
+    const current = {
+      ...createEmptyGenoma().slots.logo,
+      status: "resolved" as const,
+      value: {
+        assetId: "deck-a.png",
+        previewUrl: "deck-a.png",
+        format: "png" as const,
+        width: 200,
+        height: 80,
+        background: "transparent" as const,
+        variants: [],
+        sourcePdfSha256: "sha-a",
+        sourcePageNumber: 1,
+        detectionMethod: "vision_bbox" as const,
+      },
+      confidence: 0.88,
+      provenance: { type: "pdf_xobject", detail: "deck A" },
+    };
+    const merged = mergeSlotStreamPatch(
+      "logo",
+      current,
+      {
+        status: "resolved",
+        value: {
+          assetId: "manual-b.png",
+          previewUrl: "manual-b.png",
+          format: "png",
+          width: 220,
+          height: 90,
+          background: "transparent",
+          variants: [],
+          sourcePdfSha256: "sha-b",
+          sourcePageNumber: 2,
+          detectionMethod: "vision_bbox" as const,
+        },
+        confidence: 0.9,
+        provenance: { type: "pdf_xobject", detail: "deck B" },
+      },
+      { respectLocks: true },
+    );
+    expect(merged?.status).toBe("candidates");
+    expect(merged?.value).toBeUndefined();
+    expect(merged?.candidates?.length).toBeGreaterThanOrEqual(2);
+    expect(merged?.needsReviewReason).toContain("elige el logo");
+  });
+
   it("returns null for locked slots", () => {
     const current = {
       ...createEmptyGenoma().slots.logo,

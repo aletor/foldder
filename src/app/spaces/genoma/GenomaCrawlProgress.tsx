@@ -21,6 +21,7 @@ export type GenomaCrawlProgressState = {
 
 const LLM_STEP_LABELS: Record<GenomaLlmStepId, string> = {
   logo_vision: "Logo (visión)",
+  pdf_logo_vision: "Logo (deck PDF)",
   voice: "Voz",
   values: "Creencias",
   oneliner: "Headline",

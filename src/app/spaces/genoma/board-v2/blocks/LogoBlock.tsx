@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import type { LogoValue, SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { DnaBlock } from "../DnaBlock";
@@ -9,7 +9,18 @@ import { GenomaLogoRankMeta } from "../GenomaVisualRankMeta";
 import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { GenomaFoldderButton } from "../GenomaFoldderButton";
 import { GenomaIconButton } from "../GenomaIconButton";
-import { Check, Upload } from "lucide-react";
+import { GenomaLogoBboxEditor } from "../GenomaLogoBboxEditor";
+import { Check, Crop, Upload } from "lucide-react";
+
+function canAdjustLogo(logo?: LogoValue): boolean {
+  return Boolean(logo?.sourcePdfSha256 && logo.sourcePageNumber);
+}
+
+function logoPageHint(logo?: LogoValue): string | null {
+  if (!logo?.sourcePageNumber) return null;
+  const doc = logo.sourceDocName ? `${logo.sourceDocName} · ` : "";
+  return `${doc}${genomaLocaleEs.logoPageSignal(logo.sourcePageNumber, logo.totalDocPages ?? 0)}`;
+}
 
 function plinthClassForLogo(url?: string): string {
   if (!url) return "genoma-v2-logo-plinth--neutral";
@@ -59,7 +70,31 @@ export function LogoBlock({
 }) {
   const logo = slot.value as LogoValue | undefined;
   const plinthClass = useMemo(() => plinthClassForLogo(logo?.previewUrl), [logo?.previewUrl]);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const pageHint = logoPageHint(logo);
+  const adjustControl =
+    canAdjustLogo(logo) && !slot.locked ? (
+      <GenomaIconButton
+        icon={Crop}
+        label={genomaLocaleEs.adjustLogoArea}
+        onClick={() => setAdjustOpen(true)}
+      />
+    ) : null;
   const uploadControl = <LogoUploadControl onUploadLogo={onUploadLogo} disabled={slot.locked} />;
+  const secondaryActions = (
+    <>
+      {adjustControl}
+      {uploadControl}
+    </>
+  );
+
+  const resolvedPlinth = logo?.previewUrl ? (
+    <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
+      {pageHint ? <p className="genoma-v2-logo-page-hint">{pageHint}</p> : null}
+      <GenomaClickableImage src={logo.previewUrl} fit="logo" />
+      <GenomaSupplementalPanel slot={slot} />
+    </div>
+  ) : null;
 
   let body: React.ReactNode;
 
@@ -69,7 +104,9 @@ export function LogoBlock({
     body = <div className="genoma-v2-skeleton genoma-v2-skeleton--hero" aria-hidden />;
   } else if (slot.status === "candidates" || (slot.status === "needs_user" && slot.candidates.length)) {
     body = (
-      <div className="genoma-v2-logo-candidates">
+      <>
+        {slot.needsReviewReason ? <p className="genoma-v2-review-hint">{slot.needsReviewReason}</p> : null}
+        <div className="genoma-v2-logo-candidates">
         {pickerCandidates.map((candidate, index) => {
           const value = candidate.value as LogoValue;
           return (
@@ -92,7 +129,8 @@ export function LogoBlock({
             </div>
           );
         })}
-      </div>
+        </div>
+      </>
     );
   } else if (slot.status === "needs_user") {
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noLogo}</p>;
@@ -100,21 +138,13 @@ export function LogoBlock({
     body = (
       <>
         <p className="genoma-v2-review-hint">{slot.needsReviewReason}</p>
-        <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
-          <GenomaClickableImage src={logo.previewUrl} fit="logo" />
-          <GenomaSupplementalPanel slot={slot} />
-        </div>
+        {resolvedPlinth}
       </>
     );
   } else if (!logo?.previewUrl) {
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noLogo}</p>;
   } else {
-    body = (
-      <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
-        <GenomaClickableImage src={logo.previewUrl} fit="logo" />
-        <GenomaSupplementalPanel slot={slot} />
-      </div>
-    );
+    body = resolvedPlinth;
   }
 
   return (
@@ -124,10 +154,22 @@ export function LogoBlock({
       slot={slot}
       onAction={onAction}
       className="genoma-v2-block--hero"
-      secondaryActions={uploadControl}
+      secondaryActions={secondaryActions}
       activeSlotId={activeSlotId}
     >
       {body}
+      {adjustOpen && logo ? (
+        <div className="genoma-v2-logo-adjust-overlay">
+          <GenomaLogoBboxEditor
+            logo={logo}
+            onClose={() => setAdjustOpen(false)}
+            onSaved={(nextLogo) => {
+              onAction(slotId, { action: "set", value: nextLogo });
+              setAdjustOpen(false);
+            }}
+          />
+        </div>
+      ) : null}
     </DnaBlock>
   );
 }

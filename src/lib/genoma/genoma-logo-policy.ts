@@ -36,7 +36,10 @@ export function isExplicitPdfLogoAsset(name: string): boolean {
   return EXPLICIT_LOGO_NAME.test(name);
 }
 
-export function isStrongLogoProvenance(provenance: Provenance): boolean {
+export function isStrongLogoProvenance(provenance: Provenance, value?: LogoValue): boolean {
+  if (value?.detectionMethod === "vision_bbox" || value?.detectionMethod === "adjusted") {
+    return true;
+  }
   if (STRONG_PROVENANCE_TYPES.has(provenance.type)) {
     if (provenance.type === "file_upload") return true;
     if (provenance.type === "pdf_vector_fill") return true;
@@ -198,7 +201,7 @@ export function shouldAutoResolveLogo(candidates: Candidate<LogoValue>[]): {
   const display = groupLogoCandidatesForDisplay(candidates);
   if (!display.length) return { auto: false };
   const top = display[0];
-  if (isStrongLogoProvenance(top.provenance) && hasClearLogoLead(display)) {
+  if (isStrongLogoProvenance(top.provenance, top.value) && hasClearLogoLead(display)) {
     return { auto: true, top };
   }
   return { auto: false, top };
@@ -215,7 +218,7 @@ export function decideFirstSourceLogoPatch(
   const [top] = display;
   const alternates = display.slice(1, MAX_LOGO_PICKER);
 
-  if (isStrongLogoProvenance(top.provenance) && hasClearLogoLead(display)) {
+  if (isStrongLogoProvenance(top.provenance, top.value) && hasClearLogoLead(display)) {
     return {
       status: "resolved",
       value: top.value,
@@ -302,6 +305,37 @@ export function finalizeLogoCandidateSlot(
     candidates: candidates.slice(0, MAX_LOGO_DISPLAY),
     confidence: Math.max(slot.confidence, candidates[0]?.score ?? 0),
   };
+}
+
+export function logoCandidateFingerprint(candidate: Candidate<LogoValue>): string {
+  const value = candidate.value;
+  if (value.sourcePdfSha256 && value.sourcePageNumber && value.sourceBbox) {
+    const bbox = value.sourceBbox;
+    return [
+      "vision",
+      value.sourcePdfSha256,
+      value.sourcePageNumber,
+      bbox.x.toFixed(4),
+      bbox.y.toFixed(4),
+      bbox.width.toFixed(4),
+      bbox.height.toFixed(4),
+    ].join(":");
+  }
+  return `asset:${value.previewUrl ?? value.assetId}`;
+}
+
+export function logosAreSameFamily(a: LogoValue, b: LogoValue): boolean {
+  if (a.assetId === b.assetId) return true;
+  if (a.previewUrl && b.previewUrl && a.previewUrl === b.previewUrl) return true;
+  if (
+    a.sourcePdfSha256 &&
+    b.sourcePdfSha256 &&
+    a.sourcePdfSha256 === b.sourcePdfSha256 &&
+    a.sourcePageNumber === b.sourcePageNumber
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function resolvedLogoPreviewUrl(patch: Partial<SlotState<LogoValue>>): string | undefined {

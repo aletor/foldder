@@ -138,7 +138,9 @@ function streamV2Ingest(
   options: {
     userEmail: string;
     llmEnabled: boolean;
+    pdfLogoVisionEnabled: boolean;
     llmSkipReason?: string;
+    pdfLogoVisionSkipReason?: string;
     onLlmCostUsd: (cost: number) => void;
     walletCharge: ApiWalletCharge | null;
   },
@@ -156,7 +158,9 @@ function streamV2Ingest(
         for await (const event of runGenomaIngest(files, jobId, {
           userEmail: options.userEmail,
           llmEnabled: options.llmEnabled,
+          pdfLogoVisionEnabled: options.pdfLogoVisionEnabled,
           llmSkipReason: options.llmSkipReason,
+          pdfLogoVisionSkipReason: options.pdfLogoVisionSkipReason,
           onLlmCostUsd: (cost) => {
             llmCostUsd += cost;
             options.onLlmCostUsd(cost);
@@ -284,31 +288,37 @@ export async function POST(req: NextRequest) {
     const enableLlm = formData.get("enableLlm") !== "false";
     const hasGemini = Boolean((process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim());
     let llmEnabled = false;
+    let pdfLogoVisionEnabled = enableLlm && hasGemini;
     let llmSkipReason: string | undefined;
+    let pdfLogoVisionSkipReason: string | undefined;
 
-    if (enableLlm) {
-      if (!hasGemini) {
-        llmSkipReason = "GEMINI_API_KEY no configurada — solo extracción determinista";
-      } else {
-        try {
-          await assertApiServiceEnabled("genoma-llm-synthesis");
-          llmEnabled = true;
-          walletCharge = await reserveApiWalletCharge({
-            req,
-            userEmail: auth.user.email,
-            serviceId: "genoma-llm-synthesis",
-            provider: "gemini",
-            route: "/api/spaces/genoma/ingest",
-            maxCostMicros: reserveUsdToMicros(estimateGenomaIngestLlmReserveUsd(), { multiplier: 1.5 }),
-            metadata: { fileCount: files.length, model: GENOMA_LLM_MODEL },
-          });
-          releaseWalletOnError = false;
-        } catch (error) {
-          if (error instanceof ApiServiceDisabledError) {
-            llmSkipReason = "Síntesis IA deshabilitada en administración";
-          } else {
-            throw error;
-          }
+    if (!enableLlm) {
+      llmSkipReason = "IA desactivada";
+      pdfLogoVisionSkipReason = llmSkipReason;
+      pdfLogoVisionEnabled = false;
+    } else if (!hasGemini) {
+      llmSkipReason = "GEMINI_API_KEY no configurada — solo extracción determinista";
+      pdfLogoVisionSkipReason = llmSkipReason;
+      pdfLogoVisionEnabled = false;
+    } else {
+      try {
+        await assertApiServiceEnabled("genoma-llm-synthesis");
+        llmEnabled = true;
+        walletCharge = await reserveApiWalletCharge({
+          req,
+          userEmail: auth.user.email,
+          serviceId: "genoma-llm-synthesis",
+          provider: "gemini",
+          route: "/api/spaces/genoma/ingest",
+          maxCostMicros: reserveUsdToMicros(estimateGenomaIngestLlmReserveUsd(), { multiplier: 1.5 }),
+          metadata: { fileCount: files.length, model: GENOMA_LLM_MODEL },
+        });
+        releaseWalletOnError = false;
+      } catch (error) {
+        if (error instanceof ApiServiceDisabledError) {
+          llmSkipReason = "Síntesis IA deshabilitada en administración";
+        } else {
+          throw error;
         }
       }
     }
@@ -326,7 +336,9 @@ export async function POST(req: NextRequest) {
       streamV2Ingest(buffers, jobId, {
         userEmail: auth.user.email,
         llmEnabled,
+        pdfLogoVisionEnabled,
         llmSkipReason,
+        pdfLogoVisionSkipReason,
         onLlmCostUsd: () => undefined,
         walletCharge,
       }),
