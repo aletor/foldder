@@ -1,6 +1,9 @@
-import type { GenomaDocument, Provenance, SlotId, SlotState } from "@/lib/genoma/genoma-types";
+import type { GalleryValue, GenomaDocument, SlotId } from "@/lib/genoma/genoma-types";
+import { applyGalleryMediaMirrors, externalGalleryMediaUrls } from "@/lib/genoma/genoma-gallery-media";
 import { GENOMA_SLOT_IDS } from "@/lib/genoma/genoma-types";
 import { createEmptyGenoma } from "@/lib/genoma/genoma-defaults";
+import { mergeSlotStreamPatch } from "@/lib/genoma/genoma-stream-merge";
+import { setSourceAuthoritative } from "@/lib/genoma/genoma-source-policy";
 import { normalizeGenomaUrlInput } from "@/lib/genoma/crawl/url-utils";
 import type { GenomaStreamEvent } from "@/lib/genoma/crawl/types";
 import { compileGenoma } from "@/lib/genoma/compile-genoma";
@@ -28,6 +31,9 @@ export function applyGenomaStreamEvent(
   options?: { respectLocks?: boolean },
 ): GenomaDocument {
   if (event.type === "brand_name") {
+    if (options?.respectLocks && doc.brandName?.provenance?.type === "user_input") {
+      return doc;
+    }
     return {
       ...doc,
       brandName: { value: event.value, provenance: event.provenance },
@@ -45,13 +51,18 @@ export function applyGenomaStreamEvent(
 
   if (event.type === "slot_update") {
     const current = doc.slots[event.slotId] ?? createEmptyGenoma().slots[event.slotId];
-    if (options?.respectLocks && current.locked) return doc;
-    const merged: SlotState<unknown> = {
-      ...current,
-      id: event.slotId,
-      ...event.patch,
-      updatedAt: event.patch.updatedAt ?? NOW(),
-    };
+    const merged = options?.respectLocks
+      ? mergeSlotStreamPatch(event.slotId, current, event.patch, {
+          respectLocks: true,
+          sources: doc.sources,
+        })
+      : {
+          ...current,
+          id: event.slotId,
+          ...event.patch,
+          updatedAt: event.patch.updatedAt ?? NOW(),
+        };
+    if (!merged) return doc;
     return {
       ...doc,
       slots: { ...doc.slots, [event.slotId]: merged },
@@ -60,6 +71,14 @@ export function applyGenomaStreamEvent(
   }
 
   return doc;
+}
+
+export function applySourceAuthoritative(
+  doc: GenomaDocument,
+  sourceRef: string,
+  authoritative: boolean,
+): GenomaDocument {
+  return setSourceAuthoritative(doc, sourceRef, authoritative);
 }
 
 export async function applyGenomaCompile(doc: GenomaDocument): Promise<GenomaDocument> {
@@ -206,26 +225,51 @@ export async function generateGenomaGallery(
   return streamGenomaGallery(genoma, stylePromptVersion, () => undefined);
 }
 
+/** @deprecated El análisis acumulativo ya no resetea slots; conservado para compatibilidad. */
 export function resetSlotsForCrawl(doc: GenomaDocument): GenomaDocument {
-  const next = createEmptyGenoma();
-  const slots = Object.fromEntries(
-    GENOMA_SLOT_IDS.map((id) => [
-      id,
-      {
-        ...next.slots[id],
-        status: "pending" as const,
-        updatedAt: NOW(),
-      },
-    ]),
-  ) as GenomaDocument["slots"];
+  return { ...doc, updatedAt: NOW() };
+}
 
-  return {
-    ...doc,
-    slots,
-    compiled: null,
-    compiledHash: undefined,
-    updatedAt: NOW(),
-  };
+/** Punto de partida para añadir una fuente sin borrar el ADN existente. */
+export function prepareDocForAdditiveSource(doc: GenomaDocument): GenomaDocument {
+  return { ...doc, updatedAt: NOW() };
+}
+
+/** Persiste en S3 las imágenes de cosecha que siguen siendo URLs externas. */
+export async function hydrateGenomaGalleryMedia(doc: GenomaDocument): Promise<GenomaDocument> {
+  const gallery = doc.slots.gallery?.value as GalleryValue | undefined;
+  const urls = externalGalleryMediaUrls(gallery);
+  if (!urls.length) return doc;
+
+  try {
+    const res = await fetch("/api/spaces/genoma/hydrate-gallery", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    });
+    if (!res.ok) return doc;
+    const body = (await res.json()) as { mirrored?: Record<string, string> };
+    if (!body.mirrored || !Object.keys(body.mirrored).length) return doc;
+
+    const nextGallery = applyGalleryMediaMirrors(gallery!, body.mirrored);
+    if (nextGallery === gallery) return doc;
+
+    return {
+      ...doc,
+      slots: {
+        ...doc.slots,
+        gallery: {
+          ...doc.slots.gallery,
+          value: nextGallery,
+          updatedAt: NOW(),
+        },
+      },
+      updatedAt: NOW(),
+    };
+  } catch {
+    return doc;
+  }
 }
 
 export function pendingSlotIds(doc: GenomaDocument): SlotId[] {

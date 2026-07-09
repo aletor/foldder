@@ -3,8 +3,13 @@
 import React, { useMemo, useRef, useState } from "react";
 import type { GenomaDocument } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
+import { countLockedGenomaSlots } from "@/lib/genoma/genoma-stream-merge";
+import { countPendingGenomaConflicts } from "@/lib/genoma/genoma-reconcile";
+import { authoritativeSourceLabel, countSupplementalObservations } from "@/lib/genoma/genoma-source-policy";
+import { Star } from "lucide-react";
 import { normalizeGenomaUrlInput } from "@/lib/genoma/crawl/url-utils";
 import { GenomaCrawlProgress, type GenomaCrawlProgressState } from "./GenomaCrawlProgress";
+import { GenomaSidebarStatus } from "./board-v2/GenomaSidebarStatus";
 import { GenomaFoldderButton } from "./board-v2/GenomaFoldderButton";
 import { Globe } from "lucide-react";
 
@@ -19,6 +24,7 @@ export type GenomaSidebarPanelProps = {
   onIngestFiles?: (files: File[], enableLlm?: boolean) => void;
   onExportTokens?: () => void;
   onExportCompiled?: () => void;
+  onSetAuthoritativeSource?: (sourceRef: string, authoritative: boolean) => void;
 };
 
 export function GenomaSidebarPanel({
@@ -32,6 +38,7 @@ export function GenomaSidebarPanel({
   onIngestFiles,
   onExportTokens,
   onExportCompiled,
+  onSetAuthoritativeSource,
 }: GenomaSidebarPanelProps) {
   const [url, setUrl] = useState("");
   const [enableLlm, setEnableLlm] = useState(true);
@@ -40,6 +47,11 @@ export function GenomaSidebarPanel({
   const normalized = useMemo(() => normalizeGenomaUrlInput(url), [url]);
   const canAnalyze = normalized.ok && !isAnalyzing;
   const sourcesCount = doc.sources.length;
+  const lockedCount = useMemo(() => countLockedGenomaSlots(doc.slots), [doc.slots]);
+  const conflictCount = useMemo(() => countPendingGenomaConflicts(doc.slots), [doc.slots]);
+  const supplementalCount = useMemo(() => countSupplementalObservations(doc.slots), [doc.slots]);
+  const authoritativeLabel = useMemo(() => authoritativeSourceLabel(doc.sources), [doc.sources]);
+  const hasSources = sourcesCount > 0;
 
   const submit = () => {
     if (!normalized.ok) return;
@@ -62,6 +74,8 @@ export function GenomaSidebarPanel({
           <span className="genoma-split-stat__label">adn resuelto</span>
         </div>
 
+        <GenomaSidebarStatus doc={doc} isAnalyzing={isAnalyzing} />
+
         <section className="genoma-split-entry" aria-label="Entrada de material">
           <form
             className="genoma-split-entry__url"
@@ -83,7 +97,7 @@ export function GenomaSidebarPanel({
               aria-invalid={url.trim().length > 0 && !normalized.ok}
             />
             <GenomaFoldderButton type="submit" icon={Globe} disabled={!canAnalyze}>
-              {isAnalyzing ? "…" : "analizar"}
+              {isAnalyzing ? "…" : hasSources ? genomaLocaleEs.addSource : genomaLocaleEs.analyze}
             </GenomaFoldderButton>
           </form>
 
@@ -91,6 +105,10 @@ export function GenomaSidebarPanel({
             <p className="genoma-split-entry__hint">{normalized.displayUrl}</p>
           ) : url.trim() && !normalized.ok ? (
             <p className="genoma-split-entry__hint genoma-split-entry__hint--error">{normalized.message}</p>
+          ) : null}
+
+          {hasSources ? (
+            <p className="genoma-split-entry__hint">{genomaLocaleEs.addSourceHint}</p>
           ) : null}
 
           <div
@@ -151,12 +169,48 @@ export function GenomaSidebarPanel({
           <section className="genoma-split-sources" aria-label="Fuentes">
             <p className="genoma-split-sources__title">
               {sourcesCount} {sourcesCount === 1 ? "fuente" : "fuentes"}
+              {lockedCount > 0 ? (
+                <span className="genoma-split-sources__locks">
+                  {" "}
+                  · {genomaLocaleEs.lockedBlocksHint(lockedCount)}
+                </span>
+              ) : null}
             </p>
+            {conflictCount > 0 ? (
+              <p className="genoma-split-sources__conflicts">{genomaLocaleEs.conflictsPending(conflictCount)}</p>
+            ) : null}
+            {supplementalCount > 0 ? (
+              <p className="genoma-split-sources__conflicts">{genomaLocaleEs.supplementalObservations(supplementalCount)}</p>
+            ) : null}
+            {authoritativeLabel ? (
+              <p className="genoma-split-sources__authoritative">
+                {genomaLocaleEs.authoritativeSource}: {authoritativeLabel}
+              </p>
+            ) : null}
             <ul className="genoma-split-sources__list">
               {doc.sources.map((source, index) => (
                 <li key={`${source.ref}-${source.ts}-${index}`} title={source.ref}>
                   <span className="genoma-split-sources__ref">{source.ref}</span>
                   <span className="genoma-split-sources__kind">{source.kind === "url" ? "web" : "archivo"}</span>
+                  {onSetAuthoritativeSource ? (
+                    <button
+                      type="button"
+                      className={`genoma-split-sources__star${source.authoritative ? " is-active" : ""}`}
+                      aria-label={
+                        source.authoritative
+                          ? genomaLocaleEs.unmarkAuthoritative
+                          : genomaLocaleEs.markAuthoritative
+                      }
+                      title={
+                        source.authoritative
+                          ? genomaLocaleEs.unmarkAuthoritative
+                          : genomaLocaleEs.markAuthoritative
+                      }
+                      onClick={() => onSetAuthoritativeSource(source.ref, !source.authoritative)}
+                    >
+                      <Star size={12} fill={source.authoritative ? "currentColor" : "none"} />
+                    </button>
+                  ) : null}
                 </li>
               ))}
             </ul>

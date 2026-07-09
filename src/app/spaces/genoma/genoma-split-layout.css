@@ -404,3 +404,70 @@
   line-height: 1.55;
   color: var(--text-muted);
 }
+
+.genoma-board-empty__steps {
+  margin: 20px 0 0;
+  padding-left: 18px;
+  max-width: 42ch;
+  font-size: 11px;
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.genoma-board-empty__steps li + li {
+  margin-top: 6px;
+}
+
+.genoma-split-status {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.genoma-split-status--live {
+  border-color: color-mix(in srgb, var(--secondary) 35%, var(--border));
+}
+
+.genoma-split-status__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--secondary);
+  animation: genoma-live-pulse 1.2s ease-in-out infinite;
+}
+
+.genoma-split-status__line {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.genoma-split-status__line + .genoma-split-status__line {
+  margin-top: 4px;
+}
+
+.genoma-split-status__line--warn {
+  color: color-mix(in srgb, #c45c26 80%, var(--text-main));
+}
+
+.genoma-split-status__line--ok {
+  color: color-mix(in srgb, #2f6b3f 75%, var(--text-main));
+}
+
+@keyframes genoma-live-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

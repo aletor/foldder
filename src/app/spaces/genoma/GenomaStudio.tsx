@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
-import type { GenomaDocument, SlotAction, SlotId } from "@/lib/genoma/genoma-types";
+import type { GalleryValue, GenomaDocument, SlotAction, SlotId } from "@/lib/genoma/genoma-types";
+import { externalGalleryMediaUrls } from "@/lib/genoma/genoma-gallery-media";
 import { applySlotAction } from "@/lib/genoma/genoma-slot-actions";
 import { enrichGenomaDocument } from "@/lib/genoma/genoma-enrich";
 import { validateGenomaContentQuality } from "@/lib/genoma/genoma-content-quality";
@@ -15,7 +16,9 @@ import {
 import {
   applyGenomaCompile,
   applyGenomaStreamEvent,
-  resetSlotsForCrawl,
+  applySourceAuthoritative,
+  hydrateGenomaGalleryMedia,
+  prepareDocForAdditiveSource,
   streamGenomaCrawl,
   streamGenomaGallery,
   streamGenomaIngest,
@@ -30,10 +33,20 @@ import {
 import { GenomaBoardV2 } from "./board-v2/GenomaBoardV2";
 import { GenomaBoardEmpty } from "./GenomaBoardEmpty";
 import { GenomaSidebarPanel } from "./GenomaSidebarPanel";
+import { GenomaStudioToastStack } from "./GenomaStudioToast";
+import {
+  buildAnalysisCompleteToast,
+  buildAuthoritativeToast,
+  buildLogoUploadToast,
+  buildSlotActionToast,
+  createGenomaToast,
+  type GenomaToast,
+} from "@/lib/genoma/genoma-studio-feedback";
 import { GENOMA_GALLERY_GENERATE_IMAGE_COUNT } from "@/lib/genoma/genoma-gallery-cost";
 import "./genoma.css";
 import "./genoma-board-theme.css";
 import "./genoma-split-layout.css";
+import "./genoma-media.css";
 
 const GENOMA_STUDIO_ACCENT = "#FFBD1B";
 
@@ -63,9 +76,19 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const [galleryProgress, setGalleryProgress] = useState<GenomaGalleryGenerateProgress | null>(null);
   const [focusGeneratedTab, setFocusGeneratedTab] = useState(0);
   const [crawlProgress, setCrawlProgress] = useState<GenomaCrawlProgressState | null>(null);
+  const [toasts, setToasts] = useState<GenomaToast[]>([]);
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const genomaRef = useRef(genoma);
+  const galleryHydrateKeyRef = useRef("");
   genomaRef.current = genoma;
+
+  const pushToast = useCallback((toast: GenomaToast) => {
+    setToasts((prev) => [...prev.slice(-3), toast]);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
 
   const persistGenoma = useCallback(
     (next: GenomaDocument) => {
@@ -77,8 +100,10 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const handleAction = useCallback(
     (slotId: SlotId, action: SlotAction) => {
       persistGenoma(applySlotAction(genomaRef.current, slotId, action));
+      const toast = buildSlotActionToast(slotId, action);
+      if (toast) pushToast(toast);
     },
-    [persistGenoma],
+    [persistGenoma, pushToast],
   );
 
   const handleBrandNameChange = useCallback(
@@ -117,6 +142,33 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     };
   }, [genoma, persistGenoma]);
 
+  useEffect(() => {
+    const gallery = genoma.slots.gallery?.value as GalleryValue | undefined;
+    const external = externalGalleryMediaUrls(gallery);
+    const signature = external.slice().sort().join("|");
+    if (!signature || galleryHydrateKeyRef.current === signature) return;
+
+    let cancelled = false;
+    galleryHydrateKeyRef.current = signature;
+    void hydrateGenomaGalleryMedia(genomaRef.current).then((next) => {
+      if (cancelled) return;
+      if (next !== genomaRef.current) persistGenoma(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [genoma.slots.gallery?.value, persistGenoma]);
+
+  const handleSetAuthoritativeSource = useCallback(
+    (sourceRef: string, authoritative: boolean) => {
+      const next = applySourceAuthoritative(genomaRef.current, sourceRef, authoritative);
+      persistGenoma(next);
+      pushToast(buildAuthoritativeToast(next, authoritative));
+    },
+    [persistGenoma, pushToast],
+  );
+
   const handleLogoUpload = useCallback(
     async (file: File) => {
       setCrawlError(null);
@@ -131,8 +183,9 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
         return;
       }
       persistGenoma(enrichGenomaDocument(working));
+      pushToast(buildLogoUploadToast());
     },
-    [persistGenoma],
+    [persistGenoma, pushToast],
   );
 
   const runStreamJob = useCallback(
@@ -140,13 +193,12 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
       runner: (onEvent: (event: import("@/lib/genoma/crawl/types").GenomaStreamEvent) => void) => Promise<
         { ok: true } | { ok: false; message: string } | { ok: true; url: string }
       >,
-      respectLocks = false,
     ) => {
       setIsAnalyzing(true);
       setCrawlError(null);
       setCrawlProgress(createInitialCrawlProgress());
-      let working = resetSlotsForCrawl(genoma);
-      persistGenoma(working);
+      const before = genomaRef.current;
+      let working = prepareDocForAdditiveSource(before);
 
       const result = await runner((event) => {
         setCrawlProgress((prev) => reduceCrawlProgress(prev ?? createInitialCrawlProgress(), event));
@@ -160,7 +212,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
         ) {
           return;
         }
-        working = applyGenomaStreamEvent(working, event, { respectLocks });
+        working = applyGenomaStreamEvent(working, event, { respectLocks: true });
         persistGenoma(working);
       });
 
@@ -168,13 +220,16 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
       if (result.ok) {
         const polished = enrichGenomaDocument(validateGenomaContentQuality(working));
         persistGenoma(polished);
-        setTimeout(() => setCrawlProgress(null), 1200);
+        pushToast(buildAnalysisCompleteToast(before, polished));
+        setTimeout(() => setCrawlProgress(null), 2800);
       } else {
-        setCrawlError("message" in result ? result.message : "Error");
+        const message = "message" in result ? result.message : "Error";
+        setCrawlError(message);
+        pushToast(createGenomaToast("error", message));
         setCrawlProgress(null);
       }
     },
-    [genoma, persistGenoma],
+    [persistGenoma, pushToast],
   );
 
   const handleAnalyze = useCallback(
@@ -186,7 +241,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
 
   const handleIngestFiles = useCallback(
     async (files: File[], enableLlm = true) => {
-      await runStreamJob((onEvent) => streamGenomaIngest(files, onEvent, { enableLlm }), true);
+      await runStreamJob((onEvent) => streamGenomaIngest(files, onEvent, { enableLlm }));
     },
     [runStreamJob],
   );
@@ -297,6 +352,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
       aria-label="Genoma studio"
       style={{ ["--foldder-studio-accent" as string]: GENOMA_STUDIO_ACCENT }}
     >
+      <GenomaStudioToastStack toasts={toasts} onDismiss={dismissToast} />
       <FoldderStudioHeader
         nodeType="genoma"
         nodeLabel={title}
@@ -319,6 +375,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
           onIngestFiles={(files, enableLlm) => void handleIngestFiles(files, enableLlm)}
           onExportTokens={handleExportTokens}
           onExportCompiled={handleExportCompiled}
+          onSetAuthoritativeSource={handleSetAuthoritativeSource}
         />
 
         <main className="genoma-studio-split__main genoma-studio__board-shell">
@@ -339,6 +396,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
               onExportCompiled={handleExportCompiled}
               canExport={canExport}
               hideExportActions
+              activeSlotId={crawlProgress?.activeSlot}
             />
           ) : (
             <GenomaBoardEmpty />

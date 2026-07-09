@@ -1,6 +1,9 @@
-import type { EssenceValue, GalleryValue, GenomaDocument, SlotState, VoiceValue, VisualWorldValue } from "./genoma-types";
+import type { GalleryValue, GenomaDocument, LogoValue, SlotState, VoiceValue, VisualWorldValue, EssenceValue } from "./genoma-types";
+import { galleryItemSourceUrl } from "./genoma-gallery-media";
 import { galleryUsefulCount, normalizeGalleryInclusions } from "./genoma-gallery-filter";
 import { buildVisualWorldFromGallery } from "./genoma-visual-synthesis";
+import { groupLogoCandidatesForDisplay } from "./genoma-logo-policy";
+import { rankHarvestedGalleryItems, rankLogoCandidatesMultiSource } from "./genoma-visual-rank";
 
 const PLACEHOLDER_SUMMARY_RE =
   /activa ia|propuesta de respaldo|pendiente de revisión|manifiesto —|síntesis pendiente|revisa la síntesis antes de confirmar/i;
@@ -37,10 +40,10 @@ function improveEssenceValue(
   const headline = value.headline?.trim();
   const summary =
     labels.length >= 2
-      ? `${brand} se presenta como una productora audiovisual con mirada ${labels.slice(0, 2).join(" y ").toLowerCase()}, orientada a piezas con narrativa, carácter y emoción.`
+      ? `${brand} se presenta como una **productora audiovisual** con mirada **${labels.slice(0, 2).join(" y ").toLowerCase()}**, orientada a piezas con **narrativa**, carácter y emoción.`
       : headline
-        ? `${brand} comunica desde un claim claro («${headline}») con una mirada autoral y emocional.`
-        : `${brand} comunica con una identidad verbal propia, alejada del tono corporativo genérico.`;
+        ? `${brand} comunica desde un claim claro («${headline}») con una mirada **autoral y emocional**.`
+        : `${brand} comunica con una **identidad verbal propia**, alejada del tono corporativo genérico.`;
 
   return {
     ...value,
@@ -59,8 +62,19 @@ function improveVoiceValue(value: VoiceValue): VoiceValue {
   const descriptors = value.descriptors?.slice(0, 3).join(", ") || "directa y narrativa";
   return {
     ...value,
-    summary: `Voz ${descriptors} con reglas claras de escritura, alejada del tono corporativo genérico.`,
+    summary: `Voz **${descriptors}** con **reglas claras de escritura**, alejada del tono corporativo genérico.`,
   };
+}
+
+function normalizeGalleryHarvestedPreviewUrls(
+  harvested: GalleryValue["harvested"],
+): GalleryValue["harvested"] {
+  return harvested.map((item) => {
+    const preview = item.previewUrl?.trim();
+    if (preview) return item;
+    const source = galleryItemSourceUrl(item);
+    return source ? { ...item, previewUrl: source } : item;
+  });
 }
 
 /** Completa slots semánticos y normaliza galería tras crawl o al cargar documento. */
@@ -73,7 +87,12 @@ export function enrichGenomaDocument(doc: GenomaDocument): GenomaDocument {
     const normalizedGallery = normalizeGalleryInclusions(gallerySlot.value as GalleryValue);
     slots.gallery = {
       ...gallerySlot,
-      value: normalizedGallery,
+      value: {
+        ...normalizedGallery,
+        harvested: rankHarvestedGalleryItems(
+          normalizeGalleryHarvestedPreviewUrls(normalizedGallery.harvested),
+        ),
+      },
       updatedAt: now(),
     };
   }
@@ -132,6 +151,22 @@ export function enrichGenomaDocument(doc: GenomaDocument): GenomaDocument {
         updatedAt: now(),
       };
     }
+  }
+
+  const logoSlot = slots.logo;
+  if (logoSlot.candidates.length > 0 && !logoSlot.locked) {
+    const candidates = groupLogoCandidatesForDisplay(
+      rankLogoCandidatesMultiSource(
+      logoSlot.candidates as import("./genoma-types").Candidate<LogoValue>[],
+      doc.sources,
+      ),
+    );
+    slots.logo = {
+      ...logoSlot,
+      candidates,
+      confidence: Math.max(logoSlot.confidence, candidates[0]?.score ?? 0),
+      updatedAt: now(),
+    };
   }
 
   return { ...doc, slots, updatedAt: now() };

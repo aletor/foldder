@@ -9,6 +9,9 @@ import { GenomaIconButton } from "../GenomaIconButton";
 import { GenomaRichText } from "../GenomaRichText";
 import { GenomaTextEditPanel } from "../GenomaTextEditPanel";
 import { GenomaCapsuleList } from "../GenomaCapsuleList";
+import { GenomaSemanticCandidates } from "../GenomaSemanticCandidates";
+import { GenomaSlotReviewCard } from "../GenomaSlotReviewCard";
+import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil } from "lucide-react";
 
@@ -24,11 +27,13 @@ export function VisualWorldBlock({
   slotId,
   onAction,
   gallery,
+  activeSlotId,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   gallery?: SlotState<unknown>;
+  activeSlotId?: SlotId;
 }) {
   const visualWorld = slot.value as VisualWorldValue | undefined;
   const galleryValue = gallery?.value as GalleryValue | undefined;
@@ -40,6 +45,13 @@ export function VisualWorldBlock({
   const editButton = canEdit ? (
     <GenomaIconButton icon={Pencil} label={genomaLocaleEs.edit} onClick={() => setEditing(true)} />
   ) : null;
+
+  const beginEditFromDraft = () => {
+    if (slot.status === "candidates" && slot.candidates.length === 1) {
+      onAction(slotId, { action: "choose_candidate", candidateIndex: 0 });
+    }
+    setEditing(true);
+  };
 
   if (slot.status === "pending") {
     body = <div className="genoma-v2-skeleton" aria-hidden />;
@@ -84,27 +96,28 @@ export function VisualWorldBlock({
   } else if (slot.status === "candidates") {
     body = (
       <div className="genoma-v2-stack">
-        {slot.candidates.map((candidate, index) => {
-          const value = candidate.value as VisualWorldValue;
-          return (
-            <button
-              key={index}
-              type="button"
-              className="genoma-v2-btn genoma-v2-btn--ghost text-left"
-              onClick={() => onAction(slotId, { action: "choose_candidate", candidateIndex: index })}
-            >
-              <span className="genoma-v2-semantic__summary">{value.summary}</span>
-              {value.limits?.length ? (
-                <ul className="genoma-v2-rules genoma-v2-rules--preview">
-                  {value.limits.slice(0, 2).map((limit) => (
-                    <li key={limit}>{limit}</li>
-                  ))}
-                </ul>
-              ) : null}
-            </button>
-          );
-        })}
+        <GenomaSemanticCandidates
+          slotId={slotId}
+          slot={slot}
+          onAction={onAction}
+          onEdit={beginEditFromDraft}
+        />
       </div>
+    );
+  } else if (slot.status === "resolved" && slot.needsReviewReason && visualWorld?.summary) {
+    body = (
+      <GenomaSlotReviewCard
+        slotId={slotId}
+        candidate={{
+          value: visualWorld,
+          score: slot.confidence,
+          provenance: slot.provenance ?? { type: "llm_synthesis", detail: "revisión" },
+        }}
+        reviewReason={slot.needsReviewReason}
+        onAction={onAction}
+        onEdit={beginEditFromDraft}
+        confirmMode="lock"
+      />
     );
   } else if (!visualWorld?.summary) {
     body = (
@@ -148,18 +161,21 @@ export function VisualWorldBlock({
           },
         ]}
         footer={
-          usefulCount > 0 ? (
-            <p className="genoma-v2-muted">
-              {genomaLocaleEs.fedByGallery} {usefulCount} {genomaLocaleEs.images}
-            </p>
-          ) : null
+          <>
+            {usefulCount > 0 ? (
+              <p className="genoma-v2-muted">
+                {genomaLocaleEs.fedByGallery} {usefulCount} {genomaLocaleEs.images}
+              </p>
+            ) : null}
+            <GenomaSupplementalPanel slot={slot} />
+          </>
         }
       />
     );
   }
 
   return (
-    <DnaBlock label={genomaLocaleEs.visualWorld} slotId={slotId} slot={slot} onAction={onAction} secondaryActions={editButton}>
+    <DnaBlock label={genomaLocaleEs.visualWorld} slotId={slotId} slot={slot} onAction={onAction} secondaryActions={editButton} activeSlotId={activeSlotId}>
       {body}
     </DnaBlock>
   );

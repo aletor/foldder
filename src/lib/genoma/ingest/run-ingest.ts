@@ -4,7 +4,6 @@ import { parseBrainDocument } from "@/lib/brain-parser-utils";
 import { extractVisualImagesFromPdfBuffer } from "@/lib/brain/pdf-visual-extract";
 import type { Candidate, GalleryValue, LogoValue, Provenance, SlotState } from "../genoma-types";
 import {
-  essenceCandidatesFromOnelinerLlm,
   validateValuesAgainstCorpus,
 } from "../llm/genoma-llm-validate";
 import {
@@ -14,7 +13,12 @@ import {
   synthesizeVoice,
   voiceValueFromLlm,
 } from "../llm/genoma-llm-synthesis";
-import { buildPaletteValue, rankLogoCandidates, shouldAutoResolveLogo } from "../crawl/scoring";
+import {
+  buildEssenceHeadlineAlternatives,
+  buildResolvedEssenceFromIngest,
+} from "../genoma-essence-headline";
+import { buildLogoSlotPatch, isExplicitPdfLogoAsset } from "../genoma-logo-policy";
+import { buildPaletteValue, rankLogoCandidates } from "../crawl/scoring";
 import { hexColorsFromCss } from "../crawl/parsers";
 import type { GenomaStreamEvent } from "../crawl/types";
 import type { GenomaCrawlOptions } from "../crawl/crawl-options";
@@ -172,15 +176,15 @@ export async function* runGenomaIngest(
             included: true,
             provenance: { type: "pdf_xobject", detail: img.name, fileId: uploaded.fileId },
           });
-          if (img.width && img.height && img.width >= 120 && img.height >= 120 && img.width <= 800) {
+          if (isExplicitPdfLogoAsset(img.name)) {
             logoCandidates.push(
               logoCandidateFromUpload(
                 uploaded.url,
                 uploaded.fileId,
                 inferImageFormat(uploaded.url, img.mime),
-                img.width,
-                img.height,
-                0.55,
+                img.width ?? 256,
+                img.height ?? 256,
+                0.82,
               ),
             );
           }
@@ -233,28 +237,11 @@ export async function* runGenomaIngest(
     yield { type: "llm_progress", step: "logo_vision", status: "done", detail: `${rankedLogos.length} candidatos` };
   }
 
-  const logoDecision = shouldAutoResolveLogo(rankedLogos);
-  if (logoDecision.auto && logoDecision.top) {
-    yield {
-      type: "slot_update",
-      slotId: "logo",
-      patch: slotPatch({
-        status: "resolved",
-        value: logoDecision.top.value,
-        provenance: logoDecision.top.provenance,
-        confidence: logoDecision.top.score,
-        candidates: rankedLogos,
-      }),
-    };
-  } else if (rankedLogos.length) {
-    yield {
-      type: "slot_update",
-      slotId: "logo",
-      patch: slotPatch({ status: "candidates", candidates: rankedLogos, confidence: rankedLogos[0]?.score ?? 0.5 }),
-    };
-  } else {
-    yield { type: "slot_update", slotId: "logo", patch: slotPatch({ status: "needs_user", confidence: 0 }) };
-  }
+  yield {
+    type: "slot_update",
+    slotId: "logo",
+    patch: slotPatch(buildLogoSlotPatch(rankedLogos)),
+  };
 
   const paletteBuilt = buildPaletteValue(paletteSignals);
   if (paletteBuilt) {
@@ -323,37 +310,28 @@ export async function* runGenomaIngest(
         }),
       };
     }
-    if (valuesRaw) {
-      const valuesValue = validateValuesAgainstCorpus(corpus, valuesRaw);
-      if (valuesValue) {
-        const beliefs = valuesValue.values.map((item) => ({ label: item.label, evidence: item.evidence }));
-        yield {
-          type: "slot_update",
-          slotId: "essence",
-          patch: slotPatch({
-            status: "resolved",
-            value: { beliefs },
-            provenance: { type: "llm_synthesis", detail: "documentos" },
-            confidence: 0.62,
-          }),
-        };
-      }
-    }
-    if (onelinerLlm) {
-      const beliefs =
-        valuesRaw && validateValuesAgainstCorpus(corpus, valuesRaw)
-          ? validateValuesAgainstCorpus(corpus, valuesRaw)!.values.map((item) => ({
-              label: item.label,
-              evidence: item.evidence,
-            }))
+
+    const valuesValue = valuesRaw ? validateValuesAgainstCorpus(corpus, valuesRaw) : null;
+    const beliefs =
+      valuesValue?.values.map((item) => ({ label: item.label, evidence: item.evidence })) ?? [];
+    const essenceValue = buildResolvedEssenceFromIngest({ beliefs, onelinerLlm, brandName });
+
+    if (essenceValue) {
+      const essenceProvenance = { type: "llm_synthesis" as const, detail: "documentos subidos" };
+      const headlineAlternatives =
+        onelinerLlm && onelinerLlm.options.length > 1
+          ? buildEssenceHeadlineAlternatives(essenceValue, onelinerLlm, essenceProvenance)
           : [];
+
       yield {
         type: "slot_update",
         slotId: "essence",
         patch: slotPatch({
-          status: "candidates",
-          candidates: essenceCandidatesFromOnelinerLlm(onelinerLlm, beliefs),
-          confidence: 0.48,
+          status: "resolved",
+          value: essenceValue,
+          provenance: essenceProvenance,
+          confidence: 0.68,
+          candidates: headlineAlternatives,
         }),
       };
     }

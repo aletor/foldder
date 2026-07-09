@@ -8,6 +8,9 @@ import { GenomaIconButton } from "../GenomaIconButton";
 import { GenomaRichText } from "../GenomaRichText";
 import { GenomaTextEditPanel } from "../GenomaTextEditPanel";
 import { GenomaCapsuleList } from "../GenomaCapsuleList";
+import { GenomaSemanticCandidates } from "../GenomaSemanticCandidates";
+import { GenomaSlotReviewCard } from "../GenomaSlotReviewCard";
+import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil } from "lucide-react";
 
@@ -34,10 +37,12 @@ export function EssenceBlock({
   slot,
   slotId,
   onAction,
+  activeSlotId,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
+  activeSlotId?: SlotId;
 }) {
   const essence = slot.value as EssenceValue | undefined;
   const [editing, setEditing] = useState(false);
@@ -48,6 +53,13 @@ export function EssenceBlock({
   const editButton = canEdit ? (
     <GenomaIconButton icon={Pencil} label={genomaLocaleEs.edit} onClick={() => setEditing(true)} />
   ) : null;
+
+  const beginEditFromDraft = () => {
+    if (slot.status === "candidates" && slot.candidates.length === 1) {
+      onAction(slotId, { action: "choose_candidate", candidateIndex: 0 });
+    }
+    setEditing(true);
+  };
 
   if (slot.status === "pending") {
     body = <div className="genoma-v2-skeleton" aria-hidden />;
@@ -83,35 +95,28 @@ export function EssenceBlock({
   } else if (slot.status === "candidates") {
     body = (
       <div className="genoma-v2-stack">
-        {slot.needsReviewReason ? <p className="genoma-v2-muted">{slot.needsReviewReason}</p> : null}
-        {slot.candidates.map((candidate, index) => {
-          const value = candidate.value as EssenceValue;
-          return (
-            <button
-              key={index}
-              type="button"
-              className="genoma-v2-btn genoma-v2-btn--ghost text-left"
-              onClick={() => onAction(slotId, { action: "choose_candidate", candidateIndex: index })}
-            >
-              {value.summary ? <span className="genoma-v2-semantic__summary">{value.summary}</span> : null}
-              {value.headline ? (
-                <span className="genoma-v2-muted">
-                  {genomaLocaleEs.headlineDetected}: «{value.headline}»
-                </span>
-              ) : null}
-              {value.beliefs?.length ? (
-                <span className="genoma-v2-chip-row">
-                  {value.beliefs.slice(0, 2).map((belief) => (
-                    <span key={belief.label} className="genoma-v2-chip">
-                      {belief.label}
-                    </span>
-                  ))}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+        <GenomaSemanticCandidates
+          slotId={slotId}
+          slot={slot}
+          onAction={onAction}
+          onEdit={beginEditFromDraft}
+        />
       </div>
+    );
+  } else if (slot.status === "resolved" && slot.needsReviewReason && (essence?.summary || essence?.headline)) {
+    body = (
+      <GenomaSlotReviewCard
+        slotId={slotId}
+        candidate={{
+          value: essence,
+          score: slot.confidence,
+          provenance: slot.provenance ?? { type: "llm_synthesis", detail: "revisión" },
+        }}
+        reviewReason={slot.needsReviewReason}
+        onAction={onAction}
+        onEdit={beginEditFromDraft}
+        confirmMode="lock"
+      />
     );
   } else if (!essence?.summary) {
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noEssence}</p>;
@@ -134,7 +139,18 @@ export function EssenceBlock({
 
     body = (
       <SemanticDetailPanels
-        summary={<GenomaRichText text={essence.summary} className="genoma-v2-prose" as="p" />}
+        summary={
+          <GenomaRichText
+            text={essence.summary}
+            className="genoma-v2-prose"
+            as="p"
+            emphasizeTerms={[
+              ...(essence.beliefs?.map((belief) => belief.label) ?? []),
+              essence.headline ?? "",
+              essence.promise ?? "",
+            ]}
+          />
+        }
         chips={beliefChips}
         panels={[
           {
@@ -166,6 +182,7 @@ export function EssenceBlock({
             ) : null,
           },
         ]}
+        footer={<GenomaSupplementalPanel slot={slot} />}
       />
     );
   }
@@ -178,6 +195,7 @@ export function EssenceBlock({
       onAction={onAction}
       primaryAction={primaryAction}
       secondaryActions={editButton}
+      activeSlotId={activeSlotId}
     >
       {body}
     </DnaBlock>

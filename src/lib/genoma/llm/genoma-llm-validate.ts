@@ -50,8 +50,15 @@ export function parseVoiceLlmResponse(raw: unknown): VoiceLlmResponse | null {
     .filter(Boolean) as VoiceLlmResponse["evidence"];
   if (evidence.length < 3) return null;
   const summary = typeof o.summary === "string" ? o.summary.trim() : "";
+  const descriptors = o.descriptors.map((s) => s.trim());
+  const fallbackSummary =
+    summary.length >= 24
+      ? summary
+      : descriptors.length >= 2
+        ? `Voz ${descriptors.slice(0, 4).join(", ")}.`
+        : "Voz inferida del corpus web; revisa la síntesis generada.";
   return {
-    summary: summary.length >= 24 ? summary : "Voz inferida del corpus web; revisa la síntesis generada.",
+    summary: fallbackSummary,
     descriptors: o.descriptors.map((s) => s.trim()),
     rules: o.rules.map((s) => s.trim()),
     avoid: Array.isArray(o.avoid) ? o.avoid.map((s) => String(s).trim()).filter(Boolean) : undefined,
@@ -153,10 +160,8 @@ export function essenceCandidatesFromOnelinerLlm(
 ): Candidate<EssenceValue>[] {
   return response.options.map((option, index) => ({
     value: {
-      summary:
-        option.summary?.trim() ||
-        "Opción generada por IA — revisa la síntesis antes de confirmar.",
-      headline: option.text,
+      summary: option.summary?.trim() ?? "",
+      headline: option.text.trim(),
       headlineOrigin: "generated" as const,
       beliefs,
       evidence: [{ quote: option.text, sourceUrl }],

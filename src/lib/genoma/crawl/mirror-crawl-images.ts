@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { uploadGenomaIngestFile } from "../ingest/upload-genoma-file";
+import { fetchRemoteImageBuffer } from "../genoma-remote-image";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MIN_IMAGE_BYTES = 200;
@@ -23,28 +24,25 @@ function filenameForUrl(url: string, mime: string): string {
   return `crawl-${hash}.${extFromMime(mime)}`;
 }
 
-async function mirrorOne(userEmail: string, sourceUrl: string): Promise<string | null> {
+export async function mirrorRemoteImageUrl(
+  userEmail: string,
+  sourceUrl: string,
+): Promise<string | null> {
   if (!userEmail.trim() || !sourceUrl.startsWith("http") || isAlreadyMirrored(sourceUrl)) {
     return sourceUrl.startsWith("http") ? sourceUrl : null;
   }
 
+  const fetched = await fetchRemoteImageBuffer(sourceUrl);
+  if (!fetched) return null;
+
+  const { buffer, contentType } = fetched;
+  if (buffer.length < MIN_IMAGE_BYTES || buffer.length > MAX_IMAGE_BYTES) return null;
+
   try {
-    const res = await fetch(sourceUrl, {
-      headers: { "User-Agent": "Foldder-Genoma/1.0", Accept: "image/*,*/*;q=0.8" },
-      redirect: "follow",
-    });
-    if (!res.ok) return null;
-
-    const mime = (res.headers.get("content-type") ?? "image/png").split(";")[0]?.trim() || "image/png";
-    if (!mime.startsWith("image/")) return null;
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    if (buffer.length < MIN_IMAGE_BYTES || buffer.length > MAX_IMAGE_BYTES) return null;
-
     const uploaded = await uploadGenomaIngestFile({
       userEmail,
-      filename: filenameForUrl(sourceUrl, mime),
-      mime,
+      filename: filenameForUrl(sourceUrl, contentType),
+      mime: contentType,
       buffer,
     });
     return uploaded.url;
@@ -69,8 +67,8 @@ export async function mirrorExternalImagesForCrawl(
     while (index < unique.length) {
       const current = unique[index];
       index += 1;
-      const mirrored = await mirrorOne(userEmail, current);
-      if (mirrored) result.set(current, mirrored);
+      const mirrored = await mirrorRemoteImageUrl(userEmail, current);
+      if (mirrored && mirrored !== current) result.set(current, mirrored);
     }
   }
 

@@ -1,5 +1,6 @@
 import type { Candidate, Provenance } from "../genoma-types";
 import type { LogoValue } from "../genoma-types";
+import { shouldAutoResolveLogo as shouldAutoResolveLogoPolicy } from "../genoma-logo-policy";
 import type { LogoCandidateSignal } from "./types";
 import { rankPaletteColors, sanitizeFontFamily, isNearNeutralHex } from "./color-utils";
 
@@ -33,12 +34,7 @@ export function shouldAutoResolveLogo(candidates: Candidate<LogoValue>[]): {
   auto: boolean;
   top?: Candidate<LogoValue>;
 } {
-  if (candidates.length === 0) return { auto: false };
-  const [top, second] = candidates;
-  if (top.score >= 0.9 && (!second || top.score - second.score >= 0.15)) {
-    return { auto: true, top };
-  }
-  return { auto: false, top };
+  return shouldAutoResolveLogoPolicy(candidates);
 }
 
 function scoreFontFamilyPriority(name: string): number {

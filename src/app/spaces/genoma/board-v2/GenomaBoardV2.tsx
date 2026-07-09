@@ -3,7 +3,9 @@
 import React from "react";
 import type { GenomaDocument, SlotAction, SlotId } from "@/lib/genoma/genoma-types";
 import type { GenomaGalleryGenerateProgress } from "../genoma-api";
+import { getSlotAttention } from "@/lib/genoma/genoma-board-status";
 import { GenomaBoardHeader } from "./GenomaBoardHeader";
+import { GenomaBoardStatusBar } from "./GenomaBoardStatusBar";
 import { GenomaImageLightboxProvider } from "./GenomaImageLightbox";
 import { LogoBlock } from "./blocks/LogoBlock";
 import { PaletteBlock } from "./blocks/PaletteBlock";
@@ -29,6 +31,7 @@ type GenomaBoardV2Props = {
   onExportCompiled?: () => void;
   canExport?: boolean;
   hideExportActions?: boolean;
+  activeSlotId?: SlotId;
 };
 
 export function GenomaBoardV2({
@@ -47,52 +50,53 @@ export function GenomaBoardV2({
   onExportCompiled,
   canExport = false,
   hideExportActions = false,
+  activeSlotId,
 }: GenomaBoardV2Props) {
   const slots = doc.slots;
+
+  const tileClass = (slotId: SlotId) => {
+    const attention = getSlotAttention(slots[slotId], activeSlotId);
+    return attention.kind ? ` genoma-v2-tile--${attention.kind}` : "";
+  };
 
   return (
     <GenomaImageLightboxProvider>
       <div className={`genoma-v2-bento-board${isAnalyzing ? " is-loading" : ""}`}>
-        <GenomaBoardHeader
-          doc={doc}
-          onBrandNameChange={onBrandNameChange}
-          onExportTokens={onExportTokens}
-          onExportCompiled={onExportCompiled}
-          canExport={canExport}
-          hideExportActions={hideExportActions}
-        />
+        <GenomaBoardHeader doc={doc} onBrandNameChange={onBrandNameChange} />
+        <GenomaBoardStatusBar doc={doc} />
 
         <div className="genoma-v2-bento-grid">
-          <section className="genoma-v2-tile genoma-v2-tile--logo">
-            <LogoBlock slotId="logo" slot={slots.logo} onAction={onAction} onUploadLogo={onLogoUpload} />
+          <section className={`genoma-v2-tile genoma-v2-tile--logo${tileClass("logo")}`}>
+            <LogoBlock slotId="logo" slot={slots.logo} onAction={onAction} onUploadLogo={onLogoUpload} activeSlotId={activeSlotId} />
           </section>
 
-          <section className="genoma-v2-tile genoma-v2-tile--essence">
-            <EssenceBlock slotId="essence" slot={slots.essence} onAction={onAction} />
+          <section className={`genoma-v2-tile genoma-v2-tile--essence${tileClass("essence")}`}>
+            <EssenceBlock slotId="essence" slot={slots.essence} onAction={onAction} activeSlotId={activeSlotId} />
           </section>
 
-          <section className="genoma-v2-tile genoma-v2-tile--typography">
-            <TypographyBlock slotId="typography" slot={slots.typography} onAction={onAction} />
+          <section className={`genoma-v2-tile genoma-v2-tile--typography${tileClass("typography")}`}>
+            <TypographyBlock slotId="typography" slot={slots.typography} onAction={onAction} activeSlotId={activeSlotId} />
           </section>
 
-          <section className="genoma-v2-tile genoma-v2-tile--palette">
-            <PaletteBlock slotId="palette" slot={slots.palette} onAction={onAction} />
+          <section className={`genoma-v2-tile genoma-v2-tile--palette${tileClass("palette")}`}>
+            <PaletteBlock slotId="palette" slot={slots.palette} onAction={onAction} activeSlotId={activeSlotId} />
           </section>
 
-          <section className="genoma-v2-tile genoma-v2-tile--voice">
-            <VoiceBlock slotId="voice" slot={slots.voice} onAction={onAction} />
+          <section className={`genoma-v2-tile genoma-v2-tile--voice${tileClass("voice")}`}>
+            <VoiceBlock slotId="voice" slot={slots.voice} onAction={onAction} activeSlotId={activeSlotId} />
           </section>
 
-          <section className="genoma-v2-tile genoma-v2-tile--visual">
+          <section className={`genoma-v2-tile genoma-v2-tile--visual${tileClass("visualWorld")}`}>
             <VisualWorldBlock
               slotId="visualWorld"
               slot={slots.visualWorld}
               onAction={onAction}
               gallery={slots.gallery}
+              activeSlotId={activeSlotId}
             />
           </section>
 
-          <section className="genoma-v2-tile genoma-v2-tile--gallery">
+          <section className={`genoma-v2-tile genoma-v2-tile--gallery${tileClass("gallery")}`}>
             <GalleryBlock
               slotId="gallery"
               slot={slots.gallery}
@@ -104,6 +108,7 @@ export function GenomaBoardV2({
               galleryProgress={galleryProgress}
               focusGeneratedTab={focusGeneratedTab}
               gallerySuccessMessage={gallerySuccessMessage}
+              activeSlotId={activeSlotId}
             />
           </section>
         </div>

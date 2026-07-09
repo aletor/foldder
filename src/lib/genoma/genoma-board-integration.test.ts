@@ -106,7 +106,7 @@ describe("genoma board integration (alima-like deterministic)", () => {
     expect(pendingGenomaSlotIds(doc).filter((id) => doc.slots[id].status === "pending")).toHaveLength(0);
   });
 
-  it("locks logo and palette on tap and survives reload", () => {
+  it("preserves locked logo when a second stream tries to reset it", () => {
     let doc = createEmptyGenoma();
     doc = applyGenomaStreamEvent(doc, {
       type: "slot_update",
@@ -132,6 +132,18 @@ describe("genoma board integration (alima-like deterministic)", () => {
       },
     });
     doc = applySlotAction(doc, "logo", { action: "choose_candidate", candidateIndex: 0, lock: true });
+    expect(doc.slots.logo.locked).toBe(true);
+    expect(doc.slots.logo.status).toBe("resolved");
+
+    doc = applyGenomaStreamEvent(
+      doc,
+      {
+        type: "slot_update",
+        slotId: "logo",
+        patch: { status: "pending", confidence: 0 },
+      },
+      { respectLocks: true },
+    );
     expect(doc.slots.logo.locked).toBe(true);
     expect(doc.slots.logo.status).toBe("resolved");
 

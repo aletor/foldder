@@ -2,27 +2,18 @@
 
 import React from "react";
 import type { GenomaDocument } from "@/lib/genoma/genoma-types";
+import { summarizeGenomaBoard } from "@/lib/genoma/genoma-board-status";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
-import { pendingGenomaSlotIds } from "@/lib/genoma/genoma-defaults";
+import { computeGenomaCompleteness } from "@/lib/genoma/genoma-defaults";
 
 type GenomaBoardHeaderProps = {
   doc: GenomaDocument;
   onBrandNameChange?: (name: string) => void;
-  onExportTokens?: () => void;
-  onExportCompiled?: () => void;
-  canExport?: boolean;
-  hideExportActions?: boolean;
 };
 
-export function GenomaBoardHeader({
-  doc,
-  onBrandNameChange,
-  onExportTokens,
-  onExportCompiled,
-  canExport = false,
-  hideExportActions = false,
-}: GenomaBoardHeaderProps) {
-  const pending = pendingGenomaSlotIds(doc);
+export function GenomaBoardHeader({ doc, onBrandNameChange }: GenomaBoardHeaderProps) {
+  const summary = summarizeGenomaBoard(doc);
+  const completeness = computeGenomaCompleteness(doc);
   const brand = doc.brandName?.value ?? "Marca";
 
   return (
@@ -34,32 +25,15 @@ export function GenomaBoardHeader({
           aria-label="Nombre de marca"
           onChange={(event) => onBrandNameChange?.(event.target.value)}
         />
+        <span className="genoma-v2-header__completeness">{completeness.percent}% ADN</span>
       </div>
       <div className="genoma-v2-header__actions">
-        {pending.length ? (
+        {summary.needsYou > 0 ? (
           <span className="genoma-v2-header__pending">
-            {pending.length} {genomaLocaleEs.pendingQueue.toLowerCase()}
+            {genomaLocaleEs.analysisDoneNeedsYou(summary.needsYou)}
           </span>
-        ) : null}
-        {!hideExportActions ? (
-          <>
-            <button
-              type="button"
-              className="genoma-v2-pill genoma-v2-pill--ghost"
-              disabled={!canExport}
-              onClick={onExportTokens}
-            >
-              {genomaLocaleEs.tokens}
-            </button>
-            <button
-              type="button"
-              className="genoma-v2-pill genoma-v2-pill--ghost"
-              disabled={!canExport}
-              onClick={onExportCompiled}
-            >
-              {genomaLocaleEs.compiled}
-            </button>
-          </>
+        ) : summary.resolved > 0 ? (
+          <span className="genoma-v2-header__ready">{genomaLocaleEs.boardReady}</span>
         ) : null}
       </div>
     </header>

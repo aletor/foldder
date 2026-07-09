@@ -21,7 +21,8 @@ import {
 import { buildCopyCorpus } from "./copy-corpus";
 import { buildCopyUnits, copyUnitsToCorpus, formatCopyUnitsForLlm } from "./copy-units";
 import { selectEvidenceCandidates } from "../genoma-evidence-candidates";
-import { buildEssenceHeadlineCandidates, canResolveEssence } from "../genoma-essence-headline";
+import { buildEssenceHeadlineCandidates, buildEssenceHeadlineAlternatives, buildResolvedEssenceFromIngest, canResolveEssence } from "../genoma-essence-headline";
+import { galleryItemSourceUrl } from "../genoma-gallery-media";
 import { buildGalleryContextForLlm, filterHarvestedGallery, galleryRefIds, galleryUsefulCount } from "../genoma-gallery-filter";
 import { buildVisualWorldFromGallery } from "../genoma-visual-synthesis";
 import {
@@ -38,7 +39,8 @@ import {
 import { essenceCandidatesFromOnelinerLlm } from "../llm/genoma-llm-validate";
 import { batchLlmProvenance, buildBatchSlotPatch, synthesizeGenomaBatch } from "../llm/genoma-llm-batch";
 import { applyMirroredPreviewUrl, mirrorExternalImagesForCrawl } from "./mirror-crawl-images";
-import { buildPaletteValue, buildTypographyValue, rankLogoCandidates, shouldAutoResolveLogo } from "./scoring";
+import { buildLogoSlotPatch, resolvedLogoPreviewUrl } from "../genoma-logo-policy";
+import { buildPaletteValue, buildTypographyValue, rankLogoCandidates } from "./scoring";
 import type { GenomaCrawlOptions } from "./crawl-options";
 import type { CrawlPageSnapshot, GenomaStreamEvent } from "./types";
 import { DEFAULT_CRAWL_BUDGET, GENOMA_CRAWL_USER_AGENT } from "./types";
@@ -352,37 +354,12 @@ export async function* runGenomaCrawl(
     }
   }
 
-  const logoDecision = shouldAutoResolveLogo(logoCandidates);
-  if (logoDecision.auto && logoDecision.top) {
-    yield {
-      type: "slot_update",
-      slotId: "logo",
-      patch: slotPatch({
-        status: "resolved",
-        value: logoDecision.top.value,
-        provenance: logoDecision.top.provenance,
-        confidence: logoDecision.top.score,
-        candidates: logoCandidates,
-        locked: false,
-      }),
-    };
-  } else if (logoCandidates.length) {
-    yield {
-      type: "slot_update",
-      slotId: "logo",
-      patch: slotPatch({
-        status: "candidates",
-        candidates: logoCandidates,
-        confidence: logoCandidates[0]?.score ?? 0.5,
-      }),
-    };
-  } else {
-    yield {
-      type: "slot_update",
-      slotId: "logo",
-      patch: slotPatch({ status: "needs_user", confidence: 0 }),
-    };
-  }
+  const logoPatch = buildLogoSlotPatch(logoCandidates);
+  yield {
+    type: "slot_update",
+    slotId: "logo",
+    patch: slotPatch({ ...logoPatch, locked: false }),
+  };
 
   const paletteBuilt = buildPaletteValue(paletteColors);
   if (paletteBuilt) {
@@ -437,23 +414,20 @@ export async function* runGenomaCrawl(
       })),
     {
       logoUrls: [
-        logoDecision.top?.value.previewUrl,
-        logoDecision.top?.value.assetId,
+        resolvedLogoPreviewUrl(logoPatch),
         ...logoCandidates.map((candidate) => candidate.value.previewUrl ?? candidate.value.assetId),
       ].filter(Boolean) as string[],
     },
   );
 
   if (harvested.length && options?.userEmail) {
-    const galleryUrls = harvested.map((item) => item.previewUrl ?? item.assetId).filter((url) => url.startsWith("http"));
+    const galleryUrls = harvested.map((item) => galleryItemSourceUrl(item)).filter((url) => url.startsWith("http"));
     const mirroredGallery = await mirrorExternalImagesForCrawl(options.userEmail, galleryUrls);
-    if (mirroredGallery.size) {
-      harvested = harvested.map((item) => {
-        const sourceUrl = item.previewUrl ?? item.assetId;
-        const previewUrl = applyMirroredPreviewUrl(sourceUrl, mirroredGallery);
-        return previewUrl === sourceUrl ? item : { ...item, previewUrl };
-      });
-    }
+    harvested = harvested.map((item) => {
+      const sourceUrl = galleryItemSourceUrl(item);
+      const previewUrl = applyMirroredPreviewUrl(sourceUrl, mirroredGallery);
+      return previewUrl && previewUrl !== item.previewUrl ? { ...item, previewUrl } : item;
+    });
   }
 
   const galleryValue: GalleryValue = { harvested, generated: [], stylePromptVersion: 0 };
@@ -743,15 +717,34 @@ export async function* runGenomaCrawl(
       };
     } else if (needsOnelinerLlm) {
       if (onelinerLlm) {
-        yield {
-          type: "slot_update",
-          slotId: "essence",
-          patch: slotPatch({
-            status: "candidates",
-            candidates: essenceCandidatesFromOnelinerLlm(onelinerLlm, beliefs, rootUrl),
-            confidence: 0.5,
-          }),
-        };
+        const resolvedFromOneliner = buildResolvedEssenceFromIngest({
+          beliefs,
+          onelinerLlm,
+          brandName,
+        });
+        if (resolvedFromOneliner) {
+          yield {
+            type: "slot_update",
+            slotId: "essence",
+            patch: slotPatch({
+              status: "resolved",
+              value: resolvedFromOneliner,
+              provenance: batchProv,
+              confidence: 0.66,
+              candidates: buildEssenceHeadlineAlternatives(resolvedFromOneliner, onelinerLlm, batchProv),
+            }),
+          };
+        } else {
+          yield {
+            type: "slot_update",
+            slotId: "essence",
+            patch: slotPatch({
+              status: "candidates",
+              candidates: essenceCandidatesFromOnelinerLlm(onelinerLlm, beliefs, rootUrl),
+              confidence: 0.5,
+            }),
+          };
+        }
       } else if (deterministicOneliners.length >= 1) {
         yield {
           type: "slot_update",

@@ -1,26 +1,31 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { parseGenomaRichText } from "@/lib/genoma/genoma-rich-text";
+import { autoEmphasizeGenomaText, parseGenomaRichText } from "@/lib/genoma/genoma-rich-text";
 
 export function GenomaRichText({
   text,
   className,
   as: Tag = "span",
+  emphasizeTerms = [],
 }: {
   text: string;
   className?: string;
   as?: "span" | "p";
+  emphasizeTerms?: string[];
 }) {
-  const segments = useMemo(() => parseGenomaRichText(text), [text]);
+  const rendered = useMemo(() => {
+    const enriched = emphasizeTerms.length ? autoEmphasizeGenomaText(text, emphasizeTerms) : text;
+    return parseGenomaRichText(enriched);
+  }, [emphasizeTerms, text]);
 
   return (
     <Tag className={className}>
-      {segments.map((segment, index) =>
+      {rendered.map((segment, index) =>
         segment.type === "bold" ? (
-          <strong key={index} className="genoma-rich-text__bold">
+          <span key={index} className="genoma-rich-text__emph">
             {segment.text}
-          </strong>
+          </span>
         ) : (
           <React.Fragment key={index}>{segment.text}</React.Fragment>
         ),

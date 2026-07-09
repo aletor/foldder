@@ -4,6 +4,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import type { GalleryValue, GenomaDocument, SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
+import { galleryItemSourceUrl } from "@/lib/genoma/genoma-gallery-media";
 import { buildGalleryToneExplanation } from "@/lib/genoma/genoma-gallery-tone";
 import {
   formatGenomaGalleryCostHint,
@@ -19,6 +20,8 @@ import type { GenomaGalleryGenerateProgress } from "../../genoma-api";
 import { DnaBlock } from "../DnaBlock";
 import { GenomaFoldderButton } from "../GenomaFoldderButton";
 import { GenomaClickableImage } from "../GenomaClickableImage";
+import { GenomaVisualRankMeta } from "../GenomaVisualRankMeta";
+import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { RefreshCw, Sparkles } from "lucide-react";
 
 type GalleryTab = "harvested" | "generated";
@@ -34,6 +37,7 @@ export function GalleryBlock({
   galleryProgress = null,
   focusGeneratedTab,
   gallerySuccessMessage,
+  activeSlotId,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
@@ -45,9 +49,14 @@ export function GalleryBlock({
   galleryProgress?: GenomaGalleryGenerateProgress | null;
   focusGeneratedTab?: number;
   gallerySuccessMessage?: string | null;
+  activeSlotId?: SlotId;
 }) {
   const gallery = slot.value as GalleryValue | undefined;
   const harvested = gallery?.harvested ?? [];
+  const rankedHarvested = useMemo(
+    () => [...harvested].sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0)),
+    [harvested],
+  );
   const generated = gallery?.generated ?? [];
   const [tab, setTab] = useState<GalleryTab>("generated");
   const tabTouchedRef = React.useRef(false);
@@ -181,7 +190,7 @@ export function GalleryBlock({
                             <div key={`${category}-${slotIndex}`} className="genoma-v2-generated-slot">
                               {item?.previewUrl ? (
                                 <div className="genoma-v2-gallery-generated">
-                                  <GenomaClickableImage src={item.previewUrl} />
+                                  <GenomaClickableImage src={item.previewUrl} fit="cover" />
                                   <div className="genoma-v2-gallery-verdicts">
                                     <button
                                       type="button"
@@ -251,18 +260,20 @@ export function GalleryBlock({
           </div>
         ) : (
           <div className="genoma-v2-harvested-strip">
-            {harvested.length ? (
-              harvested.map((item) => (
+            {rankedHarvested.length ? (
+              rankedHarvested.map((item) => {
+                const previewSrc = galleryItemSourceUrl(item);
+                return (
                 <div
                   key={item.assetId}
                   className={`genoma-v2-gallery-item-wrap${item.included ? "" : " is-excluded"}`}
                 >
-                  {item.previewUrl ? (
-                    <GenomaClickableImage
-                      src={item.previewUrl}
-                      wrapperClassName="genoma-v2-gallery-item__img"
-                    />
+                  {previewSrc ? (
+                    <div className="genoma-v2-gallery-thumb">
+                      <GenomaClickableImage src={previewSrc} fit="cover" eager />
+                    </div>
                   ) : null}
+                  <GenomaVisualRankMeta score={item.rankScore} rankSignals={item.rankSignals} />
                   <button
                     type="button"
                     className="genoma-v2-gallery-item-toggle"
@@ -282,10 +293,12 @@ export function GalleryBlock({
                     {item.included ? "Incluida" : "Excluida"}
                   </button>
                 </div>
-              ))
+                );
+              })
             ) : (
               <p className="genoma-v2-muted">Sin imágenes cosechadas.</p>
             )}
+            <GenomaSupplementalPanel slot={slot} />
           </div>
         )}
       </div>
@@ -300,6 +313,7 @@ export function GalleryBlock({
       onAction={onAction}
       className="genoma-v2-block--gallery genoma-v2-block--bento-gallery"
       primaryAction={primaryAction}
+      activeSlotId={activeSlotId}
     >
       {body}
     </DnaBlock>

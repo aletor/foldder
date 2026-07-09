@@ -43,12 +43,21 @@ export interface Candidate<T> {
   value: T;
   score: number;
   provenance: Provenance;
+  rankSignals?: string[];
+  rankLabel?: string;
 }
 
 export interface SlotHistoryEntry<T> {
   value: T;
   provenance: Provenance;
   ts: string;
+}
+
+export interface SlotReconciliation {
+  outcome: "reinforcement" | "extension" | "contradiction";
+  previousSummary: string;
+  incomingSummary: string;
+  sourceLabel?: string;
 }
 
 export interface SlotState<T = unknown> {
@@ -62,6 +71,9 @@ export interface SlotState<T = unknown> {
   history: SlotHistoryEntry<T>[];
   updatedAt: string;
   needsReviewReason?: string;
+  reconciliation?: SlotReconciliation;
+  supplementalEvidence?: SupplementalEvidence[];
+  archivedCandidates?: Candidate<unknown>[];
 }
 
 export type LogoVariantKind = "principal" | "mono" | "negativo" | "icono";
@@ -131,7 +143,14 @@ export interface VisualWorldValue {
 }
 
 export interface GalleryValue {
-  harvested: { assetId: string; previewUrl?: string; included: boolean; provenance: Provenance }[];
+  harvested: {
+    assetId: string;
+    previewUrl?: string;
+    included: boolean;
+    provenance: Provenance;
+    rankScore?: number;
+    rankSignals?: string[];
+  }[];
   generated: {
     assetId: string;
     previewUrl?: string;
@@ -142,6 +161,7 @@ export interface GalleryValue {
   }[];
   stylePromptVersion: number;
   styleToneExplanation?: string;
+  archivedHarvest?: GalleryValue["harvested"];
 }
 
 export interface CompiledArtifacts {
@@ -153,10 +173,18 @@ export interface CompiledArtifacts {
   logoPackManifest: Record<string, unknown>;
 }
 
+export interface SupplementalEvidence {
+  quote: string;
+  sourceRef: string;
+  sourceLabel?: string;
+  ts: string;
+}
+
 export interface SourceRef {
   kind: "url" | "file";
   ref: string;
   ts: string;
+  authoritative?: boolean;
 }
 
 export interface GenomaDocument {
@@ -186,6 +214,8 @@ export interface GenomaNodeData {
 export type SlotAction =
   | { action: "set"; value: unknown }
   | { action: "choose_candidate"; candidateIndex: number; lock?: boolean }
+  | { action: "merge_candidates"; candidateIndices: [number, number] }
+  | { action: "dismiss_candidate"; candidateIndex: number }
   | { action: "clear" }
   | { action: "lock" }
   | { action: "unlock" }

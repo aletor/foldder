@@ -165,7 +165,23 @@ export function GenomaCrawlProgress({ progress, compact = false }: GenomaCrawlPr
         <div className="genoma-crawl-progress__bar-fill" style={{ width: `${percent}%` }} />
       </div>
 
-      {compact ? null : (
+      {compact ? (
+        <div className="genoma-crawl-progress__compact-phases" aria-hidden>
+          {PHASES.map((phase) => {
+            const phaseIndex = PHASES.findIndex((item) => item.id === phase.id);
+            const currentIndex = PHASES.findIndex((item) => item.id === progress.phase);
+            const done = phaseIndex < currentIndex || progress.phase === "finalize";
+            const active = phase.id === progress.phase;
+            return (
+              <span
+                key={phase.id}
+                className={`genoma-crawl-progress__compact-dot${done ? " is-done" : ""}${active ? " is-active" : ""}`}
+                title={phase.label}
+              />
+            );
+          })}
+        </div>
+      ) : (
         <>
           <div className="genoma-crawl-progress__phases">
             {PHASES.map((phase) => {

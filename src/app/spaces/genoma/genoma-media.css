@@ -1,0 +1,161 @@
+/* Genoma v2 — media & rich text (single source of truth) */
+
+/* Rich text emphasis from LLM **markers** */
+.genoma-studio--v2 .genoma-v2-prose .genoma-rich-text__emph,
+.genoma-studio--v2 .genoma-v2-semantic__summary .genoma-rich-text__emph,
+.genoma-studio--v2 .genoma-rich-text__emph {
+  font-weight: 700;
+  color: var(--genoma-v2-text);
+}
+
+/* Preview image base — always visible without parent height chains */
+.genoma-studio--v2 .genoma-preview-image {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.genoma-studio--v2 .genoma-preview-image--placeholder {
+  min-height: 48px;
+  background: linear-gradient(135deg, #eceae6 0%, #e4e2de 100%);
+}
+
+/* Clickable wrapper */
+.genoma-studio--v2 .genoma-clickable-image {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  outline: none;
+}
+
+.genoma-studio--v2 .genoma-clickable-image:focus-visible {
+  outline: 2px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 2px;
+}
+
+/* contain — default, natural height */
+.genoma-studio--v2 .genoma-clickable-image--contain .genoma-preview-image {
+  object-fit: contain;
+}
+
+/* cover — fills a shaped parent (gallery cells) */
+.genoma-studio--v2 .genoma-v2-gallery-generated > .genoma-clickable-image--cover,
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview > .genoma-clickable-image--cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.genoma-studio--v2 .genoma-clickable-image--cover .genoma-preview-image {
+  height: 100%;
+  object-fit: cover;
+}
+
+/* square — harvested thumbs */
+.genoma-studio--v2 .genoma-v2-gallery-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #eceae6 0%, #e4e2de 100%);
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-thumb > .genoma-clickable-image--cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-thumb .genoma-preview-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-thumb .genoma-preview-image--placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.genoma-studio--v2 .genoma-clickable-image--square {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.genoma-studio--v2 .genoma-clickable-image--square .genoma-preview-image {
+  height: 100%;
+  object-fit: cover;
+}
+
+.genoma-studio--v2 .genoma-clickable-image--square .genoma-preview-image--placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+/* logo — centered with max bounds */
+.genoma-studio--v2 .genoma-clickable-image--logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 160px;
+}
+
+.genoma-studio--v2 .genoma-clickable-image--logo .genoma-preview-image {
+  width: auto;
+  height: auto;
+  max-width: min(100%, 360px);
+  max-height: 160px;
+  object-fit: contain;
+}
+
+/* Lightbox */
+.genoma-studio--v2 .genoma-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(4px);
+}
+
+.genoma-studio--v2 .genoma-lightbox__img {
+  max-width: min(92vw, 1200px);
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.genoma-studio--v2 .genoma-lightbox__close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-lightbox__close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

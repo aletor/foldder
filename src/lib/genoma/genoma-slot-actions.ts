@@ -1,7 +1,13 @@
 import type { GenomaDocument, Provenance, SlotAction, SlotId, SlotState } from "./genoma-types";
+import { isSemanticTextSlot, mergeSemanticValues } from "./genoma-reconcile";
 
 const NOW = () => new Date().toISOString();
 const MAX_HISTORY = 5;
+
+function clearReconcileMeta<T>(slot: SlotState<T>): SlotState<T> {
+  const { needsReviewReason: _reason, reconciliation: _reconciliation, ...rest } = slot;
+  return rest as SlotState<T>;
+}
 
 function userProvenance(): Provenance {
   return { type: "user_input", detail: "tú" };
@@ -27,14 +33,14 @@ export function applySlotAction(doc: GenomaDocument, slotId: SlotId, action: Slo
       if (next.value !== undefined && next.provenance) {
         next = pushHistory(next, next.value, next.provenance);
       }
-      next = {
+      next = clearReconcileMeta({
         ...next,
         status: "resolved",
         value: action.value,
         provenance: userProvenance(),
         confidence: 1,
         updatedAt: NOW(),
-      };
+      });
       break;
     }
     case "choose_candidate": {
@@ -43,7 +49,7 @@ export function applySlotAction(doc: GenomaDocument, slotId: SlotId, action: Slo
       if (next.value !== undefined && next.provenance) {
         next = pushHistory(next, next.value, next.provenance);
       }
-      next = {
+      next = clearReconcileMeta({
         ...next,
         status: "resolved",
         value: candidate.value,
@@ -51,6 +57,49 @@ export function applySlotAction(doc: GenomaDocument, slotId: SlotId, action: Slo
         confidence: Math.max(candidate.score, next.confidence),
         candidates: next.candidates,
         locked: action.lock ?? next.locked,
+        updatedAt: NOW(),
+      });
+      break;
+    }
+    case "merge_candidates": {
+      const [leftIndex, rightIndex] = action.candidateIndices;
+      const left = next.candidates[leftIndex];
+      const right = next.candidates[rightIndex];
+      if (!left || !right || !isSemanticTextSlot(slotId)) return doc;
+      if (next.value !== undefined && next.provenance) {
+        next = pushHistory(next, next.value, next.provenance);
+      }
+      const mergedValue = mergeSemanticValues(slotId, left.value, right.value);
+      next = clearReconcileMeta({
+        ...next,
+        status: "resolved",
+        value: mergedValue,
+        provenance: userProvenance(),
+        confidence: Math.max(left.score, right.score, next.confidence),
+        candidates: [],
+        updatedAt: NOW(),
+      });
+      break;
+    }
+    case "dismiss_candidate": {
+      const remaining = next.candidates.filter((_, index) => index !== action.candidateIndex);
+      if (remaining.length === next.candidates.length) return doc;
+      if (remaining.length === 1) {
+        const candidate = remaining[0];
+        next = clearReconcileMeta({
+          ...next,
+          status: "resolved",
+          value: candidate.value,
+          provenance: candidate.provenance,
+          confidence: Math.max(candidate.score, next.confidence),
+          candidates: [],
+          updatedAt: NOW(),
+        });
+        break;
+      }
+      next = {
+        ...next,
+        candidates: remaining,
         updatedAt: NOW(),
       };
       break;
@@ -68,8 +117,7 @@ export function applySlotAction(doc: GenomaDocument, slotId: SlotId, action: Slo
       break;
     }
     case "lock": {
-      const { needsReviewReason: _removed, ...rest } = next;
-      next = { ...rest, locked: true, updatedAt: NOW() };
+      next = clearReconcileMeta({ ...next, locked: true, updatedAt: NOW() });
       break;
     }
     case "unlock": {

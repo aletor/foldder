@@ -4,6 +4,7 @@ import React from "react";
 import { Lock, RotateCcw, Unlock } from "lucide-react";
 import type { SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { confirmLabelForSlot, genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
+import { getSlotAttention } from "@/lib/genoma/genoma-board-status";
 import { GenomaSlotIcon } from "./genoma-slot-icons";
 import { GenomaFoldderButton } from "./GenomaFoldderButton";
 
@@ -17,6 +18,7 @@ type DnaBlockProps = {
   chip?: string;
   primaryAction?: React.ReactNode;
   secondaryActions?: React.ReactNode;
+  activeSlotId?: SlotId;
 };
 
 export function DnaBlock({
@@ -29,9 +31,11 @@ export function DnaBlock({
   chip,
   primaryAction,
   secondaryActions,
+  activeSlotId,
 }: DnaBlockProps) {
   const hasToolbar = Boolean(slot && onAction && slotId && (slot.status === "resolved" || slot.history.length > 0));
   const confirmLabel = slotId ? confirmLabelForSlot[slotId] ?? genomaLocaleEs.confirm : genomaLocaleEs.confirm;
+  const attention = slot && slotId ? getSlotAttention(slot, activeSlotId) : { kind: null as const };
 
   const slotToolbar =
     hasToolbar && slot && slotId && onAction ? (
@@ -56,14 +60,18 @@ export function DnaBlock({
     ) : null;
 
   return (
-    <section className={`genoma-v2-block ${className}`.trim()}>
+    <section
+      className={`genoma-v2-block${attention.kind ? ` genoma-v2-block--${attention.kind}` : ""} ${className}`.trim()}
+    >
       <header className="genoma-v2-block__head">
         <GenomaSlotIcon slotId={slotId} />
         <span className="genoma-v2-block__label">{label}</span>
         {chip ? <span className="genoma-v2-chip">{chip}</span> : null}
-        {slot?.locked ? <span className="genoma-v2-chip genoma-v2-chip--locked">{genomaLocaleEs.locked}</span> : null}
-        {slot?.needsReviewReason ? (
-          <span className="genoma-v2-chip genoma-v2-chip--warn">{genomaLocaleEs.needsReview}</span>
+        {attention.kind && attention.label ? (
+          <span className={`genoma-v2-chip genoma-v2-chip--${attention.kind}`}>{attention.label}</span>
+        ) : null}
+        {slot?.locked && attention.kind !== "locked" ? (
+          <span className="genoma-v2-chip genoma-v2-chip--locked">{genomaLocaleEs.locked}</span>
         ) : null}
         {secondaryActions ? <div className="genoma-v2-block__head-actions">{secondaryActions}</div> : null}
       </header>

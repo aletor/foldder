@@ -5,6 +5,8 @@ import type { LogoValue, SlotAction, SlotId, SlotState } from "@/lib/genoma/geno
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { DnaBlock } from "../DnaBlock";
 import { GenomaClickableImage } from "../GenomaClickableImage";
+import { GenomaLogoRankMeta } from "../GenomaVisualRankMeta";
+import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { GenomaFoldderButton } from "../GenomaFoldderButton";
 import { GenomaIconButton } from "../GenomaIconButton";
 import { Check, Upload } from "lucide-react";
@@ -47,11 +49,13 @@ export function LogoBlock({
   slotId,
   onAction,
   onUploadLogo,
+  activeSlotId,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   onUploadLogo?: (file: File) => void | Promise<void>;
+  activeSlotId?: SlotId;
 }) {
   const logo = slot.value as LogoValue | undefined;
   const plinthClass = useMemo(() => plinthClassForLogo(logo?.previewUrl), [logo?.previewUrl]);
@@ -59,18 +63,21 @@ export function LogoBlock({
 
   let body: React.ReactNode;
 
+  const pickerCandidates = slot.candidates.slice(0, 4);
+
   if (slot.status === "pending") {
     body = <div className="genoma-v2-skeleton genoma-v2-skeleton--hero" aria-hidden />;
   } else if (slot.status === "candidates" || (slot.status === "needs_user" && slot.candidates.length)) {
     body = (
       <div className="genoma-v2-logo-candidates">
-        {slot.candidates.map((candidate, index) => {
+        {pickerCandidates.map((candidate, index) => {
           const value = candidate.value as LogoValue;
           return (
             <div key={`${value.assetId}-${index}`} className="genoma-v2-logo-candidate">
+              <GenomaLogoRankMeta candidate={candidate} rank={index + 1} />
               <div className="genoma-v2-logo-candidate__preview">
                 {value.previewUrl ? (
-                  <GenomaClickableImage src={value.previewUrl} />
+                  <GenomaClickableImage src={value.previewUrl} fit="cover" />
                 ) : (
                   <span className="genoma-v2-muted">{value.assetId}</span>
                 )}
@@ -89,12 +96,23 @@ export function LogoBlock({
     );
   } else if (slot.status === "needs_user") {
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noLogo}</p>;
+  } else if (slot.status === "resolved" && slot.needsReviewReason && logo?.previewUrl) {
+    body = (
+      <>
+        <p className="genoma-v2-review-hint">{slot.needsReviewReason}</p>
+        <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
+          <GenomaClickableImage src={logo.previewUrl} fit="logo" />
+          <GenomaSupplementalPanel slot={slot} />
+        </div>
+      </>
+    );
   } else if (!logo?.previewUrl) {
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noLogo}</p>;
   } else {
     body = (
       <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
-        <GenomaClickableImage src={logo.previewUrl} className="genoma-v2-logo-plinth__img" />
+        <GenomaClickableImage src={logo.previewUrl} fit="logo" />
+        <GenomaSupplementalPanel slot={slot} />
       </div>
     );
   }
@@ -107,6 +125,7 @@ export function LogoBlock({
       onAction={onAction}
       className="genoma-v2-block--hero"
       secondaryActions={uploadControl}
+      activeSlotId={activeSlotId}
     >
       {body}
     </DnaBlock>

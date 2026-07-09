@@ -79,10 +79,12 @@ export function TypographyBlock({
   slot,
   slotId,
   onAction,
+  activeSlotId,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
+  activeSlotId?: SlotId;
 }) {
   const typography = slot.value as TypographyValue | undefined;
   const [editing, setEditing] = useState(false);
@@ -172,6 +174,7 @@ export function TypographyBlock({
       onAction={onAction}
       primaryAction={primaryAction}
       secondaryActions={editButton}
+      activeSlotId={activeSlotId}
     >
       {body}
     </DnaBlock>

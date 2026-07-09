@@ -1,5 +1,6 @@
 import type { GalleryValue, GenomaDocument, SlotState } from "./genoma-types";
 import type { EssenceValue, VoiceValue, VisualWorldValue } from "./genoma-types";
+import { finalizeSemanticCandidateSlot } from "./genoma-reconcile";
 import { copyUnitsToCorpus, type CopyUnit } from "./crawl/copy-units";
 import {
   isBareGenericDescriptor,
@@ -279,14 +280,23 @@ function processSemanticSlot(
   if (slot.locked) return slot;
 
   if (slotId === "essence") {
-    return applyQualityResult(slot, assessEssenceQuality(slot.value as EssenceValue, corpus, brandName));
+    return finalizeSemanticCandidateSlot(
+      slotId,
+      applyQualityResult(slot, assessEssenceQuality(slot.value as EssenceValue, corpus, brandName)),
+    );
   }
   if (slotId === "voice") {
-    return applyQualityResult(slot, assessVoiceQuality(slot.value as VoiceValue, corpus));
+    return finalizeSemanticCandidateSlot(
+      slotId,
+      applyQualityResult(slot, assessVoiceQuality(slot.value as VoiceValue, corpus)),
+    );
   }
-  return applyQualityResult(
-    slot,
-    assessVisualQuality(slot.value as VisualWorldValue, gallery, brandName),
+  return finalizeSemanticCandidateSlot(
+    slotId,
+    applyQualityResult(
+      slot,
+      assessVisualQuality(slot.value as VisualWorldValue, gallery, brandName),
+    ),
   );
 }
 

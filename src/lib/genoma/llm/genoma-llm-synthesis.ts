@@ -4,6 +4,7 @@ import { recordApiUsage } from "@/lib/api-usage";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
 import { cheapCopySignals } from "../crawl/copy-corpus";
 import type { Candidate, LogoValue } from "../genoma-types";
+import { applyLogoVisionLabels } from "../genoma-logo-policy";
 import {
   essenceCandidatesFromOnelinerLlm,
   parseLogoLabelLlmResponse,
@@ -201,13 +202,7 @@ export async function labelLogoCandidatesWithVision(
 
     if (!parsed) return candidates;
 
-    return candidates
-      .map((candidate, index) => {
-        const label = parsed.labels.find((row) => row.index === index);
-        if (!label || label.isLikelyLogo) return candidate;
-        return { ...candidate, score: Math.min(candidate.score, 0.25) };
-      })
-      .sort((a, b) => b.score - a.score);
+    return applyLogoVisionLabels(candidates, parsed.labels);
   } catch (error) {
     console.error("[genoma-llm/logo_label]", error);
     return candidates;
