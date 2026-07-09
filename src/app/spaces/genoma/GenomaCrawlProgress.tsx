@@ -148,9 +148,10 @@ export function reduceCrawlProgress(state: GenomaCrawlProgressState, event: Geno
 
 type GenomaCrawlProgressProps = {
   progress: GenomaCrawlProgressState;
+  compact?: boolean;
 };
 
-export function GenomaCrawlProgress({ progress }: GenomaCrawlProgressProps) {
+export function GenomaCrawlProgress({ progress, compact = false }: GenomaCrawlProgressProps) {
   const percent = Math.min(100, Math.round((progress.step / Math.max(progress.totalSteps, 1)) * 100));
 
   return (
@@ -164,69 +165,70 @@ export function GenomaCrawlProgress({ progress }: GenomaCrawlProgressProps) {
         <div className="genoma-crawl-progress__bar-fill" style={{ width: `${percent}%` }} />
       </div>
 
-      <div className="genoma-crawl-progress__phases">
-        {PHASES.map((phase) => {
-          const phaseIndex = PHASES.findIndex((item) => item.id === phase.id);
-          const currentIndex = PHASES.findIndex((item) => item.id === progress.phase);
-          const done = phaseIndex < currentIndex || progress.phase === "finalize";
-          const active = phase.id === progress.phase;
-          return (
-            <span
-              key={phase.id}
-              className={`genoma-crawl-progress__phase${done ? " is-done" : ""}${active ? " is-active" : ""}`}
-            >
-              {phase.label}
-            </span>
-          );
-        })}
-      </div>
+      {compact ? null : (
+        <>
+          <div className="genoma-crawl-progress__phases">
+            {PHASES.map((phase) => {
+              const phaseIndex = PHASES.findIndex((item) => item.id === phase.id);
+              const currentIndex = PHASES.findIndex((item) => item.id === progress.phase);
+              const done = phaseIndex < currentIndex || progress.phase === "finalize";
+              const active = phase.id === progress.phase;
+              return (
+                <span
+                  key={phase.id}
+                  className={`genoma-crawl-progress__phase${done ? " is-done" : ""}${active ? " is-active" : ""}`}
+                >
+                  {phase.label}
+                </span>
+              );
+            })}
+          </div>
 
-      {progress.pages.length ? (
-        <div className="genoma-crawl-progress__pages">
-          {progress.pages.slice(-4).map((page) => (
-            <span key={page.url} className="genoma-crawl-progress__page">
-              {page.pathname}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      {progress.triagePlan?.length ? (
-        <div className="genoma-crawl-progress__triage">
-          {progress.triagePlan.map((item) => (
-            <div key={item.name} className="genoma-crawl-progress__triage-row">
-              <span>{item.name}</span>
-              <span>{item.action}</span>
+          {progress.pages.length ? (
+            <div className="genoma-crawl-progress__pages">
+              {progress.pages.slice(-4).map((page) => (
+                <span key={page.url} className="genoma-crawl-progress__page">
+                  {page.pathname}
+                </span>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
 
-      {progress.llmStatus === "skipped" && progress.llmReason ? (
-        <div className="genoma-crawl-progress__note">{progress.llmReason}</div>
-      ) : null}
+          {progress.triagePlan?.length ? (
+            <div className="genoma-crawl-progress__triage">
+              {progress.triagePlan.map((item) => (
+                <div key={item.name} className="genoma-crawl-progress__triage-row">
+                  <span>{item.name}</span>
+                  <span>{item.action}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
-      {Object.keys(progress.llmSteps).length ? (
-        <div className="genoma-crawl-progress__llm-steps">
-          {(Object.keys(LLM_STEP_LABELS) as GenomaLlmStepId[]).map((stepId) => {
-            const status = progress.llmSteps[stepId];
-            if (!status) return null;
-            const label =
-              stepId === "batch"
-                ? LLM_STEP_LABELS.batch
-                : LLM_STEP_LABELS[stepId];
-            return (
-              <span
-                key={stepId}
-                className={`genoma-crawl-progress__llm-step is-${status}`}
-                title={progress.llmSteps[stepId]}
-              >
-                {label}
-              </span>
-            );
-          })}
-        </div>
-      ) : null}
+          {progress.llmStatus === "skipped" && progress.llmReason ? (
+            <div className="genoma-crawl-progress__note">{progress.llmReason}</div>
+          ) : null}
+
+          {Object.keys(progress.llmSteps).length ? (
+            <div className="genoma-crawl-progress__llm-steps">
+              {(Object.keys(LLM_STEP_LABELS) as GenomaLlmStepId[]).map((stepId) => {
+                const status = progress.llmSteps[stepId];
+                if (!status) return null;
+                const label = stepId === "batch" ? LLM_STEP_LABELS.batch : LLM_STEP_LABELS[stepId];
+                return (
+                  <span
+                    key={stepId}
+                    className={`genoma-crawl-progress__llm-step is-${status}`}
+                    title={progress.llmSteps[stepId]}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
+        </>
+      )}
     </div>
   );
 }

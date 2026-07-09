@@ -234,10 +234,10 @@ export function normalizeModelBboxTuple(
 /** Reinterpreta tupla del audit (p. ej. cacheada pre-fix) con la misma lógica de ingesta. */
 export function resolveAuditBbox(
   stored: readonly [number, number, number, number],
-): readonly [number, number, number, number] {
+): BBoxXYXY {
   const parsed = normalizeModelBboxTuple(stored);
   if (parsed.ok) return parsed.bbox;
-  return stored;
+  return brandBBoxXYXY([stored[0], stored[1], stored[2], stored[3]]);
 }
 
 export function parseRawBBoxTuple(

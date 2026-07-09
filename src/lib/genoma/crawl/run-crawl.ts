@@ -37,6 +37,7 @@ import {
 } from "../llm/genoma-llm-synthesis";
 import { essenceCandidatesFromOnelinerLlm } from "../llm/genoma-llm-validate";
 import { batchLlmProvenance, buildBatchSlotPatch, synthesizeGenomaBatch } from "../llm/genoma-llm-batch";
+import { applyMirroredPreviewUrl, mirrorExternalImagesForCrawl } from "./mirror-crawl-images";
 import { buildPaletteValue, buildTypographyValue, rankLogoCandidates, shouldAutoResolveLogo } from "./scoring";
 import type { GenomaCrawlOptions } from "./crawl-options";
 import type { CrawlPageSnapshot, GenomaStreamEvent } from "./types";
@@ -336,6 +337,21 @@ export async function* runGenomaCrawl(
     };
   }
 
+  if (logoCandidates.length && options?.userEmail) {
+    const logoUrls = logoCandidates
+      .map((candidate) => candidate.value.previewUrl ?? candidate.value.assetId)
+      .filter((url): url is string => Boolean(url?.startsWith("http")));
+    const mirroredLogos = await mirrorExternalImagesForCrawl(options.userEmail, logoUrls);
+    if (mirroredLogos.size) {
+      logoCandidates = logoCandidates.map((candidate) => {
+        const sourceUrl = candidate.value.previewUrl ?? candidate.value.assetId;
+        const previewUrl = applyMirroredPreviewUrl(sourceUrl, mirroredLogos);
+        if (previewUrl === sourceUrl) return candidate;
+        return { ...candidate, value: { ...candidate.value, previewUrl } };
+      });
+    }
+  }
+
   const logoDecision = shouldAutoResolveLogo(logoCandidates);
   if (logoDecision.auto && logoDecision.top) {
     yield {
@@ -410,7 +426,7 @@ export async function* runGenomaCrawl(
     message: `Galería (${harvestedRaw.length} imágenes encontradas)…`,
   };
 
-  const harvested = filterHarvestedGallery(
+  let harvested = filterHarvestedGallery(
     harvestedRaw
       .sort((a, b) => b.score - a.score)
       .map((item) => ({
@@ -427,6 +443,18 @@ export async function* runGenomaCrawl(
       ].filter(Boolean) as string[],
     },
   );
+
+  if (harvested.length && options?.userEmail) {
+    const galleryUrls = harvested.map((item) => item.previewUrl ?? item.assetId).filter((url) => url.startsWith("http"));
+    const mirroredGallery = await mirrorExternalImagesForCrawl(options.userEmail, galleryUrls);
+    if (mirroredGallery.size) {
+      harvested = harvested.map((item) => {
+        const sourceUrl = item.previewUrl ?? item.assetId;
+        const previewUrl = applyMirroredPreviewUrl(sourceUrl, mirroredGallery);
+        return previewUrl === sourceUrl ? item : { ...item, previewUrl };
+      });
+    }
+  }
 
   const galleryValue: GalleryValue = { harvested, generated: [], stylePromptVersion: 0 };
   const galleryContext = buildGalleryContextForLlm(galleryValue);

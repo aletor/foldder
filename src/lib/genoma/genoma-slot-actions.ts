@@ -68,7 +68,8 @@ export function applySlotAction(doc: GenomaDocument, slotId: SlotId, action: Slo
       break;
     }
     case "lock": {
-      next = { ...next, locked: true, updatedAt: NOW() };
+      const { needsReviewReason: _removed, ...rest } = next;
+      next = { ...rest, locked: true, updatedAt: NOW() };
       break;
     }
     case "unlock": {

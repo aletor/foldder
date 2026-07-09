@@ -1,0 +1,406 @@
+/* Genoma v2 — split layout (30% sidebar · 70% libro) */
+
+.genoma-studio--split {
+  --surface: #f6f5f2;
+  --text-main: #141414;
+  --text-muted: rgba(20, 20, 20, 0.48);
+  --text-secondary: rgba(20, 20, 20, 0.62);
+  --border: rgba(26, 26, 26, 0.1);
+  --primary: #141414;
+  --secondary: var(--foldder-studio-accent, #ffbd1b);
+  --genoma-split-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --genoma-split-body: 11px;
+  --genoma-split-title: 600;
+
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--text-main);
+  font-family: var(--genoma-split-font);
+  font-size: var(--genoma-split-body);
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+}
+
+.genoma-studio-split__sidebar {
+  display: flex;
+  width: 30%;
+  min-width: 280px;
+  max-width: 420px;
+  flex-shrink: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.genoma-studio-split__sidebar-scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 36px 32px 20px;
+}
+
+@media (min-width: 768px) {
+  .genoma-studio-split__sidebar-scroll {
+    padding-inline: 40px;
+  }
+}
+
+.genoma-studio-split__sidebar-footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 16px 32px 24px;
+}
+
+@media (min-width: 768px) {
+  .genoma-studio-split__sidebar-footer {
+    padding-inline: 40px;
+  }
+}
+
+.genoma-studio-split__main {
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  background: var(--genoma-v2-bg, #f6f5f2);
+}
+
+.genoma-studio-split__main .genoma-v2-bento-board .genoma-v2-header {
+  padding-top: 18px;
+}
+
+/* ── Sidebar stat ── */
+.genoma-split-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.genoma-split-stat__value {
+  font-size: 28px;
+  font-weight: var(--genoma-split-title);
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text-main);
+}
+
+.genoma-split-stat__label {
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--text-muted);
+}
+
+/* ── Entry ── */
+.genoma-split-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.genoma-split-entry__url {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.genoma-split-entry__input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  padding: 6px 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 300;
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.genoma-split-entry__input:focus {
+  border-bottom-color: var(--text-main);
+}
+
+.genoma-split-entry__input::placeholder {
+  color: var(--text-muted);
+}
+
+.genoma-split-entry__submit {
+  flex-shrink: 0;
+  border: 0;
+  border-bottom: 1px solid var(--text-main);
+  background: transparent;
+  padding: 6px 0;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.genoma-split-entry__submit:hover:not(:disabled) {
+  opacity: 0.65;
+}
+
+.genoma-split-entry__submit:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.genoma-split-entry__hint {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 300;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.genoma-split-entry__hint--error {
+  color: #8b2e24;
+}
+
+.genoma-split-entry__dropzone {
+  display: flex;
+  min-height: 64px;
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px dashed var(--border);
+  padding: 14px 16px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--text-secondary);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.genoma-split-entry__dropzone.is-dragover {
+  border-color: var(--secondary);
+  background: color-mix(in srgb, var(--secondary) 5%, var(--surface));
+}
+
+.genoma-split-entry__dropzone.is-disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.genoma-split-entry__dropzone-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.genoma-split-entry__llm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 300;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.genoma-split-entry__llm input {
+  accent-color: var(--secondary);
+}
+
+/* ── Sources ── */
+.genoma-split-sources {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+.genoma-split-sources__title {
+  margin: 0 0 10px;
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--text-muted);
+}
+
+.genoma-split-sources__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.genoma-split-sources__list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.genoma-split-sources__list li:last-child {
+  border-bottom: none;
+}
+
+.genoma-split-sources__ref {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--text-main);
+}
+
+.genoma-split-sources__kind {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ── Export footer ── */
+.genoma-split-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.genoma-split-export__link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(20, 20, 20, 0.2);
+  cursor: pointer;
+}
+
+.genoma-split-export__link:hover:not(:disabled) {
+  color: var(--text-main);
+}
+
+.genoma-split-export__link:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.genoma-split-export__sep {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* Sidebar — crawl progress compacto */
+.genoma-studio-split__sidebar .genoma-crawl-progress {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.genoma-studio-split__sidebar .genoma-crawl-progress__title {
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+.genoma-studio-split__sidebar .genoma-crawl-progress__percent {
+  color: var(--text-main);
+  font-weight: 300;
+  font-size: 10px;
+}
+
+.genoma-studio-split__sidebar .genoma-crawl-progress__bar {
+  margin-top: 8px;
+  background: rgba(20, 20, 20, 0.06);
+}
+
+.genoma-studio-split__sidebar .genoma-crawl-progress__bar-fill {
+  background: var(--secondary);
+}
+
+.genoma-studio-split__sidebar .genoma-crawl-progress__phase {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.genoma-studio-split__sidebar .genoma-crawl-progress__phase.is-active {
+  color: var(--text-main);
+  font-weight: 300;
+}
+
+.genoma-studio-split__error {
+  border: 1px solid rgba(180, 50, 40, 0.2);
+  border-left-width: 2px;
+  padding: 10px 12px;
+  font-size: 10px;
+  font-weight: 300;
+  line-height: 1.45;
+  color: #8b2e24;
+  background: rgba(180, 50, 40, 0.04);
+}
+
+/* Empty main panel */
+.genoma-board-empty {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 48px 64px;
+  font-family: var(--genoma-split-font, "Helvetica Neue", Helvetica, Arial, sans-serif);
+}
+
+@media (min-width: 768px) {
+  .genoma-board-empty {
+    padding-inline: 64px;
+  }
+}
+
+.genoma-board-empty__label {
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.genoma-board-empty__title {
+  margin-top: 12px;
+  max-width: 24ch;
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+  font-weight: var(--genoma-split-title, 600);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: var(--text-main);
+}
+
+.genoma-board-empty__copy {
+  margin-top: 12px;
+  max-width: 38ch;
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--text-muted);
+}

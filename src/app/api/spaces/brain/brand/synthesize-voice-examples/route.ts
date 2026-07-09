@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       userEmail: authState.user.email,
       provider: "openai",
       serviceId: "openai-brain-analyze",
-      routePath: "/api/spaces/brain/brand/synthesize-voice-examples",
+      route: "/api/spaces/brain/brand/synthesize-voice-examples",
       model: completion.model,
       inputTokens: completion.usage?.prompt_tokens ?? 0,
       outputTokens: completion.usage?.completion_tokens ?? 0,

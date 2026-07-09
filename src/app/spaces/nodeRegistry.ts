@@ -751,11 +751,9 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   genoma:
-    "label (título opcional); genoma (BrandDNA en node.data); status/jobId; abre studio fullscreen con 8 slots; sin salidas al grafo en v1",
+    "label (título opcional); genoma (GenomaDocument en node.data); status empty|running|partial|done; abre Genoma Studio v2 (crawl web + board); sin salidas al grafo en v1",
   projectBrain:
     "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
-  genoma:
-    "label (título opcional); genome en node.data (candidatos + coronas); abre libro full-bleed; salidas brand (brain) y dataset",
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:

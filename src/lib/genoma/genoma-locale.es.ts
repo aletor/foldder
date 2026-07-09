@@ -35,6 +35,8 @@ export const genomaLocaleEs = {
   galleryGeneratedCount: (count: number) =>
     `${count} imagen${count === 1 ? "" : "es"} de estilo listas — revisa por categoría`,
   galleryGeneratedEmpty: "Pulsa «Generar set de estilo» para crear 10 referencias (personas, lugares, objetos, texturas y general).",
+  galleryHarvestedHint: (count: number) =>
+    `${count} imagen${count === 1 ? "" : "es"} del análisis en la pestaña Cosecha.`,
   recalibrate: "Recalibrar estilo",
   noLogo: "Sin logo todavía.",
   noPalette: "Sin paleta.",
@@ -57,6 +59,8 @@ export const genomaLocaleEs = {
   visualTerritory: "Territorio visual",
   limits: "Límites",
   evidence: "Evidencia",
+  detail: "Detalle",
+  avoid: "Evitar",
   fedByGallery: "Se alimenta de",
   images: "imágenes",
   expandQuote: "Ver más",
@@ -65,8 +69,16 @@ export const genomaLocaleEs = {
   collapseDetail: "Ver menos",
   chooseColor: "Elegir color",
   chooseFonts: "Elegir tipografías",
+  chooseLogo: "Elegir este logo",
   uploadLogo: "Súbelo",
   specimen: "Aa",
+  typePrimary: "Principal",
+  typeSecondary: "Secundaria",
+  typeSpecimenPhrase: "La marca en movimiento",
+  edit: "Editar",
+  save: "Guardar",
+  cancel: "Cancelar",
+  uploadLogoShort: "Subir logo",
 } as const;
 
 export const confirmLabelForSlot: Partial<Record<SlotId, string>> = {

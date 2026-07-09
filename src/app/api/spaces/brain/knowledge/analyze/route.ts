@@ -1176,6 +1176,22 @@ type PdfBrandExtractPassResult = {
   patch: BrandPipelineDiagnosticsPatch;
 };
 
+function mergePdfBrandPayloads(
+  previous: PdfBrandMergePayload,
+  persisted: PdfBrandMergePayload,
+  extractedTypographySource?: PdfBrandExtractResult["typographySource"],
+): PdfBrandMergePayload {
+  return {
+    candidateBrand: { ...previous.candidateBrand, ...persisted.candidateBrand },
+    typography: persisted.typography.primary ? persisted.typography : previous.typography,
+    typographySource: mergePdfTypographySource(previous.typographySource, extractedTypographySource),
+    discoveredLogoAssets: mergeDiscoveredLogoClusterAssets(
+      previous.discoveredLogoAssets,
+      persisted.discoveredLogoAssets,
+    ),
+  };
+}
+
 async function runPdfBrandExtractPass(input: {
   docs: Array<{ doc: BrainDoc; idx: number }>;
   forceReextract: boolean;
@@ -1241,20 +1257,14 @@ async function runPdfBrandExtractPass(input: {
         userEmail: input.userEmail,
         fileBuffer,
       });
-      merge = merge
-        ? {
-            candidateBrand: { ...merge.candidateBrand, ...persisted.candidateBrand },
-            typography: persisted.typography.primary ? persisted.typography : merge.typography,
-            typographySource: mergePdfTypographySource(merge.typographySource, extractedBrand.typographySource),
-            discoveredLogoAssets: mergeDiscoveredLogoClusterAssets(
-              merge.discoveredLogoAssets,
-              persisted.discoveredLogoAssets,
-            ),
-          }
-        : {
-            ...persisted,
-            typographySource: extractedBrand.typographySource,
-          };
+      if (merge) {
+        merge = mergePdfBrandPayloads(merge, persisted, extractedBrand.typographySource);
+      } else {
+        merge = {
+          ...persisted,
+          typographySource: extractedBrand.typographySource,
+        };
+      }
       extractRows.push({
         at,
         docId: doc.id,
@@ -1450,7 +1460,10 @@ function applyGuardedAnalyzeResponse(input: {
       boardMeta: boardMetaWithCandidates,
     },
   };
-  const pendingLogoPicker = shouldPromptLogoPicker(mergedAssetsForPicker, boardMetaWithCandidates);
+  const pendingLogoPicker = shouldPromptLogoPicker(
+    normalizeProjectAssets(mergedAssetsForPicker),
+    boardMetaWithCandidates,
+  );
   return {
     strategy: guarded.assets.strategy,
     corporateContext: guarded.assets.knowledge.corporateContext ?? "",

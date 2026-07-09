@@ -5,6 +5,7 @@ import { Lock, RotateCcw, Unlock } from "lucide-react";
 import type { SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { confirmLabelForSlot, genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { GenomaSlotIcon } from "./genoma-slot-icons";
+import { GenomaFoldderButton } from "./GenomaFoldderButton";
 
 type DnaBlockProps = {
   label: string;
@@ -37,34 +38,19 @@ export function DnaBlock({
       <>
         {slot.status === "resolved" ? (
           slot.locked ? (
-            <button
-              type="button"
-              className="genoma-v2-btn genoma-v2-btn--ghost"
-              onClick={() => onAction(slotId, { action: "unlock" })}
-            >
-              <Unlock size={12} />
+            <GenomaFoldderButton variant="muted" icon={Unlock} onClick={() => onAction(slotId, { action: "unlock" })}>
               {genomaLocaleEs.unlock}
-            </button>
+            </GenomaFoldderButton>
           ) : (
-            <button
-              type="button"
-              className="genoma-v2-btn genoma-v2-btn--ghost"
-              onClick={() => onAction(slotId, { action: "lock" })}
-            >
-              <Lock size={12} />
+            <GenomaFoldderButton icon={Lock} onClick={() => onAction(slotId, { action: "lock" })}>
               {confirmLabel}
-            </button>
+            </GenomaFoldderButton>
           )
         ) : null}
         {slot.history.length > 0 ? (
-          <button
-            type="button"
-            className="genoma-v2-btn genoma-v2-btn--ghost"
-            onClick={() => onAction(slotId, { action: "revert" })}
-          >
-            <RotateCcw size={12} />
+          <GenomaFoldderButton variant="muted" icon={RotateCcw} onClick={() => onAction(slotId, { action: "revert" })}>
             {genomaLocaleEs.revert}
-          </button>
+          </GenomaFoldderButton>
         ) : null}
       </>
     ) : null;

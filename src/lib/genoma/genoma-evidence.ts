@@ -13,7 +13,7 @@ export const GENERIC_DESCRIPTOR_RE =
 export const BARE_GENERIC_DESCRIPTOR_RE = GENERIC_DESCRIPTOR_RE;
 
 export function normalizeQuoteText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+  return text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*\*/g, "").replace(/\s+/g, " ").trim();
 }
 
 /** True if text is mostly a literal substring of corpus (raw extraction, not synthesis). */

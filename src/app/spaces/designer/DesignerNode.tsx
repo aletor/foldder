@@ -57,7 +57,6 @@ import {
 import { shouldUseLegacyBrainBrandMerge } from "@/lib/brandkit/brandkit-legacy-migration";
 import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import { normalizeProjectAssets } from "../project-assets-metadata";
-import type { GenomaNodeData } from "../genoma/GenomaNode";
 import {
   applyDatasetToAllPages,
   collectDatasetLoopListId,
@@ -187,7 +186,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const brainBrand = useMemo(() => {
     if (!brainNodeId) return null;
     if (brainSourceNode?.type === "genoma") {
-      return (brainSourceNode.data as GenomaNodeData).brandKit ?? null;
+      return null;
     }
     return normalizeProjectAssets(brainCanvasCtx?.assetsMetadata).brand;
   }, [brainNodeId, brainSourceNode, brainCanvasCtx?.assetsMetadata]);

@@ -68,7 +68,7 @@ export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const usageUserEmail = (await resolveUsageUserEmailFromRequest(req)) ?? authState.user.email;
     const body = (await req.json().catch(() => null)) as { items?: RegisterItem[] } | null;
     const items = Array.isArray(body?.items) ? body.items : [];
     if (!items.length) {

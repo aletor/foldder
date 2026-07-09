@@ -9,8 +9,6 @@ import { validateGenomaContentQuality } from "@/lib/genoma/genoma-content-qualit
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import {
   computeGenomaCompleteness,
-  createDemoGenomaFixture,
-  createEmptyGenoma,
   extractBrandTitle,
   isGenomaEmpty,
 } from "@/lib/genoma/genoma-defaults";
@@ -30,12 +28,14 @@ import {
   type GenomaCrawlProgressState,
 } from "./GenomaCrawlProgress";
 import { GenomaBoardV2 } from "./board-v2/GenomaBoardV2";
-import { GenomaEntryScreen } from "./GenomaEntryScreen";
+import { GenomaBoardEmpty } from "./GenomaBoardEmpty";
+import { GenomaSidebarPanel } from "./GenomaSidebarPanel";
 import { GENOMA_GALLERY_GENERATE_IMAGE_COUNT } from "@/lib/genoma/genoma-gallery-cost";
 import "./genoma.css";
 import "./genoma-board-theme.css";
+import "./genoma-split-layout.css";
 
-const GENOMA_STUDIO_ACCENT = "#e8e6e1";
+const GENOMA_STUDIO_ACCENT = "#FFBD1B";
 
 type GenomaStudioProps = {
   nodeId: string;
@@ -64,6 +64,8 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const [focusGeneratedTab, setFocusGeneratedTab] = useState(0);
   const [crawlProgress, setCrawlProgress] = useState<GenomaCrawlProgressState | null>(null);
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const genomaRef = useRef(genoma);
+  genomaRef.current = genoma;
 
   const persistGenoma = useCallback(
     (next: GenomaDocument) => {
@@ -74,9 +76,9 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
 
   const handleAction = useCallback(
     (slotId: SlotId, action: SlotAction) => {
-      persistGenoma(applySlotAction(genoma, slotId, action));
+      persistGenoma(applySlotAction(genomaRef.current, slotId, action));
     },
-    [genoma, persistGenoma],
+    [persistGenoma],
   );
 
   const handleBrandNameChange = useCallback(
@@ -96,8 +98,16 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     if (isGenomaEmpty(genoma)) return;
     if (compileTimer.current) clearTimeout(compileTimer.current);
     compileTimer.current = setTimeout(() => {
-      void applyGenomaCompile(genoma).then((next) => {
-        if (next.compiledHash !== genoma.compiledHash) {
+      const snapshot = genomaRef.current;
+      void applyGenomaCompile(snapshot).then((compiled) => {
+        const latest = genomaRef.current;
+        const next = {
+          ...latest,
+          compiled: compiled.compiled,
+          compiledHash: compiled.compiledHash,
+          updatedAt: new Date().toISOString(),
+        };
+        if (next.compiledHash !== latest.compiledHash) {
           persistGenoma(next);
         }
       });
@@ -107,16 +117,23 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     };
   }, [genoma, persistGenoma]);
 
-  const handleLoadDemo = useCallback(() => {
-    setCrawlError(null);
-    persistGenoma(createDemoGenomaFixture());
-  }, [persistGenoma]);
-
-  const handleReset = useCallback(() => {
-    setCrawlError(null);
-    setCrawlProgress(null);
-    persistGenoma(createEmptyGenoma());
-  }, [persistGenoma]);
+  const handleLogoUpload = useCallback(
+    async (file: File) => {
+      setCrawlError(null);
+      let working = genomaRef.current;
+      const result = await streamGenomaIngest([file], (event) => {
+        if (event.type === "slot_update" || event.type === "source_added" || event.type === "brand_name") {
+          working = applyGenomaStreamEvent(working, event, { respectLocks: true });
+        }
+      }, { enableLlm: false });
+      if (!result.ok) {
+        setCrawlError(result.message);
+        return;
+      }
+      persistGenoma(enrichGenomaDocument(working));
+    },
+    [persistGenoma],
+  );
 
   const runStreamJob = useCallback(
     async (
@@ -264,40 +281,52 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   }, [genoma]);
 
   const title = extractBrandTitle(genoma, nodeLabel?.trim() || "Genoma");
-  const showEntry = isGenomaEmpty(genoma) && !isAnalyzing;
   const subtitle = crawlProgress?.message ?? (isAnalyzing ? "Analizando…" : undefined);
-  const completeness = computeGenomaCompleteness(genoma).percent;
-  const canExport = completeness >= 40 && Boolean(genoma.compiled);
+  const completeness = computeGenomaCompleteness(genoma);
+  const canExport = completeness.percent >= 40 && Boolean(genoma.compiled);
+  const showBoard = !isGenomaEmpty(genoma) || isAnalyzing;
 
   return (
-    <div className="genoma-studio fixed inset-0 z-[100090] flex flex-col genoma-studio--v2">
+    <div
+      className="genoma-studio-root fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14]"
+      data-foldder-studio-panel
+      data-foldder-studio-canvas
+      data-foldder-genoma-studio
+      role="dialog"
+      aria-modal="true"
+      aria-label="Genoma studio"
+      style={{ ["--foldder-studio-accent" as string]: GENOMA_STUDIO_ACCENT }}
+    >
       <FoldderStudioHeader
         nodeType="genoma"
         nodeLabel={title}
-        subtitle={subtitle}
+        subtitle={subtitle ?? "Brand intelligence studio"}
         onClose={onClose}
-        iconBackground={GENOMA_STUDIO_ACCENT}
       />
 
-      <div className={`min-h-0 flex-1 overflow-auto${showEntry ? "" : " genoma-studio__board-shell"}`}>
-        {showEntry ? (
-          <GenomaEntryScreen
-            onLoadDemo={handleLoadDemo}
-            onReset={handleReset}
-            onAnalyze={(url, enableLlm) => void handleAnalyze(url, enableLlm)}
-            onIngestFiles={(files, enableLlm) => void handleIngestFiles(files, enableLlm)}
-            isAnalyzing={isAnalyzing}
-            crawlProgress={crawlProgress}
-          />
-        ) : (
-          <>
-            {crawlProgress ? <GenomaCrawlProgress progress={crawlProgress} /> : null}
-            {crawlError ? (
-              <div className="genoma-v2-banner genoma-v2-banner--error mx-6 mt-4 px-4 py-3 text-sm">{crawlError}</div>
-            ) : null}
+      <div
+        className="genoma-studio genoma-studio--v2 genoma-studio--split min-h-0 flex-1"
+        style={{ ["--genoma-v2-accent" as string]: GENOMA_STUDIO_ACCENT }}
+      >
+        <GenomaSidebarPanel
+          doc={genoma}
+          completenessPercent={completeness.percent}
+          isAnalyzing={isAnalyzing}
+          crawlProgress={crawlProgress}
+          crawlError={crawlError}
+          canExport={canExport}
+          onAnalyze={(url, enableLlm) => void handleAnalyze(url, enableLlm)}
+          onIngestFiles={(files, enableLlm) => void handleIngestFiles(files, enableLlm)}
+          onExportTokens={handleExportTokens}
+          onExportCompiled={handleExportCompiled}
+        />
+
+        <main className="genoma-studio-split__main genoma-studio__board-shell">
+          {showBoard ? (
             <GenomaBoardV2
               doc={genoma}
               onAction={handleAction}
+              onLogoUpload={handleLogoUpload}
               isAnalyzing={isAnalyzing}
               isGeneratingGallery={isGeneratingGallery}
               focusGeneratedTab={focusGeneratedTab}
@@ -309,9 +338,12 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
               onExportTokens={handleExportTokens}
               onExportCompiled={handleExportCompiled}
               canExport={canExport}
+              hideExportActions
             />
-          </>
-        )}
+          ) : (
+            <GenomaBoardEmpty />
+          )}
+        </main>
       </div>
     </div>
   );

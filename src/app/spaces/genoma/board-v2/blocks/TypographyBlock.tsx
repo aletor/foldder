@@ -1,9 +1,79 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import type { SlotAction, SlotId, SlotState, TypographyValue } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { DnaBlock } from "../DnaBlock";
+import { GenomaFoldderButton } from "../GenomaFoldderButton";
+import { GenomaIconButton } from "../GenomaIconButton";
+import { GenomaTextEditPanel } from "../GenomaTextEditPanel";
+import { CaseSensitive, Pencil } from "lucide-react";
+
+type TypographyFamily = TypographyValue["families"][number];
+
+function fontStack(family: TypographyFamily): string {
+  return `${family.family}, ${family.fallbacks.join(", ")}`;
+}
+
+function pickPrimarySecondary(families: TypographyFamily[]): { primary?: TypographyFamily; secondary?: TypographyFamily } {
+  const primary =
+    families.find((family) => family.role === "heading" || family.role === "display") ?? families[0];
+  const secondary =
+    families.find((family) => family.role === "body" && family.family !== primary?.family) ??
+    families.find((family) => family.family !== primary?.family) ??
+    families[1];
+  return { primary, secondary };
+}
+
+function roleLabel(role: TypographyFamily["role"]): string {
+  if (role === "body") return genomaLocaleEs.typeSecondary;
+  return genomaLocaleEs.typePrimary;
+}
+
+function TypographyColumn({ family, label }: { family: TypographyFamily; label: string }) {
+  const stack = fontStack(family);
+  const phrase = genomaLocaleEs.typeSpecimenPhrase;
+
+  return (
+    <div className="genoma-type-column">
+      <div className="genoma-type-column__head">
+        <span className="genoma-type-column__label">{label}</span>
+        <span className="genoma-type-column__family">{family.family}</span>
+        <span className="genoma-type-column__meta">
+          {family.weights.join(" · ")} · {family.source}
+        </span>
+      </div>
+      <div className="genoma-type-column__specimens">
+        <p className="genoma-type-specimen genoma-type-specimen--bold" style={{ fontFamily: stack }}>
+          {phrase}
+        </p>
+        <p className="genoma-type-specimen genoma-type-specimen--light" style={{ fontFamily: stack }}>
+          {phrase}
+        </p>
+        <p className="genoma-type-specimen genoma-type-specimen--italic" style={{ fontFamily: stack }}>
+          {phrase}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TypographyStrip({ families }: { families: TypographyFamily[] }) {
+  const { primary, secondary } = pickPrimarySecondary(families);
+
+  return (
+    <div className="genoma-type-strip">
+      {primary ? <TypographyColumn family={primary} label={roleLabel(primary.role)} /> : null}
+      {secondary && secondary.family !== primary?.family ? (
+        <TypographyColumn family={secondary} label={genomaLocaleEs.typeSecondary} />
+      ) : (
+        <div className="genoma-type-column genoma-type-column--empty">
+          <span className="genoma-v2-muted">Sin tipografía secundaria detectada</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function TypographyBlock({
   slot,
@@ -15,30 +85,57 @@ export function TypographyBlock({
   onAction: (slotId: SlotId, action: SlotAction) => void;
 }) {
   const typography = slot.value as TypographyValue | undefined;
+  const [editing, setEditing] = useState(false);
   let body: React.ReactNode;
   let primaryAction: React.ReactNode;
 
+  const { primary, secondary } = pickPrimarySecondary(typography?.families ?? []);
+  const canEdit = Boolean(typography?.families?.length && slot.status === "resolved" && !slot.locked);
+  const editButton = canEdit ? (
+    <GenomaIconButton icon={Pencil} label={genomaLocaleEs.edit} onClick={() => setEditing(true)} />
+  ) : null;
+
   if (slot.status === "pending") {
-    body = <div className="genoma-v2-skeleton" aria-hidden />;
+    body = <div className="genoma-v2-skeleton genoma-v2-skeleton--wide" aria-hidden />;
+  } else if (editing && typography) {
+    body = (
+      <GenomaTextEditPanel
+        fields={[
+          { id: "primary", label: genomaLocaleEs.typePrimary, value: primary?.family ?? "" },
+          { id: "secondary", label: genomaLocaleEs.typeSecondary, value: secondary?.family ?? "" },
+        ]}
+        onSave={(values) => {
+          const nextFamilies = typography.families.map((family) => {
+            if (family.family === primary?.family) {
+              return { ...family, family: values.primary.trim() || family.family };
+            }
+            if (family.family === secondary?.family) {
+              return { ...family, family: values.secondary.trim() || family.family };
+            }
+            return family;
+          });
+          onAction(slotId, {
+            action: "set",
+            value: { families: nextFamilies } satisfies TypographyValue,
+          });
+          setEditing(false);
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    );
   } else if (slot.status === "candidates") {
     body = (
-      <div className="genoma-v2-stack">
+      <div className="genoma-type-strip genoma-type-strip--candidates">
         {slot.candidates.map((candidate, index) => {
           const value = candidate.value as TypographyValue;
-          const primary = value.families[0];
           return (
             <button
               key={index}
               type="button"
-              className="genoma-v2-btn genoma-v2-btn--ghost genoma-v2-type-choice text-left"
+              className="genoma-type-candidate"
               onClick={() => onAction(slotId, { action: "choose_candidate", candidateIndex: index })}
             >
-              <span className="genoma-v2-type-choice__specimen" style={{ fontFamily: primary?.family }}>
-                {genomaLocaleEs.specimen}
-              </span>
-              <span className="genoma-v2-type-choice__meta">
-                {value.families.map((family) => `${family.role}: ${family.family}`).join(" · ")}
-              </span>
+              <TypographyStrip families={value.families} />
             </button>
           );
         })}
@@ -47,9 +144,8 @@ export function TypographyBlock({
   } else if (!typography?.families?.length) {
     if (slot.status === "needs_user") {
       primaryAction = (
-        <button
-          type="button"
-          className="genoma-v2-btn"
+        <GenomaFoldderButton
+          icon={CaseSensitive}
           onClick={() =>
             onAction(slotId, {
               action: "set",
@@ -60,33 +156,23 @@ export function TypographyBlock({
           }
         >
           {genomaLocaleEs.chooseFonts}
-        </button>
+        </GenomaFoldderButton>
       );
     }
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noTypography}</p>;
   } else {
-    body = (
-      <div className="genoma-v2-stack">
-        {typography.families.map((family) => (
-          <div key={`${family.role}-${family.family}`} className="genoma-v2-type-row">
-            <div className="genoma-v2-type-row__specimen" style={{ fontFamily: `${family.family}, ${family.fallbacks.join(", ")}` }}>
-              {genomaLocaleEs.specimen}
-            </div>
-            <div>
-              <div className="genoma-v2-type-row__role">{family.role}</div>
-              <div className="genoma-v2-type-row__family">{family.family}</div>
-              <div className="genoma-v2-muted">
-                {family.weights.join(", ")} · {family.source}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
+    body = <TypographyStrip families={typography.families} />;
   }
 
   return (
-    <DnaBlock label={genomaLocaleEs.typography} slotId={slotId} slot={slot} onAction={onAction} primaryAction={primaryAction}>
+    <DnaBlock
+      label={genomaLocaleEs.typography}
+      slotId={slotId}
+      slot={slot}
+      onAction={onAction}
+      primaryAction={primaryAction}
+      secondaryActions={editButton}
+    >
       {body}
     </DnaBlock>
   );

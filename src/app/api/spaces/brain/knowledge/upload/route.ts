@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const usageUserEmail = (await resolveUsageUserEmailFromRequest(req)) ?? authState.user.email;
     const formData = await req.formData();
     const files = formData.getAll("file") as File[];
     const scopeRaw = String(formData.get("scope") || "core");

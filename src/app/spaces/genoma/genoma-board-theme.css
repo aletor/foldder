@@ -6,12 +6,17 @@
   --genoma-v2-divider: rgba(26, 26, 26, 0.08);
   --genoma-v2-border: rgba(26, 26, 26, 0.12);
   --genoma-v2-text: #141414;
-  --genoma-v2-muted: rgba(20, 20, 20, 0.52);
+  --genoma-v2-heading: #141414;
+  --genoma-v2-muted: rgba(20, 20, 20, 0.48);
   --genoma-v2-accent: #141414;
+  --genoma-v2-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
   --genoma-v2-font-light: 300;
-  --genoma-v2-font-title: 700;
+  --genoma-v2-font-title: 600;
+  --genoma-v2-body-size: 12px;
   background: var(--genoma-v2-bg);
   color: var(--genoma-v2-text);
+  font-family: var(--genoma-v2-font);
+  font-size: var(--genoma-v2-body-size);
   font-weight: var(--genoma-v2-font-light);
   -webkit-font-smoothing: antialiased;
 }
@@ -22,28 +27,26 @@
 
 /* ── Header ── */
 .genoma-studio--v2 .genoma-v2-header {
-  padding: 28px 48px 20px;
+  padding: 24px 40px 16px;
   background: var(--genoma-v2-bg);
   border-bottom: 1px solid var(--genoma-v2-divider);
   backdrop-filter: none;
 }
 
 .genoma-studio--v2 .genoma-v2-header__title {
-  font-size: clamp(1.5rem, 2.5vw, 2rem);
-  font-weight: 800;
+  font-family: var(--genoma-v2-font);
+  font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+  font-weight: 700;
   letter-spacing: -0.03em;
-  color: var(--genoma-v2-text);
+  color: var(--genoma-v2-heading);
 }
 
-.genoma-studio--v2 .genoma-v2-header__status {
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.06em;
+.genoma-studio--v2 .genoma-v2-header__pending {
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.04em;
   color: var(--genoma-v2-muted);
-}
-
-.genoma-studio--v2 .genoma-v2-live-dot {
-  background: #3d9a62;
+  text-transform: lowercase;
 }
 
 .genoma-studio--v2 .genoma-v2-pill {
@@ -51,8 +54,8 @@
   border: none;
   border-radius: 0;
   background: transparent;
-  font-size: 13px;
-  font-weight: 400;
+  font-size: 11px;
+  font-weight: 300;
   color: var(--genoma-v2-muted);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -70,8 +73,8 @@
 
 .genoma-studio--v2 .genoma-v2-pill--pending {
   text-decoration: none;
-  color: var(--genoma-v2-text);
-  font-weight: 500;
+  color: var(--genoma-v2-muted);
+  font-weight: 300;
 }
 
 /* ── Grid & blocks (frameless) ── */
@@ -100,10 +103,12 @@
 }
 
 .genoma-studio--v2 .genoma-v2-block__head {
-  gap: 10px;
-  margin-bottom: 20px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--genoma-v2-divider);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
 .genoma-studio--v2 .genoma-v2-block__dot {
@@ -112,20 +117,21 @@
 
 .genoma-studio--v2 .genoma-v2-block__icon {
   flex-shrink: 0;
-  color: var(--genoma-v2-muted);
+  color: var(--genoma-v2-heading);
 }
 
 .genoma-studio--v2 .genoma-v2-block__label {
-  font-size: 0.8125rem;
-  font-weight: var(--genoma-v2-font-title);
-  letter-spacing: 0.04em;
+  font-family: var(--genoma-v2-font);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   text-transform: none;
-  color: var(--genoma-v2-text);
+  color: var(--genoma-v2-heading);
 }
 
 .genoma-studio--v2 .genoma-v2-block__body {
   font-weight: var(--genoma-v2-font-light);
-  font-size: 0.9375rem;
+  font-size: var(--genoma-v2-body-size);
   line-height: 1.55;
 }
 
@@ -143,18 +149,28 @@
 }
 
 .genoma-studio--v2 .genoma-v2-type-row__family {
-  font-weight: 700;
+  font-weight: 400;
+  font-size: 13px;
 }
 
 .genoma-studio--v2 .genoma-v2-type-row__role {
-  font-weight: 400;
+  font-weight: 300;
   text-transform: none;
   letter-spacing: 0.02em;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .genoma-studio--v2 strong {
-  font-weight: 600;
+  font-weight: 300;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-v2-field-label {
+  font-weight: 300;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--genoma-v2-muted);
+  text-transform: lowercase;
 }
 
 /* ── Chips & tags ── */
@@ -163,8 +179,8 @@
   border-radius: 0;
   background: transparent;
   border-bottom: 1px solid var(--genoma-v2-divider);
-  font-size: 12px;
-  font-weight: 400;
+  font-size: 11px;
+  font-weight: 300;
   color: var(--genoma-v2-text);
 }
 
@@ -181,14 +197,62 @@
   color: var(--genoma-v2-muted);
 }
 
-/* ── Actions (text-first) ── */
+/* ── Foldder buttons ── */
+.genoma-studio--v2 .genoma-foldder-btn,
+.genoma-studio--split .genoma-foldder-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: 0;
+  background: var(--foldder-studio-accent, #ffbd1b);
+  color: #000;
+  padding: 8px 14px;
+  font-family: var(--genoma-v2-font, "Helvetica Neue", Helvetica, Arial, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.12s ease;
+}
+
+.genoma-studio--v2 .genoma-foldder-btn:hover:not(:disabled),
+.genoma-studio--split .genoma-foldder-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: scale(1.01);
+}
+
+.genoma-studio--v2 .genoma-foldder-btn:disabled,
+.genoma-studio--split .genoma-foldder-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.genoma-studio--v2 .genoma-foldder-btn--muted,
+.genoma-studio--split .genoma-foldder-btn--muted {
+  background: rgba(20, 20, 20, 0.08);
+  color: var(--genoma-v2-heading, #1a1a1a);
+}
+
+.genoma-studio--v2 .genoma-foldder-btn--ghost,
+.genoma-studio--split .genoma-foldder-btn--ghost {
+  background: transparent;
+  color: var(--genoma-v2-muted);
+  padding-inline: 0;
+}
+
+/* ── Actions (text links for candidates) ── */
 .genoma-studio--v2 .genoma-v2-btn {
   padding: 0;
   border: none;
   border-radius: 0;
   background: transparent;
-  font-size: 13px;
-  font-weight: 400;
+  font-size: 11px;
+  font-weight: 300;
   color: var(--genoma-v2-text);
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -205,7 +269,7 @@
 }
 
 .genoma-studio--v2 .genoma-v2-btn.is-active {
-  font-weight: 600;
+  font-weight: 300;
   color: var(--genoma-v2-text);
   text-decoration: none;
 }
@@ -218,7 +282,7 @@
 .genoma-studio--v2 .genoma-v2-muted {
   font-weight: var(--genoma-v2-font-light);
   color: var(--genoma-v2-muted);
-  font-size: 0.875rem;
+  font-size: 11px;
 }
 
 /* ── Inputs ── */
@@ -275,19 +339,19 @@
 
 .genoma-studio--v2 .genoma-v2-tab {
   margin-bottom: -1px;
-  padding: 10px 0;
+  padding: 8px 0;
   border: none;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   background: transparent;
-  font-size: 13px;
-  font-weight: 400;
+  font-size: 11px;
+  font-weight: 300;
   color: var(--genoma-v2-muted);
 }
 
 .genoma-studio--v2 .genoma-v2-tab.is-active {
   color: var(--genoma-v2-text);
-  font-weight: 600;
+  font-weight: 300;
   border-bottom-color: var(--genoma-v2-text);
   background: transparent;
 }
@@ -338,8 +402,8 @@
 }
 
 .genoma-studio--v2 .genoma-v2-evidence__label {
-  font-weight: 600;
-  font-size: 11px;
+  font-weight: 300;
+  font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--genoma-v2-muted);
 }
@@ -385,8 +449,8 @@
 }
 
 .genoma-studio--v2 .genoma-crawl-progress__title {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: 300;
+  font-size: 11px;
 }
 
 .genoma-studio--v2 .genoma-crawl-progress__percent {
@@ -416,7 +480,7 @@
 
 .genoma-studio--v2 .genoma-crawl-progress__phase.is-active {
   outline: none;
-  font-weight: 700;
+  font-weight: 300;
   color: var(--genoma-v2-text);
 }
 
@@ -437,7 +501,7 @@
 
 .genoma-studio--v2 .genoma-crawl-progress__llm-step.is-running {
   color: var(--genoma-v2-text);
-  font-weight: 600;
+  font-weight: 300;
 }
 
 /* ── Entry screen ── */
@@ -533,9 +597,9 @@
 
 .genoma-studio--v2 .genoma-v2-bento-board .genoma-v2-header {
   flex-shrink: 0;
-  padding: 18px 32px 14px;
+  padding: 18px 24px 14px;
   margin: 0;
-  border-bottom: none;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.12);
 }
 
 .genoma-studio--v2 .genoma-v2-bento-board .genoma-v2-header__title {
@@ -545,29 +609,22 @@
 .genoma-studio--v2 .genoma-v2-bento-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 14px;
-  padding: 4px 32px 64px;
-  max-width: 1560px;
-  margin: 0 auto;
+  gap: 1px;
+  padding: 0;
+  max-width: none;
+  margin: 0;
   width: 100%;
   align-content: start;
+  background: rgba(26, 26, 26, 0.12);
 }
 
 .genoma-studio--v2 .genoma-v2-tile {
-  background: #faf9f7;
+  background: #f6f5f2;
   border-radius: 0;
-  padding: 24px 28px;
+  padding: 22px 24px;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.genoma-studio--v2 .genoma-v2-tile--accent {
-  background: #e8e6e1;
-}
-
-.genoma-studio--v2 .genoma-v2-tile--muted {
-  background: #f0eeea;
 }
 
 .genoma-studio--v2 .genoma-v2-tile--logo {
@@ -577,29 +634,29 @@
 }
 
 .genoma-studio--v2 .genoma-v2-tile--essence {
-  grid-column: span 5;
+  grid-column: span 8;
   grid-row: span 2;
   min-height: 300px;
 }
 
 .genoma-studio--v2 .genoma-v2-tile--typography {
-  grid-column: span 3;
-  min-height: 148px;
+  grid-column: span 12;
+  min-height: 168px;
 }
 
 .genoma-studio--v2 .genoma-v2-tile--palette {
-  grid-column: span 3;
-  min-height: 148px;
+  grid-column: span 6;
+  min-height: 320px;
 }
 
 .genoma-studio--v2 .genoma-v2-tile--voice {
   grid-column: span 6;
-  min-height: 260px;
+  min-height: 320px;
 }
 
 .genoma-studio--v2 .genoma-v2-tile--visual {
-  grid-column: span 6;
-  min-height: 260px;
+  grid-column: span 12;
+  min-height: 220px;
 }
 
 .genoma-studio--v2 .genoma-v2-tile--gallery {
@@ -623,16 +680,17 @@
 }
 
 .genoma-studio--v2 .genoma-v2-tile .genoma-v2-block__head {
-  margin-bottom: 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(26, 26, 26, 0.06);
+  margin-bottom: 12px;
+  padding-bottom: 0;
+  border-bottom: none;
 }
 
 .genoma-studio--v2 .genoma-v2-tile .genoma-v2-block__label {
-  font-size: 0.68rem;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--genoma-v2-heading);
 }
 
 .genoma-studio--v2 .genoma-v2-tile .genoma-v2-block__body {
@@ -654,6 +712,181 @@
 .genoma-studio--v2 .genoma-v2-tile--palette .genoma-v2-block__body {
   display: flex;
   flex-direction: column;
+  min-height: 0;
+}
+
+/* ── Palette sheet ── */
+.genoma-studio--v2 .genoma-palette-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+.genoma-studio--v2 .genoma-palette-color {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(26, 26, 26, 0.08);
+  text-align: left;
+}
+
+.genoma-studio--v2 .genoma-palette-color:last-child {
+  border-bottom: none;
+}
+
+.genoma-studio--v2 .genoma-palette-color--interactive {
+  width: 100%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.genoma-studio--v2 .genoma-palette-color--interactive:hover {
+  background: rgba(20, 20, 20, 0.03);
+}
+
+.genoma-studio--v2 .genoma-palette-color__swatch {
+  width: 96px;
+  height: 72px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.genoma-studio--v2 .genoma-palette-color__swatch--featured {
+  height: 112px;
+}
+
+.genoma-studio--v2 .genoma-palette-color__role {
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-palette-color__hex {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--genoma-v2-heading);
+}
+
+.genoma-studio--v2 .genoma-palette-color__line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 300;
+  color: var(--genoma-v2-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.genoma-studio--v2 .genoma-palette-color__tag {
+  min-width: 32px;
+  font-size: 9px;
+  font-weight: 300;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted);
+}
+
+/* ── Typography strip ── */
+.genoma-studio--v2 .genoma-type-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  align-items: start;
+}
+
+.genoma-studio--v2 .genoma-type-strip--candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.genoma-studio--v2 .genoma-type-candidate {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.genoma-studio--v2 .genoma-type-candidate:hover {
+  background: rgba(20, 20, 20, 0.03);
+}
+
+.genoma-studio--v2 .genoma-type-column {
+  min-width: 0;
+}
+
+.genoma-studio--v2 .genoma-type-column--empty {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+}
+
+.genoma-studio--v2 .genoma-type-column__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 14px;
+}
+
+.genoma-studio--v2 .genoma-type-column__label {
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-type-column__family {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--genoma-v2-heading);
+}
+
+.genoma-studio--v2 .genoma-type-column__meta {
+  font-size: 10px;
+  font-weight: 300;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-type-column__specimens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  align-items: baseline;
+}
+
+.genoma-studio--v2 .genoma-type-specimen {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+  color: var(--genoma-v2-heading);
+}
+
+.genoma-studio--v2 .genoma-type-specimen--bold {
+  font-weight: 700;
+}
+
+.genoma-studio--v2 .genoma-type-specimen--light {
+  font-weight: 300;
+}
+
+.genoma-studio--v2 .genoma-type-specimen--italic {
+  font-weight: 400;
+  font-style: italic;
 }
 
 .genoma-studio--v2 .genoma-v2-swatches--stack {
@@ -697,22 +930,22 @@
 }
 
 .genoma-studio--v2 .genoma-v2-gallery-tone {
-  padding: 0 0 12px;
-  border-bottom: 1px solid var(--genoma-v2-divider);
+  padding: 0 0 8px;
+  border-bottom: none;
 }
 
 .genoma-studio--v2 .genoma-v2-gallery-tone__label {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
   color: var(--genoma-v2-muted);
 }
 
 .genoma-studio--v2 .genoma-v2-gallery-tone__text {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--genoma-v2-text);
 }
@@ -738,12 +971,19 @@
   gap: 2px;
 }
 
+.genoma-studio--v2 .genoma-v2-img-placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 48px;
+  background: linear-gradient(135deg, #eceae6 0%, #e4e2de 100%);
+}
+
 .genoma-studio--v2 .genoma-v2-generated-category__label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 9px;
+  font-weight: 300;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--genoma-v2-text);
+  color: var(--genoma-v2-muted);
 }
 
 .genoma-studio--v2 .genoma-v2-generated-category__hint {
@@ -867,17 +1107,19 @@
   }
 
   .genoma-studio--v2 .genoma-v2-tile--typography,
-  .genoma-studio--v2 .genoma-v2-tile--palette {
-    grid-column: span 3;
-  }
-
-  .genoma-studio--v2 .genoma-v2-tile--voice,
-  .genoma-studio--v2 .genoma-v2-tile--visual {
-    grid-column: span 3;
-  }
-
+  .genoma-studio--v2 .genoma-v2-tile--visual,
   .genoma-studio--v2 .genoma-v2-tile--gallery {
     grid-column: span 6;
+  }
+
+  .genoma-studio--v2 .genoma-v2-tile--palette,
+  .genoma-studio--v2 .genoma-v2-tile--voice {
+    grid-column: span 3;
+  }
+
+  .genoma-studio--v2 .genoma-type-strip {
+    grid-template-columns: 1fr;
+    gap: 20px;
   }
 
   .genoma-studio--v2 .genoma-v2-generated-matrix {
@@ -888,8 +1130,6 @@
 @media (max-width: 1100px) {
   .genoma-studio--v2 .genoma-v2-bento-grid {
     grid-template-columns: 1fr;
-    padding-left: 24px;
-    padding-right: 24px;
   }
 
   .genoma-studio--v2 .genoma-v2-tile--logo,
@@ -906,5 +1146,451 @@
   .genoma-studio--v2 .genoma-v2-generated-matrix {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Lightbox, icon buttons, text edit, palette picker */
+.genoma-studio--v2 .genoma-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(4px);
+}
+
+.genoma-studio--v2 .genoma-lightbox__img {
+  max-width: min(92vw, 1200px);
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.genoma-studio--v2 .genoma-lightbox__close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-lightbox__close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.genoma-studio--v2 .genoma-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: #fff;
+  color: rgba(0, 0, 0, 0.72);
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-icon-btn:hover:not(:disabled) {
+  border-color: rgba(0, 0, 0, 0.2);
+  color: #000;
+}
+
+.genoma-studio--v2 .genoma-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.genoma-studio--v2 .genoma-v2-block__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.genoma-studio--v2 .genoma-v2-block__head-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.genoma-studio--v2 .genoma-clickable-image {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  outline: none;
+}
+
+.genoma-studio--v2 .genoma-clickable-image:focus-visible {
+  outline: 2px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 2px;
+}
+
+.genoma-studio--v2 .genoma-clickable-image__img,
+.genoma-studio--v2 .genoma-clickable-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot .genoma-v2-gallery-generated .genoma-clickable-image {
+  height: 100%;
+}
+
+.genoma-studio--v2 .genoma-v2-generated-slot .genoma-v2-gallery-generated .genoma-clickable-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-plinth .genoma-clickable-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 160px;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-plinth .genoma-clickable-image img.genoma-v2-logo-plinth__img {
+  width: auto;
+  height: auto;
+  max-width: min(100%, 360px);
+  max-height: 160px;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview .genoma-clickable-image {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview .genoma-clickable-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-item__img.genoma-clickable-image {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-item__img.genoma-clickable-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.genoma-studio--v2 .genoma-text-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.genoma-studio--v2 .genoma-text-edit__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.genoma-studio--v2 .genoma-text-edit__label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.genoma-studio--v2 .genoma-text-edit__input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.genoma-studio--v2 .genoma-text-edit__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.genoma-studio--v2 .genoma-palette-color {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.genoma-studio--v2 .genoma-palette-color__picker-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-palette-color__picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-palette-color__meta-btn {
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.genoma-studio--v2 .genoma-palette-color__meta-btn:disabled {
+  cursor: default;
+}
+
+.genoma-studio--v2 .genoma-palette-color__meta-btn:not(:disabled):hover .genoma-palette-color__hex {
+  text-decoration: underline;
+}
+
+.genoma-studio--v2 .genoma-v2-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-item-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-item-wrap.is-excluded {
+  opacity: 0.45;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-item-toggle {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.genoma-studio--v2 .genoma-v2-gallery-item__img {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eceae6;
+  overflow: hidden;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__choose {
+  width: 100%;
+  justify-content: center;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+/* Semantic detail panels (accordion tabs) */
+.genoma-studio--v2 .genoma-semantic-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.genoma-studio--v2 .genoma-semantic-panels__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.genoma-studio--v2 .genoma-semantic-panels__list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-semantic-panel {
+  border-bottom: 1px solid var(--genoma-v2-divider);
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__tab:hover {
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-semantic-panel.is-open .genoma-semantic-panel__tab {
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__label {
+  flex: 1;
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__count {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--genoma-v2-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__chevron {
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+
+.genoma-studio--v2 .genoma-semantic-panel.is-open .genoma-semantic-panel__chevron {
+  transform: rotate(180deg);
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__body {
+  padding: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.genoma-studio--v2 .genoma-semantic-panels__footer {
+  margin-top: -4px;
+}
+
+.genoma-studio--v2 .genoma-capsule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.genoma-studio--v2 .genoma-capsule-list__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--genoma-v2-divider);
+  border-radius: 2px;
+  background: #f7f6f4;
+}
+
+.genoma-studio--v2 .genoma-capsule-list__item--warn {
+  border-color: rgba(180, 90, 40, 0.28);
+  background: #faf4ef;
+}
+
+.genoma-studio--v2 .genoma-capsule-list__item--quote .genoma-capsule-list__text {
+  font-style: italic;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-capsule-list__num {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--genoma-v2-divider);
+  border-radius: 2px;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-capsule-list__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--genoma-v2-text);
+}
+
+.genoma-studio--v2 .genoma-capsule-list__primary {
+  font-weight: 400;
+}
+
+.genoma-studio--v2 .genoma-rich-text__bold,
+.genoma-studio--v2 .genoma-v2-prose strong {
+  font-weight: 600;
+}
+
+.genoma-studio--v2 .genoma-capsule-list__detail {
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-studio--v2 .genoma-semantic-panel__body .genoma-v2-evidence {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
 }
 

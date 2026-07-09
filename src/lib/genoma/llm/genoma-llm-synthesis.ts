@@ -20,6 +20,7 @@ import {
 
 import { estimateGeminiUsd } from "@/lib/pricing-config";
 import type { EvidenceCandidate } from "../genoma-evidence-candidates";
+import { GENOMA_RICH_TEXT_PROMPT } from "../genoma-rich-text";
 
 const GENOMA_LLM_MODEL = process.env.GENOMA_LLM_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
 
@@ -105,6 +106,7 @@ export async function synthesizeVoice(input: GenomaSynthesisInput): Promise<Voic
       "descriptors: 3-5 adjetivos en español.",
       "rules: 3-6 reglas operativas breves.",
       "evidence: 3 citas literales del corpus.",
+      GENOMA_RICH_TEXT_PROMPT,
     ].join("\n"),
     [
       `Marca: ${input.brandName ?? "desconocida"}`,

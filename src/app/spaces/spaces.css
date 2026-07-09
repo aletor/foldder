@@ -15182,6 +15182,22 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   border-radius: 0 !important;
 }
 
+/* ============================================================================
+   Genoma studio — frameless content + shared studio chrome (data-foldder-genoma-studio)
+   ============================================================================ */
+[data-foldder-genoma-studio] {
+  --foldder-studio-accent: #ffbd1b;
+}
+
+.genoma-studio-root {
+  isolation: isolate;
+}
+
+[data-foldder-genoma-studio] .genoma-studio--split {
+  background: var(--surface, #f6f5f2);
+  color: var(--text-main, #141414);
+}
+
 .custom-node.foldder-studio-node--dataset .dataset-empty-background,
 .custom-node.dataset-node .dataset-empty-background {
   pointer-events: none;

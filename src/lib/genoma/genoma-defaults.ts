@@ -290,7 +290,7 @@ export function normalizeGenomaDocument(raw: unknown): GenomaDocument {
           : {},
       )
     : merged;
-  return enrichGenomaDocument(validateGenomaContentQuality(migrated));
+  return enrichGenomaDocument(migrated);
 }
 
 export function pendingGenomaSlotIds(doc: GenomaDocument): SlotId[] {

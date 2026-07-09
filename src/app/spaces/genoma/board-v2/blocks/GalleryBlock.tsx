@@ -17,6 +17,9 @@ import {
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import type { GenomaGalleryGenerateProgress } from "../../genoma-api";
 import { DnaBlock } from "../DnaBlock";
+import { GenomaFoldderButton } from "../GenomaFoldderButton";
+import { GenomaClickableImage } from "../GenomaClickableImage";
+import { RefreshCw, Sparkles } from "lucide-react";
 
 type GalleryTab = "harvested" | "generated";
 
@@ -44,15 +47,28 @@ export function GalleryBlock({
   gallerySuccessMessage?: string | null;
 }) {
   const gallery = slot.value as GalleryValue | undefined;
-  const [tab, setTab] = useState<GalleryTab>("generated");
   const harvested = gallery?.harvested ?? [];
   const generated = gallery?.generated ?? [];
+  const [tab, setTab] = useState<GalleryTab>("generated");
+  const tabTouchedRef = React.useRef(false);
 
   useEffect(() => {
     if (focusGeneratedTab && focusGeneratedTab > 0) {
       setTab("generated");
+      tabTouchedRef.current = true;
     }
   }, [focusGeneratedTab]);
+
+  useEffect(() => {
+    if (tabTouchedRef.current) return;
+    if (generated.length > 0) setTab("generated");
+    else if (harvested.length > 0) setTab("harvested");
+  }, [generated.length, harvested.length]);
+
+  const selectTab = (next: GalleryTab) => {
+    tabTouchedRef.current = true;
+    setTab(next);
+  };
 
   const toneExplanation = useMemo(() => {
     if (gallery?.styleToneExplanation?.trim()) return gallery.styleToneExplanation;
@@ -65,9 +81,9 @@ export function GalleryBlock({
 
   const generateButton = onGenerateGallery ? (
     <div className="genoma-v2-gallery-generate">
-      <button type="button" className="genoma-v2-btn" onClick={onGenerateGallery} disabled={isGeneratingGallery}>
+      <GenomaFoldderButton icon={Sparkles} onClick={onGenerateGallery} disabled={isGeneratingGallery}>
         {isGeneratingGallery ? genomaLocaleEs.generatingGallery : genomaLocaleEs.generateGallery}
-      </button>
+      </GenomaFoldderButton>
       {galleryCostHint && !isGeneratingGallery ? (
         <p className="genoma-v2-muted genoma-v2-gallery-cost-hint">{galleryCostHint}</p>
       ) : null}
@@ -76,14 +92,9 @@ export function GalleryBlock({
 
   const recalibrateButton =
     generated.length && onRecalibrateGallery ? (
-      <button
-        type="button"
-        className="genoma-v2-btn genoma-v2-btn--ghost"
-        onClick={onRecalibrateGallery}
-        disabled={isGeneratingGallery}
-      >
+      <GenomaFoldderButton icon={RefreshCw} variant="muted" onClick={onRecalibrateGallery} disabled={isGeneratingGallery}>
         {genomaLocaleEs.recalibrate}
-      </button>
+      </GenomaFoldderButton>
     ) : null;
 
   const progressPct =
@@ -125,7 +136,7 @@ export function GalleryBlock({
             role="tab"
             aria-selected={tab === "generated"}
             className={`genoma-v2-tab${tab === "generated" ? " is-active" : ""}`}
-            onClick={() => setTab("generated")}
+            onClick={() => selectTab("generated")}
           >
             {genomaLocaleEs.generated}
             {generated.length ? <span className="genoma-v2-tab__count">{generated.length}</span> : null}
@@ -135,7 +146,7 @@ export function GalleryBlock({
             role="tab"
             aria-selected={tab === "harvested"}
             className={`genoma-v2-tab${tab === "harvested" ? " is-active" : ""}`}
-            onClick={() => setTab("harvested")}
+            onClick={() => selectTab("harvested")}
           >
             {genomaLocaleEs.harvested}
             {harvested.length ? <span className="genoma-v2-tab__count">{harvested.length}</span> : null}
@@ -170,7 +181,7 @@ export function GalleryBlock({
                             <div key={`${category}-${slotIndex}`} className="genoma-v2-generated-slot">
                               {item?.previewUrl ? (
                                 <div className="genoma-v2-gallery-generated">
-                                  <img src={item.previewUrl} alt="" draggable={false} />
+                                  <GenomaClickableImage src={item.previewUrl} />
                                   <div className="genoma-v2-gallery-verdicts">
                                     <button
                                       type="button"
@@ -228,32 +239,49 @@ export function GalleryBlock({
                 })}
               </div>
             ) : (
-              <p className="genoma-v2-muted">{genomaLocaleEs.galleryGeneratedEmpty}</p>
+              <div className="genoma-v2-generated-empty">
+                <p className="genoma-v2-muted">{genomaLocaleEs.galleryGeneratedEmpty}</p>
+                {harvested.length ? (
+                  <p className="genoma-v2-muted genoma-v2-gallery-harvested-hint">
+                    {genomaLocaleEs.galleryHarvestedHint(harvested.length)}
+                  </p>
+                ) : null}
+              </div>
             )}
           </div>
         ) : (
           <div className="genoma-v2-harvested-strip">
             {harvested.length ? (
               harvested.map((item) => (
-                <button
+                <div
                   key={item.assetId}
-                  type="button"
-                  className={`genoma-v2-gallery-item${item.included ? "" : " is-excluded"}`}
-                  onClick={() => {
-                    if (!gallery) return;
-                    onAction(slotId, {
-                      action: "set",
-                      value: {
-                        ...gallery,
-                        harvested: gallery.harvested.map((entry) =>
-                          entry.assetId === item.assetId ? { ...entry, included: !entry.included } : entry,
-                        ),
-                      } satisfies GalleryValue,
-                    });
-                  }}
+                  className={`genoma-v2-gallery-item-wrap${item.included ? "" : " is-excluded"}`}
                 >
-                  {item.previewUrl ? <img src={item.previewUrl} alt="" draggable={false} /> : null}
-                </button>
+                  {item.previewUrl ? (
+                    <GenomaClickableImage
+                      src={item.previewUrl}
+                      wrapperClassName="genoma-v2-gallery-item__img"
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    className="genoma-v2-gallery-item-toggle"
+                    onClick={() => {
+                      if (!gallery) return;
+                      onAction(slotId, {
+                        action: "set",
+                        value: {
+                          ...gallery,
+                          harvested: gallery.harvested.map((entry) =>
+                            entry.assetId === item.assetId ? { ...entry, included: !entry.included } : entry,
+                          ),
+                        } satisfies GalleryValue,
+                      });
+                    }}
+                  >
+                    {item.included ? "Incluida" : "Excluida"}
+                  </button>
+                </div>
               ))
             ) : (
               <p className="genoma-v2-muted">Sin imágenes cosechadas.</p>

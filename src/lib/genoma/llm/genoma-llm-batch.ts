@@ -15,6 +15,7 @@ import {
   type BatchSlotKey,
   type BatchSlotValidation,
 } from "./genoma-llm-batch-validate";
+import { GENOMA_RICH_TEXT_PROMPT } from "../genoma-rich-text";
 
 export { batchLlmProvenance, buildBatchSlotPatch } from "./genoma-batch-slot-patch";
 
@@ -34,6 +35,7 @@ const BATCH_SYSTEM = [
   "essence.beliefs: creencias interpretadas con label corto y explanation.",
   "voice.descriptors: 2-5 chips concretos; voice.rules: instrucciones accionables (mínimo 2).",
   "visualWorld.visualTraits: territorio visual positivo; visualWorld.limits: qué evitar.",
+  GENOMA_RICH_TEXT_PROMPT,
 ].join("\n");
 
 const BATCH_JSON_SHAPE = `{

@@ -82,12 +82,12 @@ export function enrichGenomaDocument(doc: GenomaDocument): GenomaDocument {
   const usefulImages = galleryUsefulCount(gallery);
 
   let essence = slots.essence;
-  if (essence.status === "resolved" && essence.value) {
+  if (essence.status === "resolved" && essence.value && !essence.locked) {
     const improved = improveEssenceValue(essence.value as EssenceValue, brandName);
     if (improved.summary !== (essence.value as EssenceValue).summary) {
       essence = { ...essence, value: improved, updatedAt: now() };
     }
-  } else {
+  } else if (!essence.locked) {
     essence = autoResolveSingleCandidate(essence as SlotState<EssenceValue>);
     if (essence.status === "resolved" && essence.value) {
       essence = {
@@ -99,8 +99,11 @@ export function enrichGenomaDocument(doc: GenomaDocument): GenomaDocument {
   }
   slots.essence = essence;
 
-  let voice = autoResolveSingleCandidate(slots.voice as SlotState<VoiceValue>);
-  if (voice.status === "resolved" && voice.value) {
+  let voice = slots.voice as SlotState<VoiceValue>;
+  if (!voice.locked) {
+    voice = autoResolveSingleCandidate(voice);
+  }
+  if (voice.status === "resolved" && voice.value && !voice.locked) {
     const improvedVoice = improveVoiceValue(voice.value as VoiceValue);
     if (improvedVoice.summary !== (voice.value as VoiceValue).summary) {
       voice = { ...voice, value: improvedVoice, updatedAt: now() };
@@ -113,7 +116,7 @@ export function enrichGenomaDocument(doc: GenomaDocument): GenomaDocument {
     visualSlot.status === "resolved" &&
     Boolean((visualSlot.value as VisualWorldValue | undefined)?.summary?.trim());
 
-  if (!hasVisualSummary && gallery && usefulImages >= 6) {
+  if (!hasVisualSummary && gallery && usefulImages >= 6 && !visualSlot.locked) {
     const synthesized = buildVisualWorldFromGallery(gallery, brandName);
     if (synthesized) {
       slots.visualWorld = {
