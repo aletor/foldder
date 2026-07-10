@@ -88,6 +88,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const [lastCrawlJob, setLastCrawlJob] = useState<{ url: string; enableLlm: boolean } | null>(null);
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
   const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
+  const [presentationMode, setPresentationMode] = useState(false);
   genomaRef.current = genoma;
 
   const pushToast = useCallback((toast: GenomaToast) => {
@@ -449,6 +450,8 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
               canExport={canExport}
               hideExportActions
               activeSlotId={crawlProgress?.activeSlot}
+              presentationMode={presentationMode}
+              onPresentationModeChange={setPresentationMode}
             />
           ) : (
             <GenomaBoardEmpty />

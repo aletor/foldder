@@ -468,6 +468,37 @@
   color: color-mix(in srgb, #c45c26 80%, var(--text-main));
 }
 
+.genoma-split-conflict {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #c45c26 28%, var(--border));
+  border-radius: 8px;
+  background: rgba(196, 92, 38, 0.05);
+}
+
+.genoma-split-conflict__title {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, #c45c26 85%, var(--text-main));
+}
+
+.genoma-split-conflict__lead,
+.genoma-split-conflict__detail {
+  margin: 0 0 8px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.genoma-split-conflict__more {
+  margin: 8px 0 0;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* Sidebar — crawl progress compacto */
 .genoma-studio-split__sidebar .genoma-crawl-progress {
   margin: 0;

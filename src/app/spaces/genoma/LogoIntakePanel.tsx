@@ -19,6 +19,7 @@ import { GenomaDepthPanel } from "./GenomaDepthPanel";
 import { useGenomaFaceContext } from "./genoma-face-context";
 import { cx, G } from "./face-utils";
 import { GenomaMediaImage } from "./GenomaMediaImage";
+import { humanizeLogoIntakeError } from "@/lib/genoma/logo-intake/error-copy";
 
 type Phase = "idle" | "reading" | "detecting" | "quality" | "done";
 
@@ -122,7 +123,7 @@ export const LogoIntakePanel = forwardRef<
         setSelectedId(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "undo_failed");
+      setError(humanizeLogoIntakeError(err instanceof Error ? err.message : "undo_failed"));
       setUndoToast(null);
     } finally {
       setBusy(null);
@@ -177,7 +178,7 @@ export const LogoIntakePanel = forwardRef<
   }, []);
 
   const reportIntakeError = useCallback((message: string) => {
-    setError(message);
+    setError(humanizeLogoIntakeError(message));
     setIntakeNotice(null);
     setPhase("idle");
     setBusy(null);
@@ -204,7 +205,7 @@ export const LogoIntakePanel = forwardRef<
   );
 
   useEffect(() => {
-    void loadState().catch((err) => setError(err instanceof Error ? err.message : "load_failed"));
+    void loadState().catch((err) => setError(humanizeLogoIntakeError(err instanceof Error ? err.message : "load_failed")));
   }, [loadState]);
 
   const selectCandidate = useCallback(
@@ -261,7 +262,7 @@ export const LogoIntakePanel = forwardRef<
         const data = await readJson<ValidateLogoIntakeResult>(res);
         await applyValidateResult(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "validate_failed");
+        setError(humanizeLogoIntakeError(err instanceof Error ? err.message : "validate_failed"));
       } finally {
         setBusy(null);
       }
@@ -282,7 +283,7 @@ export const LogoIntakePanel = forwardRef<
         const data = await readJson<ValidateLogoIntakeResult>(res);
         await applyValidateResult(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "manual_failed");
+        setError(humanizeLogoIntakeError(err instanceof Error ? err.message : "manual_failed"));
       } finally {
         setBusy(null);
       }
@@ -320,7 +321,7 @@ export const LogoIntakePanel = forwardRef<
               onClick={() => setDepthOpen((v) => !v)}
               className="genoma-depth-trigger"
             >
-              ···
+              evidencia
             </button>
             {depthOpen ? (
               <GenomaDepthPanel

@@ -138,10 +138,10 @@ function GenomaDepthPanelBody({
                       className="genoma-depth-popover__action genoma-depth-popover__action--primary"
                       onClick={() => ctx?.onCrown?.(traitId, row.id)}
                     >
-                      coronar
+                      confirmar
                     </button>
                   ) : (
-                    <span className="genoma-depth-popover__status">coronado</span>
+                    <span className="genoma-depth-popover__status">confirmado</span>
                   )}
                   {needsVectorize ? (
                     <button

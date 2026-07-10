@@ -56,6 +56,7 @@ export function GalleryBlock({
     [harvested],
   );
   const generated = gallery?.generated ?? [];
+  const [harvestedOnlyIncluded, setHarvestedOnlyIncluded] = useState(false);
   const [tab, setTab] = useState<GalleryTab>("generated");
   const tabTouchedRef = React.useRef(false);
 
@@ -84,6 +85,11 @@ export function GalleryBlock({
   }, [gallery?.styleToneExplanation, galleryProgress?.toneExplanation, doc]);
 
   const grouped = useMemo(() => groupGeneratedByCategory(generated), [generated]);
+  const displayedHarvested = useMemo(
+    () => (harvestedOnlyIncluded ? rankedHarvested.filter((item) => item.included) : rankedHarvested),
+    [harvestedOnlyIncluded, rankedHarvested],
+  );
+  const includedCount = useMemo(() => harvested.filter((item) => item.included).length, [harvested]);
   const galleryCostHint = formatGenomaGalleryCostHint("es");
 
   const generateButton = onGenerateGallery ? (
@@ -265,8 +271,21 @@ export function GalleryBlock({
           </div>
         ) : (
           <div className="genoma-v2-harvested-strip">
-            {rankedHarvested.length ? (
-              rankedHarvested.map((item) => {
+            {harvested.length > 0 ? (
+              <label className="genoma-v2-harvested-filter">
+                <input
+                  type="checkbox"
+                  checked={harvestedOnlyIncluded}
+                  onChange={(event) => setHarvestedOnlyIncluded(event.target.checked)}
+                />
+                <span>
+                  {genomaLocaleEs.galleryHarvestedOnlyIncluded}
+                  {includedCount > 0 ? ` (${includedCount})` : ""}
+                </span>
+              </label>
+            ) : null}
+            {displayedHarvested.length ? (
+              displayedHarvested.map((item) => {
                 const previewSrc = galleryItemSourceUrl(item);
                 return (
                 <div
@@ -301,7 +320,11 @@ export function GalleryBlock({
                 );
               })
             ) : (
-              <p className="genoma-v2-muted">Sin imágenes cosechadas.</p>
+              <p className="genoma-v2-muted">
+                {harvestedOnlyIncluded && harvested.length > 0
+                  ? "Ninguna imagen marcada como incluida."
+                  : "Sin imágenes cosechadas."}
+              </p>
             )}
             <GenomaSupplementalPanel slot={slot} />
           </div>

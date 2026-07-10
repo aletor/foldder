@@ -1,9 +1,11 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import type { GenomaDocument, SlotAction, SlotId } from "@/lib/genoma/genoma-types";
+import { GENOMA_SLOT_IDS } from "@/lib/genoma/genoma-types";
 import type { GenomaGalleryGenerateProgress } from "../genoma-api";
 import { getSlotAttention } from "@/lib/genoma/genoma-board-status";
+import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { GenomaBoardHeader } from "./GenomaBoardHeader";
 import { GenomaBoardStatusBar } from "./GenomaBoardStatusBar";
 import { GenomaImageLightboxProvider } from "./GenomaImageLightbox";
@@ -32,6 +34,8 @@ type GenomaBoardV2Props = {
   canExport?: boolean;
   hideExportActions?: boolean;
   activeSlotId?: SlotId;
+  presentationMode?: boolean;
+  onPresentationModeChange?: (enabled: boolean) => void;
 };
 
 export function GenomaBoardV2({
@@ -51,18 +55,39 @@ export function GenomaBoardV2({
   canExport = false,
   hideExportActions = false,
   activeSlotId,
+  presentationMode = false,
+  onPresentationModeChange,
 }: GenomaBoardV2Props) {
   const slots = doc.slots;
 
+  const borradorPulseSlotId = useMemo(() => {
+    for (const slotId of GENOMA_SLOT_IDS) {
+      const attention = getSlotAttention(slots[slotId], activeSlotId);
+      if (attention.kind === "candidates" && attention.label === genomaLocaleEs.reviewChip) {
+        return slotId;
+      }
+    }
+    return null;
+  }, [slots, activeSlotId]);
+
   const tileClass = (slotId: SlotId) => {
     const attention = getSlotAttention(slots[slotId], activeSlotId);
-    return attention.kind ? ` genoma-v2-tile--${attention.kind}` : "";
+    const classes: string[] = [];
+    if (attention.kind) classes.push(` genoma-v2-tile--${attention.kind}`);
+    if (presentationMode && !slots[slotId]?.locked) classes.push(" genoma-v2-tile--presentation-muted");
+    if (borradorPulseSlotId === slotId) classes.push(" genoma-v2-tile--borrador-pulse");
+    return classes.join("");
   };
 
   return (
     <GenomaImageLightboxProvider>
-      <div className={`genoma-v2-bento-board${isAnalyzing ? " is-loading" : ""}`}>
-        <GenomaBoardHeader doc={doc} onBrandNameChange={onBrandNameChange} />
+      <div className={`genoma-v2-bento-board${isAnalyzing ? " is-loading" : ""}${presentationMode ? " is-presentation" : ""}`}>
+        <GenomaBoardHeader
+          doc={doc}
+          onBrandNameChange={onBrandNameChange}
+          presentationMode={presentationMode}
+          onPresentationModeChange={onPresentationModeChange}
+        />
         <GenomaBoardStatusBar doc={doc} />
 
         <div className="genoma-v2-bento-grid">

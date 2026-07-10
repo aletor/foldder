@@ -17473,9 +17473,11 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   border: 0;
   background: transparent;
   padding: 4px 6px;
-  font-size: 15px;
-  line-height: 1;
-  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 300;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
   color: var(--text-muted, rgba(31, 35, 40, 0.55));
   cursor: pointer;
   transition: color 0.15s ease;

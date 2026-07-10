@@ -3,7 +3,7 @@ export type GenomaStyleGuideExportMode = "operativo" | "cliente";
 
 export const GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS: Record<GenomaStyleGuideExportMode, string> = {
   operativo: "Operativo (equipo)",
-  cliente: "Cliente (solo coronado)",
+  cliente: "Cliente (solo confirmado)",
 };
 
 export function resolveGenomaStyleGuideSoloValidado(mode: GenomaStyleGuideExportMode): boolean {

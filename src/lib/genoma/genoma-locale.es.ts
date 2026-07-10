@@ -41,6 +41,7 @@ export const genomaLocaleEs = {
   galleryGeneratedEmpty: "Pulsa «Generar set de estilo» para crear 10 referencias (personas, lugares, objetos, texturas y general).",
   galleryHarvestedHint: (count: number) =>
     `${count} imagen${count === 1 ? "" : "es"} del análisis en la pestaña Cosecha.`,
+  galleryHarvestedOnlyIncluded: "solo incluidas",
   recalibrate: "Recalibrar estilo",
   noLogo: "Sin logo todavía.",
   logoReviewSuggested: "Revisa el logo detectado antes de confirmar",
@@ -118,6 +119,9 @@ export const genomaLocaleEs = {
   reconcileDecisionLead: (incoming: string) =>
     `La nueva fuente (${incoming}) no coincide con lo que ya tenías guardado.`,
   reconcileDecisionAction: "Elige qué versión quieres guardar en el genoma.",
+  reconcileOpenBlock: (slot: string) => `Resolver en ${slot.toLowerCase()}`,
+  reconcileMoreConflicts: (count: number) =>
+    `+${count} conflicto${count === 1 ? "" : "s"} más en otros bloques`,
   reconcileCompareHint: "Compara resumen, descriptores y reglas. Lo resaltado solo aparece en esa opción.",
   reconcileSelectHint: "Selecciona una opción arriba para confirmar.",
   candidateDecisionEyebrow: (slot: string) => `Decisión pendiente en ${slot}`,
@@ -235,6 +239,8 @@ export const genomaLocaleEs = {
     `Necesitas al menos 40% de ADN resuelto para exportar (ahora ${percent}%).`,
   exportNeedsCompile: "Compilando ADN… vuelve a intentar en unos segundos.",
   pendingChecklistTitle: "Pendiente de ti",
+  presentationMode: "solo confirmado",
+  presentationModeHint: "Oculta borradores y muestra solo bloques confirmados.",
   galleryVerdictUp: "Encaja",
   galleryVerdictDown: "No encaja",
   recalibrateHint: "Regenera imágenes con el estilo actualizado del ADN.",

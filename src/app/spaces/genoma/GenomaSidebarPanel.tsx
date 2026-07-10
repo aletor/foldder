@@ -12,6 +12,7 @@ import { GenomaCrawlProgress, type GenomaCrawlProgressState } from "./GenomaCraw
 import { GenomaSidebarStatus } from "./board-v2/GenomaSidebarStatus";
 import { GenomaFoldderButton } from "./board-v2/GenomaFoldderButton";
 import { GenomaStudioIngestFeedback } from "./GenomaStudioIngestFeedback";
+import { GenomaStudioConflictPrompt } from "./GenomaStudioConflictPrompt";
 import type { GenomaStudioIngestFeedback as GenomaStudioIngestFeedbackState } from "@/lib/genoma/studio/studio-ingest-feedback";
 import {
   GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS,
@@ -192,6 +193,7 @@ export function GenomaSidebarPanel({
         </section>
 
         {ingestFeedback ? <GenomaStudioIngestFeedback feedback={ingestFeedback} /> : null}
+        <GenomaStudioConflictPrompt doc={doc} />
         {crawlProgress ? <GenomaCrawlProgress progress={crawlProgress} compact /> : null}
         {crawlError ? (
           <div className="genoma-studio-split__error-wrap">

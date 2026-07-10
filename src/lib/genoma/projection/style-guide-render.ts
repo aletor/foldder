@@ -384,7 +384,7 @@ function renderLogoSection(
   }
 
   if (!cards.length) {
-    return includeSlot(view.logo.primary, soloValidado) ? "<p>Sin logo</p>" : "<p>Sin logo coronado</p>";
+    return includeSlot(view.logo.primary, soloValidado) ? "<p>Sin logo</p>" : "<p>Sin logo confirmado</p>";
   }
 
   const usage = logoSafeAreaSvg

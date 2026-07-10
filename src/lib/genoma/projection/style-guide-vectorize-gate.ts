@@ -121,7 +121,7 @@ export function evaluateStyleGuideVectorizeGate(
   return {
     allowed: false,
     code: "VECTORIZE_REQUIRED",
-    message: "El logo coronado requiere vectorización antes de exportar el libro de estilo.",
+    message: "El logo confirmado requiere vectorización antes de exportar el libro de estilo.",
     trace,
     cta: trace?.attempted ? "retry_vectorize" : "pay_wallet",
   };

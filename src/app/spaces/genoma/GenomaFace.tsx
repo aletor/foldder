@@ -110,7 +110,7 @@ function TraitDepthButton({ traitId, show }: { traitId: TraitId; show?: boolean 
         }}
         className="genoma-depth-trigger"
       >
-        ···
+        evidencia
       </button>
       {open && ctx?.genome ? (
         <GenomaDepthPanel
@@ -155,7 +155,7 @@ function Slot({
       data-state={slot.state}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
-      title={clickable ? "tocar para coronar" : undefined}
+      title={clickable ? "tocar para confirmar" : undefined}
       onClick={clickable ? () => onCrown!(slot.traitId, slot.candidateId!) : undefined}
       className={cx(
         "relative transition",
@@ -292,7 +292,7 @@ function ColorBlock({ slot, onCrown }: { slot: TraitSlot<ColorValue>; onCrown?: 
       data-testid={`slot-${slot.traitId}`}
       data-state={slot.state}
       role={clickable ? "button" : undefined}
-      title={clickable ? "tocar para coronar" : undefined}
+      title={clickable ? "tocar para confirmar" : undefined}
       onClick={clickable ? () => onCrown!(slot.traitId, slot.candidateId!) : undefined}
       className={cx("group relative flex min-h-[42vh] flex-1 flex-col justify-between p-10", clickable && "cursor-pointer", stateRing(slot.state))}
       style={{ backgroundColor: v.hex, color: fg }}

@@ -10,9 +10,16 @@ import { scrollToGenomaBoardSlot } from "./genoma-board-scroll";
 type GenomaBoardHeaderProps = {
   doc: GenomaDocument;
   onBrandNameChange?: (name: string) => void;
+  presentationMode?: boolean;
+  onPresentationModeChange?: (enabled: boolean) => void;
 };
 
-export function GenomaBoardHeader({ doc, onBrandNameChange }: GenomaBoardHeaderProps) {
+export function GenomaBoardHeader({
+  doc,
+  onBrandNameChange,
+  presentationMode = false,
+  onPresentationModeChange,
+}: GenomaBoardHeaderProps) {
   const summary = summarizeGenomaBoard(doc);
   const completeness = computeGenomaCompleteness(doc);
   const brand = doc.brandName?.value ?? "Marca";
@@ -51,6 +58,16 @@ export function GenomaBoardHeader({ doc, onBrandNameChange }: GenomaBoardHeaderP
           </div>
         ) : summary.resolved > 0 ? (
           <span className="genoma-v2-header__ready">{genomaLocaleEs.boardReady}</span>
+        ) : null}
+        {onPresentationModeChange ? (
+          <label className="genoma-v2-header__presentation" title={genomaLocaleEs.presentationModeHint}>
+            <input
+              type="checkbox"
+              checked={presentationMode}
+              onChange={(event) => onPresentationModeChange(event.target.checked)}
+            />
+            <span>{genomaLocaleEs.presentationMode}</span>
+          </label>
         ) : null}
       </div>
     </header>
