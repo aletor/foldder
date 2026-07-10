@@ -85,25 +85,27 @@ export function GenomaBanda08({
         </div>
       </header>
 
-      <div className="banda-08__mockups">
-        <figure className="banda-08__figure">
-          <div className="banda-08__mockup banda-08__mockup--card">
-            <GenomaShowcaseBusinessCard data={data} />
-          </div>
-          <figcaption className="banda-08__caption">Tarjeta de visita</figcaption>
-        </figure>
-        <figure className="banda-08__figure">
-          <div className="banda-08__mockup banda-08__mockup--post">
-            <GenomaShowcaseSocialPost data={data} primaryHex={primaryHex} />
-          </div>
-          <figcaption className="banda-08__caption">Post social</figcaption>
-        </figure>
-        <figure className="banda-08__figure">
-          <div className="banda-08__mockup banda-08__mockup--mobile">
-            <GenomaShowcaseMobile data={data} />
-          </div>
-          <figcaption className="banda-08__caption">Móvil</figcaption>
-        </figure>
+      <div className="banda-08__mockups-viewport">
+        <div className="banda-08__mockups">
+          <figure className="banda-08__figure">
+            <div className="banda-08__mockup banda-08__mockup--card">
+              <GenomaShowcaseBusinessCard data={data} />
+            </div>
+            <figcaption className="banda-08__caption">Tarjeta de visita</figcaption>
+          </figure>
+          <figure className="banda-08__figure">
+            <div className="banda-08__mockup banda-08__mockup--post">
+              <GenomaShowcaseSocialPost data={data} primaryHex={primaryHex} />
+            </div>
+            <figcaption className="banda-08__caption">Post social</figcaption>
+          </figure>
+          <figure className="banda-08__figure">
+            <div className="banda-08__mockup banda-08__mockup--mobile">
+              <GenomaShowcaseMobile data={data} />
+            </div>
+            <figcaption className="banda-08__caption">Móvil</figcaption>
+          </figure>
+        </div>
       </div>
     </section>
   );

@@ -23,6 +23,7 @@ export function GenomaShowcaseBusinessCard({ data }: { data: GenomaShowcaseData 
             {data.monogram}
           </span>
         )}
+        <p className="genoma-showcase-card__brand-name">{data.brandName}</p>
       </div>
     </div>
   );

@@ -207,6 +207,7 @@ export function GenomaBoardV2({
                   mosaicKey="logo"
                   surface="raised"
                   colSpan={7}
+                  alignSelf="start"
                   slot={slots.logo}
                   motion={motionBySlot.logo}
                   onTileEnterEnd={onTileEnterEnd}

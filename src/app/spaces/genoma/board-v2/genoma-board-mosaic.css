@@ -244,9 +244,58 @@
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(26, 26, 26, 0.07);
+  border: 1px solid rgba(0, 0, 0, 0.07);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   overflow-x: auto;
+  /* U1 — cromo Foldder exclusivo; ningún --brand-* penetra la barra */
+  color: #1a1a1a;
+  --brand-ink: #1a1a1a;
+  --brand-ink-soft: #666666;
+  --brand-cta-bg: var(--foldder-studio-accent, #ffbd1b);
+  --brand-cta-ink: #1a1a1a;
+  --brand-rule: rgba(0, 0, 0, 0.25);
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board[data-brand-ready="true"] .genoma-mosaic-action-bar__inner .genoma-foldder-btn:not(.genoma-foldder-btn--muted):not(.genoma-foldder-btn--ghost) {
+  background: var(--foldder-studio-accent, #ffbd1b);
+  color: #1a1a1a;
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board[data-brand-ready="true"] .genoma-mosaic-action-bar__inner .genoma-foldder-btn--muted {
+  background: rgba(0, 0, 0, 0.05);
+  color: #1a1a1a;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board[data-brand-ready="true"] .genoma-mosaic-action-bar__inner .genoma-foldder-btn--ghost {
+  color: #666666;
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board .genoma-mosaic-action-bar__inner .genoma-foldder-btn svg {
+  color: #1a1a1a;
+  stroke: #1a1a1a;
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board .genoma-mosaic-action-bar__inner .genoma-foldder-btn--ghost svg {
+  color: #666666;
+  stroke: #666666;
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board .genoma-mosaic-action-bar__inner .genoma-v2-logo-plinth-toggle__btn {
+  color: #666666;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board .genoma-mosaic-action-bar__inner .genoma-v2-logo-plinth-toggle__btn.is-active {
+  color: #1a1a1a;
+  border-color: rgba(0, 0, 0, 0.35);
+}
+
+.genoma-v2-bento-board.genoma-v2-mosaic-board .genoma-mosaic-action-bar__inner .genoma-mosaic-evidence-btn {
+  color: #1a1a1a;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.25);
 }
 
 .genoma-mosaic-cell--compact-chrome .genoma-foldder-btn {
@@ -438,9 +487,14 @@
   color: var(--brand-on-primary, #fff);
 }
 
-/* ── Logo ── */
+/* ── Logo (U3) ── */
+.genoma-mosaic-cell--logo {
+  align-self: start;
+}
+
 .genoma-mosaic-cell--logo .genoma-v2-block--mosaic .genoma-v2-block__body {
-  padding: calc(var(--mosaic-pad) + var(--mosaic-chapter-clearance)) var(--mosaic-pad) var(--mosaic-pad);
+  flex: 0 1 auto;
+  padding: calc(var(--mosaic-pad) + var(--mosaic-chapter-clearance)) var(--mosaic-pad) 80px;
   justify-content: center;
   align-items: center;
 }
@@ -448,7 +502,8 @@
 .genoma-mosaic-cell--logo .genoma-v2-logo-plinth {
   flex: 0 1 auto;
   width: 100%;
-  max-height: 100%;
+  min-height: 0;
+  max-height: none;
   border-radius: 0;
   padding: 0;
   display: flex;
@@ -457,10 +512,17 @@
   background: transparent !important;
 }
 
-.genoma-mosaic-cell--logo .genoma-v2-logo-plinth img {
-  max-height: min(160px, 75%);
+.genoma-mosaic-cell--logo .genoma-clickable-image--logo {
+  min-height: 0;
+  width: 100%;
+}
+
+.genoma-mosaic-cell--logo .genoma-v2-logo-plinth img,
+.genoma-mosaic-cell--logo .genoma-clickable-image--logo .genoma-preview-image {
+  max-width: 52%;
+  max-height: 200px;
   width: auto;
-  max-width: 85%;
+  height: auto;
   object-fit: contain;
 }
 
@@ -794,19 +856,54 @@
   opacity: 0.88;
 }
 
-/* ── Gallery ── */
+/* ── Inputs sobre campo de marca (U4) ── */
+.genoma-mosaic-cell--surface-primary .genoma-v2-inline-input,
+.genoma-mosaic-cell--surface-accent .genoma-v2-inline-input,
+.genoma-mosaic-cell--surface-primary .genoma-text-edit__input,
+.genoma-mosaic-cell--surface-accent .genoma-text-edit__input {
+  background: var(--brand-surface-raised) !important;
+  border: 1px solid var(--brand-rule) !important;
+  border-radius: 4px;
+  color: var(--brand-ink);
+  padding: 8px 10px;
+}
+
+.genoma-mosaic-cell--surface-primary .genoma-v2-inline-input::placeholder,
+.genoma-mosaic-cell--surface-accent .genoma-v2-inline-input::placeholder,
+.genoma-mosaic-cell--surface-primary .genoma-text-edit__input::placeholder,
+.genoma-mosaic-cell--surface-accent .genoma-text-edit__input::placeholder {
+  color: var(--brand-ink-soft);
+  opacity: 1;
+}
+
+.genoma-mosaic-cell--surface-primary .genoma-v2-inline-input:focus,
+.genoma-mosaic-cell--surface-accent .genoma-v2-inline-input:focus,
+.genoma-mosaic-cell--surface-primary .genoma-text-edit__input:focus,
+.genoma-mosaic-cell--surface-accent .genoma-text-edit__input:focus {
+  outline: none;
+  border-color: var(--brand-ink-soft) !important;
+}
+
+.genoma-mosaic-cell--surface-primary .genoma-text-edit__label,
+.genoma-mosaic-cell--surface-accent .genoma-text-edit__label {
+  color: var(--brand-ink-soft);
+}
+
+/* ── Gallery (U5) ── */
 .genoma-mosaic-cell--gallery .genoma-v2-block--mosaic .genoma-v2-block__body {
   padding: calc(var(--mosaic-pad) + var(--mosaic-chapter-clearance)) 0 var(--mosaic-pad);
   gap: 16px;
-  overflow: visible;
+  overflow: hidden;
   min-height: 100%;
+  min-width: 0;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-gallery--bento {
   flex: 1 1 auto;
   min-height: auto;
+  min-width: 0;
   gap: 16px;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-tabs,
@@ -817,9 +914,20 @@
 
 .genoma-mosaic-cell--gallery .genoma-v2-harvested-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--mosaic-gap);
   padding: 0;
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+}
+
+.genoma-mosaic-cell--gallery .genoma-v2-harvested-filter {
+  grid-column: 1 / -1;
+}
+
+.genoma-mosaic-cell--gallery .genoma-v2-supplemental {
+  grid-column: 1 / -1;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-gallery-item-wrap {
@@ -829,35 +937,80 @@
   margin: 0;
   background: transparent;
   box-shadow: none;
+  min-width: 0;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-gallery-thumb {
   border: 0;
   border-radius: 0;
   padding: 0;
-  background: transparent;
-  aspect-ratio: 4 / 3;
+  background: var(--brand-surface-raised, #eceae6);
+  aspect-ratio: 1;
+  min-width: 0;
+  width: 100%;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-gallery-thumb img,
-.genoma-mosaic-cell--gallery .genoma-preview-image {
+.genoma-mosaic-cell--gallery .genoma-v2-gallery-thumb .genoma-preview-image {
   border-radius: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.genoma-mosaic-cell--gallery .genoma-preview-image--placeholder {
+  background: var(--brand-surface-raised, #eceae6);
+  min-height: 0;
+}
+
+.genoma-mosaic-cell--gallery .genoma-preview-image--loading {
+  animation: genoma-preview-pulse 1.1s ease-in-out infinite;
+  background: var(--brand-surface-raised, #eceae6);
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-generated-matrix {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--mosaic-gap);
   padding: 0;
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+}
+
+.genoma-mosaic-cell--gallery .genoma-v2-generated-category {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--brand-surface-raised, #eceae6);
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-generated-category__imgs {
   gap: var(--mosaic-gap);
+  min-width: 0;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-generated-slot,
 .genoma-mosaic-cell--gallery .genoma-v2-gallery-generated {
   border-radius: 0;
   border: 0;
-  background: transparent;
+  background: var(--brand-surface-raised, #eceae6);
+  min-width: 0;
+}
+
+.genoma-mosaic-cell--gallery .genoma-v2-generated-slot__empty,
+.genoma-mosaic-cell--gallery .genoma-v2-generated-slot__loading {
+  background: var(--brand-surface-raised, #eceae6);
+}
+
+.genoma-mosaic-cell--gallery .genoma-v2-generated-slot__loading {
+  background: linear-gradient(
+    90deg,
+    var(--brand-surface-raised, #eceae6),
+    color-mix(in srgb, var(--brand-surface-raised, #eceae6) 70%, var(--brand-ink-soft, #666) 30%),
+    var(--brand-surface-raised, #eceae6)
+  );
+  background-size: 200% 100%;
+  animation: genoma-gallery-shimmer 1.2s ease-in-out infinite;
 }
 
 .genoma-mosaic-cell--gallery .genoma-v2-gallery-item-toggle,
@@ -888,6 +1041,8 @@
   box-sizing: border-box;
   background: var(--brand-surface-raised, #fff);
   color: var(--brand-ink, #1a1a1a);
+  container-type: inline-size;
+  container-name: banda08;
 }
 
 .banda-08__header {
@@ -907,17 +1062,27 @@
   color: var(--brand-ink-soft, #666);
 }
 
+.banda-08__mockups-viewport {
+  overflow: hidden;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 40px;
+  box-sizing: border-box;
+}
+
 .banda-08__mockups {
   display: flex;
+  flex-wrap: nowrap;
   gap: 48px;
   align-items: flex-end;
   justify-content: center;
-  padding: 40px;
-  flex-wrap: wrap;
+  transform-origin: bottom center;
+  flex-shrink: 0;
 }
 
 .banda-08__figure {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   margin: 0;
   display: flex;
   flex-direction: column;
@@ -926,53 +1091,59 @@
 }
 
 .banda-08__mockup {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   overflow: hidden;
 }
 
 .banda-08__mockup--card {
+  width: 420px;
   height: 240px;
-  width: calc(240px * 1.75);
-  max-width: 100%;
 }
 
 .banda-08__mockup--card .genoma-showcase-card-stack {
-  width: 100%;
-  height: 100%;
+  width: 420px;
+  height: 240px;
+  max-width: none;
   aspect-ratio: unset;
 }
 
 .banda-08__mockup--post {
-  height: 360px;
   width: 360px;
-  max-width: 100%;
+  height: 360px;
 }
 
 .banda-08__mockup--post .genoma-showcase-post {
-  width: 100%;
-  height: 100%;
+  width: 360px;
+  height: 360px;
 }
 
 .banda-08__mockup--post .genoma-showcase-post__canvas {
-  width: 100%;
-  height: 100%;
+  width: 360px;
+  height: 360px;
   aspect-ratio: unset;
 }
 
 .banda-08__mockup--mobile {
+  width: 200px;
   height: 420px;
-  width: calc(420px * 0.46);
-  max-width: 100%;
 }
 
 .banda-08__mockup--mobile .genoma-showcase-mobile {
-  width: 100%;
-  height: 100%;
+  width: 200px;
+  height: 420px;
 }
 
 .banda-08__mockup--mobile .genoma-showcase-mobile__frame {
-  width: 100%;
-  height: 100%;
+  width: 200px;
+  height: 420px;
+}
+
+@container banda08 (max-width: 1099px) {
+  .banda-08__mockups {
+    --banda08-s: min(1, calc((100cqw - 80px) / 1076));
+    transform: scale(var(--banda08-s));
+    margin-bottom: calc(420px * (var(--banda08-s) - 1));
+  }
 }
 
 .banda-08__caption {
@@ -995,6 +1166,37 @@
   width: 100%;
   height: 100%;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  display: block;
+  padding: 24px;
+}
+
+.banda-08 .genoma-showcase-card__logo {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  width: 22%;
+  max-height: none;
+}
+
+.banda-08 .genoma-showcase-card__monogram {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  font-size: 48px;
+}
+
+.banda-08 .genoma-showcase-card__brand-name {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  margin: 0;
+  max-width: calc(100% - 48px - 22%);
+  font-family: var(--brand-font-display);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: right;
+  color: var(--brand-cta-ink, #fff);
 }
 
 /* ── Detail sheet ── */
@@ -1124,12 +1326,6 @@
 
   .genoma-mosaic-cell--palette .genoma-palette-strip {
     flex-direction: column;
-  }
-
-  .banda-08__mockups {
-    flex-direction: column;
-    align-items: center;
-    gap: 32px;
   }
 
   .genoma-v2-cover--mosaic .genoma-v2-cover__canvas {
