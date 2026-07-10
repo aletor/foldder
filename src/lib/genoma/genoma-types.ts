@@ -78,7 +78,7 @@ export interface SlotState<T = unknown> {
 
 export type LogoVariantKind = "principal" | "mono" | "negativo" | "icono";
 
-export type LogoDetectionMethod = "vision_bbox" | "upload" | "web" | "adjusted";
+export type LogoDetectionMethod = "vision_bbox" | "upload" | "web" | "adjusted" | "heuristic";
 
 export interface LogoSourceBbox {
   x: number;

@@ -6,6 +6,7 @@ import { renderPdfPages } from "@/lib/brain/pdf-page-render";
 import type { Candidate, LogoValue, Provenance } from "@/lib/genoma/genoma-types";
 import { rankBrandBoardLogoRegions } from "@/lib/genoma/genoma-brand-board-logo-regions";
 import { expandBBoxPage } from "@/lib/genoma/logo-intake/bbox";
+import { stabilizeLogoBboxAcrossDpi } from "@/lib/genoma/ensemble-logo-bbox-dpi";
 import { buildIngestLogoCandidateFromBBox } from "./ingest-logo-crop";
 
 function fileProvenance(fileId: string, detail: string): Provenance {
@@ -22,8 +23,13 @@ export async function buildHeuristicLogoCandidatesFromPage(input: {
   sourcePageNumber?: number;
   totalDocPages?: number;
   limit?: number;
+  pdfBuffer?: Buffer;
 }): Promise<Candidate<LogoValue>[]> {
-  const ranked = await rankBrandBoardLogoRegions(input.pagePng, input.pageWidth, input.pageHeight);
+  const ranked = await rankBrandBoardLogoRegions(input.pagePng, input.pageWidth, input.pageHeight, {
+    userEmail: input.userEmail,
+    contentSha256: input.contentSha256,
+    pageNumber: input.sourcePageNumber ?? 1,
+  });
   if (!ranked.length) return [];
 
   const out: Candidate<LogoValue>[] = [];
@@ -32,11 +38,24 @@ export async function buildHeuristicLogoCandidatesFromPage(input: {
 
   for (let index = 0; index < Math.min(limit, ranked.length); index += 1) {
     const region = ranked[index]!;
+    let bboxPage = expandBBoxPage(region.bbox, 0.04);
+    let scoreBoost = 0;
+
+    if (input.pdfBuffer && input.sourcePageNumber) {
+      const stability = await stabilizeLogoBboxAcrossDpi({
+        pdfBuffer: input.pdfBuffer,
+        pageNumber: input.sourcePageNumber,
+        bboxPage,
+      });
+      bboxPage = stability.bboxPage;
+      scoreBoost = stability.stable ? 0.04 : -0.03;
+    }
+
     const candidate = await buildIngestLogoCandidateFromBBox({
       pagePng: input.pagePng,
       pageWidth: input.pageWidth,
       pageHeight: input.pageHeight,
-      bboxPage: expandBBoxPage(region.bbox, 0.04),
+      bboxPage,
       padding: 0,
       trim: true,
       userEmail: input.userEmail,
@@ -49,9 +68,10 @@ export async function buildHeuristicLogoCandidatesFromPage(input: {
       contentSha256: input.contentSha256,
       sourcePageNumber: input.sourcePageNumber ?? 1,
       totalDocPages: input.totalDocPages ?? 1,
-      baseScore: Math.min(0.86, 0.68 + region.score * 0.22 - index * 0.04),
+      baseScore: Math.min(0.9, 0.68 + region.score * 0.22 - index * 0.04 + scoreBoost),
       index,
       background: "solid",
+      detectionMethod: "heuristic",
       qualityMeta: { isComplete: true, cutEdges: false, confidence: region.score },
     });
     if (candidate) out.push(candidate);
@@ -87,6 +107,7 @@ export async function buildHeuristicLogoCandidatesFromPdfCover(input: {
       sourcePageNumber: pageNumber,
       totalDocPages: input.totalPages,
       limit: input.limitPerPage ?? 1,
+      pdfBuffer: input.pdfBuffer,
     });
     out.push(...pageCandidates);
   }

@@ -9,6 +9,7 @@ import {
   type NormalizedBboxPage,
 } from "@/lib/genoma/genoma-logo-crop-server";
 import { isValidBboxPage } from "@/lib/genoma/genoma-logo-bbox";
+import { recordGenomaLogoUserPattern } from "@/lib/genoma/genoma-logo-user-patterns";
 import type { LogoValue } from "@/lib/genoma/genoma-types";
 
 export const runtime = "nodejs";
@@ -97,6 +98,12 @@ export async function POST(request: NextRequest) {
     totalDocPages: previous?.totalDocPages ?? (source.kind === "raster" ? 1 : undefined),
     detectionMethod: "adjusted",
   };
+
+  await recordGenomaLogoUserPattern(auth.user.email, {
+    contentSha256,
+    pageNumber,
+    bboxPage,
+  }).catch(() => undefined);
 
   return NextResponse.json({ logo });
 }

@@ -91,6 +91,7 @@ export function GenomaLogoBboxEditor({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<EditPagePayload | null>(null);
+  const [currentPageNumber, setCurrentPageNumber] = useState(logo.sourcePageNumber ?? 1);
   const [bboxPage, setBboxPage] = useState<BBoxPage>([0.04, 0.03, 0.32, 0.12]);
   const [busy, setBusy] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -105,17 +106,22 @@ export function GenomaLogoBboxEditor({
   } | null>(null);
 
   useEffect(() => {
-    if (!logo.sourcePdfSha256 || !logo.sourcePageNumber) {
+    if (!logo.sourcePdfSha256 || !currentPageNumber) {
       setError(formatEditorError("missing_pdf_context"));
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    const bboxTuple = logo.sourceBbox ? logoSourceBboxToPageTuple(logo.sourceBbox) : null;
+    setLoading(true);
+    setError(null);
+    const bboxTuple =
+      currentPageNumber === (logo.sourcePageNumber ?? 1) && logo.sourceBbox
+        ? logoSourceBboxToPageTuple(logo.sourceBbox)
+        : null;
     const params = new URLSearchParams({
       contentSha256: logo.sourcePdfSha256,
-      pageNumber: String(logo.sourcePageNumber),
+      pageNumber: String(currentPageNumber),
     });
     if (bboxTuple) params.set("bboxPage", JSON.stringify(bboxTuple));
 
@@ -141,7 +147,7 @@ export function GenomaLogoBboxEditor({
     return () => {
       cancelled = true;
     };
-  }, [logo.sourceBbox, logo.sourcePageNumber, logo.sourcePdfSha256]);
+  }, [currentPageNumber, logo.sourceBbox, logo.sourcePageNumber, logo.sourcePdfSha256]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -213,7 +219,7 @@ export function GenomaLogoBboxEditor({
   }, [bboxPage, page]);
 
   const save = useCallback(async () => {
-    if (!logo.sourcePdfSha256 || !logo.sourcePageNumber) return;
+    if (!logo.sourcePdfSha256 || !currentPageNumber) return;
     const normalized = normalizeBBoxPage(bboxPage);
     if (!isValidBboxPage(normalized)) {
       setError(formatEditorError("invalid_bbox"));
@@ -228,7 +234,7 @@ export function GenomaLogoBboxEditor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contentSha256: logo.sourcePdfSha256,
-          pageNumber: logo.sourcePageNumber,
+          pageNumber: currentPageNumber,
           bboxPage: [...normalized],
           docName: logo.sourceDocName,
           previousLogo: logo,
@@ -243,12 +249,12 @@ export function GenomaLogoBboxEditor({
     } finally {
       setBusy(false);
     }
-  }, [bboxPage, logo, onSaved]);
+  }, [bboxPage, currentPageNumber, logo, onSaved]);
 
   const bboxCss = bboxPageToCssPercent(bboxPage);
-  const pageLabel = logo.sourcePageNumber
-    ? genomaLocaleEs.logoPageSignal(logo.sourcePageNumber, logo.totalDocPages ?? 0)
-    : null;
+  const totalPages = logo.totalDocPages ?? 0;
+  const showPagePicker = totalPages > 1;
+  const pageLabel = genomaLocaleEs.logoPageSignal(currentPageNumber, totalPages);
 
   return (
     <div className="genoma-v2-logo-adjust" role="dialog" aria-modal="true">
@@ -256,6 +262,22 @@ export function GenomaLogoBboxEditor({
         <div>
           <p className="genoma-v2-logo-adjust__title">{genomaLocaleEs.adjustLogoArea}</p>
           {pageLabel ? <p className="genoma-v2-muted">{logo.sourceDocName ?? ""} · {pageLabel}</p> : null}
+          {showPagePicker ? (
+            <label className="genoma-v2-logo-adjust__page-picker">
+              <span>{genomaLocaleEs.logoEditorPageLabel}</span>
+              <select
+                value={currentPageNumber}
+                onChange={(event) => setCurrentPageNumber(Number(event.target.value))}
+                disabled={busy || loading}
+              >
+                {Array.from({ length: totalPages }, (_, index) => index + 1).map((pageNumber) => (
+                  <option key={pageNumber} value={pageNumber}>
+                    {genomaLocaleEs.logoPageSignal(pageNumber, totalPages)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
         <button type="button" className="genoma-v2-icon-btn" onClick={onClose} aria-label="Cerrar">
           <X size={18} />

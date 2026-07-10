@@ -40,6 +40,9 @@ export function isStrongLogoProvenance(provenance: Provenance, value?: LogoValue
   if (value?.detectionMethod === "vision_bbox" || value?.detectionMethod === "adjusted") {
     return true;
   }
+  if (value?.detectionMethod === "heuristic") {
+    return true;
+  }
   if (STRONG_PROVENANCE_TYPES.has(provenance.type)) {
     if (provenance.type === "file_upload") return true;
     if (provenance.type === "pdf_vector_fill") return true;

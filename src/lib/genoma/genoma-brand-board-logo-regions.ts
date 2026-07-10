@@ -1,5 +1,11 @@
 import sharp from "sharp";
 import type { BBoxPage } from "./logo-intake/bbox";
+import { segmentContrastLogoRegions } from "./genoma-logo-segment-regions";
+import {
+  boostScoreForUserPatterns,
+  loadGenomaLogoUserPatterns,
+  type GenomaLogoUserPattern,
+} from "./genoma-logo-user-patterns";
 
 /** Regiones típicas de logo en planchetas 3×3 (y-down, 0–1). */
 const BRAND_BOARD_LOGO_REGIONS: { bbox: BBoxPage; label: string; weight: number }[] = [
@@ -81,13 +87,62 @@ export async function rankBrandBoardLogoRegions(
   pngBuffer: Buffer,
   width: number,
   height: number,
+  options?: {
+    userEmail?: string;
+    contentSha256?: string;
+    pageNumber?: number;
+    cachedPatterns?: GenomaLogoUserPattern[];
+  },
 ): Promise<BrandBoardLogoRegionScore[]> {
+  const patterns =
+    options?.cachedPatterns ??
+    (options?.userEmail ? await loadGenomaLogoUserPatterns(options.userEmail) : []);
+
   const scored: BrandBoardLogoRegionScore[] = [];
   for (const region of BRAND_BOARD_LOGO_REGIONS) {
-    const score = await scoreBrandBoardLogoRegion(pngBuffer, region.bbox, width, height, region.weight);
+    let score = await scoreBrandBoardLogoRegion(pngBuffer, region.bbox, width, height, region.weight);
+    score += boostScoreForUserPatterns(
+      region.bbox,
+      options?.pageNumber ?? 1,
+      patterns,
+      options?.contentSha256,
+    );
     if (score >= 0.45) {
-      scored.push({ bbox: region.bbox, label: region.label, score });
+      scored.push({ bbox: region.bbox, label: region.label, score: Math.min(0.98, score) });
     }
   }
-  return scored.sort((a, b) => b.score - a.score);
+
+  const segmented = await segmentContrastLogoRegions(pngBuffer, width, height);
+  for (const region of segmented) {
+    let score = region.score;
+    score += boostScoreForUserPatterns(
+      region.bbox,
+      options?.pageNumber ?? 1,
+      patterns,
+      options?.contentSha256,
+    );
+    if (score >= 0.45) {
+      scored.push({ ...region, score: Math.min(0.95, score) });
+    }
+  }
+
+  const deduped: BrandBoardLogoRegionScore[] = [];
+  for (const region of scored.sort((a, b) => b.score - a.score)) {
+    const overlaps = deduped.some((kept) => {
+      const ix1 = Math.max(kept.bbox[0], region.bbox[0]);
+      const iy1 = Math.max(kept.bbox[1], region.bbox[1]);
+      const ix2 = Math.min(kept.bbox[2], region.bbox[2]);
+      const iy2 = Math.min(kept.bbox[3], region.bbox[3]);
+      if (ix2 <= ix1 || iy2 <= iy1) return false;
+      const inter = (ix2 - ix1) * (iy2 - iy1);
+      const areaA =
+        (kept.bbox[2] - kept.bbox[0]) * (kept.bbox[3] - kept.bbox[1]);
+      const areaB =
+        (region.bbox[2] - region.bbox[0]) * (region.bbox[3] - region.bbox[1]);
+      return inter / Math.min(areaA, areaB) > 0.55;
+    });
+    if (!overlaps) deduped.push(region);
+  }
+
+  return deduped;
 }

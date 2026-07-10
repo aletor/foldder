@@ -385,6 +385,7 @@ export async function* runGenomaIngest(
               userEmail: options?.userEmail ?? "",
               route: "/api/spaces/genoma/ingest",
               visionEnabled: pdfVisionOn,
+              fullText: trimmedText,
             });
             if (pdfVisionOn) {
               await settleGenomaIngestAnalysisCharge(manualCharge, "brand_manual");
@@ -450,6 +451,7 @@ export async function* runGenomaIngest(
               fileName: file.name,
               userEmail: options?.userEmail ?? "",
               route: "/api/spaces/genoma/ingest",
+              fullText: trimmedText,
             });
             await settleGenomaIngestAnalysisCharge(visionCharge, "deck_logo");
             visionCharge = null;

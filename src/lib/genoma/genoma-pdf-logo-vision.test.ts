@@ -67,6 +67,10 @@ vi.mock("./ingest/ingest-logo-intake-bridge", () => ({
   paletteSignalsFromLogoIntakeSemantic: vi.fn(() => []),
 }));
 
+vi.mock("./rank-pdf-pages-for-logo", () => ({
+  rankDeckPdfPagesForLogoVision: vi.fn(async () => [1, 2, 16]),
+}));
+
 vi.mock("./ingest/page-vision-pass-nivel1-runner", () => ({
   isPageVisionNivel1Enabled: () => false,
   runPageVisionPassNivel1ForPdf: vi.fn(async () => ({ pages: [] })),
@@ -103,7 +107,7 @@ describe("extractLogoCandidatesFromDeckPdf", () => {
         totalPages: 16,
       }),
     );
-    expect(runPageVisionPassForPdf).not.toHaveBeenCalled();
+    expect(runPageVisionPassForPdf).toHaveBeenCalled();
     expect(result?.candidates).toHaveLength(1);
     expect(result?.candidates[0]?.provenance.detail).toContain("logo-intake");
   });

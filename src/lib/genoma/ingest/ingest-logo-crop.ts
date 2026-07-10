@@ -78,6 +78,7 @@ export async function buildIngestLogoCandidateFromBBox(input: {
   index?: number;
   background?: LogoValue["background"];
   qualityMeta?: IngestLogoCropInput["qualityMeta"];
+  detectionMethod?: LogoValue["detectionMethod"];
 }): Promise<Candidate<LogoValue> | null> {
   const crop = await cropAndScoreIngestLogo({
     pagePng: input.pagePng,
@@ -101,6 +102,7 @@ export async function buildIngestLogoCandidateFromBBox(input: {
       sourcePageNumber: input.sourcePageNumber,
       totalDocPages: input.totalDocPages,
       background: input.background,
+      detectionMethod: input.detectionMethod,
     },
     baseScore: input.baseScore,
     index: input.index,

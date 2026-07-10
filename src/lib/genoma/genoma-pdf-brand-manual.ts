@@ -20,7 +20,9 @@ import {
   isGenomaLogoIntakePdfEnabled,
   paletteSignalsFromLogoIntakeSemantic,
 } from "./ingest/ingest-logo-intake-bridge";
-import { brandManualVisionPageNumbers } from "./ingest/page-vision-pass-selection";
+import { rankPdfPagesForLogoVision } from "./rank-pdf-pages-for-logo";
+import { mergeLogoCandidatesByIoU } from "./merge-logo-candidates";
+import { buildHeuristicLogoCandidatesFromPdfCover } from "./ingest/ingest-logo-heuristic";
 
 export { isLikelyBrandManualPdf } from "./genoma-pdf-brand-manual-detect";
 
@@ -87,8 +89,14 @@ async function runBrandManualVisionAudit(input: {
   userEmail: string;
   route?: string;
   totalPages: number;
+  fullText?: string;
 }): Promise<PageVisionPassRunAudit> {
-  const forcedPageNumbers = brandManualVisionPageNumbers(input.totalPages);
+  const forcedPageNumbers = await rankPdfPagesForLogoVision({
+    pdfBuffer: input.buffer,
+    totalPages: input.totalPages,
+    fileName: input.fileName,
+    fullText: input.fullText,
+  });
   const passInput = {
     buffer: input.buffer,
     fileName: input.fileName,
@@ -125,6 +133,7 @@ export async function extractBrandManualVisualsFromPdf(input: {
   userEmail: string;
   route?: string;
   visionEnabled?: boolean;
+  fullText?: string;
 }): Promise<BrandManualVisualExtractResult> {
   const contentSha256 = bufferContentSha256(input.buffer);
   const totalPages = await countPdfPagesInBuffer(input.buffer, 200).catch(() => 0);
@@ -173,17 +182,6 @@ export async function extractBrandManualVisualsFromPdf(input: {
       if (intake.semanticPalette?.entries.length) {
         paletteSignals.push(...paletteSignalsFromLogoIntakeSemantic(intake.semanticPalette, contentSha256));
       }
-      if (intake.candidates.length > 0) {
-        return {
-          logoCandidates,
-          paletteSignals,
-          typographyFamilies,
-          contentSha256,
-          pdfStorageKey,
-          totalPages,
-          visionDetail: `${intake.visionDetail} · ${paletteSignals.length} colores · ${typographyFamilies.length} fuentes`,
-        };
-      }
     } catch (error) {
       console.warn("[genoma:manual-logo-intake]", error instanceof Error ? error.message : error);
     }
@@ -196,6 +194,7 @@ export async function extractBrandManualVisualsFromPdf(input: {
     userEmail: input.userEmail,
     route: input.route,
     totalPages,
+    fullText: input.fullText,
   });
 
   paletteSignals.push(...paletteSignalsFromPageVisionAudit(audit, input.fileName, contentSha256));
@@ -226,13 +225,34 @@ export async function extractBrandManualVisualsFromPdf(input: {
     (page) => page.ok && (page.result?.logoInstances.length ?? 0) > 0,
   ).length;
 
+  if (!logoCandidates.length) {
+    const heuristic = await buildHeuristicLogoCandidatesFromPdfCover({
+      pdfBuffer: input.buffer,
+      fileName: input.fileName,
+      contentSha256,
+      userEmail: input.userEmail,
+      totalPages,
+      pageNumbers: await rankPdfPagesForLogoVision({
+        pdfBuffer: input.buffer,
+        totalPages,
+        fileName: input.fileName,
+        fullText: input.fullText,
+        maxPages: 6,
+      }),
+      limitPerPage: 1,
+    });
+    logoCandidates.push(...heuristic);
+  }
+
+  const mergedLogos = mergeLogoCandidatesByIoU(logoCandidates);
+
   return {
-    logoCandidates,
+    logoCandidates: mergedLogos,
     paletteSignals,
     typographyFamilies,
     contentSha256,
     pdfStorageKey,
     totalPages,
-    visionDetail: `${logoCandidates.length} logos · ${paletteSignals.length} colores · ${typographyFamilies.length} fuentes · ${withLogo}/${analyzed} pág.`,
+    visionDetail: `${mergedLogos.length} logos · ${paletteSignals.length} colores · ${typographyFamilies.length} fuentes · ${withLogo}/${analyzed} pág.`,
   };
 }
