@@ -16,13 +16,6 @@ import {
   isLikelyBrandBoardImage,
   type BrandBoardImageSignals,
 } from "../genoma-brand-board-image-detect";
-import { isLikelyBrandManualPdf } from "../genoma-pdf-brand-manual-detect";
-import {
-  buildDeckPdfHeuristicsFromMetadata,
-  deckPdfNameLooksLikeDeck,
-  isLikelyDeckPdfFromHeuristics,
-  type DeckPdfHeuristics,
-} from "../genoma-pdf-deck-detect";
 
 const GENOMA_LLM_MODEL = "gemini-2.5-flash";
 
@@ -55,10 +48,36 @@ function roundedUsd(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-/** Alineado con `estimateGenomaIngestLlmReserveUsd` en ingest/route.ts */
+/** Probe (1–2) + batch semántico (1) */
 export function estimateGenomaIngestLlmSynthesisUsd(): number {
   const textCall = estimateGeminiUsd(GENOMA_LLM_MODEL, 6500, 900);
-  return roundedUsd(textCall * 2 + 0.008);
+  const probeCall = estimateGeminiUsd(GENOMA_LLM_MODEL, 4200, 900);
+  return roundedUsd(probeCall * 2 + textCall + 0.006);
+}
+
+function documentProbeLine(pageCount?: number): GenomaIngestCostLine {
+  const llmCalls = pageCount != null && pageCount > 4 ? 2 : 1;
+  const perCall = estimateGeminiUsd(GENOMA_LLM_MODEL, 4200, 900);
+  const estimatedUsd = roundedUsd(perCall * llmCalls);
+  const reserveMicros = Math.max(1_000, Math.ceil(usdToCostMicros(estimatedUsd) * 1.25));
+  return {
+    id: "document_probe",
+    label: `Genoma · document probe (${llmCalls} LLM)`,
+    estimatedUsd,
+    reserveMicros,
+  };
+}
+
+function llmSynthesisLine(): GenomaIngestCostLine {
+  const textCall = estimateGeminiUsd(GENOMA_LLM_MODEL, 6500, 900);
+  const estimatedUsd = roundedUsd(textCall + 0.004);
+  const reserveMicros = Math.max(1_000, Math.ceil(usdToCostMicros(estimatedUsd) * 1.5));
+  return {
+    id: "llm_synthesis",
+    label: "Genoma · batch IA (esencia, voz, mundo visual)",
+    estimatedUsd,
+    reserveMicros,
+  };
 }
 
 function visionLine(kind: GenomaIngestPaidKind): GenomaIngestCostLine {
@@ -72,20 +91,9 @@ function visionLine(kind: GenomaIngestPaidKind): GenomaIngestCostLine {
   };
 }
 
-function llmSynthesisLine(): GenomaIngestCostLine {
-  const estimatedUsd = estimateGenomaIngestLlmSynthesisUsd();
-  const reserveMicros = Math.max(1_000, Math.ceil(usdToCostMicros(estimatedUsd) * 1.5));
-  return {
-    id: "llm_synthesis",
-    label: "Genoma · síntesis IA (voz, valores, esencia)",
-    estimatedUsd,
-    reserveMicros,
-  };
-}
-
-function isPdfFile(hint: GenomaIngestFileCostHint): boolean {
-  const name = hint.name.toLowerCase();
-  return hint.mime === "application/pdf" || name.endsWith(".pdf");
+function usesDocumentProbe(hint: GenomaIngestFileCostHint): boolean {
+  const triage = triageGenomaFilename(hint.name, hint.mime);
+  return triage.kind === "brand_document" || triage.kind === "logo_image" || triage.kind === "gallery_image";
 }
 
 function isImageFile(hint: GenomaIngestFileCostHint): boolean {
@@ -105,22 +113,8 @@ function brandBoardSignalsFromHint(hint: GenomaIngestFileCostHint): BrandBoardIm
   };
 }
 
-function deckHeuristicsFromHint(hint: GenomaIngestFileCostHint): DeckPdfHeuristics | null {
-  if (!isPdfFile(hint) || hint.pageCount == null) return null;
-  return buildDeckPdfHeuristicsFromMetadata(hint.pageCount, hint.name, hint.textSampleExcerpt ?? "");
-}
-
 function visionKindForFile(hint: GenomaIngestFileCostHint, enableLlm: boolean): GenomaIngestPaidKind | null {
   if (!enableLlm) return null;
-
-  if (isPdfFile(hint)) {
-    const textSample = hint.textSampleExcerpt ?? "";
-    if (isLikelyBrandManualPdf(hint.name, textSample)) return "brand_manual";
-    const deckHeuristics = deckHeuristicsFromHint(hint);
-    if (deckHeuristics && isLikelyDeckPdfFromHeuristics(deckHeuristics)) return "deck_logo";
-    if (!deckHeuristics && deckPdfNameLooksLikeDeck(hint.name)) return "deck_logo";
-    return null;
-  }
 
   if (!isImageFile(hint)) return null;
 
@@ -143,10 +137,6 @@ function visionKindsForFile(hint: GenomaIngestFileCostHint, enableLlm: boolean):
   return [kind];
 }
 
-function shouldIncludeLogoCropVerify(visionKinds: Set<GenomaIngestPaidKind>): boolean {
-  return visionKinds.has("deck_logo") || visionKinds.has("brand_board") || visionKinds.has("brand_manual");
-}
-
 export function estimateGenomaIngestCost(
   files: GenomaIngestFileCostHint[],
   enableLlm: boolean,
@@ -154,6 +144,14 @@ export function estimateGenomaIngestCost(
   const lines: GenomaIngestCostLine[] = [];
 
   if (enableLlm) {
+    let maxProbePages: number | undefined;
+    for (const file of files) {
+      if (!usesDocumentProbe(file)) continue;
+      maxProbePages = Math.max(maxProbePages ?? 0, file.pageCount ?? 1);
+    }
+    if (maxProbePages != null) {
+      lines.push(documentProbeLine(maxProbePages));
+    }
     lines.push(llmSynthesisLine());
   }
 
@@ -166,10 +164,6 @@ export function estimateGenomaIngestCost(
 
   for (const kind of visionKinds) {
     lines.push(visionLine(kind));
-  }
-
-  if (enableLlm && shouldIncludeLogoCropVerify(visionKinds)) {
-    lines.push(visionLine("logo_crop_verify"));
   }
 
   const totalEstimatedUsd = roundedUsd(lines.reduce((sum, line) => sum + line.estimatedUsd, 0));

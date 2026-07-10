@@ -25,10 +25,18 @@ import { GENOMA_RICH_TEXT_PROMPT } from "../genoma-rich-text";
 
 const GENOMA_LLM_MODEL = process.env.GENOMA_LLM_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
 
+export type GenomaDocumentProbeContext = {
+  textSummary: string[];
+  primaryColors: Array<{ hex: string; label?: string }>;
+  typography: Array<{ family: string; role: string }>;
+  imageInventory: Array<{ description: string; page: number | null }>;
+};
+
 export type GenomaSynthesisInput = {
   corpus: string;
   structuredCorpus?: string;
   galleryContext?: string;
+  probeContext?: GenomaDocumentProbeContext;
   evidenceCandidates?: EvidenceCandidate[];
   brandName?: string;
   userEmail?: string;

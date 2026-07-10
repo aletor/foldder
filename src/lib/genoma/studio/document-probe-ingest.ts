@@ -6,7 +6,8 @@ import sharp from "sharp";
 import { parseBrainDocument } from "@/lib/brain-parser-utils";
 import { renderPdfPagesAt } from "@/lib/brain/pdf-page-render";
 import type { BBoxPage } from "@/lib/genoma/logo-intake/bbox";
-import type { Candidate, GalleryValue, LogoValue, Provenance, VisualWorldValue } from "../genoma-types";
+import type { Candidate, GalleryValue, LogoValue, Provenance } from "../genoma-types";
+import type { GenomaDocumentProbeContext } from "../llm/genoma-llm-synthesis";
 import { extractTypographyFromPdf } from "../extractors/typography";
 import { bufferContentSha256 } from "../ingest/paid-operations-server";
 import { buildIngestLogoCandidateFromBBox } from "../ingest/ingest-logo-crop";
@@ -20,19 +21,32 @@ import type {
   GenomaDocumentProbeResult,
   GenomaDocumentProbeTypography,
 } from "./document-probe-types";
-import { synthesizeVisualWorldFromDocumentProbe } from "./document-probe-visual-synthesis";
 
-export const PROBE_GALLERY_TOP_N = 10;
-const LOGO_RENDER_DPI = 144;
-const GALLERY_CROP_MAX_EDGE = 480;
+export function buildDocumentProbeContext(probe: GenomaDocumentProbeResult): GenomaDocumentProbeContext {
+  return {
+    textSummary: probe.textSummary.filter((line) => line.trim()),
+    primaryColors: probe.primaryColors.map((color) => ({
+      hex: color.hex,
+      label: color.label,
+    })),
+    typography: probe.typography.map((row) => ({
+      family: row.family,
+      role: row.role,
+    })),
+    imageInventory: probe.otherImages.slice(0, PROBE_GALLERY_TOP_N).map((image) => ({
+      description: image.description,
+      page: image.page,
+    })),
+  };
+}
 
 export type DocumentProbeIngestArtifacts = {
   probe: GenomaDocumentProbeResult;
+  probeContext: GenomaDocumentProbeContext;
   logoCandidates: Candidate<LogoValue>[];
   paletteSignals: Array<{ hex: string; provenance: Provenance; weight?: number }>;
   typographyFamilies: string[];
   galleryItems: GalleryValue["harvested"];
-  visualWorld: VisualWorldValue | null;
   corpusParts: string[];
   sourceMeta?: {
     contentSha256: string;
@@ -41,6 +55,10 @@ export type DocumentProbeIngestArtifacts = {
   };
   brandNameHint?: string;
 };
+
+export const PROBE_GALLERY_TOP_N = 10;
+const LOGO_RENDER_DPI = 144;
+const GALLERY_CROP_MAX_EDGE = 480;
 
 function fileProvenance(fileId: string, detail: string): Provenance {
   return { type: "file_upload", detail, fileId };
@@ -320,7 +338,6 @@ export async function extractBrandMaterialViaDocumentProbe(input: {
   mime: string;
   userEmail: string;
   route: string;
-  llmEnabled: boolean;
   onLlmCostUsd?: (cost: number) => void;
 }): Promise<DocumentProbeIngestArtifacts> {
   const probe = await runGenomaDocumentProbe({
@@ -402,34 +419,13 @@ export async function extractBrandMaterialViaDocumentProbe(input: {
     probe.logos[0]?.label ??
     undefined;
 
-  let visualWorld: VisualWorldValue | null = null;
-  if (input.llmEnabled && probe.otherImages.length) {
-    visualWorld = await synthesizeVisualWorldFromDocumentProbe({
-      brandName: brandNameHint ?? undefined,
-      palette: probe.primaryColors,
-      imageDescriptions: probe.otherImages.slice(0, PROBE_GALLERY_TOP_N).map((image) => ({
-        description: image.description,
-        page: image.page,
-      })),
-      userEmail: input.userEmail,
-      route: input.route,
-      onLlmCostUsd: input.onLlmCostUsd,
-    });
-    if (visualWorld && galleryItems.length) {
-      visualWorld = {
-        ...visualWorld,
-        galleryRefs: galleryItems.map((item) => item.assetId).slice(0, PROBE_GALLERY_TOP_N),
-      };
-    }
-  }
-
   return {
     probe,
+    probeContext: buildDocumentProbeContext(probe),
     logoCandidates,
     paletteSignals,
     typographyFamilies,
     galleryItems,
-    visualWorld,
     corpusParts,
     sourceMeta,
     brandNameHint,

@@ -126,3 +126,40 @@ export function copyUnitsToCorpus(units: CopyUnit[], maxChars = 32_000): string 
     .join("\n\n")
     .slice(0, maxChars);
 }
+
+/** Unidades de copy desde texto de documento/PDF (ingesta por archivos). */
+export function buildCopyUnitsFromPlainCorpus(
+  corpus: string,
+  sourceRef = "document",
+  extraLines: string[] = [],
+  maxUnits = 40,
+): CopyUnit[] {
+  const units: CopyUnit[] = [];
+  const seen = new Set<string>();
+
+  for (const line of extraLines) {
+    const trimmed = cleanText(line);
+    if (!trimmed) continue;
+    const role: CopyUnitRole =
+      trimmed.endsWith("?") ? "claim" : trimmed.length < 72 ? "headline" : "about";
+    pushUnit(units, seen, trimmed, role, sourceRef, 8);
+  }
+
+  for (const chunk of corpus.split(/\n\n+/)) {
+    const trimmed = cleanText(chunk);
+    if (!trimmed) continue;
+    if (trimmed.length < 140) {
+      const role: CopyUnitRole =
+        trimmed.endsWith("?") ? "claim" : trimmed.length < 72 ? "headline" : "about";
+      pushUnit(units, seen, trimmed, role, sourceRef, 8);
+    } else {
+      for (const sentence of trimmed.split(/(?<=[.!?])\s+/)) {
+        pushUnit(units, seen, sentence, "body", sourceRef, 16);
+        if (units.length >= maxUnits) break;
+      }
+    }
+    if (units.length >= maxUnits) break;
+  }
+
+  return units.slice(0, maxUnits);
+}

@@ -1,20 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { Candidate, GalleryValue, LogoValue, Provenance, SlotState } from "../genoma-types";
-import {
-  validateValuesAgainstCorpus,
-} from "../llm/genoma-llm-validate";
-import {
-  labelLogoCandidatesWithVision,
-  synthesizeOnelinerOptions,
-  synthesizeValues,
-  synthesizeVoice,
-  voiceValueFromLlm,
-} from "../llm/genoma-llm-synthesis";
-import {
-  buildEssenceHeadlineAlternatives,
-  buildResolvedEssenceFromIngest,
-} from "../genoma-essence-headline";
+import type { Candidate, GalleryValue, LogoValue, Provenance, SlotState, VisualWorldValue } from "../genoma-types";
+import { labelLogoCandidatesWithVision } from "../llm/genoma-llm-synthesis";
+import type { GenomaDocumentProbeContext } from "../llm/genoma-llm-synthesis";
+import { buildCopyUnitsFromPlainCorpus, formatCopyUnitsForLlm } from "../crawl/copy-units";
+import { batchLlmProvenance, buildBatchSlotPatch, synthesizeGenomaBatch } from "../llm/genoma-llm-batch";
+import { canResolveEssence } from "../genoma-essence-headline";
+import { selectEvidenceCandidates } from "../genoma-evidence-candidates";
+import type { EssenceValue } from "../genoma-types";
 import { buildLogoSlotPatch } from "../genoma-logo-policy";
+import { buildGalleryContextForLlm, galleryRefIds } from "../genoma-gallery-filter";
+import { buildVisualWorldFromGallery } from "../genoma-visual-synthesis";
 import { buildPaletteValue, buildTypographyValue, rankLogoCandidates } from "../crawl/scoring";
 import type { GenomaStreamEvent } from "../crawl/types";
 import type { GenomaCrawlOptions } from "../crawl/crawl-options";
@@ -26,14 +21,12 @@ import {
   reserveGenomaIngestAnalysisCharge,
   settleGenomaIngestAnalysisCharge,
 } from "./genoma-ingest-wallet";
-import { applyLogoCropVerificationToCandidates } from "./genoma-logo-crop-verify";
 import {
   extractBrandBoardVisualsFromImage,
   isLikelyBrandBoardImage,
   measureBrandBoardSignals,
 } from "../genoma-brand-board-image";
 import { extractBrandMaterialViaDocumentProbe } from "../studio/document-probe-ingest";
-import type { VisualWorldValue } from "../genoma-types";
 
 const NOW = () => new Date().toISOString();
 const MAX_FILES = 12;
@@ -74,6 +67,13 @@ function rankUploadedLogoCandidates(candidates: Candidate<LogoValue>[]): Candida
     );
     return original ? { ...original, score: rankedCandidate.score } : rankedCandidate;
   });
+}
+
+function canEmitIngestEssence(value: EssenceValue): boolean {
+  if (canResolveEssence(value)) return true;
+  const summary = value.summary?.trim() ?? "";
+  const beliefCount = value.beliefs?.filter((belief) => belief.label.trim()).length ?? 0;
+  return summary.length >= 24 && beliefCount >= 1;
 }
 
 function mergeRankedLogoCandidates(candidates: Candidate<LogoValue>[]): Candidate<LogoValue>[] {
@@ -117,7 +117,8 @@ export async function* runGenomaIngest(
   const typographyFamilies: string[] = [];
   let corpusParts: string[] = [];
   let brandName: string | undefined;
-  let visualWorldFromProbe: VisualWorldValue | null = null;
+  let probeContextForBatch: GenomaDocumentProbeContext | undefined;
+  let totalProbeLlmCalls = 0;
 
   yield {
     type: "progress",
@@ -266,7 +267,6 @@ export async function* runGenomaIngest(
           mime: file.mime || "application/octet-stream",
           userEmail: options.userEmail,
           route: "/api/spaces/genoma/ingest",
-          llmEnabled: options?.llmEnabled === true,
           onLlmCostUsd: options?.onLlmCostUsd,
         });
         if (artifacts.logoCandidates.length) logoCandidates.push(...artifacts.logoCandidates);
@@ -275,7 +275,8 @@ export async function* runGenomaIngest(
         galleryItems.push(...artifacts.galleryItems);
         corpusParts.push(...artifacts.corpusParts);
         if (artifacts.brandNameHint && !brandName) brandName = artifacts.brandNameHint;
-        if (artifacts.visualWorld) visualWorldFromProbe = artifacts.visualWorld;
+        probeContextForBatch = artifacts.probeContext;
+        totalProbeLlmCalls += artifacts.probe.llmCallCount;
 
         yield {
           type: "llm_progress",
@@ -326,7 +327,6 @@ export async function* runGenomaIngest(
           mime: file.mime || "application/octet-stream",
           userEmail: options.userEmail,
           route: "/api/spaces/genoma/ingest",
-          llmEnabled: options?.llmEnabled === true,
           onLlmCostUsd: options?.onLlmCostUsd,
         });
 
@@ -336,7 +336,8 @@ export async function* runGenomaIngest(
         galleryItems.push(...artifacts.galleryItems);
         corpusParts.push(...artifacts.corpusParts);
         if (artifacts.brandNameHint && !brandName) brandName = artifacts.brandNameHint;
-        if (artifacts.visualWorld) visualWorldFromProbe = artifacts.visualWorld;
+        probeContextForBatch = artifacts.probeContext;
+        totalProbeLlmCalls += artifacts.probe.llmCallCount;
         sourceMeta = artifacts.sourceMeta;
 
         yield {
@@ -405,53 +406,6 @@ export async function* runGenomaIngest(
 
   yield emitLogoSlot();
 
-  if (options?.allowLogoCropVerify && rankedLogos.length && options?.userEmail) {
-    yield {
-      type: "llm_progress",
-      step: "logo_crop_verify",
-      status: "running",
-      detail: "Verificando recorte del logo…",
-    };
-    const verifySha = bufferContentSha256(
-      Buffer.from(JSON.stringify(rankedLogos.map((row) => row.value.previewUrl ?? row.value.assetId))),
-    );
-    let verifyCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
-    try {
-      verifyCharge = await reserveGenomaIngestAnalysisCharge({
-        userEmail: options.userEmail,
-        contentSignature: `${verifySha}:logo-crop-verify`,
-        kind: "logo_crop_verify",
-      });
-      const verified = await applyLogoCropVerificationToCandidates(rankedLogos, {
-        userEmail: options.userEmail,
-        route: "/api/spaces/genoma/ingest",
-        contentSignature: verifySha,
-      });
-      rankedLogos = verified.candidates;
-      if (verified.verifyUsed) {
-        await settleGenomaIngestAnalysisCharge(verifyCharge, "logo_crop_verify");
-      } else {
-        await releaseUnusedGenomaIngestAnalysisCharge(verifyCharge, "logo_crop_verify_not_needed");
-      }
-      verifyCharge = null;
-      yield {
-        type: "llm_progress",
-        step: "logo_crop_verify",
-        status: "done",
-        detail: verified.verifyUsed ? "Recorte verificado" : "Verificación omitida",
-      };
-      yield emitLogoSlot();
-    } catch (error) {
-      await releaseGenomaIngestAnalysisCharge(verifyCharge, error);
-      yield {
-        type: "llm_progress",
-        step: "logo_crop_verify",
-        status: "failed",
-        detail: "No pude verificar el recorte",
-      };
-    }
-  }
-
   const paletteBuilt = buildPaletteValue(paletteSignals);
   if (paletteBuilt) {
     yield {
@@ -480,97 +434,194 @@ export async function* runGenomaIngest(
     };
   }
 
+  const galleryValue: GalleryValue = {
+    harvested: galleryItems,
+    generated: [],
+    stylePromptVersion: 0,
+  };
+
   if (galleryItems.length) {
     yield {
       type: "slot_update",
       slotId: "gallery",
       patch: slotPatch({
         status: "resolved",
-        value: { harvested: galleryItems, generated: [], stylePromptVersion: 0 } satisfies GalleryValue,
+        value: galleryValue,
         confidence: 0.72,
         provenance: galleryItems[0]?.provenance,
       }),
     };
   }
 
-  if (visualWorldFromProbe) {
-    yield {
-      type: "slot_update",
-      slotId: "visualWorld",
-      patch: slotPatch({
-        status: "resolved",
-        value: visualWorldFromProbe,
-        provenance: { type: "llm_synthesis", detail: "document probe" },
-        confidence: 0.66,
-      }),
-    };
-  }
-
-  const corpus = corpusParts.join("\n\n").trim();
+  const corpusBase = corpusParts.join("\n\n").trim();
+  const probeLines = probeContextForBatch?.textSummary.filter((line) => line.trim()) ?? [];
+  const corpus = [corpusBase, ...probeLines].filter(Boolean).join("\n\n").trim();
   const llmEnabled = options?.llmEnabled === true;
+  const ingestProv = batchLlmProvenance(files[0]?.name);
+  const copyUnits = buildCopyUnitsFromPlainCorpus(
+    corpusBase || corpus,
+    files[0]?.name ?? "document",
+    probeLines,
+  );
+  const evidenceCandidates = selectEvidenceCandidates(copyUnits, 20, 2);
   const synthesisInput = {
     corpus,
+    structuredCorpus: copyUnits.length ? formatCopyUnitsForLlm(copyUnits) : undefined,
+    evidenceCandidates: evidenceCandidates.length ? evidenceCandidates : undefined,
     brandName,
+    galleryContext: buildGalleryContextForLlm(galleryValue) || undefined,
+    probeContext: probeContextForBatch,
     userEmail: options?.userEmail,
     route: "/api/spaces/genoma/ingest",
     onLlmCostUsd: options?.onLlmCostUsd,
   };
+  const corpusReadyForLlm =
+    corpus.length >= 50 || (corpus.length >= 24 && Boolean(probeContextForBatch));
 
-  if (llmEnabled && corpus.length >= 50) {
+  if (llmEnabled && corpusReadyForLlm) {
     yield { type: "progress", phase: "llm", step: 4, totalSteps: 5, message: "Síntesis IA…" };
     yield { type: "llm_status", status: "running" };
 
-    yield { type: "llm_progress", step: "voice", status: "running" };
-    const voiceRaw = await synthesizeVoice(synthesisInput);
-    yield { type: "llm_progress", step: "voice", status: voiceRaw ? "done" : "failed" };
+    yield {
+      type: "llm_progress",
+      step: "batch",
+      status: "running",
+      substep: "essence",
+      detail: "Esencia, voz y mundo visual…",
+    };
+    const batch = await synthesizeGenomaBatch(synthesisInput, { allowSlotRetries: false });
 
-    yield { type: "llm_progress", step: "values", status: "running" };
-    const valuesRaw = await synthesizeValues(synthesisInput);
-    yield { type: "llm_progress", step: "values", status: valuesRaw ? "done" : "failed" };
+    const essenceValue = batch.essence
+      ? {
+          ...batch.essence,
+          headline: batch.essence.headline,
+          headlineOrigin: batch.essence.headline ? ("generated" as const) : undefined,
+        }
+      : null;
 
-    yield { type: "llm_progress", step: "oneliner", status: "running" };
-    const onelinerLlm = await synthesizeOnelinerOptions(synthesisInput);
-    yield { type: "llm_progress", step: "oneliner", status: onelinerLlm ? "done" : "failed" };
+    yield {
+      type: "llm_progress",
+      step: "batch",
+      substep: "essence",
+      status: essenceValue && canEmitIngestEssence(essenceValue) ? "done" : "failed",
+      detail:
+        essenceValue && canEmitIngestEssence(essenceValue)
+          ? `${essenceValue.beliefs.length} creencias`
+          : "Degradado",
+    };
 
-    yield { type: "llm_status", status: voiceRaw || valuesRaw || onelinerLlm ? "done" : "skipped" };
+    yield {
+      type: "llm_progress",
+      step: "batch",
+      substep: "voice",
+      status: batch.voice ? "done" : "failed",
+      detail: batch.voice ? `${batch.voice.descriptors.length} descriptores` : "Degradado",
+    };
 
-    if (voiceRaw) {
-      yield {
-        type: "slot_update",
-        slotId: "voice",
-        patch: slotPatch({
-          status: "resolved",
-          value: voiceValueFromLlm(voiceRaw),
-          provenance: { type: "llm_synthesis", detail: "documentos subidos" },
-          confidence: 0.65,
-        }),
-      };
-    }
+    yield {
+      type: "llm_progress",
+      step: "batch",
+      substep: "visualWorld",
+      status: batch.visualWorld ? "done" : "failed",
+      detail: batch.visualWorld ? `${batch.visualWorld.limits.length} límites` : "Degradado",
+    };
 
-    const valuesValue = valuesRaw ? validateValuesAgainstCorpus(corpus, valuesRaw) : null;
-    const beliefs =
-      valuesValue?.values.map((item) => ({ label: item.label, evidence: item.evidence })) ?? [];
-    const essenceValue = buildResolvedEssenceFromIngest({ beliefs, onelinerLlm, brandName });
+    const llmOk = Boolean(
+      (essenceValue && canEmitIngestEssence(essenceValue)) || batch.voice || batch.visualWorld,
+    );
+    yield {
+      type: "llm_status",
+      status: llmOk ? "done" : "skipped",
+      reason: llmOk ? undefined : "IA sin resultados válidos",
+    };
 
-    if (essenceValue) {
-      const essenceProvenance = { type: "llm_synthesis" as const, detail: "documentos subidos" };
-      const headlineAlternatives =
-        onelinerLlm && onelinerLlm.options.length > 1
-          ? buildEssenceHeadlineAlternatives(essenceValue, onelinerLlm, essenceProvenance)
-          : [];
-
+    if (essenceValue && canEmitIngestEssence(essenceValue)) {
       yield {
         type: "slot_update",
         slotId: "essence",
-        patch: slotPatch({
-          status: "resolved",
-          value: essenceValue,
-          provenance: essenceProvenance,
-          confidence: 0.68,
-          candidates: headlineAlternatives,
-        }),
+        patch: slotPatch(
+          buildBatchSlotPatch({
+            value: essenceValue,
+            provenance: ingestProv,
+            confidence: 0.68,
+          }),
+        ),
+      };
+    } else {
+      yield {
+        type: "slot_update",
+        slotId: "essence",
+        patch: slotPatch({ status: "needs_user", confidence: 0 }),
       };
     }
+
+    if (batch.voice) {
+      yield {
+        type: "slot_update",
+        slotId: "voice",
+        patch: slotPatch(
+          buildBatchSlotPatch({
+            value: batch.voice,
+            provenance: ingestProv,
+            confidence: batch.voice.evidence.length >= 1 ? 0.72 : 0.68,
+          }),
+        ),
+      };
+    } else {
+      yield {
+        type: "slot_update",
+        slotId: "voice",
+        patch: slotPatch({ status: "needs_user", confidence: 0 }),
+      };
+    }
+
+    if (batch.visualWorld) {
+      const visualValue: VisualWorldValue = {
+        ...batch.visualWorld,
+        galleryRefs: galleryRefIds(galleryValue),
+      };
+      yield {
+        type: "slot_update",
+        slotId: "visualWorld",
+        patch: slotPatch(
+          buildBatchSlotPatch({
+            value: visualValue,
+            provenance: ingestProv,
+            confidence: 0.66,
+          }),
+        ),
+      };
+    } else {
+      const fallbackVisual = buildVisualWorldFromGallery(galleryValue, brandName);
+      if (fallbackVisual) {
+        yield {
+          type: "slot_update",
+          slotId: "visualWorld",
+          patch: slotPatch({
+            status: "resolved",
+            value: fallbackVisual,
+            provenance: {
+              type: "llm_synthesis",
+              detail: `síntesis visual desde galería (sin batch)`,
+            },
+            confidence: 0.62,
+          }),
+        };
+      } else {
+        yield {
+          type: "slot_update",
+          slotId: "visualWorld",
+          patch: slotPatch({ status: "needs_user", confidence: 0 }),
+        };
+      }
+    }
+
+    yield {
+      type: "llm_progress",
+      step: "batch",
+      status: "done",
+      detail: `${totalProbeLlmCalls + 1} LLM total · probe ${totalProbeLlmCalls} + batch 1`,
+    };
   } else if (!llmEnabled) {
     yield { type: "llm_status", status: "skipped", reason: options?.llmSkipReason ?? "IA desactivada" };
   }

@@ -129,7 +129,11 @@ function groundVoice(
   const summary = normalizeQuoteText(raw.summary);
   if (looksLikeLiteralCorpusQuote(summary, corpus)) return null;
 
-  const descriptors = penalizeBareGenericDescriptors(raw.descriptors.map((item) => item.trim()));
+  let descriptors = penalizeBareGenericDescriptors(raw.descriptors.map((item) => item.trim()));
+  if (descriptors.length < 2) {
+    const fallback = raw.descriptors.map((item) => item.trim()).filter((item) => item.length >= 3);
+    if (fallback.length >= 2) descriptors = fallback.slice(0, 5);
+  }
   if (descriptors.length < 2) return null;
 
   const rules = raw.rules.map((item) => item.trim()).filter(Boolean);

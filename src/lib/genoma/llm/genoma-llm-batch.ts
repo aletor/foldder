@@ -95,8 +95,43 @@ async function reportGeminiUsage(
   }).catch(() => undefined);
 }
 
+function formatProbeContextForLlm(context: GenomaSynthesisInput["probeContext"]): string {
+  if (!context) return "";
+  const lines: string[] = [];
+  if (context.textSummary.length) {
+    lines.push("Resumen del document probe:", ...context.textSummary.map((row) => `- ${row}`));
+  }
+  if (context.primaryColors.length) {
+    lines.push(
+      "Paleta detectada:",
+      ...context.primaryColors.map((color) =>
+        `- ${color.hex}${color.label ? ` (${color.label})` : ""}`,
+      ),
+    );
+  }
+  if (context.typography.length) {
+    lines.push(
+      "Tipografía visible:",
+      ...context.typography.map((row) => `- ${row.family} (${row.role})`),
+    );
+  }
+  if (context.imageInventory.length) {
+    lines.push(
+      "Inventario visual (imágenes no-logo):",
+      ...context.imageInventory.map((row) =>
+        `- ${row.description}${row.page != null ? ` · pág. ${row.page}` : ""}`,
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
 function buildBatchUserPrompt(input: GenomaSynthesisInput): string {
   const parts = [`Marca: ${input.brandName ?? "desconocida"}`];
+  const probeBlock = formatProbeContextForLlm(input.probeContext);
+  if (probeBlock) {
+    parts.push("Contexto visual del document probe (usa para coherencia, especialmente visualWorld):", probeBlock);
+  }
   if (input.evidenceCandidates?.length) {
     parts.push("Evidencias preseleccionadas (usa solo estos IDs en evidenceIds):", formatEvidenceCandidatesForLlm(input.evidenceCandidates));
   }
@@ -117,7 +152,8 @@ async function callBatchJson(
   operation: string,
 ): Promise<unknown | null> {
   const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
-  if (!apiKey || input.corpus.trim().length < 50) return null;
+  const minCorpus = input.probeContext || input.evidenceCandidates?.length ? 24 : 50;
+  if (!apiKey || input.corpus.trim().length < minCorpus) return null;
 
   const ai = new GoogleGenAI({ apiKey });
   try {
@@ -164,10 +200,19 @@ async function retryBatchKey(
   return validateBatchSlotKey(key, value, input.corpus, input.evidenceCandidates ?? []);
 }
 
-export async function synthesizeGenomaBatch(input: GenomaSynthesisInput): Promise<GenomaBatchSlotResult> {
+export type GenomaBatchOptions = {
+  /** Reintentos por slot fallido (crawl). Ingest file usa false para cap ≤3 LLM. */
+  allowSlotRetries?: boolean;
+};
+
+export async function synthesizeGenomaBatch(
+  input: GenomaSynthesisInput,
+  options?: GenomaBatchOptions,
+): Promise<GenomaBatchSlotResult> {
   const degraded: BatchSlotKey[] = [];
   const empty = { essence: null, voice: null, visualWorld: null, degraded };
   const evidenceCandidates = input.evidenceCandidates ?? [];
+  const allowSlotRetries = options?.allowSlotRetries !== false;
 
   const raw = await callBatchJson(input, buildBatchUserPrompt(input), "batch");
   if (!raw) return empty;
@@ -177,21 +222,23 @@ export async function synthesizeGenomaBatch(input: GenomaSynthesisInput): Promis
   let voiceResult = initial.voice;
   let visualWorldResult = initial.visualWorld;
 
-  const keys: BatchSlotKey[] = ["essence", "voice", "visualWorld"];
-  for (const key of keys) {
-    const current =
-      key === "essence" ? essenceResult : key === "voice" ? voiceResult : visualWorldResult;
-    if (current.ok) continue;
-    const retry = await retryBatchKey(input, key);
-    if (key === "essence") {
-      essenceResult = mergeBatchValidation(essenceResult, retry as BatchSlotValidation<EssenceValue>);
-    } else if (key === "voice") {
-      voiceResult = mergeBatchValidation(voiceResult, retry as BatchSlotValidation<VoiceValue>);
-    } else {
-      visualWorldResult = mergeBatchValidation(
-        visualWorldResult,
-        retry as BatchSlotValidation<VisualWorldValue>,
-      );
+  if (allowSlotRetries) {
+    const keys: BatchSlotKey[] = ["essence", "voice", "visualWorld"];
+    for (const key of keys) {
+      const current =
+        key === "essence" ? essenceResult : key === "voice" ? voiceResult : visualWorldResult;
+      if (current.ok) continue;
+      const retry = await retryBatchKey(input, key);
+      if (key === "essence") {
+        essenceResult = mergeBatchValidation(essenceResult, retry as BatchSlotValidation<EssenceValue>);
+      } else if (key === "voice") {
+        voiceResult = mergeBatchValidation(voiceResult, retry as BatchSlotValidation<VoiceValue>);
+      } else {
+        visualWorldResult = mergeBatchValidation(
+          visualWorldResult,
+          retry as BatchSlotValidation<VisualWorldValue>,
+        );
+      }
     }
   }
 
