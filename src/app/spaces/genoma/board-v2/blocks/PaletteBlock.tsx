@@ -102,7 +102,7 @@ function PaletteColorCard({
         </GenomaEvidenceTrigger>
       ) : null}
       {interactive && onColorChange ? (
-        <label className="genoma-palette-card__picker" title="Cambiar color">
+        <label className="genoma-palette-card__picker" aria-label="Cambiar color">
           <span className="genoma-v2-sr-only">Cambiar color</span>
           <input
             type="color"

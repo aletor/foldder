@@ -68,6 +68,20 @@
   padding: 16px 32px 24px;
 }
 
+.genoma-sidebar-export-card {
+  margin-top: auto;
+}
+
+.genoma-sidebar-export-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(26, 26, 26, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
 @media (min-width: 768px) {
   .genoma-studio-split__sidebar-footer {
     padding-inline: 40px;

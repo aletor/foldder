@@ -1,12 +1,13 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useMemo } from "react";
 import { Lock, RotateCcw, Unlock } from "lucide-react";
 import type { SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { confirmLabelForSlot, genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { getSlotAttention, type SlotAttention } from "@/lib/genoma/genoma-board-status";
 import { GenomaFoldderButton } from "./GenomaFoldderButton";
 import { boardChapterLabel } from "./genoma-board-chapters";
+import { useGenomaMosaicCellOptional } from "./genoma-mosaic-context";
 
 type DnaBlockProps = {
   label?: string;
@@ -35,14 +36,18 @@ export function DnaBlock({
   activeSlotId,
   headExtra,
 }: DnaBlockProps) {
+  const mosaicCell = useGenomaMosaicCellOptional();
+  const isMosaic = Boolean(mosaicCell);
+
   const hasToolbar = Boolean(slot && onAction && slotId && (slot.status === "resolved" || slot.history.length > 0));
   const confirmLabel = slotId ? confirmLabelForSlot[slotId] ?? genomaLocaleEs.confirm : genomaLocaleEs.confirm;
   const attention: SlotAttention =
     slot && slotId ? getSlotAttention(slot, activeSlotId) : { kind: null };
   const chapter = boardChapterLabel(slotId);
 
-  const slotToolbar =
-    hasToolbar && slot && slotId && onAction ? (
+  const slotToolbar = useMemo(() => {
+    if (!hasToolbar || !slot || !slotId || !onAction) return null;
+    return (
       <>
         {slot.status === "resolved" ? (
           slot.locked ? (
@@ -61,7 +66,36 @@ export function DnaBlock({
           </GenomaFoldderButton>
         ) : null}
       </>
-    ) : null;
+    );
+  }, [confirmLabel, hasToolbar, onAction, slot, slotId]);
+
+  const mosaicActions = useMemo(
+    () => (
+      <>
+        {secondaryActions}
+        {headExtra}
+        {primaryAction}
+        {slotToolbar}
+      </>
+    ),
+    [headExtra, primaryAction, secondaryActions, slotToolbar],
+  );
+
+  useEffect(() => {
+    if (!mosaicCell) return;
+    mosaicCell.setActionSlot("dna-block", mosaicActions);
+    return () => mosaicCell.setActionSlot("dna-block", null);
+  }, [mosaicActions, mosaicCell]);
+
+  if (isMosaic) {
+    return (
+      <section
+        className={`genoma-v2-block genoma-v2-block--mosaic${attention.kind ? ` genoma-v2-block--${attention.kind}` : ""} ${className}`.trim()}
+      >
+        <div className="genoma-v2-block__body">{children}</div>
+      </section>
+    );
+  }
 
   return (
     <section

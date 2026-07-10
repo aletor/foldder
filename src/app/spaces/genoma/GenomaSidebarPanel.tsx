@@ -127,7 +127,7 @@ export function GenomaSidebarPanel({
       </div>
 
       {showExportFooter ? (
-        <div className="genoma-studio-split__sidebar-footer">
+        <div className="genoma-studio-split__sidebar-footer genoma-sidebar-export-card">
           {phase === "review" ? (
             <button
               type="button"
@@ -137,61 +137,63 @@ export function GenomaSidebarPanel({
               {genomaLocaleEs.hideAddSource}
             </button>
           ) : null}
-          <fieldset className="genoma-split-export__modes">
-            <legend className="genoma-split-export__legend">{genomaLocaleEs.exportStyleGuide}</legend>
-            {(Object.keys(GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS) as GenomaStyleGuideExportMode[]).map((mode) => (
-              <label key={mode} className="genoma-split-export__mode">
-                <input
-                  type="radio"
-                  name="genoma-studio-export-mode"
-                  checked={exportMode === mode}
-                  onChange={() => setExportMode(mode)}
-                />
-                {GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS[mode].toLowerCase()}
-              </label>
-            ))}
-          </fieldset>
-          <div className="genoma-split-export">
-            <GenomaFoldderButton
-              variant="muted"
-              disabled={!canExport || !onExportStyleGuidePdf || styleGuideDownloadPhase !== "idle"}
-              onClick={() => onExportStyleGuidePdf?.(exportMode)}
-              title={
-                canExport
-                  ? genomaLocaleEs.downloadStyleGuidePdf
-                  : (exportBlockedReason ?? genomaLocaleEs.downloadStyleGuidePdf)
-              }
-            >
-              {styleGuideDownloadPhase === "vectorizing"
-                ? genomaLocaleEs.vectorizingLogo
-                : styleGuideDownloadPhase === "downloading"
-                  ? genomaLocaleEs.downloadingPdf
-                  : genomaLocaleEs.downloadStyleGuidePdf.toLowerCase()}
-            </GenomaFoldderButton>
-            <button
-              type="button"
-              className="genoma-split-export__link"
-              disabled={!canExport}
-              onClick={onExportTokens}
-            >
-              {genomaLocaleEs.tokens.toLowerCase()}
-            </button>
-            <span className="genoma-split-export__sep">·</span>
-            <button
-              type="button"
-              className="genoma-split-export__link"
-              disabled={!canExport}
-              onClick={onExportCompiled}
-            >
-              {genomaLocaleEs.compiled.toLowerCase()}
-            </button>
+          <div className="genoma-sidebar-export-card__body">
+            <fieldset className="genoma-split-export__modes">
+              <legend className="genoma-split-export__legend">{genomaLocaleEs.exportStyleGuide}</legend>
+              {(Object.keys(GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS) as GenomaStyleGuideExportMode[]).map((mode) => (
+                <label key={mode} className="genoma-split-export__mode">
+                  <input
+                    type="radio"
+                    name="genoma-studio-export-mode"
+                    checked={exportMode === mode}
+                    onChange={() => setExportMode(mode)}
+                  />
+                  {GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS[mode].toLowerCase()}
+                </label>
+              ))}
+            </fieldset>
+            <div className="genoma-split-export">
+              <GenomaFoldderButton
+                variant="muted"
+                disabled={!canExport || !onExportStyleGuidePdf || styleGuideDownloadPhase !== "idle"}
+                onClick={() => onExportStyleGuidePdf?.(exportMode)}
+                title={
+                  canExport
+                    ? genomaLocaleEs.downloadStyleGuidePdf
+                    : (exportBlockedReason ?? genomaLocaleEs.downloadStyleGuidePdf)
+                }
+              >
+                {styleGuideDownloadPhase === "vectorizing"
+                  ? genomaLocaleEs.vectorizingLogo
+                  : styleGuideDownloadPhase === "downloading"
+                    ? genomaLocaleEs.downloadingPdf
+                    : genomaLocaleEs.downloadStyleGuidePdf.toLowerCase()}
+              </GenomaFoldderButton>
+              <button
+                type="button"
+                className="genoma-split-export__link"
+                disabled={!canExport}
+                onClick={onExportTokens}
+              >
+                {genomaLocaleEs.tokens.toLowerCase()}
+              </button>
+              <span className="genoma-split-export__sep">·</span>
+              <button
+                type="button"
+                className="genoma-split-export__link"
+                disabled={!canExport}
+                onClick={onExportCompiled}
+              >
+                {genomaLocaleEs.compiled.toLowerCase()}
+              </button>
+            </div>
+            {!canExport && exportBlockedReason ? (
+              <p className="genoma-split-export__hint">{exportBlockedReason}</p>
+            ) : null}
+            {styleGuideDownloadError ? (
+              <p className="genoma-split-export__hint genoma-split-export__hint--error">{styleGuideDownloadError}</p>
+            ) : null}
           </div>
-          {!canExport && exportBlockedReason ? (
-            <p className="genoma-split-export__hint">{exportBlockedReason}</p>
-          ) : null}
-          {styleGuideDownloadError ? (
-            <p className="genoma-split-export__hint genoma-split-export__hint--error">{styleGuideDownloadError}</p>
-          ) : null}
         </div>
       ) : null}
     </aside>

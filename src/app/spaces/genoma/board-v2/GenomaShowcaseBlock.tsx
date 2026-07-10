@@ -12,6 +12,7 @@ import {
 import { GenomaShowcaseBusinessCard } from "./showcase/GenomaShowcaseBusinessCard";
 import { GenomaShowcaseSocialPost } from "./showcase/GenomaShowcaseSocialPost";
 import { GenomaShowcaseMobile } from "./showcase/GenomaShowcaseMobile";
+import { useGenomaMosaicCellOptional } from "./genoma-mosaic-context";
 
 export function GenomaShowcaseBlock({
   doc,
@@ -24,12 +25,36 @@ export function GenomaShowcaseBlock({
   brandPolarity?: BrandThemePolarity;
   brandVars?: Record<string, string>;
 }) {
+  const mosaicCell = useGenomaMosaicCellOptional();
+  const isMosaic = Boolean(mosaicCell);
   const data = useMemo(
     () => buildGenomaShowcaseData(doc, presentationMode),
     [doc, presentationMode],
   );
   const [surfaceMode, setSurfaceMode] = useState<ShowcaseSurfaceMode>(
     brandPolarity === "dark" ? "dark" : "light",
+  );
+
+  const surfaceToggle = useMemo(
+    () => (
+      <div className="genoma-showcase-surface-toggle" role="group" aria-label="Base de mockups">
+        <button
+          type="button"
+          className={`genoma-showcase-surface-toggle__btn${surfaceMode === "light" ? " is-active" : ""}`}
+          onClick={() => setSurfaceMode("light")}
+        >
+          Claro
+        </button>
+        <button
+          type="button"
+          className={`genoma-showcase-surface-toggle__btn${surfaceMode === "dark" ? " is-active" : ""}`}
+          onClick={() => setSurfaceMode("dark")}
+        >
+          Oscuro
+        </button>
+      </div>
+    ),
+    [surfaceMode],
   );
 
   const showcaseStyle = useMemo(() => {
@@ -60,32 +85,19 @@ export function GenomaShowcaseBlock({
 
   return (
     <section
-      className="genoma-v2-block genoma-showcase"
+      className={`genoma-v2-block genoma-showcase${isMosaic ? " genoma-showcase--mosaic" : ""}`}
       aria-label="La marca en acción"
       data-showcase-surface={surfaceMode}
       style={showcaseStyle}
     >
-      <header className="genoma-v2-block__head genoma-v2-block__head--chapter">
-        <span className="genoma-v2-chapter-label">{GENOMA_SHOWCASE_CHAPTER_LABEL}</span>
-        <div className="genoma-v2-block__head-extra">
-          <div className="genoma-showcase-surface-toggle" role="group" aria-label="Base de mockups">
-            <button
-              type="button"
-              className={`genoma-showcase-surface-toggle__btn${surfaceMode === "light" ? " is-active" : ""}`}
-              onClick={() => setSurfaceMode("light")}
-            >
-              Claro
-            </button>
-            <button
-              type="button"
-              className={`genoma-showcase-surface-toggle__btn${surfaceMode === "dark" ? " is-active" : ""}`}
-              onClick={() => setSurfaceMode("dark")}
-            >
-              Oscuro
-            </button>
-          </div>
-        </div>
-      </header>
+      {!isMosaic ? (
+        <header className="genoma-v2-block__head genoma-v2-block__head--chapter">
+          <span className="genoma-v2-chapter-label">{GENOMA_SHOWCASE_CHAPTER_LABEL}</span>
+          <div className="genoma-v2-block__head-extra">{surfaceToggle}</div>
+        </header>
+      ) : (
+        <div className="genoma-showcase--mosaic__toolbar">{surfaceToggle}</div>
+      )}
 
       <div className="genoma-showcase__grid">
         <figure className="genoma-showcase__item">

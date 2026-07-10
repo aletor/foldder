@@ -27,6 +27,7 @@ import {
 import type { BrandThemePolarity } from "@/lib/genoma/brand-theme-color";
 import { GenomaLogoClearanceZone } from "../GenomaLogoClearanceZone";
 import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
+import { useGenomaMosaicCellOptional } from "../genoma-mosaic-context";
 
 function canAdjustLogo(logo?: LogoValue): boolean {
   return Boolean(logo?.sourcePdfSha256 && logo.sourcePageNumber);
@@ -108,6 +109,8 @@ export function LogoBlock({
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustCandidateIndex, setAdjustCandidateIndex] = useState<number | null>(null);
 
+  const mosaicCell = useGenomaMosaicCellOptional();
+  const isMosaic = Boolean(mosaicCell);
   const plinthClass = useMemo(
     () => resolvePlinthClass(logo, plinthMode, brandReady, brandPolarity),
     [logo, plinthMode, brandPolarity, brandReady],
@@ -130,8 +133,12 @@ export function LogoBlock({
       />
     ) : null;
   const uploadControl = <LogoUploadControl onUploadLogo={onUploadLogo} disabled={slot.locked} />;
+  const plinthToggle = logo?.previewUrl ? (
+    <GenomaLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} />
+  ) : null;
   const secondaryActions = (
     <>
+      {isMosaic ? plinthToggle : null}
       {adjustControl}
       {uploadControl}
     </>
@@ -147,7 +154,7 @@ export function LogoBlock({
       rankSignals={slot.candidates[0]?.rankSignals}
     >
       <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
-        <GenomaLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} />
+        {!isMosaic ? <GenomaLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} /> : null}
         {pageHint ? <p className="genoma-v2-logo-page-hint">{pageHint}</p> : null}
         <GenomaClickableImage src={logo.previewUrl} fit="logo" eager />
         <GenomaSupplementalPanel slot={slot} />

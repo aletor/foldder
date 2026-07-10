@@ -16,6 +16,7 @@ import {
 } from "../genoma-block-motion";
 import { normalizeFontDisplayName } from "@/lib/genoma/normalize-font-display-name";
 import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
+import { useGenomaMosaicCellOptional } from "../genoma-mosaic-context";
 
 type TypographyFamily = TypographyValue["families"][number];
 
@@ -49,6 +50,73 @@ function pickPrimarySecondary(families: TypographyFamily[]): { primary?: Typogra
 function roleLabel(role: TypographyFamily["role"]): string {
   if (role === "body") return genomaLocaleEs.typeSecondary;
   return genomaLocaleEs.typePrimary;
+}
+
+const WEIGHT_SAMPLE = "AaBbCc 0123";
+
+function TypographyComparisonColumn({
+  family,
+  label,
+  specimenText,
+  slot,
+  slotId,
+  onAction,
+  onCorrect,
+}: {
+  family: TypographyFamily;
+  label: string;
+  specimenText: string;
+  slot?: SlotState<unknown>;
+  slotId?: SlotId;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
+  onCorrect?: () => void;
+}) {
+  const stack = fontStack(family);
+  const estimated = isEstimatedCustomFamily(family);
+  const weights = [...family.weights].sort((a, b) => a - b);
+
+  return (
+    <div className="genoma-type-column genoma-type-column--comparison">
+      <div className="genoma-type-column__head">
+        <span className="genoma-type-column__label">{label}</span>
+        {slot && slotId ? (
+          <GenomaEvidenceTrigger
+            id={`typography-${slotId}-${family.family}`}
+            slot={slot}
+            slotId={slotId}
+            onAction={onAction}
+            onCorrect={onCorrect}
+            provenance={slot.provenance}
+            confidence={slot.confidence}
+          >
+            <span className="genoma-type-column__family">{typographyDisplayName(family)}</span>
+          </GenomaEvidenceTrigger>
+        ) : (
+          <span className="genoma-type-column__family">{typographyDisplayName(family)}</span>
+        )}
+        <span className="genoma-type-column__meta">
+          {weights.join(" · ")} · {family.source}
+        </span>
+        {estimated ? (
+          <span className="genoma-v2-chapter-micro genoma-type-estimated-note">Estimada a partir del material</span>
+        ) : null}
+      </div>
+      <div className="genoma-type-alphabet genoma-type-alphabet--body" style={{ fontFamily: stack }} aria-hidden>
+        <span>{ALPHABET_LINE}</span>
+        <span>{NUMERIC_LINE}</span>
+      </div>
+      <div className="genoma-type-weight-ladder genoma-type-weight-ladder--body">
+        {weights.map((weight) => (
+          <div key={weight} className="genoma-type-weight-step">
+            <span className="genoma-v2-chapter-micro">{weight}</span>
+            <p className="genoma-type-weight-step__sample" style={{ fontFamily: stack, fontWeight: weight }}>
+              {WEIGHT_SAMPLE}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function TypographyColumn({
@@ -121,7 +189,7 @@ function TypographyColumn({
   );
 }
 
-function TypographyStrip({
+function TypographyMosaicLayout({
   families,
   specimenText,
   slot,
@@ -137,6 +205,92 @@ function TypographyStrip({
   onCorrect?: () => void;
 }) {
   const { primary, secondary } = pickPrimarySecondary(families);
+  if (!primary) return null;
+
+  const primaryStack = fontStack(primary);
+  const estimated = isEstimatedCustomFamily(primary);
+  const weights = [...primary.weights].sort((a, b) => a - b);
+
+  return (
+    <div className="genoma-type-strip genoma-type-strip--mosaic">
+      <div className="genoma-type-mosaic-primary">
+        <div className="genoma-type-column__head">
+          <span className="genoma-type-column__label">{roleLabel(primary.role)}</span>
+          {slot && slotId ? (
+            <GenomaEvidenceTrigger
+              id={`typography-${slotId}-${primary.family}`}
+              slot={slot}
+              slotId={slotId}
+              onAction={onAction}
+              onCorrect={onCorrect}
+              provenance={slot.provenance}
+              confidence={slot.confidence}
+            >
+              <span className="genoma-type-column__family">{typographyDisplayName(primary)}</span>
+            </GenomaEvidenceTrigger>
+          ) : (
+            <span className="genoma-type-column__family">{typographyDisplayName(primary)}</span>
+          )}
+          <span className="genoma-type-column__meta">
+            {weights.join(" · ")} · {primary.source}
+          </span>
+          {estimated ? (
+            <span className="genoma-v2-chapter-micro genoma-type-estimated-note">Estimada a partir del material</span>
+          ) : null}
+        </div>
+        <p
+          className="genoma-type-specimen--mosaic-display"
+          style={{ fontFamily: primaryStack }}
+        >
+          {specimenText}
+        </p>
+      </div>
+      {secondary && secondary.family !== primary.family ? (
+        <TypographyComparisonColumn
+          family={secondary}
+          label={genomaLocaleEs.typeSecondary}
+          specimenText={specimenText}
+          slot={slot}
+          slotId={slotId}
+          onAction={onAction}
+          onCorrect={onCorrect}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TypographyStrip({
+  families,
+  specimenText,
+  slot,
+  slotId,
+  onAction,
+  onCorrect,
+}: {
+  families: TypographyFamily[];
+  specimenText: string;
+  slot?: SlotState<unknown>;
+  slotId?: SlotId;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
+  onCorrect?: () => void;
+}) {
+  const mosaicCell = useGenomaMosaicCellOptional();
+  const isMosaic = Boolean(mosaicCell);
+  const { primary, secondary } = pickPrimarySecondary(families);
+
+  if (isMosaic) {
+    return (
+      <TypographyMosaicLayout
+        families={families}
+        specimenText={specimenText}
+        slot={slot}
+        slotId={slotId}
+        onAction={onAction}
+        onCorrect={onCorrect}
+      />
+    );
+  }
 
   return (
     <div className="genoma-type-strip">

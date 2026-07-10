@@ -34,11 +34,13 @@ export function GenomaCoverTile({
   presentationMode = false,
   brandReady = false,
   brandVars = {},
+  mosaic = false,
 }: {
   doc: GenomaDocument;
   presentationMode?: boolean;
   brandReady?: boolean;
   brandVars?: Record<string, string>;
+  mosaic?: boolean;
 }) {
   const logo = slotConfirmedValue<LogoValue>(doc.slots.logo, presentationMode);
   const essence = slotConfirmedValue<EssenceValue>(doc.slots.essence, presentationMode);
@@ -61,28 +63,34 @@ export function GenomaCoverTile({
     return { background: hasLogo && logoContrasts ? primary : page };
   }, [brandReady, brandVars, hasLogo, showSkeleton]);
 
+  const heroContent = showSkeleton ? (
+    <div className="genoma-v2-cover__skeleton" aria-hidden>
+      <div className="genoma-v2-cover__skeleton-logo" />
+      <div className="genoma-v2-cover__skeleton-title" />
+      <div className="genoma-v2-cover__skeleton-line" />
+    </div>
+  ) : (
+    <>
+      {logo?.previewUrl ? (
+        <div className="genoma-v2-cover__logo">
+          <GenomaClickableImage src={logo.previewUrl} fit="logo" eager alt="" />
+        </div>
+      ) : null}
+      {brandName ? <h1 className="genoma-v2-cover__brand">{brandName}</h1> : null}
+      {headline ? <p className="genoma-v2-cover__headline">{headline}</p> : null}
+    </>
+  );
+
   return (
-    <section className="genoma-v2-cover" aria-label="Portada del libro de estilo">
+    <section className={`genoma-v2-cover${mosaic ? " genoma-v2-cover--mosaic" : ""}`} aria-label="Portada del libro de estilo">
       <div
         className={`genoma-v2-cover__canvas${showSkeleton ? " genoma-v2-cover__canvas--skeleton" : ""}`}
         style={canvasStyle}
       >
-        {showSkeleton ? (
-          <div className="genoma-v2-cover__skeleton" aria-hidden>
-            <div className="genoma-v2-cover__skeleton-logo" />
-            <div className="genoma-v2-cover__skeleton-title" />
-            <div className="genoma-v2-cover__skeleton-line" />
-          </div>
+        {mosaic ? (
+          <div className="genoma-v2-cover__group">{heroContent}</div>
         ) : (
-          <>
-            {logo?.previewUrl ? (
-              <div className="genoma-v2-cover__logo">
-                <GenomaClickableImage src={logo.previewUrl} fit="logo" eager alt="" />
-              </div>
-            ) : null}
-            {brandName ? <h1 className="genoma-v2-cover__brand">{brandName}</h1> : null}
-            {headline ? <p className="genoma-v2-cover__headline">{headline}</p> : null}
-          </>
+          heroContent
         )}
       </div>
       <footer className="genoma-v2-cover__foot">
