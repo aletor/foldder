@@ -310,6 +310,164 @@
   font-size: 10px;
 }
 
+.genoma-split-export__hint--error {
+  color: #8b2e24;
+}
+
+.genoma-split-export__modes {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+}
+
+.genoma-split-export__legend {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.genoma-split-export__mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 300;
+  text-transform: lowercase;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.genoma-split-export__mode + .genoma-split-export__mode {
+  margin-top: 4px;
+}
+
+.genoma-split-ingest {
+  margin-top: 16px;
+}
+
+.genoma-split-ingest__block + .genoma-split-ingest__block {
+  margin-top: 14px;
+}
+
+.genoma-split-ingest__block--live {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--secondary) 30%, var(--border));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.genoma-split-ingest__title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.genoma-split-ingest__status-line {
+  margin: 0 0 8px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.genoma-split-ingest__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.genoma-split-ingest__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.genoma-split-ingest__row.is-empty {
+  opacity: 0.45;
+}
+
+.genoma-split-ingest__row.is-running .genoma-split-ingest__label {
+  color: var(--text-main);
+}
+
+.genoma-split-ingest__status {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.genoma-split-ingest__label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 300;
+  text-transform: lowercase;
+  color: var(--text-muted);
+}
+
+.genoma-split-ingest__row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.genoma-split-ingest__running {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.genoma-split-ingest__meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.genoma-split-ingest__mark {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.genoma-split-ingest__mark--idle {
+  opacity: 0.35;
+}
+
+.genoma-split-ingest__swatches {
+  display: flex;
+  gap: 4px;
+}
+
+.genoma-split-ingest__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(20, 20, 20, 0.08);
+}
+
+.genoma-split-ingest__logo-thumb {
+  height: 18px;
+  width: auto;
+  max-width: 56px;
+  object-fit: contain;
+}
+
+.genoma-split-ingest__spinner {
+  animation: genoma-live-pulse 0.9s linear infinite;
+}
+
+.genoma-split-ingest__note {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: color-mix(in srgb, #c45c26 80%, var(--text-main));
+}
+
 /* Sidebar — crawl progress compacto */
 .genoma-studio-split__sidebar .genoma-crawl-progress {
   margin: 0;

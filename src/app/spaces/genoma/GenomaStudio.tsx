@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import type { GalleryValue, GenomaDocument, SlotAction, SlotId } from "@/lib/genoma/genoma-types";
 import { externalGalleryMediaUrls } from "@/lib/genoma/genoma-gallery-media";
@@ -35,6 +35,9 @@ import { GenomaBoardV2 } from "./board-v2/GenomaBoardV2";
 import { GenomaBoardEmpty } from "./GenomaBoardEmpty";
 import { GenomaSidebarPanel } from "./GenomaSidebarPanel";
 import { GenomaStudioToastStack } from "./GenomaStudioToast";
+import { buildStudioIngestFeedback } from "@/lib/genoma/studio/studio-ingest-feedback";
+import type { GenomaStyleGuideExportMode } from "@/lib/genoma/projection/style-guide-export-types";
+import { downloadGenomaDocumentStyleGuidePdf } from "@/lib/genoma/projection/genoma-style-guide-download.client";
 import {
   buildAnalysisCompleteToast,
   buildAuthoritativeToast,
@@ -83,6 +86,8 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const galleryHydrateKeyRef = useRef("");
   const lastCrawlJobRef = useRef<{ url: string; enableLlm: boolean } | null>(null);
   const [lastCrawlJob, setLastCrawlJob] = useState<{ url: string; enableLlm: boolean } | null>(null);
+  const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
+  const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
   genomaRef.current = genoma;
 
   const pushToast = useCallback((toast: GenomaToast) => {
@@ -347,6 +352,33 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     });
   }, [genoma]);
 
+  const handleExportStyleGuidePdf = useCallback(
+    async (exportMode: GenomaStyleGuideExportMode) => {
+      setStyleGuideDownloadError(null);
+      setStyleGuideDownloadPhase("downloading");
+      const result = await downloadGenomaDocumentStyleGuidePdf(genomaRef.current, {
+        exportMode,
+        projectName: extractBrandTitle(genomaRef.current, nodeLabel?.trim() || "Genoma"),
+        onPhase: (phase) => setStyleGuideDownloadPhase(phase),
+      });
+      setStyleGuideDownloadPhase("idle");
+      if (!result.ok) {
+        setStyleGuideDownloadError(result.message);
+        pushToast(createGenomaToast("error", result.message));
+        return;
+      }
+      if (result.usedHtmlFallback) {
+        pushToast(createGenomaToast("neutral", "Chromium no disponible — descargado como HTML."));
+      }
+    },
+    [nodeLabel, pushToast],
+  );
+
+  const ingestFeedback = useMemo(
+    () => buildStudioIngestFeedback(genoma, { isAnalyzing, crawlProgress }),
+    [genoma, isAnalyzing, crawlProgress],
+  );
+
   const title = extractBrandTitle(genoma, nodeLabel?.trim() || "Genoma");
   const subtitle = crawlProgress?.message ?? (isAnalyzing ? "Analizando…" : undefined);
   const completeness = computeGenomaCompleteness(genoma);
@@ -391,6 +423,10 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
           onIngestFiles={(files, enableLlm) => void handleIngestFiles(files, enableLlm)}
           onExportTokens={handleExportTokens}
           onExportCompiled={handleExportCompiled}
+          onExportStyleGuidePdf={(mode) => void handleExportStyleGuidePdf(mode)}
+          styleGuideDownloadPhase={styleGuideDownloadPhase}
+          styleGuideDownloadError={styleGuideDownloadError}
+          ingestFeedback={ingestFeedback}
           onSetAuthoritativeSource={handleSetAuthoritativeSource}
         />
 

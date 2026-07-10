@@ -26,6 +26,10 @@ export const genomaLocaleEs = {
   live: "Vivo",
   tokens: "Tokens",
   compiled: "Compilado",
+  exportStyleGuide: "exportar libro",
+  downloadStyleGuidePdf: "Descargar PDF",
+  vectorizingLogo: "vectorizando…",
+  downloadingPdf: "descargando…",
   generateGallery: "Generar set de estilo (10 imgs)",
   generatingGallery: "Generando imágenes de estilo…",
   generatingGalleryProgress: (current: number, total: number, category: string) =>

@@ -11,6 +11,12 @@ import { normalizeGenomaUrlInput } from "@/lib/genoma/crawl/url-utils";
 import { GenomaCrawlProgress, type GenomaCrawlProgressState } from "./GenomaCrawlProgress";
 import { GenomaSidebarStatus } from "./board-v2/GenomaSidebarStatus";
 import { GenomaFoldderButton } from "./board-v2/GenomaFoldderButton";
+import { GenomaStudioIngestFeedback } from "./GenomaStudioIngestFeedback";
+import type { GenomaStudioIngestFeedback as GenomaStudioIngestFeedbackState } from "@/lib/genoma/studio/studio-ingest-feedback";
+import {
+  GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS,
+  type GenomaStyleGuideExportMode,
+} from "@/lib/genoma/projection/style-guide-export-types";
 import { Globe } from "lucide-react";
 
 export type GenomaSidebarPanelProps = {
@@ -27,6 +33,10 @@ export type GenomaSidebarPanelProps = {
   onIngestFiles?: (files: File[], enableLlm?: boolean) => void;
   onExportTokens?: () => void;
   onExportCompiled?: () => void;
+  onExportStyleGuidePdf?: (exportMode: GenomaStyleGuideExportMode) => void;
+  styleGuideDownloadPhase?: "idle" | "vectorizing" | "downloading";
+  styleGuideDownloadError?: string | null;
+  ingestFeedback?: GenomaStudioIngestFeedbackState | null;
   onSetAuthoritativeSource?: (sourceRef: string, authoritative: boolean) => void;
 };
 
@@ -44,9 +54,14 @@ export function GenomaSidebarPanel({
   onIngestFiles,
   onExportTokens,
   onExportCompiled,
+  onExportStyleGuidePdf,
+  styleGuideDownloadPhase = "idle",
+  styleGuideDownloadError = null,
+  ingestFeedback = null,
   onSetAuthoritativeSource,
 }: GenomaSidebarPanelProps) {
   const [url, setUrl] = useState("");
+  const [exportMode, setExportMode] = useState<GenomaStyleGuideExportMode>("operativo");
   const [enableLlm, setEnableLlm] = useState(true);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -176,6 +191,7 @@ export function GenomaSidebarPanel({
           ) : null}
         </section>
 
+        {ingestFeedback ? <GenomaStudioIngestFeedback feedback={ingestFeedback} /> : null}
         {crawlProgress ? <GenomaCrawlProgress progress={crawlProgress} compact /> : null}
         {crawlError ? (
           <div className="genoma-studio-split__error-wrap">
@@ -242,6 +258,20 @@ export function GenomaSidebarPanel({
       </div>
 
       <div className="genoma-studio-split__sidebar-footer">
+        <fieldset className="genoma-split-export__modes">
+          <legend className="genoma-split-export__legend">{genomaLocaleEs.exportStyleGuide}</legend>
+          {(Object.keys(GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS) as GenomaStyleGuideExportMode[]).map((mode) => (
+            <label key={mode} className="genoma-split-export__mode">
+              <input
+                type="radio"
+                name="genoma-studio-export-mode"
+                checked={exportMode === mode}
+                onChange={() => setExportMode(mode)}
+              />
+              {GENOMA_STYLE_GUIDE_EXPORT_MODE_LABELS[mode].toLowerCase()}
+            </label>
+          ))}
+        </fieldset>
         <div className="genoma-split-export">
           <GenomaFoldderButton
             variant="muted"
@@ -259,9 +289,28 @@ export function GenomaSidebarPanel({
           >
             {genomaLocaleEs.compiled.toLowerCase()}
           </GenomaFoldderButton>
+          <GenomaFoldderButton
+            variant="muted"
+            disabled={!canExport || styleGuideDownloadPhase !== "idle" || !onExportStyleGuidePdf}
+            onClick={() => onExportStyleGuidePdf?.(exportMode)}
+            title={
+              canExport
+                ? genomaLocaleEs.downloadStyleGuidePdf
+                : (exportBlockedReason ?? genomaLocaleEs.downloadStyleGuidePdf)
+            }
+          >
+            {styleGuideDownloadPhase === "vectorizing"
+              ? genomaLocaleEs.vectorizingLogo
+              : styleGuideDownloadPhase === "downloading"
+                ? genomaLocaleEs.downloadingPdf
+                : genomaLocaleEs.downloadStyleGuidePdf.toLowerCase()}
+          </GenomaFoldderButton>
         </div>
         {!canExport && exportBlockedReason ? (
           <p className="genoma-split-export__hint">{exportBlockedReason}</p>
+        ) : null}
+        {styleGuideDownloadError ? (
+          <p className="genoma-split-export__hint genoma-split-export__hint--error">{styleGuideDownloadError}</p>
         ) : null}
       </div>
     </aside>
