@@ -99,9 +99,12 @@ export function GalleryBlock({
 
   const recalibrateButton =
     generated.length && onRecalibrateGallery ? (
-      <GenomaFoldderButton icon={RefreshCw} variant="muted" onClick={onRecalibrateGallery} disabled={isGeneratingGallery}>
-        {genomaLocaleEs.recalibrate}
-      </GenomaFoldderButton>
+      <div className="genoma-v2-recalibrate-wrap">
+        <GenomaFoldderButton icon={RefreshCw} variant="muted" onClick={onRecalibrateGallery} disabled={isGeneratingGallery}>
+          {genomaLocaleEs.recalibrate}
+        </GenomaFoldderButton>
+        <p className="genoma-v2-muted genoma-v2-recalibrate-hint">{genomaLocaleEs.recalibrateHint}</p>
+      </div>
     ) : null;
 
   const progressPct =
@@ -193,6 +196,7 @@ export function GalleryBlock({
                                     <button
                                       type="button"
                                       className={`genoma-v2-btn genoma-v2-btn--ghost${item.verdict === "up" ? " is-active" : ""}`}
+                                      aria-label={genomaLocaleEs.galleryVerdictUp}
                                       onClick={() => {
                                         if (!gallery) return;
                                         onAction(slotId, {
@@ -208,11 +212,13 @@ export function GalleryBlock({
                                         });
                                       }}
                                     >
-                                      ✓
+                                      <span aria-hidden>✓</span>
+                                      <span className="genoma-v2-gallery-verdict-label">{genomaLocaleEs.galleryVerdictUp}</span>
                                     </button>
                                     <button
                                       type="button"
                                       className={`genoma-v2-btn genoma-v2-btn--ghost${item.verdict === "down" ? " is-active" : ""}`}
+                                      aria-label={genomaLocaleEs.galleryVerdictDown}
                                       onClick={() => {
                                         if (!gallery) return;
                                         onAction(slotId, {
@@ -228,7 +234,8 @@ export function GalleryBlock({
                                         });
                                       }}
                                     >
-                                      ✗
+                                      <span aria-hidden>✗</span>
+                                      <span className="genoma-v2-gallery-verdict-label">{genomaLocaleEs.galleryVerdictDown}</span>
                                     </button>
                                   </div>
                                 </div>

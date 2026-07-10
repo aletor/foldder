@@ -20,7 +20,10 @@ export type GenomaSidebarPanelProps = {
   crawlProgress?: GenomaCrawlProgressState | null;
   crawlError?: string | null;
   canExport?: boolean;
+  exportBlockedReason?: string | null;
   onAnalyze: (url: string, enableLlm?: boolean) => void;
+  onRetryLastJob?: () => void;
+  canRetryLastJob?: boolean;
   onIngestFiles?: (files: File[], enableLlm?: boolean) => void;
   onExportTokens?: () => void;
   onExportCompiled?: () => void;
@@ -34,7 +37,10 @@ export function GenomaSidebarPanel({
   crawlProgress = null,
   crawlError = null,
   canExport = false,
+  exportBlockedReason = null,
   onAnalyze,
+  onRetryLastJob,
+  canRetryLastJob = false,
   onIngestFiles,
   onExportTokens,
   onExportCompiled,
@@ -97,7 +103,11 @@ export function GenomaSidebarPanel({
               aria-invalid={url.trim().length > 0 && !normalized.ok}
             />
             <GenomaFoldderButton type="submit" icon={Globe} disabled={!canAnalyze}>
-              {isAnalyzing ? "…" : hasSources ? genomaLocaleEs.addSource : genomaLocaleEs.analyze}
+              {isAnalyzing
+                ? genomaLocaleEs.analyzingButton
+                : hasSources
+                  ? genomaLocaleEs.addSource
+                  : genomaLocaleEs.analyze}
             </GenomaFoldderButton>
           </form>
 
@@ -160,10 +170,23 @@ export function GenomaSidebarPanel({
             />
             <span>síntesis ia</span>
           </label>
+          <p className="genoma-split-entry__hint">{genomaLocaleEs.synthesisIaHint}</p>
+          {!hasSources ? (
+            <p className="genoma-split-entry__hint">{genomaLocaleEs.crawlCostHint}</p>
+          ) : null}
         </section>
 
         {crawlProgress ? <GenomaCrawlProgress progress={crawlProgress} compact /> : null}
-        {crawlError ? <p className="genoma-studio-split__error">{crawlError}</p> : null}
+        {crawlError ? (
+          <div className="genoma-studio-split__error-wrap">
+            <p className="genoma-studio-split__error">{crawlError}</p>
+            {canRetryLastJob && onRetryLastJob ? (
+              <GenomaFoldderButton variant="muted" onClick={onRetryLastJob}>
+                {genomaLocaleEs.retryAnalysis}
+              </GenomaFoldderButton>
+            ) : null}
+          </div>
+        ) : null}
 
         {sourcesCount > 0 ? (
           <section className="genoma-split-sources" aria-label="Fuentes">
@@ -204,7 +227,7 @@ export function GenomaSidebarPanel({
                       title={
                         source.authoritative
                           ? genomaLocaleEs.unmarkAuthoritative
-                          : genomaLocaleEs.markAuthoritative
+                          : `${genomaLocaleEs.markAuthoritative} — ${genomaLocaleEs.authoritativeTooltip}`
                       }
                       onClick={() => onSetAuthoritativeSource(source.ref, !source.authoritative)}
                     >
@@ -220,13 +243,26 @@ export function GenomaSidebarPanel({
 
       <div className="genoma-studio-split__sidebar-footer">
         <div className="genoma-split-export">
-          <GenomaFoldderButton variant="muted" disabled={!canExport} onClick={onExportTokens} title={genomaLocaleEs.tokens}>
+          <GenomaFoldderButton
+            variant="muted"
+            disabled={!canExport}
+            onClick={onExportTokens}
+            title={canExport ? genomaLocaleEs.tokens : (exportBlockedReason ?? genomaLocaleEs.tokens)}
+          >
             {genomaLocaleEs.tokens.toLowerCase()}
           </GenomaFoldderButton>
-          <GenomaFoldderButton variant="muted" disabled={!canExport} onClick={onExportCompiled} title={genomaLocaleEs.compiled}>
+          <GenomaFoldderButton
+            variant="muted"
+            disabled={!canExport}
+            onClick={onExportCompiled}
+            title={canExport ? genomaLocaleEs.compiled : (exportBlockedReason ?? genomaLocaleEs.compiled)}
+          >
             {genomaLocaleEs.compiled.toLowerCase()}
           </GenomaFoldderButton>
         </div>
+        {!canExport && exportBlockedReason ? (
+          <p className="genoma-split-export__hint">{exportBlockedReason}</p>
+        ) : null}
       </div>
     </aside>
   );

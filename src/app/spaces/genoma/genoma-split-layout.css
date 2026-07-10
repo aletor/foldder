@@ -359,6 +359,20 @@
   line-height: 1.45;
   color: #8b2e24;
   background: rgba(180, 50, 40, 0.04);
+  margin: 0;
+}
+
+.genoma-studio-split__error-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.genoma-split-export__hint {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--genoma-split-muted, rgba(244, 241, 236, 0.45));
 }
 
 /* Empty main panel */

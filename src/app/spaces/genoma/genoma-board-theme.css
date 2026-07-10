@@ -2404,3 +2404,77 @@
   color: var(--genoma-v2-text);
 }
 
+.genoma-v2-header__checklist {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.genoma-v2-header__checklist-items {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.genoma-v2-header__checklist-link {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--genoma-v2-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--genoma-v2-accent) 12%, transparent);
+  color: var(--genoma-v2-text);
+  cursor: pointer;
+}
+
+.genoma-v2-header__checklist-link--conflict {
+  border-color: color-mix(in srgb, #c45c26 40%, transparent);
+  background: color-mix(in srgb, #c45c26 12%, transparent);
+}
+
+.genoma-v2-header__checklist-link:hover,
+.genoma-v2-header__checklist-link:focus-visible {
+  filter: brightness(1.08);
+}
+
+.genoma-v2-status-bar__pill--action {
+  cursor: pointer;
+  border: none;
+  font: inherit;
+}
+
+.genoma-v2-status-bar__pill--action:hover,
+.genoma-v2-status-bar__pill--action:focus-visible {
+  filter: brightness(1.06);
+}
+
+.genoma-v2-status-bar__hint {
+  width: 100%;
+  font-size: 10px;
+  color: var(--genoma-v2-muted);
+  margin: 2px 0 0;
+}
+
+.genoma-v2-gallery-verdict-label {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  margin-left: 2px;
+}
+
+.genoma-v2-recalibrate-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.genoma-v2-recalibrate-hint {
+  font-size: 10px;
+  max-width: 220px;
+}
+

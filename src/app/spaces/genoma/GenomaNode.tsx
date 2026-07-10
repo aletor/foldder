@@ -12,6 +12,7 @@ import {
   normalizeGenomaDocument,
 } from "@/lib/genoma/genoma-defaults";
 import type { GenomaDocument, GenomaNodeData, LogoValue } from "@/lib/genoma/genoma-types";
+import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { genomaNodeLogoWrapClass } from "@/lib/genoma/genoma-logo-plinth";
 import {
   FoldderNodeContentDock,
@@ -52,6 +53,13 @@ export const GenomaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const logoWrapClass = useMemo(() => genomaNodeLogoWrapClass(logoValue), [logoValue]);
   const swatches = extractPaletteSwatches(genoma);
   const sourcesCount = genoma.sources.length;
+
+  const nodeStatusLabel =
+    nodeData.status === "done"
+      ? genomaLocaleEs.nodeStatusDone
+      : nodeData.status === "empty" || isEmpty
+        ? genomaLocaleEs.nodeStatusEmpty
+        : genomaLocaleEs.nodeStatusPartial;
 
   const patchNodeData = useCallback(
     (patch: Partial<GenomaNodeData>) => {
@@ -176,7 +184,7 @@ export const GenomaNode = memo(({ id, data, selected }: NodeProps<any>) => {
                 </p>
                 <FoldderNodeContentMeta>
                   <FoldderNodeContentMetaRow label="Slots" value={`${completeness.resolved}/${completeness.total}`} />
-                  <FoldderNodeContentMetaRow label="Estado" value={nodeData.status ?? "partial"} />
+                  <FoldderNodeContentMetaRow label="Estado" value={nodeStatusLabel} />
                 </FoldderNodeContentMeta>
               </FoldderNodeContentDockMain>
               <FoldderNodeContentDockActions>

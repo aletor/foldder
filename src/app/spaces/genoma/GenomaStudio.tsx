@@ -8,6 +8,7 @@ import { applySlotAction } from "@/lib/genoma/genoma-slot-actions";
 import { enrichGenomaDocument } from "@/lib/genoma/genoma-enrich";
 import { validateGenomaContentQuality } from "@/lib/genoma/genoma-content-quality";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
+import { genomaExportBlockedReason } from "@/lib/genoma/genoma-board-status";
 import {
   computeGenomaCompleteness,
   extractBrandTitle,
@@ -80,6 +81,8 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const genomaRef = useRef(genoma);
   const galleryHydrateKeyRef = useRef("");
+  const lastCrawlJobRef = useRef<{ url: string; enableLlm: boolean } | null>(null);
+  const [lastCrawlJob, setLastCrawlJob] = useState<{ url: string; enableLlm: boolean } | null>(null);
   genomaRef.current = genoma;
 
   const pushToast = useCallback((toast: GenomaToast) => {
@@ -234,10 +237,18 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
 
   const handleAnalyze = useCallback(
     async (url: string, enableLlm = true) => {
+      lastCrawlJobRef.current = { url, enableLlm };
+      setLastCrawlJob({ url, enableLlm });
       await runStreamJob((onEvent) => streamGenomaCrawl(url, onEvent, { enableLlm }));
     },
     [runStreamJob],
   );
+
+  const handleRetryLastJob = useCallback(() => {
+    const job = lastCrawlJobRef.current ?? lastCrawlJob;
+    if (!job) return;
+    void handleAnalyze(job.url, job.enableLlm);
+  }, [handleAnalyze]);
 
   const handleIngestFiles = useCallback(
     async (files: File[], enableLlm = true) => {
@@ -340,6 +351,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const subtitle = crawlProgress?.message ?? (isAnalyzing ? "Analizando…" : undefined);
   const completeness = computeGenomaCompleteness(genoma);
   const canExport = completeness.percent >= 40 && Boolean(genoma.compiled);
+  const exportBlockedReason = genomaExportBlockedReason(genoma, completeness.percent);
   const showBoard = !isGenomaEmpty(genoma) || isAnalyzing;
 
   return (
@@ -372,7 +384,10 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
           crawlProgress={crawlProgress}
           crawlError={crawlError}
           canExport={canExport}
+          exportBlockedReason={exportBlockedReason}
           onAnalyze={(url, enableLlm) => void handleAnalyze(url, enableLlm)}
+          onRetryLastJob={handleRetryLastJob}
+          canRetryLastJob={Boolean(lastCrawlJob) && Boolean(crawlError)}
           onIngestFiles={(files, enableLlm) => void handleIngestFiles(files, enableLlm)}
           onExportTokens={handleExportTokens}
           onExportCompiled={handleExportCompiled}

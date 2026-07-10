@@ -221,6 +221,24 @@ export const genomaLocaleEs = {
   authoritativeSetDetail: (label: string) => `${label} tendrá más peso en futuros análisis`,
   authoritativeRemoved: "Prioridad de fuente quitada",
   logoUploadSuccess: "Logo subido — revisa el bloque",
+  logoUploadFastHint: "Análisis rápido sin síntesis IA — añade un manual para enriquecer voz y esencia.",
+  analyzingButton: "Analizando…",
+  synthesisIaHint:
+    "Genera esencia, voz y mundo visual con IA. Desactivar = más rápido, solo extracción de datos.",
+  crawlCostHint: "El análisis web no consume créditos de visión por archivo.",
+  retryAnalysis: "Reintentar",
+  exportNeedsCompleteness: (percent: number) =>
+    `Necesitas al menos 40% de ADN resuelto para exportar (ahora ${percent}%).`,
+  exportNeedsCompile: "Compilando ADN… vuelve a intentar en unos segundos.",
+  pendingChecklistTitle: "Pendiente de ti",
+  galleryVerdictUp: "Encaja",
+  galleryVerdictDown: "No encaja",
+  recalibrateHint: "Regenera imágenes con el estilo actualizado del ADN.",
+  authoritativeTooltip: "Esta fuente prevalece en futuros conflictos.",
+  nodeStatusEmpty: "Vacío",
+  nodeStatusPartial: "Parcial",
+  nodeStatusDone: "Listo",
+  voiceManualSummaryFallback: "Voz definida a partir de ejemplos del usuario.",
 } as const;
 
 export const confirmLabelForSlot: Partial<Record<SlotId, string>> = {

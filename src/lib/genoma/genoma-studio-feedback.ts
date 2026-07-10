@@ -91,5 +91,5 @@ export function buildAuthoritativeToast(doc: GenomaDocument, authoritative: bool
 }
 
 export function buildLogoUploadToast(): GenomaToast {
-  return createGenomaToast("success", genomaLocaleEs.logoUploadSuccess);
+  return createGenomaToast("success", genomaLocaleEs.logoUploadSuccess, genomaLocaleEs.logoUploadFastHint);
 }

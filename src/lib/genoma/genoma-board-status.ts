@@ -102,3 +102,37 @@ export function getSlotAttention(slot: SlotState<unknown>, activeSlotId?: SlotId
 export function slotLabel(slotId: SlotId): string {
   return GENOMA_SLOT_LABELS[slotId] ?? slotId;
 }
+
+export type GenomaBoardActionItem = {
+  slotId: SlotId;
+  kind: "conflict" | "candidates" | "pending";
+};
+
+/** Bloques que requieren decisión del usuario (conflicto, opciones o pendiente). */
+export function genomaBoardActionItems(doc: GenomaDocument): GenomaBoardActionItem[] {
+  const items: GenomaBoardActionItem[] = [];
+  for (const slotId of GENOMA_SLOT_IDS) {
+    const slot = doc.slots[slotId];
+    if (!slot) continue;
+    if (slot.reconciliation?.outcome === "contradiction" && slot.status === "candidates") {
+      items.push({ slotId, kind: "conflict" });
+    } else if (slot.status === "candidates") {
+      items.push({ slotId, kind: "candidates" });
+    } else if (slot.status === "pending" || slot.status === "needs_user") {
+      items.push({ slotId, kind: "pending" });
+    }
+  }
+  return items;
+}
+
+/** Mensaje cuando export JSON está deshabilitado; null si ya se puede exportar. */
+export function genomaExportBlockedReason(
+  doc: GenomaDocument,
+  completenessPercent: number,
+): string | null {
+  if (completenessPercent >= 40 && doc.compiled) return null;
+  if (completenessPercent < 40) {
+    return genomaLocaleEs.exportNeedsCompleteness(completenessPercent);
+  }
+  return genomaLocaleEs.exportNeedsCompile;
+}

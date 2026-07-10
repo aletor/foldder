@@ -124,11 +124,18 @@ export function VoiceBlock({
     primaryAction = (
       <GenomaFoldderButton
         icon={Save}
-        onClick={() =>
+        onClick={() => {
+          const trimmed = draft.trim();
+          const summary =
+            trimmed.length > 0
+              ? trimmed.length > 200
+                ? `${trimmed.slice(0, 197)}…`
+                : trimmed
+              : genomaLocaleEs.voiceManualSummaryFallback;
           onAction(slotId, {
             action: "set",
             value: {
-              summary: "Voz definida manualmente a partir de ejemplos del usuario.",
+              summary,
               descriptors: ["directo", "cercano", "claro"],
               rules: ["Usar frases cortas", "Mantener tono conversacional", "Evitar jerga vacía"],
               avoid: [],
@@ -138,8 +145,8 @@ export function VoiceBlock({
                 .slice(0, 3)
                 .map((quote) => ({ quote })),
             } satisfies VoiceValue,
-          })
-        }
+          });
+        }}
       >
         Guardar voz
       </GenomaFoldderButton>
