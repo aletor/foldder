@@ -113,9 +113,24 @@
   font-size: clamp(48px, 8vw, 96px);
   font-weight: 500;
   line-height: 1;
-  opacity: 0.04;
   pointer-events: none;
   user-select: none;
+}
+
+.genoma-mosaic-cell--surface-primary .genoma-mosaic-cell__ghost {
+  opacity: 0.08;
+}
+
+.genoma-mosaic-cell--surface-raised .genoma-mosaic-cell__ghost,
+.genoma-mosaic-cell--surface-page .genoma-mosaic-cell__ghost,
+.genoma-mosaic-cell--surface-accent .genoma-mosaic-cell__ghost {
+  opacity: 0.05;
+}
+
+.genoma-mosaic-cell--ghost-vacant .genoma-mosaic-cell__ghost {
+  top: auto;
+  bottom: var(--mosaic-pad);
+  right: var(--mosaic-pad);
 }
 
 .genoma-mosaic-cell__content {
@@ -138,6 +153,12 @@
 .genoma-mosaic-cell--surface-primary .genoma-mosaic-cell__status {
   color: var(--brand-on-primary, #fff);
   opacity: 0.92;
+}
+
+.genoma-mosaic-cell--surface-primary .genoma-v2-chapter-micro,
+.genoma-mosaic-cell--surface-primary .genoma-type-column__meta {
+  color: var(--brand-on-primary, #fff);
+  opacity: 0.88;
 }
 
 .genoma-mosaic-cell--surface-raised {
@@ -378,10 +399,8 @@
   margin: 0;
   padding: 0;
   max-width: 14ch;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  overflow: visible;
+  white-space: normal;
 }
 
 .genoma-v2-cover--mosaic .genoma-v2-cover__headline {
@@ -406,7 +425,11 @@
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  opacity: 0.55;
+  color: var(--brand-ink-soft, #666);
+}
+
+.genoma-mosaic-cell--surface-primary .genoma-v2-cover--mosaic .genoma-v2-cover__meta {
+  color: color-mix(in srgb, var(--brand-on-primary, #fff) 72%, transparent);
 }
 
 .genoma-mosaic-cell--surface-primary .genoma-v2-cover__foot,
@@ -567,7 +590,13 @@
 .genoma-mosaic-cell--palette .genoma-palette-card__line {
   font-size: 11px;
   line-height: 1.4;
-  opacity: 0.88;
+  color: var(--brand-ink-soft, #666);
+  opacity: 1;
+}
+
+.genoma-mosaic-cell--typography .genoma-type-estimated-note {
+  color: var(--brand-ink-soft, #666);
+  opacity: 1;
 }
 
 .genoma-mosaic-cell--palette .genoma-palette-proportions {
@@ -598,6 +627,7 @@
   gap: var(--mosaic-label-gap);
   min-height: auto;
   overflow: visible;
+  position: relative;
 }
 
 .genoma-type-mosaic-primary {
@@ -614,12 +644,24 @@
   line-height: 1.08 !important;
   letter-spacing: -0.02em;
   margin: 0;
-  overflow: hidden;
+  overflow: visible;
   text-wrap: balance;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   max-width: 100%;
+  white-space: normal;
+}
+
+.genoma-type-specimen--mosaic-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  left: 0;
+  top: 0;
+  z-index: -1;
 }
 
 .genoma-mosaic-cell--typography .genoma-type-specimen--headline,
@@ -658,9 +700,24 @@
 }
 
 /* ── Voice ── */
+/* ── Voice (P3: contenido arriba, fantasma en zona vacía) ── */
+.genoma-mosaic-cell--voice {
+  align-self: start;
+  height: auto;
+}
+
+.genoma-mosaic-cell--voice .genoma-mosaic-cell__content,
+.genoma-mosaic-cell--voice .genoma-v2-block--mosaic {
+  flex: 0 1 auto;
+  height: auto;
+}
+
 .genoma-mosaic-cell--voice .genoma-v2-block--mosaic .genoma-v2-block__body {
   color: var(--brand-on-primary, #fff);
   gap: var(--mosaic-label-gap);
+  justify-content: flex-start;
+  flex: 0 1 auto;
+  height: auto;
 }
 
 .genoma-mosaic-cell--voice .genoma-v2-prose,
@@ -819,114 +876,125 @@
   pointer-events: auto;
 }
 
-/* ── Showcase (F3) ── */
-.genoma-mosaic-cell--showcase .genoma-mosaic-cell__content {
-  flex: 0 1 auto;
-  padding: 0;
-  height: auto;
+/* ── Banda 08 (P1: fuera del grid, altura = contenido) ── */
+.genoma-v2-mosaic-banda-08-wrap {
+  padding: 0 var(--mosaic-board-pad-x) var(--mosaic-board-pad-x);
+  margin-top: var(--mosaic-gap);
 }
 
-.genoma-showcase--mosaic {
-  --mockup-scale: min(1, calc((100% - 96px) / 1125));
-  --mockup-card-h: calc(220px * var(--mockup-scale));
-  --mockup-post-h: calc(340px * var(--mockup-scale));
-  --mockup-mobile-h: calc(400px * var(--mockup-scale));
-  --mockup-card-w: calc(var(--mockup-card-h) * 1.75);
-  --mockup-mobile-w: calc(var(--mockup-mobile-h) * 0.46);
-  position: relative;
-  box-sizing: border-box;
-  padding: calc(var(--mosaic-pad) + var(--mosaic-chapter-clearance)) var(--mosaic-pad) var(--mosaic-pad);
-  height: auto;
-  min-height: unset;
+.banda-08 {
   display: block;
-  flex: 0 1 auto;
-}
-
-.genoma-showcase--mosaic__toolbar {
-  position: absolute;
-  top: var(--mosaic-pad);
-  right: var(--mosaic-pad);
-  z-index: 4;
-}
-
-.genoma-showcase--mosaic .genoma-showcase-surface-toggle {
-  margin: 0;
-}
-
-.genoma-showcase--mosaic .genoma-showcase__grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 48px;
-  align-items: end;
-  padding: 0;
-  margin-top: 24px;
   width: 100%;
+  box-sizing: border-box;
+  background: var(--brand-surface-raised, #fff);
+  color: var(--brand-ink, #1a1a1a);
 }
 
-.genoma-showcase--mosaic .genoma-showcase__item {
+.banda-08__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 40px 40px 0;
+  gap: 16px;
+}
+
+.banda-08__rotulo {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  color: var(--brand-ink-soft, #666);
+}
+
+.banda-08__mockups {
+  display: flex;
+  gap: 48px;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 40px;
+  flex-wrap: wrap;
+}
+
+.banda-08__figure {
+  flex: 0 1 auto;
   margin: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  gap: 16px;
-  min-width: 0;
 }
 
-.genoma-showcase--mosaic .genoma-showcase-card--back {
+.banda-08__mockup {
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.banda-08__mockup--card {
+  height: 240px;
+  width: calc(240px * 1.75);
+  max-width: 100%;
+}
+
+.banda-08__mockup--card .genoma-showcase-card-stack {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: unset;
+}
+
+.banda-08__mockup--post {
+  height: 360px;
+  width: 360px;
+  max-width: 100%;
+}
+
+.banda-08__mockup--post .genoma-showcase-post {
+  width: 100%;
+  height: 100%;
+}
+
+.banda-08__mockup--post .genoma-showcase-post__canvas {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: unset;
+}
+
+.banda-08__mockup--mobile {
+  height: 420px;
+  width: calc(420px * 0.46);
+  max-width: 100%;
+}
+
+.banda-08__mockup--mobile .genoma-showcase-mobile {
+  width: 100%;
+  height: 100%;
+}
+
+.banda-08__mockup--mobile .genoma-showcase-mobile__frame {
+  width: 100%;
+  height: 100%;
+}
+
+.banda-08__caption {
+  margin: 16px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--brand-ink-soft, #666);
+}
+
+.banda-08 .genoma-showcase-card--back {
   display: none;
 }
 
-.genoma-showcase--mosaic .genoma-showcase-card--front {
+.banda-08 .genoma-showcase-card--front {
   position: relative;
   inset: auto;
   width: 100%;
   height: 100%;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-}
-
-.genoma-showcase--mosaic .genoma-showcase-card-stack {
-  width: var(--mockup-card-w);
-  height: var(--mockup-card-h);
-  max-width: 100%;
-  aspect-ratio: unset;
-  flex-shrink: 0;
-}
-
-.genoma-showcase--mosaic .genoma-showcase-post {
-  width: var(--mockup-post-h);
-  height: var(--mockup-post-h);
-  max-width: 100%;
-  flex-shrink: 0;
-}
-
-.genoma-showcase--mosaic .genoma-showcase-post__canvas {
-  width: 100%;
-  height: 100%;
-  aspect-ratio: unset;
-}
-
-.genoma-showcase--mosaic .genoma-showcase-mobile {
-  width: var(--mockup-mobile-w);
-  height: var(--mockup-mobile-h);
-  max-width: 100%;
-  flex-shrink: 0;
-}
-
-.genoma-showcase--mosaic .genoma-showcase-mobile__frame {
-  width: 100%;
-  height: 100%;
-}
-
-.genoma-showcase--mosaic .genoma-v2-chapter-micro {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  opacity: 0.55;
-  min-height: 16px;
-  line-height: 1.2;
-  text-align: center;
-  width: 100%;
 }
 
 /* ── Detail sheet ── */
@@ -1058,8 +1126,9 @@
     flex-direction: column;
   }
 
-  .genoma-showcase--mosaic .genoma-showcase__grid {
-    grid-template-columns: 1fr;
+  .banda-08__mockups {
+    flex-direction: column;
+    align-items: center;
     gap: 32px;
   }
 

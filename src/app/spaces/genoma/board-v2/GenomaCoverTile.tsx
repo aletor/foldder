@@ -29,6 +29,15 @@ function formatCoverDate(iso?: string): string {
   }
 }
 
+function mosaicCoverBrandName(name: string): string {
+  if (name.length > 24) {
+    // TODO(brandname-fix): heurística temporal — solo primera palabra en portada
+    const firstWord = name.split(/\s+/).find(Boolean);
+    return firstWord ?? name;
+  }
+  return name;
+}
+
 export function GenomaCoverTile({
   doc,
   presentationMode = false,
@@ -76,7 +85,9 @@ export function GenomaCoverTile({
           <GenomaClickableImage src={logo.previewUrl} fit="logo" eager alt="" />
         </div>
       ) : null}
-      {brandName ? <h1 className="genoma-v2-cover__brand">{brandName}</h1> : null}
+      {brandName ? (
+        <h1 className="genoma-v2-cover__brand">{mosaic ? mosaicCoverBrandName(brandName) : brandName}</h1>
+      ) : null}
       {headline ? <p className="genoma-v2-cover__headline">{headline}</p> : null}
     </>
   );

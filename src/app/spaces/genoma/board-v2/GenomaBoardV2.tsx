@@ -14,8 +14,8 @@ import { GenomaReviewPrompt } from "./GenomaReviewPrompt";
 import { GenomaReviewQueueBar } from "./GenomaReviewQueueBar";
 import { useGenomaReviewMode, type GenomaReviewModeStats } from "./use-genoma-review-mode";
 import { GenomaCoverTile } from "./GenomaCoverTile";
-import { GenomaShowcaseBlock } from "./GenomaShowcaseBlock";
-import { shouldRenderGenomaShowcase, GENOMA_SHOWCASE_CHAPTER_LABEL } from "./showcase/genoma-showcase-data";
+import { GenomaBanda08 } from "./GenomaBanda08";
+import { shouldRenderGenomaShowcase } from "./showcase/genoma-showcase-data";
 import { LogoBlock } from "./blocks/LogoBlock";
 import { PaletteBlock } from "./blocks/PaletteBlock";
 import { TypographyBlock } from "./blocks/TypographyBlock";
@@ -36,15 +36,12 @@ import "./genoma-showcase.css";
 import "./genoma-confidence.css";
 import "./genoma-board-mosaic.css";
 
-function resolveTypographySpecimen(doc: GenomaDocument, presentationMode: boolean): string {
+function mosaicHeadlineCandidate(doc: GenomaDocument, presentationMode: boolean): string | undefined {
   const essenceSlot = doc.slots.essence;
   const canUseEssence = !presentationMode || essenceSlot.locked;
-  if (canUseEssence) {
-    const essence = essenceSlot.value as EssenceValue | undefined;
-    const headline = essence?.headline?.trim();
-    if (headline) return headline;
-  }
-  return doc.brandName?.value?.trim() || genomaLocaleEs.typeSpecimenPhrase;
+  if (!canUseEssence) return undefined;
+  const essence = essenceSlot.value as EssenceValue | undefined;
+  return essence?.headline?.trim() || undefined;
 }
 
 type GenomaBoardV2Props = {
@@ -113,10 +110,11 @@ export function GenomaBoardV2({
     handleReviewComplete,
   );
   const typography = slots.typography?.value as TypographyValue | undefined;
-  const specimenText = useMemo(
-    () => resolveTypographySpecimen(doc, presentationMode),
+  const mosaicHeadline = useMemo(
+    () => mosaicHeadlineCandidate(doc, presentationMode),
     [doc, presentationMode],
   );
+  const mosaicBrandName = doc.brandName?.value?.trim();
   const showShowcase = useMemo(
     () => shouldRenderGenomaShowcase(doc, presentationMode),
     [doc, presentationMode],
@@ -180,7 +178,7 @@ export function GenomaBoardV2({
              * C  palette      12 × auto
              * D  typography    7 × auto  |  voice          5 × auto
              * E  visual        5 × auto  |  gallery        7 × auto  (visual align-self:start)
-             * F  showcase     12 × auto  (condicional)
+             * 08 banda-08: hermana posterior al mosaico (fuera del grid)
              */}
             <div className="genoma-v2-mosaic-bands">
               <div className="genoma-v2-mosaic-band genoma-v2-mosaic-band--a">
@@ -288,7 +286,8 @@ export function GenomaBoardV2({
                     onAction={onAction}
                     activeSlotId={activeSlotId}
                     motion={motionBySlot.typography}
-                    specimenText={specimenText}
+                    mosaicHeadline={mosaicHeadline}
+                    mosaicBrandName={mosaicBrandName}
                   />
                 </GenomaMosaicCell>
 
@@ -297,6 +296,8 @@ export function GenomaBoardV2({
                   mosaicKey="voice"
                   surface="primary"
                   colSpan={5}
+                  alignSelf="start"
+                  ghostVacant
                   slot={slots.voice}
                   motion={motionBySlot.voice}
                   onTileEnterEnd={onTileEnterEnd}
@@ -320,6 +321,7 @@ export function GenomaBoardV2({
                   surface="accent"
                   colSpan={5}
                   alignSelf="start"
+                  ghostVacant
                   slot={slots.visualWorld}
                   motion={motionBySlot.visualWorld}
                   onTileEnterEnd={onTileEnterEnd}
@@ -364,28 +366,18 @@ export function GenomaBoardV2({
                   />
                 </GenomaMosaicCell>
               </div>
-
-              {showShowcase ? (
-                <div className="genoma-v2-mosaic-band genoma-v2-mosaic-band--f">
-                  <GenomaMosaicCell
-                    mosaicKey="showcase"
-                    surface="raised"
-                    colSpan={12}
-                    chapterLabel={GENOMA_SHOWCASE_CHAPTER_LABEL}
-                    ghostNumeral="08"
-                    showStatus={false}
-                    attentionClass={ancillaryReviewClass}
-                  >
-                    <GenomaShowcaseBlock
-                      doc={doc}
-                      presentationMode={presentationMode}
-                      brandPolarity={brandTheme.polarity}
-                      brandVars={brandTheme.vars}
-                    />
-                  </GenomaMosaicCell>
-                </div>
-              ) : null}
             </div>
+
+            {showShowcase ? (
+              <div className="genoma-v2-mosaic-banda-08-wrap">
+                <GenomaBanda08
+                  doc={doc}
+                  presentationMode={presentationMode}
+                  brandPolarity={brandTheme.polarity}
+                  brandVars={brandTheme.vars}
+                />
+              </div>
+            ) : null}
 
             {reviewMode && queue.length > 0 ? (
               <GenomaReviewQueueBar index={index} total={queue.length} onSkip={skip} onExit={exit} />

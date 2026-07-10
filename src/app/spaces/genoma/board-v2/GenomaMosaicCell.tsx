@@ -36,6 +36,7 @@ export function GenomaMosaicCell({
   ghostNumeral,
   colSpan = 12,
   alignSelf,
+  ghostVacant = false,
   children,
 }: {
   slotId?: SlotId;
@@ -52,6 +53,7 @@ export function GenomaMosaicCell({
   ghostNumeral?: string;
   colSpan?: number;
   alignSelf?: "start" | "stretch";
+  ghostVacant?: boolean;
   children: React.ReactNode;
 }) {
   const chapter = chapterLabel ?? (slotId ? boardChapterLabel(slotId) : null);
@@ -62,7 +64,7 @@ export function GenomaMosaicCell({
 
   return (
     <section
-      className={`genoma-mosaic-cell genoma-mosaic-cell--${mosaicKey} genoma-mosaic-cell--surface-${surface}${alignSelf === "start" ? " genoma-mosaic-cell--align-start" : ""}${attentionClass}${motion ? tileMotionClass(motion) : ""}`}
+      className={`genoma-mosaic-cell genoma-mosaic-cell--${mosaicKey} genoma-mosaic-cell--surface-${surface}${alignSelf === "start" ? " genoma-mosaic-cell--align-start" : ""}${ghostVacant ? " genoma-mosaic-cell--ghost-vacant" : ""}${attentionClass}${motion ? tileMotionClass(motion) : ""}`}
       data-genoma-slot={slotId}
       data-mosaic-key={mosaicKey}
       data-col-span={colSpan}

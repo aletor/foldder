@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { SlotAction, SlotId, SlotState, TypographyValue } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { DnaBlock } from "../DnaBlock";
@@ -16,7 +16,9 @@ import {
 } from "../genoma-block-motion";
 import { normalizeFontDisplayName } from "@/lib/genoma/normalize-font-display-name";
 import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
+import { useGenomaMosaicBoard } from "../genoma-mosaic-context";
 import { useGenomaMosaicCellOptional } from "../genoma-mosaic-context";
+import { useMosaicSpecimenCascade } from "../use-mosaic-specimen-cascade";
 
 type TypographyFamily = TypographyValue["families"][number];
 
@@ -54,22 +56,47 @@ function roleLabel(role: TypographyFamily["role"]): string {
 
 const WEIGHT_SAMPLE = "AaBbCc 0123";
 
+function TypographyWeightLadder({
+  family,
+  sample = WEIGHT_SAMPLE,
+}: {
+  family: TypographyFamily;
+  sample?: string;
+}) {
+  const stack = fontStack(family);
+  const weights = [...family.weights].sort((a, b) => a - b);
+
+  return (
+    <div className="genoma-type-weight-ladder genoma-type-weight-ladder--body">
+      {weights.map((weight) => (
+        <div key={weight} className="genoma-type-weight-step">
+          <span className="genoma-v2-chapter-micro">{weight}</span>
+          <p className="genoma-type-weight-step__sample" style={{ fontFamily: stack, fontWeight: weight }}>
+            {sample}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TypographyComparisonColumn({
   family,
   label,
-  specimenText,
   slot,
   slotId,
   onAction,
   onCorrect,
+  mosaicCompact = false,
 }: {
   family: TypographyFamily;
   label: string;
-  specimenText: string;
+  specimenText?: string;
   slot?: SlotState<unknown>;
   slotId?: SlotId;
   onAction?: (slotId: SlotId, action: SlotAction) => void;
   onCorrect?: () => void;
+  mosaicCompact?: boolean;
 }) {
   const stack = fontStack(family);
   const estimated = isEstimatedCustomFamily(family);
@@ -105,16 +132,7 @@ function TypographyComparisonColumn({
         <span>{ALPHABET_LINE}</span>
         <span>{NUMERIC_LINE}</span>
       </div>
-      <div className="genoma-type-weight-ladder genoma-type-weight-ladder--body">
-        {weights.map((weight) => (
-          <div key={weight} className="genoma-type-weight-step">
-            <span className="genoma-v2-chapter-micro">{weight}</span>
-            <p className="genoma-type-weight-step__sample" style={{ fontFamily: stack, fontWeight: weight }}>
-              {WEIGHT_SAMPLE}
-            </p>
-          </div>
-        ))}
-      </div>
+      {!mosaicCompact ? <TypographyWeightLadder family={family} /> : null}
     </div>
   );
 }
@@ -191,28 +209,76 @@ function TypographyColumn({
 
 function TypographyMosaicLayout({
   families,
-  specimenText,
+  mosaicHeadline,
+  mosaicBrandName,
   slot,
   slotId,
   onAction,
   onCorrect,
 }: {
   families: TypographyFamily[];
-  specimenText: string;
+  mosaicHeadline?: string;
+  mosaicBrandName?: string;
   slot?: SlotState<unknown>;
   slotId?: SlotId;
   onAction?: (slotId: SlotId, action: SlotAction) => void;
   onCorrect?: () => void;
 }) {
+  const mosaicCell = useGenomaMosaicCellOptional();
+  const mosaicBoard = useGenomaMosaicBoard();
+  const stripRef = useRef<HTMLDivElement>(null);
   const { primary, secondary } = pickPrimarySecondary(families);
   if (!primary) return null;
 
   const primaryStack = fontStack(primary);
   const estimated = isEstimatedCustomFamily(primary);
   const weights = [...primary.weights].sort((a, b) => a - b);
+  const { specimen, measureNode } = useMosaicSpecimenCascade({
+    headline: mosaicHeadline,
+    brandName: mosaicBrandName,
+    fontFamily: primaryStack,
+    containerRef: stripRef,
+  });
+
+  const weightDetail = useMemo(() => {
+    const blocks: React.ReactNode[] = [
+      <section key={primary.family}>
+        <h4 className="genoma-v2-chapter-micro">{typographyDisplayName(primary)}</h4>
+        <TypographyWeightLadder family={primary} />
+      </section>,
+    ];
+    if (secondary && secondary.family !== primary.family) {
+      blocks.push(
+        <section key={secondary.family}>
+          <h4 className="genoma-v2-chapter-micro">{typographyDisplayName(secondary)}</h4>
+          <TypographyWeightLadder family={secondary} />
+        </section>,
+      );
+    }
+    return <div className="genoma-mosaic-detail-panels">{blocks}</div>;
+  }, [primary, secondary]);
+
+  const detailAction = useMemo(
+    () => (
+      <GenomaFoldderButton
+        variant="muted"
+        onClick={() => mosaicBoard?.openDetailSheet({ title: "Pesos tipográficos", content: weightDetail })}
+      >
+        Detalle
+      </GenomaFoldderButton>
+    ),
+    [mosaicBoard, weightDetail],
+  );
+
+  useEffect(() => {
+    if (!mosaicCell) return;
+    mosaicCell.setActionSlot("typography-weights", detailAction);
+    return () => mosaicCell.setActionSlot("typography-weights", null);
+  }, [detailAction, mosaicCell]);
 
   return (
-    <div className="genoma-type-strip genoma-type-strip--mosaic">
+    <div ref={stripRef} className="genoma-type-strip genoma-type-strip--mosaic">
+      {measureNode}
       <div className="genoma-type-mosaic-primary">
         <div className="genoma-type-column__head">
           <span className="genoma-type-column__label">{roleLabel(primary.role)}</span>
@@ -242,18 +308,22 @@ function TypographyMosaicLayout({
           className="genoma-type-specimen--mosaic-display"
           style={{ fontFamily: primaryStack }}
         >
-          {specimenText}
+          {specimen}
         </p>
+        <div className="genoma-type-alphabet genoma-type-alphabet--body" style={{ fontFamily: primaryStack }} aria-hidden>
+          <span>{ALPHABET_LINE}</span>
+          <span>{NUMERIC_LINE}</span>
+        </div>
       </div>
       {secondary && secondary.family !== primary.family ? (
         <TypographyComparisonColumn
           family={secondary}
           label={genomaLocaleEs.typeSecondary}
-          specimenText={specimenText}
           slot={slot}
           slotId={slotId}
           onAction={onAction}
           onCorrect={onCorrect}
+          mosaicCompact
         />
       ) : null}
     </div>
@@ -263,6 +333,8 @@ function TypographyMosaicLayout({
 function TypographyStrip({
   families,
   specimenText,
+  mosaicHeadline,
+  mosaicBrandName,
   slot,
   slotId,
   onAction,
@@ -270,6 +342,8 @@ function TypographyStrip({
 }: {
   families: TypographyFamily[];
   specimenText: string;
+  mosaicHeadline?: string;
+  mosaicBrandName?: string;
   slot?: SlotState<unknown>;
   slotId?: SlotId;
   onAction?: (slotId: SlotId, action: SlotAction) => void;
@@ -283,7 +357,8 @@ function TypographyStrip({
     return (
       <TypographyMosaicLayout
         families={families}
-        specimenText={specimenText}
+        mosaicHeadline={mosaicHeadline}
+        mosaicBrandName={mosaicBrandName}
         slot={slot}
         slotId={slotId}
         onAction={onAction}
@@ -331,12 +406,16 @@ export function TypographyBlock({
   activeSlotId,
   motion,
   specimenText = genomaLocaleEs.typeSpecimenPhrase,
+  mosaicHeadline,
+  mosaicBrandName,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   activeSlotId?: SlotId;
   specimenText?: string;
+  mosaicHeadline?: string;
+  mosaicBrandName?: string;
 } & GenomaBlockMotionProps) {
   const typography = slot.value as TypographyValue | undefined;
   const [editing, setEditing] = useState(false);
@@ -427,6 +506,8 @@ export function TypographyBlock({
       <TypographyStrip
         families={typography.families}
         specimenText={specimenText}
+        mosaicHeadline={mosaicHeadline}
+        mosaicBrandName={mosaicBrandName}
         slot={slot}
         slotId={slotId}
         onAction={onAction}
