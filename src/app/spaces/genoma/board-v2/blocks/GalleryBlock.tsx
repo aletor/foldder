@@ -21,6 +21,12 @@ import { GenomaClickableImage } from "../GenomaClickableImage";
 import { GenomaVisualRankMeta } from "../GenomaVisualRankMeta";
 import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { RefreshCw, Sparkles } from "lucide-react";
+import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import {
+  shouldShowAnalyzingSkeleton,
+  shouldShowLegacyPendingSkeleton,
+  type GenomaBlockMotionProps,
+} from "../genoma-block-motion";
 
 type GalleryTab = "harvested" | "generated";
 
@@ -36,6 +42,7 @@ export function GalleryBlock({
   focusGeneratedTab,
   gallerySuccessMessage,
   activeSlotId,
+  motion,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
@@ -48,7 +55,7 @@ export function GalleryBlock({
   focusGeneratedTab?: number;
   gallerySuccessMessage?: string | null;
   activeSlotId?: SlotId;
-}) {
+} & GenomaBlockMotionProps) {
   const gallery = slot.value as GalleryValue | undefined;
   const harvested = gallery?.harvested ?? [];
   const rankedHarvested = useMemo(
@@ -126,7 +133,9 @@ export function GalleryBlock({
     </>
   );
 
-  if (slot.status === "pending") {
+  if (shouldShowAnalyzingSkeleton(motion)) {
+    body = <GenomaBlockSkeleton variant="gallery" />;
+  } else if (shouldShowLegacyPendingSkeleton(motion, slot.status)) {
     body = <div className="genoma-v2-skeleton genoma-v2-skeleton--wide" aria-hidden />;
   } else {
     body = (
@@ -285,12 +294,13 @@ export function GalleryBlock({
               </label>
             ) : null}
             {displayedHarvested.length ? (
-              displayedHarvested.map((item) => {
+              displayedHarvested.map((item, index) => {
                 const previewSrc = galleryItemSourceUrl(item);
                 return (
                 <div
                   key={item.assetId}
                   className={`genoma-v2-gallery-item-wrap${item.included ? "" : " is-excluded"}`}
+                  style={{ ["--genoma-stagger-i" as string]: index }}
                 >
                   {previewSrc ? (
                     <div className="genoma-v2-gallery-thumb">

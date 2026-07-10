@@ -7,6 +7,12 @@ import { formatCmyk, formatRgb, hexToRgb, readableTextOn, rgbToCmyk } from "../.
 import { DnaBlock } from "../DnaBlock";
 import { GenomaFoldderButton } from "../GenomaFoldderButton";
 import { Droplet } from "lucide-react";
+import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import {
+  shouldShowAnalyzingSkeleton,
+  shouldShowLegacyPendingSkeleton,
+  type GenomaBlockMotionProps,
+} from "../genoma-block-motion";
 
 const ROLE_LABELS: Record<PaletteValue["colors"][number]["role"], string> = {
   primary: "Principal",
@@ -29,6 +35,7 @@ function PaletteColorCard({
   interactive = true,
   onPickPrimary,
   onColorChange,
+  staggerIndex,
 }: {
   hex: string;
   role: string;
@@ -36,17 +43,39 @@ function PaletteColorCard({
   interactive?: boolean;
   onPickPrimary?: () => void;
   onColorChange?: (nextHex: string) => void;
+  staggerIndex?: number;
 }) {
   const normalized = normalizeHex(hex);
   const pickerValue = normalized.toLowerCase();
   const rgb = hexToRgb(normalized);
   const cmyk = rgb ? rgbToCmyk(rgb) : null;
   const textColor = readableTextOn(normalized);
+  const pickable = interactive && Boolean(onPickPrimary);
+  const bodyClassName = "genoma-palette-card__body";
+  const bodyContent = (
+    <>
+      {featured ? <span className="genoma-palette-card__badge">Principal</span> : null}
+      <span className="genoma-palette-card__role">{role}</span>
+      <span className="genoma-palette-card__hex">{normalized}</span>
+      <span className="genoma-palette-card__line">
+        <span className="genoma-palette-card__tag">rgb</span>
+        {rgb ? formatRgb(rgb) : "—"}
+      </span>
+      <span className="genoma-palette-card__line">
+        <span className="genoma-palette-card__tag">cmyk</span>
+        {cmyk ? formatCmyk(cmyk) : "—"}
+      </span>
+    </>
+  );
 
   return (
     <div
       className={`genoma-palette-card${featured ? " genoma-palette-card--primary" : ""}${interactive ? "" : " genoma-palette-card--static"}`}
-      style={{ backgroundColor: normalized, color: textColor }}
+      style={{
+        backgroundColor: normalized,
+        color: textColor,
+        ...(staggerIndex !== undefined ? { ["--genoma-stagger-i" as string]: staggerIndex } : {}),
+      }}
     >
       {interactive && onColorChange ? (
         <label className="genoma-palette-card__picker" title="Cambiar color">
@@ -60,24 +89,13 @@ function PaletteColorCard({
         </label>
       ) : null}
 
-      <button
-        type="button"
-        className="genoma-palette-card__body"
-        onClick={onPickPrimary}
-        disabled={!onPickPrimary}
-      >
-        {featured ? <span className="genoma-palette-card__badge">Principal</span> : null}
-        <span className="genoma-palette-card__role">{role}</span>
-        <span className="genoma-palette-card__hex">{normalized}</span>
-        <span className="genoma-palette-card__line">
-          <span className="genoma-palette-card__tag">rgb</span>
-          {rgb ? formatRgb(rgb) : "—"}
-        </span>
-        <span className="genoma-palette-card__line">
-          <span className="genoma-palette-card__tag">cmyk</span>
-          {cmyk ? formatCmyk(cmyk) : "—"}
-        </span>
-      </button>
+      {pickable ? (
+        <button type="button" className={bodyClassName} onClick={onPickPrimary}>
+          {bodyContent}
+        </button>
+      ) : (
+        <div className={bodyClassName}>{bodyContent}</div>
+      )}
     </div>
   );
 }
@@ -97,13 +115,14 @@ function PaletteStrip({
 
   return (
     <div className="genoma-palette-strip">
-      {colors.map((color) => (
+      {colors.map((color, index) => (
         <PaletteColorCard
           key={`${color.role}-${color.hex}`}
           hex={color.hex}
           role={ROLE_LABELS[color.role] ?? color.role}
           featured={color.role === "primary"}
           interactive={interactive}
+          staggerIndex={index}
           onPickPrimary={onPickPrimary ? () => onPickPrimary(color.hex) : undefined}
           onColorChange={onColorChange ? (next) => onColorChange(color.hex, next) : undefined}
         />
@@ -117,12 +136,13 @@ export function PaletteBlock({
   slotId,
   onAction,
   activeSlotId,
+  motion,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   activeSlotId?: SlotId;
-}) {
+} & GenomaBlockMotionProps) {
   const palette = slot.value as PaletteValue | undefined;
   let body: React.ReactNode;
   let primaryAction: React.ReactNode;
@@ -150,7 +170,9 @@ export function PaletteBlock({
     });
   };
 
-  if (slot.status === "pending") {
+  if (shouldShowAnalyzingSkeleton(motion)) {
+    body = <GenomaBlockSkeleton variant="palette" />;
+  } else if (shouldShowLegacyPendingSkeleton(motion, slot.status)) {
     body = <div className="genoma-v2-skeleton genoma-v2-skeleton--wide" aria-hidden />;
   } else if (slot.status === "candidates") {
     body = (

@@ -18,6 +18,12 @@ import { GenomaLogoBboxEditor } from "../GenomaLogoBboxEditor";
 import { GenomaLogoPlinthToggle } from "../GenomaLogoPlinthToggle";
 import { GenomaLogoDetectionEmpty } from "../GenomaLogoDetectionEmpty";
 import { Check, Crop, Upload } from "lucide-react";
+import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import {
+  shouldShowAnalyzingSkeleton,
+  shouldShowLegacyPendingSkeleton,
+  type GenomaBlockMotionProps,
+} from "../genoma-block-motion";
 
 function canAdjustLogo(logo?: LogoValue): boolean {
   return Boolean(logo?.sourcePdfSha256 && logo.sourcePageNumber);
@@ -69,13 +75,14 @@ export function LogoBlock({
   onAction,
   onUploadLogo,
   activeSlotId,
+  motion,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   onUploadLogo?: (file: File) => void | Promise<void>;
   activeSlotId?: SlotId;
-}) {
+} & GenomaBlockMotionProps) {
   const logo = slot.value as LogoValue | undefined;
   const [plinthMode, setPlinthMode] = useState<GenomaLogoPlinthMode>("auto");
   const [adjustOpen, setAdjustOpen] = useState(false);
@@ -125,7 +132,9 @@ export function LogoBlock({
     (slot.status === "needs_user" && !pickerCandidates.length) ||
     (slot.status === "candidates" && !pickerCandidates.length);
 
-  if (slot.status === "pending") {
+  if (shouldShowAnalyzingSkeleton(motion)) {
+    body = <GenomaBlockSkeleton variant="logo" />;
+  } else if (shouldShowLegacyPendingSkeleton(motion, slot.status)) {
     body = <div className="genoma-v2-skeleton genoma-v2-skeleton--hero" aria-hidden />;
   } else if (showDetectionEmpty) {
     body = (

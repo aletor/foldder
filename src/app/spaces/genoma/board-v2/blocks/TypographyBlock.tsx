@@ -8,6 +8,12 @@ import { GenomaFoldderButton } from "../GenomaFoldderButton";
 import { GenomaIconButton } from "../GenomaIconButton";
 import { GenomaTextEditPanel } from "../GenomaTextEditPanel";
 import { CaseSensitive, Pencil } from "lucide-react";
+import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import {
+  shouldShowAnalyzingSkeleton,
+  shouldShowLegacyPendingSkeleton,
+  type GenomaBlockMotionProps,
+} from "../genoma-block-motion";
 
 type TypographyFamily = TypographyValue["families"][number];
 
@@ -80,12 +86,13 @@ export function TypographyBlock({
   slotId,
   onAction,
   activeSlotId,
+  motion,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   activeSlotId?: SlotId;
-}) {
+} & GenomaBlockMotionProps) {
   const typography = slot.value as TypographyValue | undefined;
   const [editing, setEditing] = useState(false);
   let body: React.ReactNode;
@@ -97,7 +104,9 @@ export function TypographyBlock({
     <GenomaIconButton icon={Pencil} label={genomaLocaleEs.edit} onClick={() => setEditing(true)} />
   ) : null;
 
-  if (slot.status === "pending") {
+  if (shouldShowAnalyzingSkeleton(motion)) {
+    body = <GenomaBlockSkeleton variant="typography" />;
+  } else if (shouldShowLegacyPendingSkeleton(motion, slot.status)) {
     body = <div className="genoma-v2-skeleton genoma-v2-skeleton--wide" aria-hidden />;
   } else if (editing && typography) {
     body = (

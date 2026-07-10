@@ -14,6 +14,12 @@ import { GenomaSlotReviewCard } from "../GenomaSlotReviewCard";
 import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil, Save } from "lucide-react";
+import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import {
+  shouldShowAnalyzingSkeleton,
+  shouldShowLegacyPendingSkeleton,
+  type GenomaBlockMotionProps,
+} from "../genoma-block-motion";
 
 function linesToList(text: string): string[] {
   return text
@@ -27,12 +33,13 @@ export function VoiceBlock({
   slotId,
   onAction,
   activeSlotId,
+  motion,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   activeSlotId?: SlotId;
-}) {
+} & GenomaBlockMotionProps) {
   const voice = slot.value as VoiceValue | undefined;
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
@@ -51,7 +58,9 @@ export function VoiceBlock({
     setEditing(true);
   };
 
-  if (slot.status === "pending") {
+  if (shouldShowAnalyzingSkeleton(motion)) {
+    body = <GenomaBlockSkeleton variant="voice" />;
+  } else if (shouldShowLegacyPendingSkeleton(motion, slot.status)) {
     body = <div className="genoma-v2-skeleton" aria-hidden />;
   } else if (editing && voice) {
     body = (

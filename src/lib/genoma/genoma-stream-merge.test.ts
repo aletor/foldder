@@ -326,4 +326,54 @@ describe("applyGenomaStreamEvent additive mode", () => {
     );
     expect(doc.brandName?.value).toBe("Mi marca");
   });
+
+  it("preserves crawl web logo when PDF ingest adds a different logo", () => {
+    let doc = createEmptyGenoma();
+    doc = applyGenomaStreamEvent(doc, {
+      type: "slot_update",
+      slotId: "logo",
+      patch: {
+        status: "resolved",
+        value: {
+          assetId: "web-logo.svg",
+          previewUrl: "https://example.com/logo.svg",
+          format: "svg",
+          width: 200,
+          height: 80,
+          background: "transparent",
+          variants: [],
+          detectionMethod: "header_img",
+        },
+        confidence: 0.99,
+        provenance: { type: "header_img", detail: "https://oaro.net", sourceUrl: "https://oaro.net" },
+        needsReviewReason: "Revisa el logo detectado en la web.",
+      },
+    }, { respectLocks: true });
+
+    doc = applyGenomaStreamEvent(doc, {
+      type: "slot_update",
+      slotId: "logo",
+      patch: {
+        status: "resolved",
+        value: {
+          assetId: "deck-logo.png",
+          previewUrl: "/deck-logo.png",
+          format: "png",
+          width: 220,
+          height: 90,
+          background: "transparent",
+          variants: [],
+          sourcePdfSha256: "sha-deck",
+          sourcePageNumber: 1,
+          detectionMethod: "vision_bbox",
+        },
+        confidence: 0.99,
+        provenance: { type: "pdf_xobject", detail: "Investor Deck V1.pdf", fileId: "f-deck" },
+      },
+    }, { respectLocks: true });
+
+    expect(doc.slots.logo.status).toBe("candidates");
+    expect(doc.slots.logo.candidates?.length).toBeGreaterThanOrEqual(2);
+    expect(doc.slots.logo.value).toBeUndefined();
+  });
 });

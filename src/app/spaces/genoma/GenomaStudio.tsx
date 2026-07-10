@@ -48,6 +48,7 @@ import {
 import { GENOMA_GALLERY_GENERATE_IMAGE_COUNT } from "@/lib/genoma/genoma-gallery-cost";
 import "./genoma.css";
 import "./genoma-board-theme.css";
+import "./board-v2/genoma-board-motion.css";
 import "./genoma-split-layout.css";
 import "./genoma-media.css";
 
@@ -88,7 +89,10 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
   const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState(false);
-  genomaRef.current = genoma;
+
+  useEffect(() => {
+    genomaRef.current = genoma;
+  }, [genoma]);
 
   const pushToast = useCallback((toast: GenomaToast) => {
     setToasts((prev) => [...prev.slice(-3), toast]);
@@ -100,6 +104,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
 
   const persistGenoma = useCallback(
     (next: GenomaDocument) => {
+      genomaRef.current = next;
       onGenomaChange(next);
     },
     [onGenomaChange],
@@ -117,14 +122,14 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const handleBrandNameChange = useCallback(
     (name: string) => {
       persistGenoma({
-        ...genoma,
+        ...genomaRef.current,
         brandName: {
           value: name,
           provenance: { type: "user_input", detail: "tú" },
         },
       });
     },
-    [genoma, persistGenoma],
+    [persistGenoma],
   );
 
   useEffect(() => {
@@ -180,17 +185,19 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const handleLogoUpload = useCallback(
     async (file: File) => {
       setCrawlError(null);
-      let working = genomaRef.current;
+      let working = prepareDocForAdditiveSource(genomaRef.current);
       const result = await streamGenomaIngest([file], (event) => {
         if (event.type === "slot_update" || event.type === "source_added" || event.type === "brand_name") {
           working = applyGenomaStreamEvent(working, event, { respectLocks: true });
+          persistGenoma(working);
         }
       }, { enableLlm: false });
       if (!result.ok) {
         setCrawlError(result.message);
         return;
       }
-      persistGenoma(enrichGenomaDocument(working));
+      const polished = enrichGenomaDocument(validateGenomaContentQuality(working));
+      persistGenoma(polished);
       pushToast(buildLogoUploadToast());
     },
     [persistGenoma, pushToast],

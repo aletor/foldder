@@ -1,0 +1,275 @@
+/* Board slot materialization — crawl/ingest live sequencing */
+
+.genoma-studio--v2 {
+  --genoma-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --genoma-motion-enter: 450ms;
+  --genoma-motion-glow: 1200ms;
+  --genoma-motion-accent: var(--foldder-studio-accent, #ffbd1b);
+  --genoma-motion-radius: 18px;
+}
+
+/* ── Tile enter ── */
+@keyframes genoma-tile-materialize {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.genoma-v2-tile--materialize {
+  animation: genoma-tile-materialize var(--genoma-motion-enter) var(--genoma-motion-ease) both;
+}
+
+/* ── Update glow (2ª fuente) ── */
+@keyframes genoma-tile-glow {
+  0% {
+    box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--genoma-motion-accent) 0%, transparent);
+  }
+  18% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--genoma-motion-accent) 52%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--genoma-motion-accent) 0%, transparent);
+  }
+}
+
+.genoma-v2-tile--glow {
+  animation: genoma-tile-glow var(--genoma-motion-glow) var(--genoma-motion-ease) both;
+}
+
+/* ── Analyze skeleton shimmer (light theme) ── */
+@keyframes genoma-block-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.genoma-block-skeleton__line,
+.genoma-block-skeleton__logo-plinth,
+.genoma-block-skeleton__swatch,
+.genoma-block-skeleton__thumb {
+  background: linear-gradient(
+    90deg,
+    rgba(20, 20, 20, 0.05) 0%,
+    rgba(20, 20, 20, 0.1) 50%,
+    rgba(20, 20, 20, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: genoma-block-skeleton-shimmer 1.6s ease-in-out infinite;
+  border-radius: var(--genoma-motion-radius);
+}
+
+/* Logo skeleton */
+.genoma-block-skeleton--logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  flex: 1;
+}
+
+.genoma-block-skeleton__logo-plinth {
+  width: min(72%, 220px);
+  height: 120px;
+  border-radius: var(--genoma-motion-radius);
+}
+
+/* Palette skeleton */
+.genoma-block-skeleton--palette {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  min-height: 120px;
+}
+
+.genoma-block-skeleton__swatch {
+  flex: 1 1 140px;
+  min-height: 112px;
+  max-width: 220px;
+  border-radius: var(--genoma-motion-radius);
+}
+
+/* Typography skeleton */
+.genoma-block-skeleton--typography {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  min-height: 120px;
+}
+
+.genoma-block-skeleton__type-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.genoma-block-skeleton__line--short {
+  width: 28%;
+  height: 10px;
+}
+
+.genoma-block-skeleton__line--title {
+  width: 55%;
+  height: 22px;
+}
+
+.genoma-block-skeleton__line--specimen {
+  width: 100%;
+  height: 48px;
+  margin-top: 8px;
+}
+
+/* Semantic skeleton */
+.genoma-block-skeleton--semantic {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.genoma-block-skeleton__line--headline {
+  width: 62%;
+  height: 18px;
+}
+
+.genoma-block-skeleton__line--body {
+  width: 100%;
+  height: 12px;
+}
+
+.genoma-block-skeleton__line--narrow {
+  width: 78%;
+}
+
+/* Gallery skeleton */
+.genoma-block-skeleton--gallery {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 280px;
+}
+
+.genoma-block-skeleton__thumb {
+  aspect-ratio: 1;
+  border-radius: 12px;
+}
+
+/* ── Internal stagger (after tile enter) ── */
+@keyframes genoma-stagger-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes genoma-logo-unblur {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes genoma-stagger-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.genoma-v2-tile--materialize .genoma-palette-card {
+  opacity: 0;
+  animation: genoma-stagger-fade-up 360ms var(--genoma-motion-ease) forwards;
+  animation-delay: calc(var(--genoma-stagger-i, 0) * 70ms);
+}
+
+.genoma-v2-tile--materialize .genoma-type-column__head {
+  opacity: 0;
+  animation: genoma-stagger-fade-up 320ms var(--genoma-motion-ease) forwards;
+}
+
+.genoma-v2-tile--materialize .genoma-type-column__specimens {
+  opacity: 0;
+  animation: genoma-stagger-fade 200ms var(--genoma-motion-ease) 200ms forwards;
+}
+
+.genoma-v2-tile--materialize .genoma-v2-logo-plinth,
+.genoma-v2-tile--materialize .genoma-v2-logo-candidate__preview {
+  animation: genoma-logo-unblur var(--genoma-motion-enter) var(--genoma-motion-ease) both;
+}
+
+.genoma-v2-tile--materialize .genoma-v2-semantic__summary,
+.genoma-v2-tile--materialize .genoma-v2-headline,
+.genoma-v2-tile--materialize .genoma-v2-semantic__headline {
+  opacity: 0;
+  animation: genoma-stagger-fade-up 340ms var(--genoma-motion-ease) forwards;
+}
+
+.genoma-v2-tile--materialize .genoma-v2-semantic__chips,
+.genoma-v2-tile--materialize .genoma-v2-prose,
+.genoma-v2-tile--materialize .genoma-v2-semantic__rest,
+.genoma-v2-tile--materialize .genoma-v2-voice-descriptors,
+.genoma-v2-tile--materialize .genoma-v2-visual-traits {
+  opacity: 0;
+  animation: genoma-stagger-fade 280ms var(--genoma-motion-ease) 120ms forwards;
+}
+
+.genoma-v2-tile--materialize .genoma-v2-gallery-item-wrap,
+.genoma-v2-tile--materialize .genoma-v2-gallery-generated {
+  opacity: 0;
+  animation: genoma-stagger-fade-up 300ms var(--genoma-motion-ease) forwards;
+  animation-delay: min(calc(var(--genoma-stagger-i, 0) * 50ms), 400ms);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .genoma-v2-tile--materialize,
+  .genoma-v2-tile--glow {
+    animation: none !important;
+  }
+
+  .genoma-block-skeleton__line,
+  .genoma-block-skeleton__logo-plinth,
+  .genoma-block-skeleton__swatch,
+  .genoma-block-skeleton__thumb {
+    animation: none !important;
+    background: rgba(20, 20, 20, 0.07);
+  }
+
+  .genoma-v2-tile--materialize .genoma-palette-card,
+  .genoma-v2-tile--materialize .genoma-type-column__head,
+  .genoma-v2-tile--materialize .genoma-type-column__specimens,
+  .genoma-v2-tile--materialize .genoma-v2-logo-plinth,
+  .genoma-v2-tile--materialize .genoma-v2-semantic__summary,
+  .genoma-v2-tile--materialize .genoma-v2-headline,
+  .genoma-v2-tile--materialize .genoma-v2-semantic__headline,
+  .genoma-v2-tile--materialize .genoma-v2-semantic__chips,
+  .genoma-v2-tile--materialize .genoma-v2-prose,
+  .genoma-v2-tile--materialize .genoma-v2-semantic__rest,
+  .genoma-v2-tile--materialize .genoma-v2-voice-descriptors,
+  .genoma-v2-tile--materialize .genoma-v2-visual-traits,
+  .genoma-v2-tile--materialize .genoma-v2-gallery-item-wrap,
+  .genoma-v2-tile--materialize .genoma-v2-gallery-generated {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    animation: none !important;
+  }
+}

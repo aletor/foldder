@@ -13,6 +13,12 @@ import { GenomaSlotReviewCard } from "../GenomaSlotReviewCard";
 import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil } from "lucide-react";
+import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import {
+  shouldShowAnalyzingSkeleton,
+  shouldShowLegacyPendingSkeleton,
+  type GenomaBlockMotionProps,
+} from "../genoma-block-motion";
 
 function beliefsToText(beliefs: EssenceValue["beliefs"]): string {
   return beliefs
@@ -38,12 +44,13 @@ export function EssenceBlock({
   slotId,
   onAction,
   activeSlotId,
+  motion,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   activeSlotId?: SlotId;
-}) {
+} & GenomaBlockMotionProps) {
   const essence = slot.value as EssenceValue | undefined;
   const [editing, setEditing] = useState(false);
   let body: React.ReactNode;
@@ -61,7 +68,9 @@ export function EssenceBlock({
     setEditing(true);
   };
 
-  if (slot.status === "pending") {
+  if (shouldShowAnalyzingSkeleton(motion)) {
+    body = <GenomaBlockSkeleton variant="essence" />;
+  } else if (shouldShowLegacyPendingSkeleton(motion, slot.status)) {
     body = <div className="genoma-v2-skeleton" aria-hidden />;
   } else if (editing && essence) {
     body = (

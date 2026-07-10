@@ -16,6 +16,7 @@ import { EssenceBlock } from "./blocks/EssenceBlock";
 import { VoiceBlock } from "./blocks/VoiceBlock";
 import { VisualWorldBlock } from "./blocks/VisualWorldBlock";
 import { GalleryBlock } from "./blocks/GalleryBlock";
+import { useGenomaBoardSlotMotion, type SlotMotionState } from "./use-genoma-board-slot-motion";
 
 type GenomaBoardV2Props = {
   doc: GenomaDocument;
@@ -38,6 +39,43 @@ type GenomaBoardV2Props = {
   onPresentationModeChange?: (enabled: boolean) => void;
 };
 
+function tileMotionClass(motion: SlotMotionState): string {
+  if (motion.phase === "enter") return " genoma-v2-tile--materialize";
+  if (motion.phase === "glow") return " genoma-v2-tile--glow";
+  return "";
+}
+
+function GenomaBoardTile({
+  slotId,
+  tileSuffix,
+  attentionClass,
+  motion,
+  onTileEnterEnd,
+  children,
+}: {
+  slotId: SlotId;
+  tileSuffix: string;
+  attentionClass: string;
+  motion: SlotMotionState;
+  onTileEnterEnd: (slotId: SlotId) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      className={`genoma-v2-tile genoma-v2-tile--${tileSuffix}${attentionClass}${tileMotionClass(motion)}`}
+      data-genoma-slot={slotId}
+      onAnimationEnd={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.animationName === "genoma-tile-materialize") {
+          onTileEnterEnd(slotId);
+        }
+      }}
+    >
+      {children}
+    </section>
+  );
+}
+
 export function GenomaBoardV2({
   doc,
   onAction,
@@ -59,6 +97,7 @@ export function GenomaBoardV2({
   onPresentationModeChange,
 }: GenomaBoardV2Props) {
   const slots = doc.slots;
+  const { motionBySlot, onTileEnterEnd } = useGenomaBoardSlotMotion(slots, isAnalyzing);
 
   const borradorPulseSlotId = useMemo(() => {
     for (const slotId of GENOMA_SLOT_IDS) {
@@ -81,7 +120,7 @@ export function GenomaBoardV2({
 
   return (
     <GenomaImageLightboxProvider>
-      <div className={`genoma-v2-bento-board${isAnalyzing ? " is-loading" : ""}${presentationMode ? " is-presentation" : ""}`}>
+      <div className={`genoma-v2-bento-board${presentationMode ? " is-presentation" : ""}`}>
         <GenomaBoardHeader
           doc={doc}
           onBrandNameChange={onBrandNameChange}
@@ -91,44 +130,93 @@ export function GenomaBoardV2({
         <GenomaBoardStatusBar doc={doc} />
 
         <div className="genoma-v2-bento-grid">
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--logo${tileClass("logo")}`}
-            data-genoma-slot="logo"
+          <GenomaBoardTile
+            slotId="logo"
+            tileSuffix="logo"
+            attentionClass={tileClass("logo")}
+            motion={motionBySlot.logo}
+            onTileEnterEnd={onTileEnterEnd}
           >
-            <LogoBlock slotId="logo" slot={slots.logo} onAction={onAction} onUploadLogo={onLogoUpload} activeSlotId={activeSlotId} />
-          </section>
+            <LogoBlock
+              slotId="logo"
+              slot={slots.logo}
+              onAction={onAction}
+              onUploadLogo={onLogoUpload}
+              activeSlotId={activeSlotId}
+              motion={motionBySlot.logo}
+            />
+          </GenomaBoardTile>
 
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--essence${tileClass("essence")}`}
-            data-genoma-slot="essence"
+          <GenomaBoardTile
+            slotId="essence"
+            tileSuffix="essence"
+            attentionClass={tileClass("essence")}
+            motion={motionBySlot.essence}
+            onTileEnterEnd={onTileEnterEnd}
           >
-            <EssenceBlock slotId="essence" slot={slots.essence} onAction={onAction} activeSlotId={activeSlotId} />
-          </section>
+            <EssenceBlock
+              slotId="essence"
+              slot={slots.essence}
+              onAction={onAction}
+              activeSlotId={activeSlotId}
+              motion={motionBySlot.essence}
+            />
+          </GenomaBoardTile>
 
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--typography${tileClass("typography")}`}
-            data-genoma-slot="typography"
+          <GenomaBoardTile
+            slotId="typography"
+            tileSuffix="typography"
+            attentionClass={tileClass("typography")}
+            motion={motionBySlot.typography}
+            onTileEnterEnd={onTileEnterEnd}
           >
-            <TypographyBlock slotId="typography" slot={slots.typography} onAction={onAction} activeSlotId={activeSlotId} />
-          </section>
+            <TypographyBlock
+              slotId="typography"
+              slot={slots.typography}
+              onAction={onAction}
+              activeSlotId={activeSlotId}
+              motion={motionBySlot.typography}
+            />
+          </GenomaBoardTile>
 
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--palette${tileClass("palette")}`}
-            data-genoma-slot="palette"
+          <GenomaBoardTile
+            slotId="palette"
+            tileSuffix="palette"
+            attentionClass={tileClass("palette")}
+            motion={motionBySlot.palette}
+            onTileEnterEnd={onTileEnterEnd}
           >
-            <PaletteBlock slotId="palette" slot={slots.palette} onAction={onAction} activeSlotId={activeSlotId} />
-          </section>
+            <PaletteBlock
+              slotId="palette"
+              slot={slots.palette}
+              onAction={onAction}
+              activeSlotId={activeSlotId}
+              motion={motionBySlot.palette}
+            />
+          </GenomaBoardTile>
 
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--voice${tileClass("voice")}`}
-            data-genoma-slot="voice"
+          <GenomaBoardTile
+            slotId="voice"
+            tileSuffix="voice"
+            attentionClass={tileClass("voice")}
+            motion={motionBySlot.voice}
+            onTileEnterEnd={onTileEnterEnd}
           >
-            <VoiceBlock slotId="voice" slot={slots.voice} onAction={onAction} activeSlotId={activeSlotId} />
-          </section>
+            <VoiceBlock
+              slotId="voice"
+              slot={slots.voice}
+              onAction={onAction}
+              activeSlotId={activeSlotId}
+              motion={motionBySlot.voice}
+            />
+          </GenomaBoardTile>
 
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--visual${tileClass("visualWorld")}`}
-            data-genoma-slot="visualWorld"
+          <GenomaBoardTile
+            slotId="visualWorld"
+            tileSuffix="visual"
+            attentionClass={tileClass("visualWorld")}
+            motion={motionBySlot.visualWorld}
+            onTileEnterEnd={onTileEnterEnd}
           >
             <VisualWorldBlock
               slotId="visualWorld"
@@ -136,12 +224,16 @@ export function GenomaBoardV2({
               onAction={onAction}
               gallery={slots.gallery}
               activeSlotId={activeSlotId}
+              motion={motionBySlot.visualWorld}
             />
-          </section>
+          </GenomaBoardTile>
 
-          <section
-            className={`genoma-v2-tile genoma-v2-tile--gallery${tileClass("gallery")}`}
-            data-genoma-slot="gallery"
+          <GenomaBoardTile
+            slotId="gallery"
+            tileSuffix="gallery"
+            attentionClass={tileClass("gallery")}
+            motion={motionBySlot.gallery}
+            onTileEnterEnd={onTileEnterEnd}
           >
             <GalleryBlock
               slotId="gallery"
@@ -155,8 +247,9 @@ export function GenomaBoardV2({
               focusGeneratedTab={focusGeneratedTab}
               gallerySuccessMessage={gallerySuccessMessage}
               activeSlotId={activeSlotId}
+              motion={motionBySlot.gallery}
             />
-          </section>
+          </GenomaBoardTile>
         </div>
       </div>
     </GenomaImageLightboxProvider>
