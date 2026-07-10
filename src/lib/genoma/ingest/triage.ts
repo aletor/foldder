@@ -38,7 +38,7 @@ export function triageGenomaFilename(name: string, mime: string): GenomaIngestTr
   }
 
   if (DECK_EXT.has(ext)) {
-    return { name, mime, kind: "presentation", action: "Presentación — solo metadatos por ahora" };
+    return { name, mime, kind: "brand_document", action: "Presentación — análisis document probe" };
   }
 
   if (DOC_EXT.has(ext) || mime.startsWith("text/")) {

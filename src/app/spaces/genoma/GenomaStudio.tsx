@@ -46,9 +46,6 @@ import {
   type GenomaToast,
 } from "@/lib/genoma/genoma-studio-feedback";
 import { GENOMA_GALLERY_GENERATE_IMAGE_COUNT } from "@/lib/genoma/genoma-gallery-cost";
-import { GenomaDocumentProbeModal } from "./GenomaDocumentProbeModal";
-import { probeGenomaDocument } from "./genoma-document-probe-client";
-import type { GenomaDocumentProbeResult } from "@/lib/genoma/studio/document-probe-types";
 import "./genoma.css";
 import "./genoma-board-theme.css";
 import "./genoma-split-layout.css";
@@ -91,9 +88,6 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
   const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState(false);
-  const [probeLoading, setProbeLoading] = useState(false);
-  const [probeResult, setProbeResult] = useState<GenomaDocumentProbeResult | null>(null);
-  const [probeError, setProbeError] = useState<string | null>(null);
   genomaRef.current = genoma;
 
   const pushToast = useCallback((toast: GenomaToast) => {
@@ -261,37 +255,13 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     void handleAnalyze(job.url, job.enableLlm);
   }, [handleAnalyze]);
 
-  const closeDocumentProbe = useCallback(() => {
-    setProbeLoading(false);
-    setProbeResult(null);
-    setProbeError(null);
-  }, []);
-
   const handleIngestFiles = useCallback(
-    async (files: File[]) => {
-      const file = Array.from(files)[0];
-      if (!file) return;
-
-      setCrawlError(null);
-      setProbeLoading(true);
-      setProbeResult(null);
-      setProbeError(null);
-      setIsAnalyzing(true);
-
-      const outcome = await probeGenomaDocument(file);
-
-      setIsAnalyzing(false);
-      setProbeLoading(false);
-
-      if (!outcome.ok) {
-        setProbeError(outcome.message);
-        pushToast(createGenomaToast("error", outcome.message));
-        return;
-      }
-
-      setProbeResult(outcome.result);
+    async (files: File[], enableLlm = true) => {
+      const list = Array.from(files).slice(0, 12);
+      if (!list.length) return;
+      await runStreamJob((onEvent) => streamGenomaIngest(list, onEvent, { enableLlm }));
     },
-    [pushToast],
+    [runStreamJob],
   );
 
   const handleGenerateGallery = useCallback(async () => {
@@ -483,13 +453,6 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
           )}
         </main>
       </div>
-
-      <GenomaDocumentProbeModal
-        result={probeResult}
-        error={probeError}
-        loading={probeLoading}
-        onClose={closeDocumentProbe}
-      />
     </div>
   );
 }

@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import sharp from "sharp";
-import { parseBrainDocument } from "@/lib/brain-parser-utils";
-import { extractVisualImagesFromPdfBuffer } from "@/lib/brain/pdf-visual-extract";
 import type { Candidate, GalleryValue, LogoValue, Provenance, SlotState } from "../genoma-types";
 import {
   validateValuesAgainstCorpus,
@@ -17,19 +14,11 @@ import {
   buildEssenceHeadlineAlternatives,
   buildResolvedEssenceFromIngest,
 } from "../genoma-essence-headline";
-import { buildLogoSlotPatch, isExplicitPdfLogoAsset } from "../genoma-logo-policy";
-import { isLikelyDeckPdf } from "../genoma-pdf-deck";
-import { extractLogoCandidatesFromDeckPdf } from "../genoma-pdf-logo-vision";
-import {
-  extractBrandManualVisualsFromPdf,
-  isLikelyBrandManualPdf,
-} from "../genoma-pdf-brand-manual";
+import { buildLogoSlotPatch } from "../genoma-logo-policy";
 import { buildPaletteValue, buildTypographyValue, rankLogoCandidates } from "../crawl/scoring";
-import { hexColorsFromCss } from "../crawl/parsers";
 import type { GenomaStreamEvent } from "../crawl/types";
 import type { GenomaCrawlOptions } from "../crawl/crawl-options";
 import { triageGenomaFilename, type GenomaIngestTriageItem } from "./triage";
-import { uploadGenomaIngestFile } from "./upload-genoma-file";
 import { bufferContentSha256 } from "./paid-operations-server";
 import {
   releaseGenomaIngestAnalysisCharge,
@@ -43,8 +32,8 @@ import {
   isLikelyBrandBoardImage,
   measureBrandBoardSignals,
 } from "../genoma-brand-board-image";
-import { inferImageFormat } from "../crawl/url-utils";
-import { persistGenomaSourceRaster } from "./genoma-source-pdf-store";
+import { extractBrandMaterialViaDocumentProbe } from "../studio/document-probe-ingest";
+import type { VisualWorldValue } from "../genoma-types";
 
 const NOW = () => new Date().toISOString();
 const MAX_FILES = 12;
@@ -62,48 +51,6 @@ function slotPatch(partial: Partial<SlotState<unknown>>): Partial<SlotState<unkn
 
 function fileProvenance(fileId: string, detail: string): Provenance {
   return { type: "file_upload", detail, fileId };
-}
-
-async function imageDimensions(buffer: Buffer): Promise<{ width: number; height: number }> {
-  try {
-    const meta = await sharp(buffer).metadata();
-    return { width: meta.width ?? 512, height: meta.height ?? 512 };
-  } catch {
-    return { width: 512, height: 512 };
-  }
-}
-
-function logoCandidateFromUpload(
-  url: string,
-  fileId: string,
-  format: LogoValue["format"],
-  width: number,
-  height: number,
-  score: number,
-  source?: { contentSha256: string; fileName: string },
-): Candidate<LogoValue> {
-  return {
-    score,
-    provenance: fileProvenance(fileId, "archivo subido"),
-    value: {
-      assetId: url,
-      previewUrl: url,
-      format,
-      width,
-      height,
-      background: format === "svg" || format === "png" ? "transparent" : "solid",
-      variants: [],
-      ...(source
-        ? {
-            sourcePdfSha256: source.contentSha256,
-            sourcePageNumber: 1,
-            totalDocPages: 1,
-            sourceDocName: source.fileName,
-            detectionMethod: "upload" as const,
-          }
-        : {}),
-    },
-  };
 }
 
 function rankUploadedLogoCandidates(candidates: Candidate<LogoValue>[]): Candidate<LogoValue>[] {
@@ -170,6 +117,7 @@ export async function* runGenomaIngest(
   const typographyFamilies: string[] = [];
   let corpusParts: string[] = [];
   let brandName: string | undefined;
+  let visualWorldFromProbe: VisualWorldValue | null = null;
 
   yield {
     type: "progress",
@@ -190,14 +138,11 @@ export async function* runGenomaIngest(
       };
       continue;
     }
-    if (triage.kind === "unknown" || triage.kind === "presentation") {
+    if (triage.kind === "unknown") {
       yield {
         type: "source_error",
         fileName: file.name,
-        message:
-          triage.kind === "presentation"
-            ? "Presentación detectada — omitida en el análisis de marca"
-            : "Tipo de archivo no reconocido",
+        message: "Tipo de archivo no reconocido",
       };
       continue;
     }
@@ -299,234 +244,118 @@ export async function* runGenomaIngest(
         continue;
       }
 
-      const uploaded = await uploadGenomaIngestFile({
-        userEmail: options?.userEmail ?? "",
-        filename: file.name,
-        mime: file.mime,
-        buffer: file.buffer,
-      });
-      yield { type: "source_added", kind: "file", ref: uploaded.fileId };
+      if (!options?.userEmail?.trim()) {
+        yield {
+          type: "source_error",
+          fileName: file.name,
+          message: "Sesión requerida para analizar el archivo",
+        };
+        continue;
+      }
 
-      const format = inferImageFormat(uploaded.url, file.mime);
-      const dims = await imageDimensions(file.buffer);
-
-      if (triage.kind === "logo_image") {
-        const contentSha256 = bufferContentSha256(file.buffer);
-        if (options?.userEmail) {
-          await persistGenomaSourceRaster(options.userEmail, contentSha256, file.buffer).catch(() => undefined);
-        }
-        logoCandidates.push(
-          logoCandidateFromUpload(
-            uploaded.url,
-            uploaded.fileId,
-            format,
-            dims.width,
-            dims.height,
-            0.88,
-            { contentSha256, fileName: file.name },
-          ),
-        );
-      } else {
-        galleryItems.push({
-          assetId: uploaded.url,
-          previewUrl: uploaded.url,
-          included: true,
-          provenance: fileProvenance(uploaded.fileId, file.name),
+      yield {
+        type: "llm_progress",
+        step: "document_probe",
+        status: "running",
+        detail: "Analizando logo, paleta e imágenes…",
+      };
+      try {
+        const artifacts = await extractBrandMaterialViaDocumentProbe({
+          buffer: file.buffer,
+          fileName: file.name,
+          mime: file.mime || "application/octet-stream",
+          userEmail: options.userEmail,
+          route: "/api/spaces/genoma/ingest",
+          llmEnabled: options?.llmEnabled === true,
+          onLlmCostUsd: options?.onLlmCostUsd,
         });
+        if (artifacts.logoCandidates.length) logoCandidates.push(...artifacts.logoCandidates);
+        paletteSignals.push(...artifacts.paletteSignals);
+        typographyFamilies.push(...artifacts.typographyFamilies);
+        galleryItems.push(...artifacts.galleryItems);
+        corpusParts.push(...artifacts.corpusParts);
+        if (artifacts.brandNameHint && !brandName) brandName = artifacts.brandNameHint;
+        if (artifacts.visualWorld) visualWorldFromProbe = artifacts.visualWorld;
+
+        yield {
+          type: "llm_progress",
+          step: "document_probe",
+          status: "done",
+          detail: `${artifacts.probe.llmCallCount} LLM · ${artifacts.logoCandidates.length} logo(s) · ${artifacts.galleryItems.length} imagen(es)`,
+        };
+        yield { type: "source_added", kind: "file", ref: file.name };
+      } catch (error) {
+        console.error("[genoma/ingest/document_probe]", error);
+        yield {
+          type: "source_error",
+          fileName: file.name,
+          message:
+            error instanceof Error
+              ? error.message
+              : "No pude analizar el archivo con document probe",
+        };
       }
       continue;
     }
 
     if (triage.kind === "brand_document") {
+      if (!options?.userEmail?.trim()) {
+        yield {
+          type: "source_error",
+          fileName: file.name,
+          message: "Sesión requerida para analizar el documento",
+        };
+        continue;
+      }
+
+      yield {
+        type: "llm_progress",
+        step: "document_probe",
+        status: "running",
+        detail: "Analizando documento (logo, paleta, tipografía, imágenes)…",
+      };
+
       let sourceMeta:
         | { contentSha256: string; pdfStorageKey: string; pageCount: number }
         | undefined;
 
-      if (file.mime === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-        let trimmedText = "";
-        try {
-          const text = await parseBrainDocument(file.buffer, file.name, file.mime || "application/octet-stream");
-          trimmedText = text.trim();
-          if (trimmedText.length >= 40) corpusParts.push(trimmedText.slice(0, 12_000));
-          if (!brandName) {
-            const firstLine = trimmedText.split("\n").find((line) => line.trim().length > 2)?.trim();
-            if (firstLine && firstLine.length <= 80) brandName = firstLine;
-          }
-          paletteSignals.push(...hexColorsFromCss(trimmedText, file.name).map((c) => ({ ...c, weight: 0.4 })));
-        } catch {
-          // scanned PDF or unsupported — gallery-only path
-        }
+      try {
+        const artifacts = await extractBrandMaterialViaDocumentProbe({
+          buffer: file.buffer,
+          fileName: file.name,
+          mime: file.mime || "application/octet-stream",
+          userEmail: options.userEmail,
+          route: "/api/spaces/genoma/ingest",
+          llmEnabled: options?.llmEnabled === true,
+          onLlmCostUsd: options?.onLlmCostUsd,
+        });
 
-        const likelyBrandManual = isLikelyBrandManualPdf(file.name, trimmedText);
-        const likelyDeck = !likelyBrandManual && (await isLikelyDeckPdf(file.buffer, file.name, trimmedText));
+        if (artifacts.logoCandidates.length) logoCandidates.push(...artifacts.logoCandidates);
+        paletteSignals.push(...artifacts.paletteSignals);
+        typographyFamilies.push(...artifacts.typographyFamilies);
+        galleryItems.push(...artifacts.galleryItems);
+        corpusParts.push(...artifacts.corpusParts);
+        if (artifacts.brandNameHint && !brandName) brandName = artifacts.brandNameHint;
+        if (artifacts.visualWorld) visualWorldFromProbe = artifacts.visualWorld;
+        sourceMeta = artifacts.sourceMeta;
 
-        const pdfVisionOn = options?.pdfLogoVisionEnabled === true && Boolean(options?.userEmail);
-
-        if (likelyBrandManual) {
-          yield {
-            type: "llm_progress",
-            step: "pdf_brand_vision",
-            status: "running",
-            detail: pdfVisionOn ? "Analizando manual de marca…" : "Extrayendo paleta y tipografía del PDF…",
-          };
-          const manualSha = bufferContentSha256(file.buffer);
-          let manualCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
-          try {
-            if (pdfVisionOn) {
-              manualCharge = await reserveGenomaIngestAnalysisCharge({
-                userEmail: options?.userEmail,
-                contentSignature: manualSha,
-                kind: "brand_manual",
-              });
-            }
-            const manual = await extractBrandManualVisualsFromPdf({
-              buffer: file.buffer,
-              fileName: file.name,
-              userEmail: options?.userEmail ?? "",
-              route: "/api/spaces/genoma/ingest",
-              visionEnabled: pdfVisionOn,
-              fullText: trimmedText,
-            });
-            if (pdfVisionOn) {
-              await settleGenomaIngestAnalysisCharge(manualCharge, "brand_manual");
-              manualCharge = null;
-            }
-            if (manual.logoCandidates.length) logoCandidates.push(...manual.logoCandidates);
-            paletteSignals.push(...manual.paletteSignals);
-            typographyFamilies.push(...manual.typographyFamilies);
-            sourceMeta = {
-              contentSha256: manual.contentSha256,
-              pdfStorageKey: manual.pdfStorageKey,
-              pageCount: manual.totalPages,
-            };
-            yield {
-              type: "llm_progress",
-              step: "pdf_brand_vision",
-              status: "done",
-              detail: manual.visionDetail ?? "Manual de marca procesado",
-            };
-          } catch (error) {
-            await releaseGenomaIngestAnalysisCharge(manualCharge, error);
-            console.error("[genoma/ingest/pdf_brand_vision]", error);
-            yield {
-              type: "llm_progress",
-              step: "pdf_brand_vision",
-              status: "failed",
-              detail: "No pude analizar el manual de marca",
-            };
-          }
-        }
-
-        if (likelyDeck && !pdfVisionOn) {
-          yield {
-            type: "llm_progress",
-            step: "pdf_logo_vision",
-            status: "skipped",
-            detail:
-              options?.pdfLogoVisionSkipReason ??
-              options?.llmSkipReason ??
-              "IA desactivada — sin visión de logo en deck",
-          };
-        }
-
-        const deckPdf = pdfVisionOn && likelyDeck;
-
-        if (deckPdf) {
-          yield {
-            type: "llm_progress",
-            step: "pdf_logo_vision",
-            status: "running",
-            detail: "Detectando logo en el deck…",
-          };
-          const deckSha = bufferContentSha256(file.buffer);
-          let visionCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
-          try {
-            visionCharge = await reserveGenomaIngestAnalysisCharge({
-              userEmail: options?.userEmail,
-              contentSignature: deckSha,
-              kind: "deck_logo",
-            });
-            const vision = await extractLogoCandidatesFromDeckPdf({
-              buffer: file.buffer,
-              fileName: file.name,
-              userEmail: options?.userEmail ?? "",
-              route: "/api/spaces/genoma/ingest",
-              fullText: trimmedText,
-            });
-            await settleGenomaIngestAnalysisCharge(visionCharge, "deck_logo");
-            visionCharge = null;
-            if (vision?.candidates.length) {
-              logoCandidates.push(...vision.candidates);
-            }
-            if (vision) {
-              sourceMeta = {
-                contentSha256: vision.contentSha256,
-                pdfStorageKey: vision.pdfStorageKey,
-                pageCount: vision.totalPages,
-              };
-            }
-            yield {
-              type: "llm_progress",
-              step: "pdf_logo_vision",
-              status: "done",
-              detail:
-                vision?.candidates.length
-                  ? (vision.visionDetail ??
-                    `${vision.candidates.length} candidatos · ${vision.pagesWithLogo} pág.`)
-                  : (vision?.visionDetail ?? "Sin logo claro en el deck"),
-            };
-          } catch (error) {
-            await releaseGenomaIngestAnalysisCharge(visionCharge, error);
-            console.error("[genoma/ingest/pdf_logo_vision]", error);
-            yield {
-              type: "llm_progress",
-              step: "pdf_logo_vision",
-              status: "failed",
-              detail: "No pude analizar el logo del deck",
-            };
-          }
-        }
-
-        const pdfImages = await extractVisualImagesFromPdfBuffer(file.buffer, file.name).catch(() => []);
-        for (const img of pdfImages) {
-          const uploaded = await uploadGenomaIngestFile({
-            userEmail: options?.userEmail ?? "",
-            filename: img.name,
-            mime: img.mime,
-            buffer: img.buffer,
-          });
-          galleryItems.push({
-            assetId: uploaded.url,
-            previewUrl: uploaded.url,
-            included: true,
-            provenance: { type: "pdf_xobject", detail: img.name, fileId: uploaded.fileId },
-          });
-          if (isExplicitPdfLogoAsset(img.name)) {
-            logoCandidates.push(
-              logoCandidateFromUpload(
-                uploaded.url,
-                uploaded.fileId,
-                inferImageFormat(uploaded.url, img.mime),
-                img.width ?? 256,
-                img.height ?? 256,
-                0.82,
-              ),
-            );
-          }
-        }
-      } else {
-        try {
-          const text = await parseBrainDocument(file.buffer, file.name, file.mime || "application/octet-stream");
-          const trimmed = text.trim();
-          if (trimmed.length >= 40) corpusParts.push(trimmed.slice(0, 12_000));
-          if (!brandName) {
-            const firstLine = trimmed.split("\n").find((line) => line.trim().length > 2)?.trim();
-            if (firstLine && firstLine.length <= 80) brandName = firstLine;
-          }
-          paletteSignals.push(...hexColorsFromCss(trimmed, file.name).map((c) => ({ ...c, weight: 0.4 })));
-        } catch {
-          // unsupported document
-        }
+        yield {
+          type: "llm_progress",
+          step: "document_probe",
+          status: "done",
+          detail: `${artifacts.probe.llmCallCount} LLM · ${artifacts.probe.pdfTotalPages ?? 1} pág.`,
+        };
+      } catch (error) {
+        console.error("[genoma/ingest/document_probe]", error);
+        yield {
+          type: "source_error",
+          fileName: file.name,
+          message:
+            error instanceof Error
+              ? error.message
+              : "No pude analizar el documento",
+        };
+        continue;
       }
 
       yield {
@@ -660,6 +489,19 @@ export async function* runGenomaIngest(
         value: { harvested: galleryItems, generated: [], stylePromptVersion: 0 } satisfies GalleryValue,
         confidence: 0.72,
         provenance: galleryItems[0]?.provenance,
+      }),
+    };
+  }
+
+  if (visualWorldFromProbe) {
+    yield {
+      type: "slot_update",
+      slotId: "visualWorld",
+      patch: slotPatch({
+        status: "resolved",
+        value: visualWorldFromProbe,
+        provenance: { type: "llm_synthesis", detail: "document probe" },
+        confidence: 0.66,
       }),
     };
   }

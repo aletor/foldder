@@ -11,6 +11,7 @@ export type GenomaLlmStepId =
   | "pdf_logo_vision"
   | "pdf_brand_vision"
   | "brand_board_vision"
+  | "document_probe"
   | "batch";
 
 export type GenomaLlmBatchSubstep = "essence" | "voice" | "visualWorld";

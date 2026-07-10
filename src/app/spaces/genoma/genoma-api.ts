@@ -107,6 +107,7 @@ async function consumeNdjsonStream(
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sourceError: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -119,9 +120,11 @@ async function consumeNdjsonStream(
       const event = JSON.parse(line) as GenomaStreamEvent;
       onEvent(event);
       if (event.type === "error") return { ok: false, message: event.message };
+      if (event.type === "source_error") sourceError = event.message;
     }
   }
 
+  if (sourceError) return { ok: false, message: sourceError };
   return { ok: true };
 }
 

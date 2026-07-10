@@ -18,6 +18,14 @@ export type GenomaDocumentProbeColor = {
   label: string | null;
 };
 
+export type GenomaDocumentProbeTypographyRole = "display" | "heading" | "body";
+
+export type GenomaDocumentProbeTypography = {
+  family: string;
+  role: GenomaDocumentProbeTypographyRole;
+  evidence: string | null;
+};
+
 /** Fotografías, ilustraciones o gráficos que no son logos ni iconos de marca. */
 export type GenomaDocumentProbeOtherImage = {
   page: number | null;
@@ -43,6 +51,7 @@ export type GenomaDocumentProbeResult = {
   /** Logo principal elegido para el recuadro de vista previa. */
   primaryLogo: GenomaDocumentProbeLogo | null;
   primaryColors: GenomaDocumentProbeColor[];
+  typography: GenomaDocumentProbeTypography[];
   otherImages: GenomaDocumentProbeOtherImage[];
   textSummary: [string, string, string];
   pagePreviews: GenomaDocumentProbePagePreview[];

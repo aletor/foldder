@@ -25,6 +25,7 @@ const LLM_STEP_LABELS: Record<GenomaLlmStepId, string> = {
   pdf_logo_vision: "Logo (deck PDF)",
   pdf_brand_vision: "Manual de marca (PDF)",
   brand_board_vision: "Brand board (imagen)",
+  document_probe: "Documento (probe)",
   voice: "Voz",
   values: "Creencias",
   oneliner: "Headline",

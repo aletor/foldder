@@ -15,6 +15,8 @@ import type {
   GenomaDocumentProbeLogo,
   GenomaDocumentProbeOtherImage,
   GenomaDocumentProbeResult,
+  GenomaDocumentProbeTypography,
+  GenomaDocumentProbeTypographyRole,
 } from "./document-probe-types";
 import { refineProbeLogoBboxFromBackground } from "./document-probe-bbox-refine";
 import {
@@ -149,6 +151,29 @@ function parseLegibility(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return 0.5;
   return Math.min(1, Math.max(0, n));
+}
+
+function parseTypographyRole(value: unknown): GenomaDocumentProbeTypographyRole {
+  if (value === "display" || value === "heading" || value === "body") return value;
+  return "body";
+}
+
+function parseTypographyArray(raw: unknown): GenomaDocumentProbeTypography[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: GenomaDocumentProbeTypography[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const family = typeof row.family === "string" ? row.family.trim().slice(0, 80) : "";
+    if (!family) continue;
+    rows.push({
+      family,
+      role: parseTypographyRole(row.role),
+      evidence: typeof row.evidence === "string" ? row.evidence.trim().slice(0, 120) || null : null,
+    });
+    if (rows.length >= 4) break;
+  }
+  return rows;
 }
 
 const SIMILAR_LEGIBILITY_EPS = 0.1;
@@ -388,6 +413,7 @@ function parseProbeResponse(
   }
 
   const otherImages = parseOtherImagesArray(o.otherImages, OTHER_IMAGES_MAX_SHORT);
+  const typography = parseTypographyArray(o.typography);
 
   const summaryRaw = Array.isArray(o.textSummary) ? o.textSummary : [];
   const textSummary: [string, string, string] = [
@@ -404,6 +430,7 @@ function parseProbeResponse(
     fileName,
     logos,
     primaryColors,
+    typography,
     otherImages,
     textSummary,
   };
@@ -460,8 +487,20 @@ const PROBE_RESPONSE_SCHEMA = {
         required: ["x", "y", "width", "height", "description"],
       },
     },
+    typography: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          family: { type: Type.STRING },
+          role: { type: Type.STRING },
+          evidence: { type: Type.STRING, nullable: true },
+        },
+        required: ["family", "role"],
+      },
+    },
   },
-  required: ["documentType", "logos", "primaryColors", "textSummary", "otherImages"],
+  required: ["documentType", "logos", "primaryColors", "textSummary", "otherImages", "typography"],
 };
 
 const EXTENDED_OTHER_IMAGES_SCHEMA = {
@@ -585,6 +624,7 @@ export async function runGenomaDocumentProbe(input: {
         "legibility: 0–1 — qué tan claro y completo es ese logo (nitidez, sin recortes, wordmark legible).",
         "Si hay varias variantes del mismo logo con calidad parecida, el servidor prioriza la que tenga el fondo más claro.",
         "primaryColors: máximo 5 colores corporativos dominantes con hex #RRGGBB.",
+        "typography: hasta 4 familias tipográficas visibles (display, heading o body) con evidencia breve.",
         "otherImages: fotografías, ilustraciones, diagramas o gráficos visibles que NO sean logos ni iconos de marca.",
         "otherImages: NO dupliques nada listado en logos[]. Excluye iconos pequeños de UI/app. Máximo 10 entradas.",
         "otherImages: page + bbox normalizado 0–1 (igual que logos) y description breve en español (qué hay en la imagen).",
@@ -620,7 +660,7 @@ export async function runGenomaDocumentProbe(input: {
   let llmCallCount = 1;
 
   const parsed = parseJsonObjectFromVisionModelText((response as { text?: string }).text ?? "");
-  if (!parsed) throw new Error("document_probe_parse_failed");
+  if (!parsed) throw new Error("El modelo no devolvió un análisis válido del documento");
 
   const normalized = parseProbeResponse(parsed, input.fileName, documentType);
   const logos = await enrichLogosWithBackgroundLightness(normalized.logos, frames);
