@@ -38,6 +38,8 @@ export type GenomaSidebarPanelProps = {
   styleGuideDownloadPhase?: "idle" | "vectorizing" | "downloading";
   styleGuideDownloadError?: string | null;
   onSetAuthoritativeSource?: (sourceRef: string, authoritative: boolean) => void;
+  onStartReview?: () => void;
+  reviewMode?: boolean;
 };
 
 export function GenomaSidebarPanel({
@@ -57,6 +59,8 @@ export function GenomaSidebarPanel({
   styleGuideDownloadPhase = "idle",
   styleGuideDownloadError = null,
   onSetAuthoritativeSource,
+  onStartReview,
+  reviewMode = false,
 }: GenomaSidebarPanelProps) {
   const [exportMode, setExportMode] = useState<GenomaStyleGuideExportMode>("operativo");
   const [exportOpen, setExportOpen] = useState(false);
@@ -88,8 +92,8 @@ export function GenomaSidebarPanel({
 
         {phase === "review" ? (
           <>
-            <GenomaSidebarConflictBanner doc={doc} />
-            <GenomaSidebarReview doc={doc} />
+            <GenomaSidebarConflictBanner doc={doc} onStartReview={onStartReview} reviewMode={reviewMode} />
+            <GenomaSidebarReview doc={doc} onStartReview={onStartReview} reviewMode={reviewMode} />
           </>
         ) : null}
 

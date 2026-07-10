@@ -2,16 +2,17 @@
 
 import React from "react";
 import type { GenomaDocument } from "@/lib/genoma/genoma-types";
-import { genomaBoardActionItems, slotLabel, summarizeGenomaBoard } from "@/lib/genoma/genoma-board-status";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { computeGenomaCompleteness } from "@/lib/genoma/genoma-defaults";
-import { scrollToGenomaBoardSlot } from "./genoma-board-scroll";
+import { summarizeGenomaBoard } from "@/lib/genoma/genoma-board-status";
 
 type GenomaBoardHeaderProps = {
   doc: GenomaDocument;
   onBrandNameChange?: (name: string) => void;
   presentationMode?: boolean;
   onPresentationModeChange?: (enabled: boolean) => void;
+  needsYou?: number;
+  onStartReview?: () => void;
 };
 
 export function GenomaBoardHeader({
@@ -19,11 +20,12 @@ export function GenomaBoardHeader({
   onBrandNameChange,
   presentationMode = false,
   onPresentationModeChange,
+  needsYou = 0,
+  onStartReview,
 }: GenomaBoardHeaderProps) {
-  const summary = summarizeGenomaBoard(doc);
   const completeness = computeGenomaCompleteness(doc);
+  const summary = summarizeGenomaBoard(doc);
   const brand = doc.brandName?.value ?? "Marca";
-  const actionItems = genomaBoardActionItems(doc);
 
   return (
     <header className="genoma-v2-header">
@@ -37,26 +39,16 @@ export function GenomaBoardHeader({
         <span className="genoma-v2-header__completeness">{completeness.percent}% ADN</span>
       </div>
       <div className="genoma-v2-header__actions">
-        {actionItems.length > 0 ? (
-          <div className="genoma-v2-header__checklist" role="navigation" aria-label={genomaLocaleEs.pendingChecklistTitle}>
-            <span className="genoma-v2-header__pending">
-              {genomaLocaleEs.analysisDoneNeedsYou(summary.needsYou)}
-            </span>
-            <ul className="genoma-v2-header__checklist-items">
-              {actionItems.map((item) => (
-                <li key={item.slotId}>
-                  <button
-                    type="button"
-                    className={`genoma-v2-header__checklist-link genoma-v2-header__checklist-link--${item.kind}`}
-                    onClick={() => scrollToGenomaBoardSlot(item.slotId)}
-                  >
-                    {slotLabel(item.slotId)}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : summary.resolved > 0 ? (
+        {needsYou > 0 && onStartReview ? (
+          <button
+            type="button"
+            className="genoma-v2-header__review-cta"
+            disabled={presentationMode}
+            onClick={onStartReview}
+          >
+            {genomaLocaleEs.reviewAskButton(needsYou)}
+          </button>
+        ) : needsYou === 0 && summary.resolved > 0 ? (
           <span className="genoma-v2-header__ready">{genomaLocaleEs.boardReady}</span>
         ) : null}
         {onPresentationModeChange ? (

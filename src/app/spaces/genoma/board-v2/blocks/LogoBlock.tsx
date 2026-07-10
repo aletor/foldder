@@ -24,6 +24,9 @@ import {
   shouldShowLegacyPendingSkeleton,
   type GenomaBlockMotionProps,
 } from "../genoma-block-motion";
+import type { BrandThemePolarity } from "@/lib/genoma/brand-theme-color";
+import { GenomaLogoClearanceZone } from "../GenomaLogoClearanceZone";
+import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
 
 function canAdjustLogo(logo?: LogoValue): boolean {
   return Boolean(logo?.sourcePdfSha256 && logo.sourcePageNumber);
@@ -69,6 +72,19 @@ function LogoUploadControl({
   );
 }
 
+function resolvePlinthClass(
+  logo: LogoValue | undefined,
+  plinthMode: GenomaLogoPlinthMode,
+  brandReady: boolean,
+  brandPolarity: BrandThemePolarity,
+): string {
+  const base = genomaV2LogoPlinthClassForMode(logo, plinthMode);
+  if (plinthMode === "auto" && brandReady && brandPolarity === "dark") {
+    return `${base} genoma-v2-logo-plinth--brand-auto`;
+  }
+  return base;
+}
+
 export function LogoBlock({
   slot,
   slotId,
@@ -76,12 +92,16 @@ export function LogoBlock({
   onUploadLogo,
   activeSlotId,
   motion,
+  brandPolarity = "light",
+  brandReady = false,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   onUploadLogo?: (file: File) => void | Promise<void>;
   activeSlotId?: SlotId;
+  brandPolarity?: BrandThemePolarity;
+  brandReady?: boolean;
 } & GenomaBlockMotionProps) {
   const logo = slot.value as LogoValue | undefined;
   const [plinthMode, setPlinthMode] = useState<GenomaLogoPlinthMode>("auto");
@@ -89,8 +109,8 @@ export function LogoBlock({
   const [adjustCandidateIndex, setAdjustCandidateIndex] = useState<number | null>(null);
 
   const plinthClass = useMemo(
-    () => genomaV2LogoPlinthClassForMode(logo, plinthMode),
-    [logo, plinthMode],
+    () => resolvePlinthClass(logo, plinthMode, brandReady, brandPolarity),
+    [logo, plinthMode, brandPolarity, brandReady],
   );
   const pageHint = logoPageHint(logo);
   const editingLogo =
@@ -118,12 +138,21 @@ export function LogoBlock({
   );
 
   const resolvedPlinth = logo?.previewUrl ? (
-    <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
-      <GenomaLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} />
-      {pageHint ? <p className="genoma-v2-logo-page-hint">{pageHint}</p> : null}
-      <GenomaClickableImage src={logo.previewUrl} fit="logo" eager />
-      <GenomaSupplementalPanel slot={slot} />
-    </div>
+    <GenomaEvidenceTrigger
+      id={`logo-${slotId}`}
+      slot={slot}
+      slotId={slotId}
+      onAction={onAction}
+      className="genoma-evidence-wrap--block"
+      rankSignals={slot.candidates[0]?.rankSignals}
+    >
+      <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
+        <GenomaLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} />
+        {pageHint ? <p className="genoma-v2-logo-page-hint">{pageHint}</p> : null}
+        <GenomaClickableImage src={logo.previewUrl} fit="logo" eager />
+        <GenomaSupplementalPanel slot={slot} />
+      </div>
+    </GenomaEvidenceTrigger>
   ) : null;
 
   let body: React.ReactNode;
@@ -159,7 +188,7 @@ export function LogoBlock({
           {pickerCandidates.map((candidate, index) => {
             const value = candidate.value as LogoValue;
             const meta = logoCandidateMeta(candidate);
-            const candidatePlinth = genomaV2LogoPlinthClassForMode(value, plinthMode);
+            const candidatePlinth = resolvePlinthClass(value, plinthMode, brandReady, brandPolarity);
             const adjustable = canAdjustLogo(value) && !slot.locked;
             return (
               <div key={`${value.assetId}-${index}`} className="genoma-v2-logo-candidate">
@@ -222,9 +251,11 @@ export function LogoBlock({
     body = resolvedPlinth;
   }
 
+  const showClearance =
+    Boolean(logo?.previewUrl) && (slot.status === "resolved" || slot.locked);
+
   return (
     <DnaBlock
-      label={genomaLocaleEs.logo}
       slotId={slotId}
       slot={slot}
       onAction={onAction}
@@ -233,6 +264,7 @@ export function LogoBlock({
       activeSlotId={activeSlotId}
     >
       {body}
+      {showClearance && logo?.previewUrl ? <GenomaLogoClearanceZone previewUrl={logo.previewUrl} /> : null}
       {adjustOpen && editingLogo ? (
         <div className="genoma-v2-logo-adjust-overlay">
           <GenomaLogoBboxEditor

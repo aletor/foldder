@@ -15,6 +15,7 @@ import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil, Save } from "lucide-react";
 import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
 import {
   shouldShowAnalyzingSkeleton,
   shouldShowLegacyPendingSkeleton,
@@ -177,7 +178,19 @@ export function VoiceBlock({
             emphasizeTerms={voice.descriptors}
           />
         }
-        chips={descriptorChips}
+        chips={
+          voice.descriptors.length ? (
+            <GenomaEvidenceTrigger
+              id={`voice-descriptors-${slotId}`}
+              slot={slot}
+              slotId={slotId}
+              onAction={onAction}
+              onCorrect={() => setEditing(true)}
+            >
+              <>{descriptorChips}</>
+            </GenomaEvidenceTrigger>
+          ) : null
+        }
         panels={[
           {
             id: "rules",

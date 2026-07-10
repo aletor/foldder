@@ -3,21 +3,21 @@
 import React from "react";
 import type { GenomaDocument } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
-import { genomaBoardActionItems, slotLabel, summarizeGenomaBoard } from "@/lib/genoma/genoma-board-status";
+import { summarizeGenomaBoard } from "@/lib/genoma/genoma-board-status";
 import { countPendingGenomaConflicts } from "@/lib/genoma/genoma-reconcile";
-import { scrollToGenomaBoardSlot } from "./board-v2/genoma-board-scroll";
 import { GenomaFoldderButton } from "./board-v2/GenomaFoldderButton";
 
 type GenomaSidebarReviewProps = {
   doc: GenomaDocument;
+  onStartReview?: () => void;
+  reviewMode?: boolean;
 };
 
-export function GenomaSidebarReview({ doc }: GenomaSidebarReviewProps) {
+export function GenomaSidebarReview({ doc, onStartReview, reviewMode = false }: GenomaSidebarReviewProps) {
   const summary = summarizeGenomaBoard(doc);
-  const actions = genomaBoardActionItems(doc);
   const conflicts = countPendingGenomaConflicts(doc.slots);
 
-  if (!actions.length && conflicts === 0) return null;
+  if (summary.needsYou === 0 && conflicts === 0) return null;
 
   return (
     <section className="genoma-sidebar-review" aria-label="Revisión pendiente">
@@ -27,21 +27,11 @@ export function GenomaSidebarReview({ doc }: GenomaSidebarReviewProps) {
           : genomaLocaleEs.sidebarReviewPending(summary.needsYou)}
       </p>
       <p className="genoma-sidebar-review__lead">{genomaLocaleEs.sidebarReviewLead}</p>
-
-      <ul className="genoma-sidebar-review__list">
-        {actions.map((item) => (
-          <li key={item.slotId}>
-            <button
-              type="button"
-              className={`genoma-sidebar-review__link genoma-sidebar-review__link--${item.kind}`}
-              onClick={() => scrollToGenomaBoardSlot(item.slotId)}
-            >
-              <span>{slotLabel(item.slotId)}</span>
-              <span className="genoma-sidebar-review__go">{genomaLocaleEs.sidebarReviewGo}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {onStartReview ? (
+        <GenomaFoldderButton onClick={onStartReview} disabled={reviewMode}>
+          {genomaLocaleEs.reviewAskButton(summary.needsYou)}
+        </GenomaFoldderButton>
+      ) : null}
     </section>
   );
 }
@@ -66,21 +56,26 @@ export function GenomaSidebarReady({ doc }: GenomaSidebarReadyProps) {
 
 type GenomaSidebarConflictBannerProps = {
   doc: GenomaDocument;
+  onStartReview?: () => void;
+  reviewMode?: boolean;
 };
 
-export function GenomaSidebarConflictBanner({ doc }: GenomaSidebarConflictBannerProps) {
+export function GenomaSidebarConflictBanner({
+  doc,
+  onStartReview,
+  reviewMode = false,
+}: GenomaSidebarConflictBannerProps) {
   const conflicts = countPendingGenomaConflicts(doc.slots);
   if (!conflicts) return null;
-
-  const first = genomaBoardActionItems(doc).find((item) => item.kind === "conflict");
-  if (!first) return null;
 
   return (
     <div className="genoma-sidebar-conflict" role="alert">
       <p className="genoma-sidebar-conflict__text">{genomaLocaleEs.conflictsPending(conflicts)}</p>
-      <GenomaFoldderButton variant="muted" onClick={() => scrollToGenomaBoardSlot(first.slotId)}>
-        {genomaLocaleEs.reconcileOpenBlock(slotLabel(first.slotId))}
-      </GenomaFoldderButton>
+      {onStartReview ? (
+        <GenomaFoldderButton onClick={onStartReview} disabled={reviewMode}>
+          {genomaLocaleEs.reviewAskButton(conflicts)}
+        </GenomaFoldderButton>
+      ) : null}
     </div>
   );
 }

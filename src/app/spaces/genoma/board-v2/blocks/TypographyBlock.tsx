@@ -14,11 +14,26 @@ import {
   shouldShowLegacyPendingSkeleton,
   type GenomaBlockMotionProps,
 } from "../genoma-block-motion";
+import { normalizeFontDisplayName } from "@/lib/genoma/normalize-font-display-name";
+import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
 
 type TypographyFamily = TypographyValue["families"][number];
 
+const ALPHABET_LINE =
+  "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYyZz";
+const NUMERIC_LINE = "0123456789 &?!%";
+
 function fontStack(family: TypographyFamily): string {
-  return `${family.family}, ${family.fallbacks.join(", ")}`;
+  const displayName = normalizeFontDisplayName(family.family) ?? family.family;
+  return `${displayName.includes(" ") ? `"${displayName}"` : displayName}, ${family.fallbacks.join(", ")}`;
+}
+
+function typographyDisplayName(family: TypographyFamily): string {
+  return normalizeFontDisplayName(family.family) ?? family.family;
+}
+
+function isEstimatedCustomFamily(family: TypographyFamily): boolean {
+  return family.source === "custom";
 }
 
 function pickPrimarySecondary(families: TypographyFamily[]): { primary?: TypographyFamily; secondary?: TypographyFamily } {
@@ -36,42 +51,116 @@ function roleLabel(role: TypographyFamily["role"]): string {
   return genomaLocaleEs.typePrimary;
 }
 
-function TypographyColumn({ family, label }: { family: TypographyFamily; label: string }) {
+function TypographyColumn({
+  family,
+  label,
+  specimenText,
+  slot,
+  slotId,
+  onAction,
+  onCorrect,
+}: {
+  family: TypographyFamily;
+  label: string;
+  specimenText: string;
+  slot?: SlotState<unknown>;
+  slotId?: SlotId;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
+  onCorrect?: () => void;
+}) {
   const stack = fontStack(family);
-  const phrase = genomaLocaleEs.typeSpecimenPhrase;
+  const estimated = isEstimatedCustomFamily(family);
+  const weights = [...family.weights].sort((a, b) => a - b);
 
   return (
     <div className="genoma-type-column">
       <div className="genoma-type-column__head">
         <span className="genoma-type-column__label">{label}</span>
-        <span className="genoma-type-column__family">{family.family}</span>
+        {slot && slotId ? (
+          <GenomaEvidenceTrigger
+            id={`typography-${slotId}-${family.family}`}
+            slot={slot}
+            slotId={slotId}
+            onAction={onAction}
+            onCorrect={onCorrect}
+            provenance={slot.provenance}
+            confidence={slot.confidence}
+          >
+            <span className="genoma-type-column__family">{typographyDisplayName(family)}</span>
+          </GenomaEvidenceTrigger>
+        ) : (
+          <span className="genoma-type-column__family">{typographyDisplayName(family)}</span>
+        )}
         <span className="genoma-type-column__meta">
-          {family.weights.join(" · ")} · {family.source}
+          {weights.join(" · ")} · {family.source}
         </span>
+        {estimated ? (
+          <span className="genoma-v2-chapter-micro genoma-type-estimated-note">Estimada a partir del material</span>
+        ) : null}
       </div>
       <div className="genoma-type-column__specimens">
-        <p className="genoma-type-specimen genoma-type-specimen--bold" style={{ fontFamily: stack }}>
-          {phrase}
+        <p className="genoma-type-specimen genoma-type-specimen--headline" style={{ fontFamily: stack }}>
+          {specimenText}
         </p>
-        <p className="genoma-type-specimen genoma-type-specimen--light" style={{ fontFamily: stack }}>
-          {phrase}
-        </p>
-        <p className="genoma-type-specimen genoma-type-specimen--italic" style={{ fontFamily: stack }}>
-          {phrase}
-        </p>
+        <div className="genoma-type-alphabet" style={{ fontFamily: stack }} aria-hidden>
+          <span>{ALPHABET_LINE}</span>
+          <span>{NUMERIC_LINE}</span>
+        </div>
+        <div className="genoma-type-weight-ladder">
+          {weights.map((weight) => (
+            <div key={weight} className="genoma-type-weight-step">
+              <span className="genoma-v2-chapter-micro">{weight}</span>
+              <p className="genoma-type-weight-step__sample" style={{ fontFamily: stack, fontWeight: weight }}>
+                {specimenText}
+              </p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-function TypographyStrip({ families }: { families: TypographyFamily[] }) {
+function TypographyStrip({
+  families,
+  specimenText,
+  slot,
+  slotId,
+  onAction,
+  onCorrect,
+}: {
+  families: TypographyFamily[];
+  specimenText: string;
+  slot?: SlotState<unknown>;
+  slotId?: SlotId;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
+  onCorrect?: () => void;
+}) {
   const { primary, secondary } = pickPrimarySecondary(families);
 
   return (
     <div className="genoma-type-strip">
-      {primary ? <TypographyColumn family={primary} label={roleLabel(primary.role)} /> : null}
+      {primary ? (
+        <TypographyColumn
+          family={primary}
+          label={roleLabel(primary.role)}
+          specimenText={specimenText}
+          slot={slot}
+          slotId={slotId}
+          onAction={onAction}
+          onCorrect={onCorrect}
+        />
+      ) : null}
       {secondary && secondary.family !== primary?.family ? (
-        <TypographyColumn family={secondary} label={genomaLocaleEs.typeSecondary} />
+        <TypographyColumn
+          family={secondary}
+          label={genomaLocaleEs.typeSecondary}
+          specimenText={specimenText}
+          slot={slot}
+          slotId={slotId}
+          onAction={onAction}
+          onCorrect={onCorrect}
+        />
       ) : (
         <div className="genoma-type-column genoma-type-column--empty">
           <span className="genoma-v2-muted">Sin tipografía secundaria detectada</span>
@@ -87,11 +176,13 @@ export function TypographyBlock({
   onAction,
   activeSlotId,
   motion,
+  specimenText = genomaLocaleEs.typeSpecimenPhrase,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   activeSlotId?: SlotId;
+  specimenText?: string;
 } & GenomaBlockMotionProps) {
   const typography = slot.value as TypographyValue | undefined;
   const [editing, setEditing] = useState(false);
@@ -146,7 +237,13 @@ export function TypographyBlock({
               className="genoma-type-candidate"
               onClick={() => onAction(slotId, { action: "choose_candidate", candidateIndex: index })}
             >
-              <TypographyStrip families={value.families} />
+              <TypographyStrip
+                families={value.families}
+                specimenText={specimenText}
+                slot={slot}
+                slotId={slotId}
+                onAction={onAction}
+              />
             </button>
           );
         })}
@@ -172,12 +269,20 @@ export function TypographyBlock({
     }
     body = <p className="genoma-v2-muted">{genomaLocaleEs.noTypography}</p>;
   } else {
-    body = <TypographyStrip families={typography.families} />;
+    body = (
+      <TypographyStrip
+        families={typography.families}
+        specimenText={specimenText}
+        slot={slot}
+        slotId={slotId}
+        onAction={onAction}
+        onCorrect={() => setEditing(true)}
+      />
+    );
   }
 
   return (
     <DnaBlock
-      label={genomaLocaleEs.typography}
       slotId={slotId}
       slot={slot}
       onAction={onAction}

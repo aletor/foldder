@@ -1,0 +1,434 @@
+/* Genoma board — libro de estilo (capítulos, portada, duotono, clearance) */
+
+.genoma-v2-chapter-label {
+  display: block;
+  flex: 1 1 100%;
+  width: 100%;
+  order: -1;
+  margin: 0 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--genoma-v2-divider, rgba(26, 26, 26, 0.12));
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted, rgba(26, 26, 26, 0.55));
+}
+
+.genoma-v2-chapter-micro {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted, rgba(26, 26, 26, 0.55));
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-v2-chapter-label,
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-v2-chapter-micro {
+  color: var(--brand-ink-soft);
+  border-top-color: var(--brand-rule);
+}
+
+.genoma-v2-block__head--chapter {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.genoma-v2-block__head--chapter .genoma-v2-chip {
+  margin-left: 0;
+}
+
+.genoma-v2-block__head-extra {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Portada ── */
+.genoma-studio--v2 .genoma-v2-cover-wrap {
+  grid-column: 1 / -1;
+  background: var(--genoma-v2-bg, #f6f5f2);
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-v2-cover-wrap {
+  background: var(--brand-surface-raised);
+}
+
+.genoma-v2-cover {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.genoma-v2-cover__canvas {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: min(40vh, 420px);
+  max-height: 40vh;
+  padding: 48px 32px 40px;
+  text-align: center;
+  background: var(--genoma-v2-bg, #f6f5f2);
+}
+
+.genoma-v2-cover__canvas--skeleton {
+  background: var(--genoma-v2-bg, #f6f5f2);
+}
+
+.genoma-v2-cover__logo {
+  width: min(180px, 42vw);
+  max-height: 120px;
+}
+
+.genoma-v2-cover__logo .genoma-clickable-image--logo {
+  width: 100%;
+  height: 100%;
+}
+
+.genoma-v2-cover__brand {
+  margin: 0;
+  font-family: var(--brand-font-display, var(--genoma-v2-font));
+  font-size: clamp(40px, 6vw, 88px);
+  font-weight: 500;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: var(--brand-ink, var(--genoma-v2-heading));
+}
+
+.genoma-v2-cover__headline {
+  margin: 0;
+  max-width: 42ch;
+  font-family: var(--brand-font-text, var(--genoma-v2-font));
+  font-size: clamp(15px, 2vw, 20px);
+  font-weight: 400;
+  font-style: italic;
+  line-height: 1.45;
+  color: var(--brand-ink-soft, var(--genoma-v2-muted));
+}
+
+.genoma-v2-cover__foot {
+  padding: 12px 24px 20px;
+  border-top: 1px solid var(--genoma-v2-divider, rgba(26, 26, 26, 0.12));
+  background: var(--genoma-v2-surface, #f6f5f2);
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-v2-cover__foot {
+  border-top-color: var(--brand-rule);
+  background: var(--brand-surface-raised);
+}
+
+.genoma-v2-cover__meta {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-v2-cover__skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(320px, 80%);
+}
+
+.genoma-v2-cover__skeleton-logo,
+.genoma-v2-cover__skeleton-title,
+.genoma-v2-cover__skeleton-line {
+  border-radius: 18px;
+  background: rgba(26, 26, 26, 0.08);
+  animation: genoma-cover-pulse 1.4s ease-in-out infinite;
+}
+
+.genoma-v2-cover__skeleton-logo {
+  width: 120px;
+  height: 72px;
+}
+
+.genoma-v2-cover__skeleton-title {
+  width: 100%;
+  height: 48px;
+}
+
+.genoma-v2-cover__skeleton-line {
+  width: 72%;
+  height: 18px;
+}
+
+@keyframes genoma-cover-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── Palette — nombre humano + proporciones ── */
+.genoma-palette-card__human-name {
+  font-family: var(--brand-font-display, inherit);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+
+.genoma-palette-proportions {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.genoma-palette-proportions__bar {
+  display: flex;
+  height: 10px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(26, 26, 26, 0.06);
+}
+
+.genoma-palette-proportions__segment {
+  min-width: 0;
+}
+
+.genoma-palette-proportions__segment--60 {
+  flex: 60 1 0;
+}
+
+.genoma-palette-proportions__segment--30 {
+  flex: 30 1 0;
+}
+
+.genoma-palette-proportions__segment--10 {
+  flex: 10 1 0;
+}
+
+.genoma-palette-proportions__labels {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.genoma-palette-proportions__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-palette-proportions__pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--genoma-v2-heading);
+}
+
+/* ── Typography — alfabeto y pesos ── */
+.genoma-type-specimen--headline {
+  margin: 0 0 12px;
+  font-size: clamp(22px, 3vw, 32px);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.genoma-type-alphabet {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  color: var(--genoma-v2-muted);
+  word-break: break-all;
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-type-alphabet {
+  color: var(--brand-ink-soft);
+}
+
+.genoma-type-weight-ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.genoma-type-weight-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.genoma-type-weight-step__sample {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.genoma-type-estimated-note {
+  margin-top: 4px;
+}
+
+/* ── Galería duotono ── */
+.genoma-gallery-view-toggle {
+  display: inline-flex;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--genoma-v2-divider, rgba(26, 26, 26, 0.12));
+}
+
+.genoma-gallery-view-toggle__btn {
+  border: 0;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--genoma-v2-muted);
+  cursor: pointer;
+}
+
+.genoma-gallery-view-toggle__btn.is-active {
+  background: rgba(26, 26, 26, 0.08);
+  color: var(--genoma-v2-heading);
+  font-weight: 600;
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-gallery-view-toggle {
+  border-color: var(--brand-rule);
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-gallery-view-toggle__btn.is-active {
+  background: color-mix(in srgb, var(--brand-primary) 14%, transparent);
+  color: var(--brand-ink);
+}
+
+.genoma-v2-gallery-thumb--duotone {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.genoma-v2-gallery-thumb--duotone .genoma-preview-image,
+.genoma-v2-gallery-thumb--duotone img {
+  filter: grayscale(1) contrast(1.05);
+}
+
+.genoma-v2-gallery-thumb--duotone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--brand-primary, #6b4c9a);
+  mix-blend-mode: multiply;
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+/* ── Logo clearance ── */
+.genoma-logo-clearance {
+  margin-top: 16px;
+  border-top: 1px solid var(--genoma-v2-divider, rgba(26, 26, 26, 0.1));
+  padding-top: 10px;
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-logo-clearance {
+  border-top-color: var(--brand-rule);
+}
+
+.genoma-logo-clearance__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.genoma-logo-clearance__toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.genoma-logo-clearance__toggle svg.is-open {
+  transform: rotate(180deg);
+}
+
+.genoma-logo-clearance__diagram {
+  padding: 12px 0 4px;
+}
+
+.genoma-logo-clearance__stage {
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.genoma-logo-clearance__zone {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 25%;
+  border: 1px dashed var(--genoma-v2-divider, rgba(26, 26, 26, 0.35));
+  border-radius: 4px;
+}
+
+.genoma-v2-bento-board[data-brand-ready="true"] .genoma-logo-clearance__zone {
+  border-color: var(--brand-rule);
+}
+
+.genoma-logo-clearance__logo {
+  max-width: 160px;
+  max-height: 80px;
+}
+
+.genoma-logo-clearance__cota {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--genoma-v2-muted);
+}
+
+.genoma-logo-clearance__cota--top {
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.genoma-logo-clearance__cota--bottom {
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.genoma-logo-clearance__cota--left {
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.genoma-logo-clearance__cota--right {
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.genoma-logo-clearance__hint {
+  text-align: center;
+  font-size: 11px;
+  margin: 0;
+}

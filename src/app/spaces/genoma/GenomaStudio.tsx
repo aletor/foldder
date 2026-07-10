@@ -89,6 +89,11 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
   const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+
+  useEffect(() => {
+    if (presentationMode) setReviewMode(false);
+  }, [presentationMode]);
 
   useEffect(() => {
     genomaRef.current = genoma;
@@ -108,6 +113,15 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
       onGenomaChange(next);
     },
     [onGenomaChange],
+  );
+
+  const handleReviewComplete = useCallback(
+    (stats: { decided: number; skipped: number }) => {
+      if (stats.decided > 0) {
+        pushToast(createGenomaToast("success", genomaLocaleEs.reviewCompleteToast(stats.decided)));
+      }
+    },
+    [pushToast],
   );
 
   const handleAction = useCallback(
@@ -431,6 +445,8 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
           styleGuideDownloadPhase={styleGuideDownloadPhase}
           styleGuideDownloadError={styleGuideDownloadError}
           onSetAuthoritativeSource={handleSetAuthoritativeSource}
+          onStartReview={() => setReviewMode(true)}
+          reviewMode={reviewMode}
         />
 
         <main className="genoma-studio-split__main genoma-studio__board-shell">
@@ -454,6 +470,9 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
               activeSlotId={crawlProgress?.activeSlot}
               presentationMode={presentationMode}
               onPresentationModeChange={setPresentationMode}
+              reviewMode={reviewMode}
+              onReviewModeChange={setReviewMode}
+              onReviewComplete={handleReviewComplete}
             />
           ) : (
             <GenomaBoardEmpty />

@@ -14,6 +14,7 @@ import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil } from "lucide-react";
 import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
 import {
   shouldShowAnalyzingSkeleton,
   shouldShowLegacyPendingSkeleton,
@@ -147,7 +148,19 @@ export function EssenceBlock({
     ].filter(Boolean) as { label: string; value: string }[];
 
     body = (
-      <SemanticDetailPanels
+      <>
+        {essence.headline ? (
+          <GenomaEvidenceTrigger
+            id={`essence-headline-${slotId}`}
+            slot={slot}
+            slotId={slotId}
+            onAction={onAction}
+            onCorrect={() => setEditing(true)}
+          >
+            <p className="genoma-v2-semantic-headline-row">«{essence.headline}»</p>
+          </GenomaEvidenceTrigger>
+        ) : null}
+        <SemanticDetailPanels
         summary={
           <GenomaRichText
             text={essence.summary}
@@ -193,6 +206,7 @@ export function EssenceBlock({
         ]}
         footer={<GenomaSupplementalPanel slot={slot} />}
       />
+      </>
     );
   }
 

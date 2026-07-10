@@ -5,11 +5,11 @@ import { Lock, RotateCcw, Unlock } from "lucide-react";
 import type { SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { confirmLabelForSlot, genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { getSlotAttention, type SlotAttention } from "@/lib/genoma/genoma-board-status";
-import { GenomaSlotIcon } from "./genoma-slot-icons";
 import { GenomaFoldderButton } from "./GenomaFoldderButton";
+import { boardChapterLabel } from "./genoma-board-chapters";
 
 type DnaBlockProps = {
-  label: string;
+  label?: string;
   slotId?: SlotId;
   slot?: SlotState<unknown>;
   onAction?: (slotId: SlotId, action: SlotAction) => void;
@@ -19,6 +19,7 @@ type DnaBlockProps = {
   primaryAction?: React.ReactNode;
   secondaryActions?: React.ReactNode;
   activeSlotId?: SlotId;
+  headExtra?: React.ReactNode;
 };
 
 export function DnaBlock({
@@ -32,11 +33,13 @@ export function DnaBlock({
   primaryAction,
   secondaryActions,
   activeSlotId,
+  headExtra,
 }: DnaBlockProps) {
   const hasToolbar = Boolean(slot && onAction && slotId && (slot.status === "resolved" || slot.history.length > 0));
   const confirmLabel = slotId ? confirmLabelForSlot[slotId] ?? genomaLocaleEs.confirm : genomaLocaleEs.confirm;
   const attention: SlotAttention =
     slot && slotId ? getSlotAttention(slot, activeSlotId) : { kind: null };
+  const chapter = boardChapterLabel(slotId);
 
   const slotToolbar =
     hasToolbar && slot && slotId && onAction ? (
@@ -64,9 +67,12 @@ export function DnaBlock({
     <section
       className={`genoma-v2-block${attention.kind ? ` genoma-v2-block--${attention.kind}` : ""} ${className}`.trim()}
     >
-      <header className="genoma-v2-block__head">
-        <GenomaSlotIcon slotId={slotId} />
-        <span className="genoma-v2-block__label">{label}</span>
+      <header className="genoma-v2-block__head genoma-v2-block__head--chapter">
+        {chapter ? (
+          <span className="genoma-v2-chapter-label">{chapter}</span>
+        ) : label ? (
+          <span className="genoma-v2-block__label">{label}</span>
+        ) : null}
         {chip ? <span className="genoma-v2-chip">{chip}</span> : null}
         {attention.kind && attention.label ? (
           <span className={`genoma-v2-chip genoma-v2-chip--${attention.kind}`}>{attention.label}</span>
@@ -74,6 +80,7 @@ export function DnaBlock({
         {slot?.locked && attention.kind !== "locked" ? (
           <span className="genoma-v2-chip genoma-v2-chip--locked">{genomaLocaleEs.locked}</span>
         ) : null}
+        {headExtra ? <div className="genoma-v2-block__head-extra">{headExtra}</div> : null}
         {secondaryActions ? <div className="genoma-v2-block__head-actions">{secondaryActions}</div> : null}
       </header>
       <div className="genoma-v2-block__body">{children}</div>

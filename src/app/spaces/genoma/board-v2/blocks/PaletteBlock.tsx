@@ -3,11 +3,13 @@
 import React from "react";
 import type { PaletteValue, SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
+import { nameColor } from "@/lib/genoma/name-color";
 import { formatCmyk, formatRgb, hexToRgb, readableTextOn, rgbToCmyk } from "../../face-utils";
 import { DnaBlock } from "../DnaBlock";
 import { GenomaFoldderButton } from "../GenomaFoldderButton";
 import { Droplet } from "lucide-react";
 import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
 import {
   shouldShowAnalyzingSkeleton,
   shouldShowLegacyPendingSkeleton,
@@ -36,6 +38,10 @@ function PaletteColorCard({
   onPickPrimary,
   onColorChange,
   staggerIndex,
+  slot,
+  slotId,
+  onAction,
+  evidenceId,
 }: {
   hex: string;
   role: string;
@@ -44,6 +50,10 @@ function PaletteColorCard({
   onPickPrimary?: () => void;
   onColorChange?: (nextHex: string) => void;
   staggerIndex?: number;
+  slot?: SlotState<unknown>;
+  slotId?: SlotId;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
+  evidenceId?: string;
 }) {
   const normalized = normalizeHex(hex);
   const pickerValue = normalized.toLowerCase();
@@ -52,9 +62,11 @@ function PaletteColorCard({
   const textColor = readableTextOn(normalized);
   const pickable = interactive && Boolean(onPickPrimary);
   const bodyClassName = "genoma-palette-card__body";
+  const humanName = nameColor(normalized);
   const bodyContent = (
     <>
       {featured ? <span className="genoma-palette-card__badge">Principal</span> : null}
+      <span className="genoma-palette-card__human-name">{humanName}</span>
       <span className="genoma-palette-card__role">{role}</span>
       <span className="genoma-palette-card__hex">{normalized}</span>
       <span className="genoma-palette-card__line">
@@ -77,6 +89,18 @@ function PaletteColorCard({
         ...(staggerIndex !== undefined ? { ["--genoma-stagger-i" as string]: staggerIndex } : {}),
       }}
     >
+      {slot && slotId && evidenceId ? (
+        <GenomaEvidenceTrigger
+          id={evidenceId}
+          slot={slot}
+          slotId={slotId}
+          onAction={onAction}
+          provenance={slot.provenance}
+          confidence={slot.confidence}
+        >
+          <span className="genoma-v2-sr-only">{humanName}</span>
+        </GenomaEvidenceTrigger>
+      ) : null}
       {interactive && onColorChange ? (
         <label className="genoma-palette-card__picker" title="Cambiar color">
           <span className="genoma-v2-sr-only">Cambiar color</span>
@@ -100,34 +124,94 @@ function PaletteColorCard({
   );
 }
 
+function PaletteProportionsBar({ colors }: { colors: PaletteValue["colors"] }) {
+  const primaryHex = colors.find((entry) => entry.role === "primary")?.hex ?? colors[0]?.hex ?? "#cccccc";
+  const secondaryHex =
+    colors.find((entry) => entry.role === "secondary")?.hex ??
+    colors.find((entry) => entry.role === "background")?.hex ??
+    "#dddddd";
+  const accentHex =
+    colors.find((entry) => entry.role === "accent")?.hex ??
+    colors.find((entry) => entry.role === "neutral")?.hex ??
+    "#999999";
+
+  return (
+    <div className="genoma-palette-proportions" aria-label="Proporciones orientativas de uso de color">
+      <div className="genoma-palette-proportions__bar">
+        <div
+          className="genoma-palette-proportions__segment genoma-palette-proportions__segment--60"
+          style={{ backgroundColor: primaryHex }}
+          title="Principal 60%"
+        />
+        <div
+          className="genoma-palette-proportions__segment genoma-palette-proportions__segment--30"
+          style={{ backgroundColor: secondaryHex }}
+          title="Secundaria y fondo 30%"
+        />
+        <div
+          className="genoma-palette-proportions__segment genoma-palette-proportions__segment--10"
+          style={{ backgroundColor: accentHex }}
+          title="Acento 10%"
+        />
+      </div>
+      <div className="genoma-palette-proportions__labels">
+        <span className="genoma-palette-proportions__label">
+          Principal <span className="genoma-palette-proportions__pct">60%</span>
+        </span>
+        <span className="genoma-palette-proportions__label">
+          Secundaria + fondo <span className="genoma-palette-proportions__pct">30%</span>
+        </span>
+        <span className="genoma-palette-proportions__label">
+          Acento <span className="genoma-palette-proportions__pct">10%</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function PaletteStrip({
   colors,
   onPickPrimary,
   onColorChange,
   interactive = true,
+  showProportions = false,
+  slot,
+  slotId,
+  onAction,
 }: {
   colors: PaletteValue["colors"];
   onPickPrimary?: (hex: string) => void;
   onColorChange?: (fromHex: string, toHex: string) => void;
   interactive?: boolean;
+  showProportions?: boolean;
+  slot?: SlotState<unknown>;
+  slotId?: SlotId;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
 }) {
   if (!colors.length) return null;
 
   return (
-    <div className="genoma-palette-strip">
-      {colors.map((color, index) => (
-        <PaletteColorCard
-          key={`${color.role}-${color.hex}`}
-          hex={color.hex}
-          role={ROLE_LABELS[color.role] ?? color.role}
-          featured={color.role === "primary"}
-          interactive={interactive}
-          staggerIndex={index}
-          onPickPrimary={onPickPrimary ? () => onPickPrimary(color.hex) : undefined}
-          onColorChange={onColorChange ? (next) => onColorChange(color.hex, next) : undefined}
-        />
-      ))}
-    </div>
+    <>
+      <div className="genoma-palette-strip">
+        {colors.map((color, index) => (
+          <PaletteColorCard
+            key={`${color.role}-${color.hex}`}
+            hex={color.hex}
+            role={ROLE_LABELS[color.role] ?? color.role}
+            featured={color.role === "primary"}
+            interactive={interactive}
+            staggerIndex={index}
+            onPickPrimary={onPickPrimary ? () => onPickPrimary(color.hex) : undefined}
+            onColorChange={onColorChange ? (next) => onColorChange(color.hex, next) : undefined}
+            slot={slot}
+            slotId={slotId}
+            onAction={onAction}
+            evidenceId={`palette-${color.role}-${color.hex}`}
+          />
+        ))}
+      </div>
+      {showProportions ? <PaletteProportionsBar colors={colors} /> : null}
+    </>
   );
 }
 
@@ -213,12 +297,16 @@ export function PaletteBlock({
         colors={palette.colors}
         onPickPrimary={slot.locked ? undefined : pickPrimary}
         onColorChange={slot.locked ? undefined : changeColor}
+        showProportions
+        slot={slot}
+        slotId={slotId}
+        onAction={onAction}
       />
     );
   }
 
   return (
-    <DnaBlock label={genomaLocaleEs.palette} slotId={slotId} slot={slot} onAction={onAction} primaryAction={primaryAction} activeSlotId={activeSlotId}>
+    <DnaBlock slotId={slotId} slot={slot} onAction={onAction} primaryAction={primaryAction} activeSlotId={activeSlotId}>
       {body}
     </DnaBlock>
   );

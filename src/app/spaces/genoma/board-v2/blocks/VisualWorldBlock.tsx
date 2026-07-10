@@ -15,6 +15,7 @@ import { GenomaSupplementalPanel } from "../GenomaSupplementalPanel";
 import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil } from "lucide-react";
 import { GenomaBlockSkeleton } from "../GenomaBlockSkeleton";
+import { GenomaEvidenceTrigger } from "../GenomaEvidenceTrigger";
 import {
   shouldShowAnalyzingSkeleton,
   shouldShowLegacyPendingSkeleton,
@@ -144,7 +145,19 @@ export function VisualWorldBlock({
     body = (
       <SemanticDetailPanels
         summary={<GenomaRichText text={visualWorld.summary} className="genoma-v2-prose" as="p" />}
-        chips={moodChips}
+        chips={
+          visualWorld.moodTags?.length ? (
+            <GenomaEvidenceTrigger
+              id={`visual-mood-${slotId}`}
+              slot={slot}
+              slotId={slotId}
+              onAction={onAction}
+              onCorrect={() => setEditing(true)}
+            >
+              <>{moodChips}</>
+            </GenomaEvidenceTrigger>
+          ) : null
+        }
         panels={[
           {
             id: "traits",

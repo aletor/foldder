@@ -43,6 +43,7 @@ export function GalleryBlock({
   gallerySuccessMessage,
   activeSlotId,
   motion,
+  brandReady = false,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
@@ -55,6 +56,7 @@ export function GalleryBlock({
   focusGeneratedTab?: number;
   gallerySuccessMessage?: string | null;
   activeSlotId?: SlotId;
+  brandReady?: boolean;
 } & GenomaBlockMotionProps) {
   const gallery = slot.value as GalleryValue | undefined;
   const harvested = gallery?.harvested ?? [];
@@ -65,7 +67,14 @@ export function GalleryBlock({
   const generated = gallery?.generated ?? [];
   const [harvestedOnlyIncluded, setHarvestedOnlyIncluded] = useState(false);
   const [tab, setTab] = useState<GalleryTab>("generated");
+  const [harvestedView, setHarvestedView] = useState<"original" | "duotone">(() =>
+    brandReady ? "duotone" : "original",
+  );
   const tabTouchedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!brandReady) setHarvestedView("original");
+  }, [brandReady]);
 
   useEffect(() => {
     if (focusGeneratedTab && focusGeneratedTab > 0) {
@@ -98,6 +107,27 @@ export function GalleryBlock({
   );
   const includedCount = useMemo(() => harvested.filter((item) => item.included).length, [harvested]);
   const galleryCostHint = formatGenomaGalleryCostHint("es");
+  const duotoneActive = brandReady && harvestedView === "duotone";
+
+  const viewToggle = (
+    <div className="genoma-gallery-view-toggle" role="group" aria-label="Vista de galería cosechada">
+      <button
+        type="button"
+        className={`genoma-gallery-view-toggle__btn${harvestedView === "original" ? " is-active" : ""}`}
+        onClick={() => setHarvestedView("original")}
+      >
+        Original
+      </button>
+      <button
+        type="button"
+        className={`genoma-gallery-view-toggle__btn${harvestedView === "duotone" ? " is-active" : ""}`}
+        onClick={() => setHarvestedView("duotone")}
+        disabled={!brandReady}
+      >
+        Duotono
+      </button>
+    </div>
+  );
 
   const generateButton = onGenerateGallery ? (
     <div className="genoma-v2-gallery-generate">
@@ -303,7 +333,9 @@ export function GalleryBlock({
                   style={{ ["--genoma-stagger-i" as string]: index }}
                 >
                   {previewSrc ? (
-                    <div className="genoma-v2-gallery-thumb">
+                    <div
+                      className={`genoma-v2-gallery-thumb${duotoneActive ? " genoma-v2-gallery-thumb--duotone" : ""}`}
+                    >
                       <GenomaClickableImage src={previewSrc} fit="cover" eager />
                     </div>
                   ) : null}
@@ -345,13 +377,13 @@ export function GalleryBlock({
 
   return (
     <DnaBlock
-      label={genomaLocaleEs.gallery}
       slotId={slotId}
       slot={slot}
       onAction={onAction}
       className="genoma-v2-block--gallery genoma-v2-block--bento-gallery"
       primaryAction={primaryAction}
       activeSlotId={activeSlotId}
+      headExtra={viewToggle}
     >
       {body}
     </DnaBlock>

@@ -211,6 +211,8 @@ export const genomaLocaleEs = {
     `Fuente añadida — ${count} documento${count === 1 ? "" : "s"} integrado${count === 1 ? "" : "s"}`,
   analysisDoneClean: "Sin conflictos nuevos",
   analysisDoneNeedsYou: (count: number) => `${count} decisión${count === 1 ? "" : "es"} pendiente${count === 1 ? "" : "s"} en el board`,
+  reviewAskButton: (count: number) => `Genoma te pregunta (${count})`,
+  reviewCompleteToast: (count: number) => `Revisión completada — ${count} decisión${count === 1 ? "" : "es"} tomada${count === 1 ? "" : "s"}`,
   analysisDoneConflict: (count: number) =>
     `${count} conflicto${count === 1 ? "" : "s"} nuevo${count === 1 ? "" : "s"} — revisa el board`,
   analysisDoneConflictHint: "Los bloques marcados en ámbar piden tu criterio",
