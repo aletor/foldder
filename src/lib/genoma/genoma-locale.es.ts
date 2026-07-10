@@ -241,6 +241,23 @@ export const genomaLocaleEs = {
   pendingChecklistTitle: "Pendiente de ti",
   presentationMode: "solo confirmado",
   presentationModeHint: "Oculta borradores y muestra solo bloques confirmados.",
+  sidebarEmptyLead: "Añade la primera fuente de la marca",
+  sidebarEmptySub: "PDF, manual de marca o URL web — el análisis tarda unos minutos.",
+  sidebarDropHero: "Suelta aquí tu manual o deck",
+  sidebarOrUrl: "o pega una url",
+  sidebarAnalysisOptions: "opciones de análisis",
+  sidebarIngestTitle: "Analizando material",
+  addAnotherSource: "añadir otra fuente",
+  hideAddSource: "ocultar entrada",
+  sidebarReviewPending: (count: number) =>
+    `Te falta confirmar ${count} ${count === 1 ? "bloque" : "bloques"}`,
+  sidebarReviewConflicts: (count: number) =>
+    `${count} ${count === 1 ? "conflicto" : "conflictos"} por resolver`,
+  sidebarReviewLead: "Revisa y confirma en el board — el sidebar solo te guía.",
+  sidebarReviewGo: "ir",
+  sidebarReadyMeta: (locked: number, sources: number) =>
+    `${locked} bloque${locked === 1 ? "" : "s"} confirmado${locked === 1 ? "" : "s"} · ${sources} fuente${sources === 1 ? "" : "s"}`,
+  sidebarExportCollapsed: "exportar",
   galleryVerdictUp: "Encaja",
   galleryVerdictDown: "No encaja",
   recalibrateHint: "Regenera imágenes con el estilo actualizado del ADN.",

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import type { GalleryValue, GenomaDocument, SlotAction, SlotId } from "@/lib/genoma/genoma-types";
 import { externalGalleryMediaUrls } from "@/lib/genoma/genoma-gallery-media";
@@ -35,7 +35,6 @@ import { GenomaBoardV2 } from "./board-v2/GenomaBoardV2";
 import { GenomaBoardEmpty } from "./GenomaBoardEmpty";
 import { GenomaSidebarPanel } from "./GenomaSidebarPanel";
 import { GenomaStudioToastStack } from "./GenomaStudioToast";
-import { buildStudioIngestFeedback } from "@/lib/genoma/studio/studio-ingest-feedback";
 import type { GenomaStyleGuideExportMode } from "@/lib/genoma/projection/style-guide-export-types";
 import { downloadGenomaDocumentStyleGuidePdf } from "@/lib/genoma/projection/genoma-style-guide-download.client";
 import {
@@ -375,11 +374,6 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     [nodeLabel, pushToast],
   );
 
-  const ingestFeedback = useMemo(
-    () => buildStudioIngestFeedback(genoma, { isAnalyzing, crawlProgress }),
-    [genoma, isAnalyzing, crawlProgress],
-  );
-
   const title = extractBrandTitle(genoma, nodeLabel?.trim() || "Genoma");
   const subtitle = crawlProgress?.message ?? (isAnalyzing ? "Analizando…" : undefined);
   const completeness = computeGenomaCompleteness(genoma);
@@ -427,7 +421,6 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
           onExportStyleGuidePdf={(mode) => void handleExportStyleGuidePdf(mode)}
           styleGuideDownloadPhase={styleGuideDownloadPhase}
           styleGuideDownloadError={styleGuideDownloadError}
-          ingestFeedback={ingestFeedback}
           onSetAuthoritativeSource={handleSetAuthoritativeSource}
         />
 
