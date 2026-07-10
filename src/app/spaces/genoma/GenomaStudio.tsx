@@ -251,12 +251,13 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
     setCrawlError(null);
     setGallerySuccess(null);
     setGalleryProgress(null);
-    const gallery = genoma.slots.gallery?.value as import("@/lib/genoma/genoma-types").GalleryValue | undefined;
+    const snapshot = genomaRef.current;
+    const gallery = snapshot.slots.gallery?.value as import("@/lib/genoma/genoma-types").GalleryValue | undefined;
     const version = gallery?.stylePromptVersion ?? 0;
     const priorGenerated = gallery?.generated?.length ?? 0;
     let workingGallery = gallery;
 
-    const result = await streamGenomaGallery(genoma, version, (event) => {
+    const result = await streamGenomaGallery(snapshot, version, (event) => {
       if (event.type === "tone") {
         setGalleryProgress({
           index: 0,
@@ -269,7 +270,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
         if (workingGallery) {
           workingGallery = { ...workingGallery, styleToneExplanation: event.explanation };
           persistGenoma(
-            applySlotAction(genoma, "gallery", { action: "set", value: workingGallery }),
+            applySlotAction(genomaRef.current, "gallery", { action: "set", value: workingGallery }),
           );
         }
       }
@@ -295,7 +296,7 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
               }
             : null,
         );
-        persistGenoma(applySlotAction(genoma, "gallery", { action: "set", value: workingGallery }));
+        persistGenoma(applySlotAction(genomaRef.current, "gallery", { action: "set", value: workingGallery }));
       }
     });
 
@@ -306,11 +307,11 @@ export function GenomaStudio({ nodeId, nodeLabel, genoma, onGenomaChange, onClos
       return;
     }
     const added = result.addedCount ?? result.gallery.generated.length - priorGenerated;
-    persistGenoma(applySlotAction(genoma, "gallery", { action: "set", value: result.gallery }));
+    persistGenoma(applySlotAction(genomaRef.current, "gallery", { action: "set", value: result.gallery }));
     setFocusGeneratedTab((value) => value + 1);
     setGallerySuccess(added > 0 ? genomaLocaleEs.galleryGeneratedCount(added) : genomaLocaleEs.galleryGeneratedSuccess);
     window.setTimeout(() => setGallerySuccess(null), 8000);
-  }, [genoma, persistGenoma]);
+  }, [persistGenoma]);
 
   const handleRecalibrateGallery = useCallback(() => {
     const gallery = genoma.slots.gallery?.value as import("@/lib/genoma/genoma-types").GalleryValue | undefined;

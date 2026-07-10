@@ -173,15 +173,17 @@ export async function extractBrandManualVisualsFromPdf(input: {
       if (intake.semanticPalette?.entries.length) {
         paletteSignals.push(...paletteSignalsFromLogoIntakeSemantic(intake.semanticPalette, contentSha256));
       }
-      return {
-        logoCandidates,
-        paletteSignals,
-        typographyFamilies,
-        contentSha256,
-        pdfStorageKey,
-        totalPages,
-        visionDetail: `${intake.visionDetail} · ${paletteSignals.length} colores · ${typographyFamilies.length} fuentes`,
-      };
+      if (intake.candidates.length > 0) {
+        return {
+          logoCandidates,
+          paletteSignals,
+          typographyFamilies,
+          contentSha256,
+          pdfStorageKey,
+          totalPages,
+          visionDetail: `${intake.visionDetail} · ${paletteSignals.length} colores · ${typographyFamilies.length} fuentes`,
+        };
+      }
     } catch (error) {
       console.warn("[genoma:manual-logo-intake]", error instanceof Error ? error.message : error);
     }

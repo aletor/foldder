@@ -1,7 +1,5 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
-
 import React, { useEffect, useMemo, useState } from "react";
 import type { GalleryValue, GenomaDocument, SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { galleryItemSourceUrl } from "@/lib/genoma/genoma-gallery-media";

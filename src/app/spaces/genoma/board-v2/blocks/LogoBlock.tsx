@@ -3,6 +3,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import type { LogoValue, SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
+import { genomaV2LogoPlinthClass } from "@/lib/genoma/genoma-logo-plinth";
 import { DnaBlock } from "../DnaBlock";
 import { GenomaClickableImage } from "../GenomaClickableImage";
 import { GenomaLogoRankMeta } from "../GenomaVisualRankMeta";
@@ -20,15 +21,6 @@ function logoPageHint(logo?: LogoValue): string | null {
   if (!logo?.sourcePageNumber) return null;
   const doc = logo.sourceDocName ? `${logo.sourceDocName} · ` : "";
   return `${doc}${genomaLocaleEs.logoPageSignal(logo.sourcePageNumber, logo.totalDocPages ?? 0)}`;
-}
-
-function plinthClassForLogo(logo?: LogoValue): string {
-  if (!logo?.previewUrl) return "genoma-v2-logo-plinth--neutral";
-  if (logo.background === "solid") return "genoma-v2-logo-plinth--light";
-  if (logo.detectionMethod === "vision_bbox" || logo.detectionMethod === "adjusted") {
-    return "genoma-v2-logo-plinth--light";
-  }
-  return "genoma-v2-logo-plinth--adaptive";
 }
 
 function LogoUploadControl({ onUploadLogo, disabled }: { onUploadLogo?: (file: File) => void | Promise<void>; disabled?: boolean }) {
@@ -73,7 +65,7 @@ export function LogoBlock({
   activeSlotId?: SlotId;
 }) {
   const logo = slot.value as LogoValue | undefined;
-  const plinthClass = useMemo(() => plinthClassForLogo(logo), [logo]);
+  const plinthClass = useMemo(() => genomaV2LogoPlinthClass(logo), [logo]);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const pageHint = logoPageHint(logo);
   const adjustControl =
@@ -113,12 +105,13 @@ export function LogoBlock({
         <div className="genoma-v2-logo-candidates">
         {pickerCandidates.map((candidate, index) => {
           const value = candidate.value as LogoValue;
+          const candidatePlinth = genomaV2LogoPlinthClass(value);
           return (
             <div key={`${value.assetId}-${index}`} className="genoma-v2-logo-candidate">
               <GenomaLogoRankMeta candidate={candidate} rank={index + 1} />
-              <div className="genoma-v2-logo-candidate__preview">
+              <div className={`genoma-v2-logo-candidate__preview ${candidatePlinth}`}>
                 {value.previewUrl ? (
-                  <GenomaClickableImage src={value.previewUrl} fit="cover" eager />
+                  <GenomaClickableImage src={value.previewUrl} fit="logo" eager />
                 ) : (
                   <span className="genoma-v2-muted">{value.assetId}</span>
                 )}

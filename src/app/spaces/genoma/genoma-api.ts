@@ -1,6 +1,5 @@
-import type { GalleryValue, GenomaDocument, SlotId } from "@/lib/genoma/genoma-types";
+import type { GalleryValue, GenomaDocument } from "@/lib/genoma/genoma-types";
 import { applyGalleryMediaMirrors, externalGalleryMediaUrls } from "@/lib/genoma/genoma-gallery-media";
-import { GENOMA_SLOT_IDS } from "@/lib/genoma/genoma-types";
 import { createEmptyGenoma } from "@/lib/genoma/genoma-defaults";
 import { mergeSlotStreamPatch } from "@/lib/genoma/genoma-stream-merge";
 import { setSourceAuthoritative } from "@/lib/genoma/genoma-source-policy";
@@ -245,22 +244,6 @@ export async function streamGenomaGallery(
   return { ok: true, gallery: lastGallery, addedCount };
 }
 
-/** @deprecated Usar streamGenomaGallery */
-export async function generateGenomaGallery(
-  genoma: GenomaDocument,
-  stylePromptVersion?: number,
-): Promise<
-  | { ok: true; gallery: import("@/lib/genoma/genoma-types").GalleryValue; addedCount: number }
-  | { ok: false; message: string }
-> {
-  return streamGenomaGallery(genoma, stylePromptVersion, () => undefined);
-}
-
-/** @deprecated El análisis acumulativo ya no resetea slots; conservado para compatibilidad. */
-export function resetSlotsForCrawl(doc: GenomaDocument): GenomaDocument {
-  return { ...doc, updatedAt: NOW() };
-}
-
 /** Punto de partida para añadir una fuente sin borrar el ADN existente. */
 export function prepareDocForAdditiveSource(doc: GenomaDocument): GenomaDocument {
   return { ...doc, updatedAt: NOW() };
@@ -301,11 +284,4 @@ export async function hydrateGenomaGalleryMedia(doc: GenomaDocument): Promise<Ge
   } catch {
     return doc;
   }
-}
-
-export function pendingSlotIds(doc: GenomaDocument): SlotId[] {
-  return GENOMA_SLOT_IDS.filter((id) => {
-    const status = doc.slots[id]?.status;
-    return status === "pending" || status === "candidates" || status === "needs_user";
-  });
 }

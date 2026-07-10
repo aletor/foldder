@@ -500,30 +500,6 @@
   font-weight: 300;
 }
 
-/* ── Entry screen ── */
-.genoma-studio--v2 .genoma-entry {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 64px 48px;
-}
-
-.genoma-studio--v2 .genoma-entry__title {
-  font-weight: 800;
-  letter-spacing: -0.03em;
-}
-
-.genoma-studio--v2 .genoma-entry__copy {
-  font-weight: 300;
-}
-
-.genoma-studio--v2 .genoma-entry__input {
-  border: none;
-  border-bottom: 1px solid var(--genoma-v2-border);
-  border-radius: 0;
-  background: transparent;
-  font-weight: 300;
-}
-
 .genoma-studio--v2 .genoma-pill {
   border: none;
   background: transparent;
@@ -1767,8 +1743,19 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #eceae6;
   overflow: hidden;
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview.genoma-v2-logo-plinth--light {
+  background: linear-gradient(180deg, #eceae6 0%, #e2e0db 100%);
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview.genoma-v2-logo-plinth--adaptive {
+  background: linear-gradient(180deg, #2a2a30 0%, #141418 100%);
+}
+
+.genoma-studio--v2 .genoma-v2-logo-candidate__preview.genoma-v2-logo-plinth--neutral {
+  background: #eceae6;
 }
 
 .genoma-studio--v2 .genoma-v2-logo-candidate__choose {

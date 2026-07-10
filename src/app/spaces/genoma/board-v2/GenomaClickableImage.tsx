@@ -2,7 +2,7 @@
 
 import React, { useMemo } from "react";
 import { resolveGenomaPreviewUrl } from "@/lib/genoma/genoma-media-url";
-import { GenomaPreviewImage } from "./GenomaPreviewImage";
+import { GenomaMediaImage } from "../GenomaMediaImage";
 import { useGenomaImageLightbox } from "./GenomaImageLightbox";
 
 export type GenomaImageFit = "contain" | "cover" | "square" | "logo";
@@ -45,7 +45,7 @@ export function GenomaClickableImage({
         }
       }}
     >
-      <GenomaPreviewImage src={src} alt={alt} eager={eager} />
+      <GenomaMediaImage src={src} alt={alt} eager={eager} />
     </div>
   );
 }

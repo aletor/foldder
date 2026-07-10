@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import { resolveGenomaPreviewUrl } from "@/lib/genoma/genoma-media-url";
 
 /** Rutas same-origin: el navegador envía cookies en `<img>` sin blob intermedio. */
@@ -12,7 +12,7 @@ function isSameOriginGenomaMediaUrl(url: string): boolean {
   return false;
 }
 
-/** Preview de medios Genoma — blob solo si hiciera falta para URLs externas sin proxy. */
+/** Preview de medios Genoma — carga directa en same-origin; reintento vía cache-bust en GenomaPreviewImage. */
 export function useGenomaPreviewMediaUrl(src: string) {
   const resolvedSrc = useMemo(() => resolveGenomaPreviewUrl(src), [src]);
   const directLoad = useMemo(
@@ -20,17 +20,10 @@ export function useGenomaPreviewMediaUrl(src: string) {
     [resolvedSrc],
   );
 
-  const displayUrl = resolvedSrc;
-
-  const retryWithBlob = useCallback(async () => {
-    // Legacy hook surface — reintento vía cache-bust en GenomaPreviewImage.
-  }, []);
-
   return {
-    displayUrl,
+    displayUrl: resolvedSrc,
     resolvedSrc,
     isLoading: false,
     needsAuthBlob: !directLoad && Boolean(resolvedSrc),
-    retryWithBlob,
   };
 }

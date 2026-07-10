@@ -28,7 +28,6 @@ import type { ImageAxes, ImageDnaValue, VisualDnaFields } from "@/lib/genoma/mod
 import type {
   ClaimValue,
   ColorValue,
-  LogoValue,
   TaglineValue,
   ToneValue,
   TypographyValue,
@@ -40,8 +39,6 @@ import type {
   TraitSlot,
 } from "@/lib/genoma/projection/book-view";
 import { cx, formatCmyk, formatRgb, G, hexToRgb, readableTextOn, rgbToCmyk } from "./face-utils";
-import { resolveLogoDisplayUrl, resolveLogoUiFromTrait } from "@/lib/genoma/projection/logo-display-url";
-import { GenomaLogoImage } from "./GenomaLogoImage";
 import { GenomaMediaImage } from "./GenomaMediaImage";
 import { GenomaIngestFeedback } from "./GenomaIngestFeedback";
 import { GenomaPageVisionBadge, GenomaSourcesPanel } from "./GenomaPageVisionBadge";
@@ -181,165 +178,6 @@ function GhostLabel({ text }: { text: string }) {
 }
 
 // ── Secciones del libro ──────────────────────────────────────────────────────
-
-function LogoSection({
-  primary,
-  secondary,
-  onCrown,
-}: {
-  primary: TraitSlot<LogoValue>;
-  secondary: MultiTraitSlot<LogoValue>;
-  onCrown?: GenomaFaceProps["onCrown"];
-}) {
-  const ctx = useGenomaFaceContext();
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const logoCandidates =
-    ctx?.genome?.traits["logo.primary"]?.candidates.filter((c) => c.status !== "archived") ?? [];
-  const uiLogo = resolveLogoUiFromTrait(logoCandidates, primary.candidateId);
-  const logoValue = uiLogo?.logo ?? primary.value;
-  const logoDerived = uiLogo?.derived ?? primary.derived;
-  const hasLogo = Boolean(logoValue && resolveLogoDisplayUrl(logoValue, logoDerived));
-
-  useEffect(() => {
-    if (primary.state === "proposed" && primary.candidateCount > 1 && onCrown) {
-      setPickerOpen(true);
-    }
-  }, [primary.state, primary.candidateCount, onCrown]);
-
-  return (
-    <section className={cx("relative flex min-h-[70vh] flex-col items-center justify-center gap-16 bg-[#1A1B1E] text-white", G.section)}>
-      <Slot slot={primary} onCrown={onCrown} suppressDepth className="flex w-full max-w-4xl flex-col items-center justify-center">
-        {hasLogo ? (
-          <div className="flex w-full flex-col items-center gap-12">
-            <div className="grid w-full grid-cols-1 gap-px bg-white/10 md:grid-cols-2">
-              <div className="flex min-h-[180px] items-center justify-center bg-white p-12">
-                <GenomaLogoImage
-                  logo={logoValue}
-                  derived={logoDerived}
-                  polarity="positive"
-                  alt="logo principal"
-                  className="max-h-[32vh] w-auto max-w-full object-contain"
-                />
-              </div>
-              <div className="flex min-h-[180px] items-center justify-center bg-[#0d0d0f] p-12">
-                <GenomaLogoImage
-                  logo={logoValue}
-                  derived={logoDerived}
-                  polarity="negative"
-                  alt=""
-                  aria-hidden
-                  className="max-h-[32vh] w-auto max-w-full object-contain"
-                />
-              </div>
-            </div>
-            {primary.candidateCount > 1 && onCrown ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setPickerOpen(true);
-                }}
-                className={cx(G.btn, "border-white/20 text-white/80 hover:border-white hover:text-white")}
-              >
-                ver alternativas
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="flex min-h-[200px] w-full max-w-md items-center justify-center border border-white/10">
-            <GhostLabel text="sin logo todavía" />
-          </div>
-        )}
-      </Slot>
-
-      {pickerOpen && onCrown ? (
-        <div
-          className="fixed inset-0 z-[65] flex items-center justify-center bg-black/70 p-8"
-          role="dialog"
-          aria-modal="true"
-          aria-label="elegir logo principal"
-          onClick={() => setPickerOpen(false)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto border border-white/15 bg-[#1A1B1E] p-10 text-white"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className={G.label}>logo principal</p>
-            <p className="mt-4 text-lg">¿cuál es tu logo principal?</p>
-            <p className="mt-2 text-sm text-white/50">toca uno para coronarlo</p>
-            <div className="mt-10 grid grid-cols-2 gap-px bg-white/10 sm:grid-cols-3">
-              {logoCandidates.map((candidate) => {
-                const logo = candidate.value as LogoValue;
-                const crowned = primary.candidateId === candidate.id;
-                return (
-                  <button
-                    key={candidate.id}
-                    type="button"
-                    onClick={() => {
-                      onCrown("logo.primary", candidate.id);
-                      setPickerOpen(false);
-                    }}
-                    className={cx(
-                      "flex flex-col items-center gap-4 bg-[#1A1B1E] p-6 transition hover:bg-white/[0.03]",
-                      crowned && "ring-1 ring-inset ring-[var(--secondary)]",
-                    )}
-                  >
-                    <div className="flex h-28 w-full items-center justify-center bg-white p-4">
-                      <GenomaLogoImage
-                        logo={logo}
-                        derived={candidate.derived}
-                        className="max-h-full max-w-full object-contain"
-                      />
-                    </div>
-                    <span className="text-xs lowercase text-white/60">
-                      {candidate.signals.find((s) => s.kind === "recurrence")?.detail ?? "candidato"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <button
-              type="button"
-              onClick={() => setPickerOpen(false)}
-              className={cx("mt-10", G.btn, "border-white/20 text-white/70 hover:border-white hover:text-white")}
-            >
-              cerrar
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {secondary.items.length > 0 && (
-        <div className="flex flex-wrap items-center justify-center gap-10 opacity-90">
-          {secondary.items.map((item) => (
-            <div
-              key={item.candidateId}
-              data-state={item.crowned ? "crowned" : "proposed"}
-              role={!item.crowned && onCrown ? "button" : undefined}
-              onClick={!item.crowned && onCrown ? () => onCrown("logo.secondary", item.candidateId) : undefined}
-              className={cx(
-                "relative p-2",
-                !item.crowned && onCrown && "cursor-pointer ring-1 ring-inset ring-[var(--secondary)]/35",
-              )}
-            >
-              {!item.crowned && <ProposedDot />}
-              <GenomaLogoImage
-                logo={item.value}
-                derived={item.derived}
-                alt={item.value.label ?? "logo"}
-                className="h-12 w-auto object-contain"
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="genoma-depth-trigger-wrap genoma-depth-trigger-wrap--dark">
-        <TraitDepthButton traitId="logo.primary" show={primary.candidateCount > 0} />
-      </div>
-    </section>
-  );
-}
 
 function SpecimenBlock({
   slot,

@@ -44,6 +44,7 @@ import {
   measureBrandBoardSignals,
 } from "../genoma-brand-board-image";
 import { inferImageFormat } from "../crawl/url-utils";
+import { persistGenomaSourceRaster } from "./genoma-source-pdf-store";
 
 const NOW = () => new Date().toISOString();
 const MAX_FILES = 12;
@@ -79,6 +80,7 @@ function logoCandidateFromUpload(
   width: number,
   height: number,
   score: number,
+  source?: { contentSha256: string; fileName: string },
 ): Candidate<LogoValue> {
   return {
     score,
@@ -91,6 +93,15 @@ function logoCandidateFromUpload(
       height,
       background: format === "svg" || format === "png" ? "transparent" : "solid",
       variants: [],
+      ...(source
+        ? {
+            sourcePdfSha256: source.contentSha256,
+            sourcePageNumber: 1,
+            totalDocPages: 1,
+            sourceDocName: source.fileName,
+            detectionMethod: "upload" as const,
+          }
+        : {}),
     },
   };
 }
@@ -171,8 +182,25 @@ export async function* runGenomaIngest(
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
     const triage = triageItems[index];
-    if (file.buffer.length > MAX_FILE_BYTES) continue;
-    if (triage.kind === "unknown" || triage.kind === "presentation") continue;
+    if (file.buffer.length > MAX_FILE_BYTES) {
+      yield {
+        type: "source_error",
+        fileName: file.name,
+        message: "Archivo demasiado grande (máx. 25 MB)",
+      };
+      continue;
+    }
+    if (triage.kind === "unknown" || triage.kind === "presentation") {
+      yield {
+        type: "source_error",
+        fileName: file.name,
+        message:
+          triage.kind === "presentation"
+            ? "Presentación detectada — omitida en el análisis de marca"
+            : "Tipo de archivo no reconocido",
+      };
+      continue;
+    }
 
     yield {
       type: "progress",
@@ -283,8 +311,20 @@ export async function* runGenomaIngest(
       const dims = await imageDimensions(file.buffer);
 
       if (triage.kind === "logo_image") {
+        const contentSha256 = bufferContentSha256(file.buffer);
+        if (options?.userEmail) {
+          await persistGenomaSourceRaster(options.userEmail, contentSha256, file.buffer).catch(() => undefined);
+        }
         logoCandidates.push(
-          logoCandidateFromUpload(uploaded.url, uploaded.fileId, format, dims.width, dims.height, 0.88),
+          logoCandidateFromUpload(
+            uploaded.url,
+            uploaded.fileId,
+            format,
+            dims.width,
+            dims.height,
+            0.88,
+            { contentSha256, fileName: file.name },
+          ),
         );
       } else {
         galleryItems.push({

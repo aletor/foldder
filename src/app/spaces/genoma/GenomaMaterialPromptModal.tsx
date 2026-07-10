@@ -72,25 +72,3 @@ export function GenomaMaterialPromptCard({
     </div>
   );
 }
-
-/** @deprecated Usar GenomaMaterialPromptCard dentro del flujo de ingesta. */
-export function GenomaMaterialPromptModal({
-  prompt,
-  onResolve,
-}: {
-  prompt: MaterialPromptPayload | null;
-  onResolve: (optionId: string) => void;
-}) {
-  if (!prompt) return null;
-  return (
-    <div
-      className="fixed inset-0 z-[70] flex items-end justify-start bg-black/30 p-8 md:items-center md:pl-[max(2rem,30vw)]"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="w-full max-w-md bg-[var(--surface)] p-8">
-        <GenomaMaterialPromptCard prompt={prompt} onResolve={onResolve} />
-      </div>
-    </div>
-  );
-}

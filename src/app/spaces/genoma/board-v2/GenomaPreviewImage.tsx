@@ -31,7 +31,7 @@ export const GenomaPreviewImage = forwardRef<HTMLImageElement, GenomaPreviewImag
     },
     ref,
   ) {
-    const { displayUrl, isLoading, needsAuthBlob, retryWithBlob } = useGenomaPreviewMediaUrl(src);
+    const { displayUrl, isLoading, needsAuthBlob } = useGenomaPreviewMediaUrl(src);
     const [failed, setFailed] = useState(false);
     const [retryNonce, setRetryNonce] = useState(0);
     const retryAttemptRef = useRef(0);
@@ -85,7 +85,6 @@ export const GenomaPreviewImage = forwardRef<HTMLImageElement, GenomaPreviewImag
         onError={() => {
           if (retryAttemptRef.current < 4) {
             retryAttemptRef.current += 1;
-            void retryWithBlob();
             window.setTimeout(() => {
               setRetryNonce((value) => value + 1);
             }, retryAttemptRef.current * 800);

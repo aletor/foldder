@@ -290,18 +290,18 @@ export async function POST(req: NextRequest) {
     const enableLlm = formData.get("enableLlm") !== "false";
     const hasGemini = Boolean((process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim());
     let llmEnabled = false;
-    let pdfLogoVisionEnabled = enableLlm && hasGemini;
+    let pdfLogoVisionEnabled = hasGemini;
     let llmSkipReason: string | undefined;
     let pdfLogoVisionSkipReason: string | undefined;
 
-    if (!enableLlm) {
+    if (!hasGemini) {
+      if (enableLlm) {
+        llmSkipReason = "GEMINI_API_KEY no configurada — solo extracción determinista";
+      }
+      pdfLogoVisionSkipReason = "GEMINI_API_KEY no configurada — sin visión IA";
+      pdfLogoVisionEnabled = false;
+    } else if (!enableLlm) {
       llmSkipReason = "IA desactivada";
-      pdfLogoVisionSkipReason = llmSkipReason;
-      pdfLogoVisionEnabled = false;
-    } else if (!hasGemini) {
-      llmSkipReason = "GEMINI_API_KEY no configurada — solo extracción determinista";
-      pdfLogoVisionSkipReason = llmSkipReason;
-      pdfLogoVisionEnabled = false;
     } else {
       try {
         await assertApiServiceEnabled("genoma-llm-synthesis");

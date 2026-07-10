@@ -11,7 +11,8 @@ import {
   isGenomaEmpty,
   normalizeGenomaDocument,
 } from "@/lib/genoma/genoma-defaults";
-import type { GenomaDocument, GenomaNodeData } from "@/lib/genoma/genoma-types";
+import type { GenomaDocument, GenomaNodeData, LogoValue } from "@/lib/genoma/genoma-types";
+import { genomaNodeLogoWrapClass } from "@/lib/genoma/genoma-logo-plinth";
 import {
   FoldderNodeContentDock,
   FoldderNodeContentDockActions,
@@ -47,6 +48,8 @@ export const GenomaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const headerTitle = nodeData.label?.trim() || extractBrandTitle(genoma, "Genoma");
   const isEmpty = isGenomaEmpty(genoma);
   const logoPreview = extractLogoPreviewUrl(genoma);
+  const logoValue = genoma.slots.logo?.value as LogoValue | undefined;
+  const logoWrapClass = useMemo(() => genomaNodeLogoWrapClass(logoValue), [logoValue]);
   const swatches = extractPaletteSwatches(genoma);
   const sourcesCount = genoma.sources.length;
 
@@ -132,7 +135,10 @@ export const GenomaNode = memo(({ id, data, selected }: NodeProps<any>) => {
               ) : (
                 <div className="genoma-node-card-preview">
                   {logoPreview ? (
-                    <div className="genoma-node-card-preview__logo-wrap" aria-hidden>
+                    <div
+                      className={`genoma-node-card-preview__logo-wrap${logoWrapClass ? ` ${logoWrapClass}` : ""}`}
+                      aria-hidden
+                    >
                       <GenomaMediaImage
                         src={logoPreview}
                         alt=""

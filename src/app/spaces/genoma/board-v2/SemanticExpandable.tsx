@@ -72,26 +72,6 @@ export function SemanticDetailPanels({
   );
 }
 
-/** @deprecated Usar SemanticDetailPanels */
-export function SemanticExpandable({
-  summary,
-  chips,
-  children,
-}: {
-  summary: React.ReactNode;
-  chips?: React.ReactNode;
-  children: React.ReactNode;
-  maxRestLines?: number;
-}) {
-  return (
-    <SemanticDetailPanels
-      summary={summary}
-      chips={chips}
-      panels={[{ id: "detail", label: genomaLocaleEs.expandDetail, content: children }]}
-    />
-  );
-}
-
 export function EvidenceList({ quotes, hideLabel = false }: { quotes: string[]; hideLabel?: boolean }) {
   if (!quotes.length) return null;
   return (
