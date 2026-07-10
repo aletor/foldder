@@ -139,6 +139,7 @@ function streamV2Ingest(
     userEmail: string;
     llmEnabled: boolean;
     pdfLogoVisionEnabled: boolean;
+    allowLogoCropVerify: boolean;
     llmSkipReason?: string;
     pdfLogoVisionSkipReason?: string;
     onLlmCostUsd: (cost: number) => void;
@@ -159,6 +160,7 @@ function streamV2Ingest(
           userEmail: options.userEmail,
           llmEnabled: options.llmEnabled,
           pdfLogoVisionEnabled: options.pdfLogoVisionEnabled,
+          allowLogoCropVerify: options.allowLogoCropVerify,
           llmSkipReason: options.llmSkipReason,
           pdfLogoVisionSkipReason: options.pdfLogoVisionSkipReason,
           onLlmCostUsd: (cost) => {
@@ -337,6 +339,7 @@ export async function POST(req: NextRequest) {
         userEmail: auth.user.email,
         llmEnabled,
         pdfLogoVisionEnabled,
+        allowLogoCropVerify: pdfLogoVisionEnabled,
         llmSkipReason,
         pdfLogoVisionSkipReason,
         onLlmCostUsd: () => undefined,

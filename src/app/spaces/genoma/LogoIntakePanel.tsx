@@ -17,6 +17,7 @@ import { LogoIntakeBboxEditor } from "./LogoIntakeBboxEditor";
 import { GenomaDepthPanel } from "./GenomaDepthPanel";
 import { useGenomaFaceContext } from "./genoma-face-context";
 import { cx, G } from "./face-utils";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 
 type Phase = "idle" | "reading" | "detecting" | "quality" | "done";
 
@@ -513,12 +514,10 @@ function LogoPreview({
     <div className="flex w-full flex-col items-center gap-4">
       <div className={cx("grid w-full gap-px bg-white/10", large ? "grid-cols-1 md:grid-cols-2" : "grid-cols-2")}>
         <div className={cx("flex items-center justify-center bg-white p-8", large && "min-h-[220px]")}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt="logo propuesto" className="max-h-[28vh] max-w-full object-contain" />
+          <GenomaMediaImage src={src} alt="logo propuesto" className="max-h-[28vh] max-w-full object-contain" eager />
         </div>
         <div className={cx("flex items-center justify-center bg-[#0d0d0f] p-8", large && "min-h-[220px]")}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt="" aria-hidden className="max-h-[28vh] max-w-full object-contain" />
+          <GenomaMediaImage src={src} alt="" aria-hidden className="max-h-[28vh] max-w-full object-contain" eager />
         </div>
       </div>
       <button type="button" onClick={onToggleBg} className="text-xs text-white/40 hover:text-white/70">
@@ -595,8 +594,12 @@ function ProposalView({
                       selected?.id === item.id ? "border-[#FFBD1B]" : "border-white/15 hover:border-white/40",
                     )}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={candidateImageSrc(item)} alt={item.docName} className="h-16 w-24 object-contain" />
+                    <GenomaMediaImage
+                      src={candidateImageSrc(item)}
+                      alt={item.docName}
+                      className="h-16 w-24 object-contain"
+                      eager
+                    />
                   </button>
                 ))}
               </div>
@@ -658,11 +661,11 @@ function ProposalView({
                         mejor
                       </span>
                     ) : null}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    <GenomaMediaImage
                       src={candidateImageSrc(item)}
                       alt={item.docName}
                       className="h-16 w-24 object-contain"
+                      eager
                     />
                   </button>
                 );

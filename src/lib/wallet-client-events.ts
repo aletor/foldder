@@ -49,6 +49,8 @@ export type WalletCostDecisionRequest = {
   reserveMicros: number;
   tone: WalletCostDecisionTone;
   wallet: WalletStatusResponse;
+  /** Líneas de desglose (p. ej. varias llamadas IA en ingesta Genoma). */
+  detailLines?: string[];
 };
 
 export type WalletCostDecisionResult = {

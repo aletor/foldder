@@ -15,6 +15,12 @@ import { extractTypographyFromPdf, type TypographyExtraction } from "./extractor
 import { bufferContentSha256 } from "./ingest/paid-operations-server";
 import { persistGenomaSourcePdf } from "./ingest/genoma-source-pdf-store";
 import { mapVisionLogoEntryToCandidate } from "./genoma-pdf-logo-vision";
+import {
+  extractLogoCandidatesFromPdfLogoIntake,
+  isGenomaLogoIntakePdfEnabled,
+  paletteSignalsFromLogoIntakeSemantic,
+} from "./ingest/ingest-logo-intake-bridge";
+import { brandManualVisionPageNumbers } from "./ingest/page-vision-pass-selection";
 
 export { isLikelyBrandManualPdf } from "./genoma-pdf-brand-manual-detect";
 
@@ -72,16 +78,6 @@ export function typographyFamiliesFromExtraction(extraction: TypographyExtractio
     if (family) families.push(family);
   }
   return families;
-}
-
-function brandManualVisionPageNumbers(totalPages: number): number[] {
-  if (totalPages <= 0) return [];
-  if (totalPages <= 12) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-  const picked = new Set<number>([1, 2, 3, 4, totalPages]);
-  if (totalPages >= 2) picked.add(totalPages - 1);
-  return [...picked].sort((a, b) => a - b);
 }
 
 async function runBrandManualVisionAudit(input: {
@@ -160,6 +156,35 @@ export async function extractBrandManualVisualsFromPdf(input: {
       totalPages,
       visionDetail: "Extracción determinista (sin visión IA)",
     };
+  }
+
+  if (isGenomaLogoIntakePdfEnabled()) {
+    try {
+      const intake = await extractLogoCandidatesFromPdfLogoIntake({
+        buffer: input.buffer,
+        fileName: input.fileName,
+        contentSha256,
+        userEmail: input.userEmail,
+        route: input.route,
+        totalPages,
+        scope: "manual",
+      });
+      logoCandidates.push(...intake.candidates);
+      if (intake.semanticPalette?.entries.length) {
+        paletteSignals.push(...paletteSignalsFromLogoIntakeSemantic(intake.semanticPalette, contentSha256));
+      }
+      return {
+        logoCandidates,
+        paletteSignals,
+        typographyFamilies,
+        contentSha256,
+        pdfStorageKey,
+        totalPages,
+        visionDetail: `${intake.visionDetail} · ${paletteSignals.length} colores · ${typographyFamilies.length} fuentes`,
+      };
+    } catch (error) {
+      console.warn("[genoma:manual-logo-intake]", error instanceof Error ? error.message : error);
+    }
   }
 
   const audit = await runBrandManualVisionAudit({

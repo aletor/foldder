@@ -1,6 +1,9 @@
+import { triageImageKind } from "../genoma-brand-board-image-detect";
+
 export type GenomaIngestFileKind =
   | "logo_image"
   | "gallery_image"
+  | "brand_board_image"
   | "brand_document"
   | "presentation"
   | "unknown";
@@ -12,23 +15,22 @@ export type GenomaIngestTriageItem = {
   action: string;
 };
 
-const LOGO_NAME_RE = /logo|marca|brand|icon|favicon/i;
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "svg", "gif", "ico"]);
 const DOC_EXT = new Set(["pdf", "docx", "doc", "txt", "md", "rtf", "html", "htm"]);
 const DECK_EXT = new Set(["pptx", "ppt", "key"]);
 
 export function triageGenomaFilename(name: string, mime: string): GenomaIngestTriageItem {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  const lower = name.toLowerCase();
 
   if (IMAGE_EXT.has(ext) || mime.startsWith("image/")) {
-    const kind: GenomaIngestFileKind = LOGO_NAME_RE.test(lower) ? "logo_image" : "gallery_image";
-    return {
-      name,
-      mime,
-      kind,
-      action: kind === "logo_image" ? "Candidato de logo" : "Imagen de galería",
-    };
+    const kind = triageImageKind(name);
+    const action =
+      kind === "brand_board_image"
+        ? "Brand board — logo, paleta y tipografía"
+        : kind === "logo_image"
+          ? "Candidato de logo"
+          : "Imagen de galería";
+    return { name, mime, kind, action };
   }
 
   if (ext === "pdf" || mime === "application/pdf") {

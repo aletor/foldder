@@ -4,6 +4,7 @@ import type { MaterialPromptPayload } from "@/lib/genoma/ingest/material-prompt"
 import type { ColorValue, LogoValue, TypographyValue } from "@/lib/genoma/model/trait-values";
 import { specimenFontStack } from "@/lib/genoma/specimen/typography-specimen";
 import { G, cx } from "./face-utils";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 
 function PromptVisual({ prompt }: { prompt: MaterialPromptPayload }) {
   const value = prompt.candidate.value;
@@ -17,8 +18,7 @@ function PromptVisual({ prompt }: { prompt: MaterialPromptPayload }) {
     const logo = value as LogoValue;
     return (
       <div className="mt-6 flex h-24 items-center justify-center border-t border-[var(--border)] pt-6">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={logo.imageUrl} alt="" className="max-h-full max-w-full object-contain" />
+        <GenomaMediaImage src={logo.imageUrl} alt="" className="max-h-full max-w-full object-contain" eager />
       </div>
     );
   }

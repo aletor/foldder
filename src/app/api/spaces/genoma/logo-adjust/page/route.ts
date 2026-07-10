@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
-import { loadGenomaSourcePdf } from "@/lib/genoma/ingest/genoma-source-pdf-store";
-import { renderPdfPagesAt } from "@/lib/brain/pdf-page-render";
+import { loadGenomaSourceForLogoAdjust } from "@/lib/genoma/ingest/genoma-source-pdf-store";
+import { buildLogoAdjustPagePayload } from "@/lib/genoma/ingest/genoma-logo-adjust-page";
 import type { NormalizedBboxPage } from "@/lib/genoma/genoma-logo-bbox";
 
 export const runtime = "nodejs";
@@ -31,25 +31,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
-  const pdfBuffer = await loadGenomaSourcePdf(auth.user.email, contentSha256);
-  if (!pdfBuffer) {
-    return NextResponse.json({ error: "pdf_not_found" }, { status: 404 });
-  }
-
-  const pages = await renderPdfPagesAt(pdfBuffer, [pageNumber], { dpi: 144 });
-  const page = pages[0];
-  if (!page) {
-    return NextResponse.json({ error: "page_not_found" }, { status: 404 });
+  const source = await loadGenomaSourceForLogoAdjust(auth.user.email, contentSha256);
+  if (!source) {
+    return NextResponse.json({ error: "source_not_found" }, { status: 404 });
   }
 
   const bboxPage = parseBboxPage(bboxRaw) ?? ([0.04, 0.03, 0.32, 0.12] as NormalizedBboxPage);
 
-  return NextResponse.json({
-    imageBase64: page.pngBuffer.toString("base64"),
-    mime: "image/png",
-    width: page.width,
-    height: page.height,
-    page: pageNumber,
-    bboxPage,
-  });
+  try {
+    const payload = await buildLogoAdjustPagePayload({
+      source,
+      pageNumber,
+      bboxPage,
+    });
+    return NextResponse.json(payload);
+  } catch {
+    return NextResponse.json({ error: "edit_page_failed" }, { status: 500 });
+  }
 }

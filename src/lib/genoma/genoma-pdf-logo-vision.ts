@@ -16,6 +16,11 @@ import { deckLogoVisionPageNumbers } from "./ingest/page-vision-pass-selection";
 import { countPdfPagesInBuffer } from "@/lib/brain/pdf-brand-extract";
 import { uploadGenomaIngestFile } from "./ingest/upload-genoma-file";
 import { genomaLocaleEs } from "./genoma-locale.es";
+import { buildHeuristicLogoCandidatesFromPdfCover } from "./ingest/ingest-logo-heuristic";
+import {
+  extractLogoCandidatesFromPdfLogoIntake,
+  isGenomaLogoIntakePdfEnabled,
+} from "./ingest/ingest-logo-intake-bridge";
 
 function dataUrlToBuffer(dataUrl: string): Buffer | null {
   const match = /^data:image\/(?:png|jpeg|jpg);base64,(.+)$/i.exec(dataUrl);
@@ -179,6 +184,60 @@ export async function extractLogoCandidatesFromDeckPdf(input: {
   const totalPages = await countPdfPagesInBuffer(input.buffer, 200).catch(() => 0);
   const pdfStorageKey = await persistGenomaSourcePdf(input.userEmail, contentSha256, input.buffer);
 
+  if (isGenomaLogoIntakePdfEnabled()) {
+    try {
+      const intake = await extractLogoCandidatesFromPdfLogoIntake({
+        buffer: input.buffer,
+        fileName: input.fileName,
+        contentSha256,
+        userEmail: input.userEmail,
+        route: input.route,
+        totalPages,
+        scope: "deck",
+      });
+      if (intake.candidates.length) {
+        return {
+          candidates: intake.candidates,
+          contentSha256,
+          pdfStorageKey,
+          totalPages,
+          pagesWithLogo: new Set(intake.candidates.map((row) => row.value.sourcePageNumber ?? 1)).size,
+          visionDetail: intake.visionDetail,
+        };
+      }
+    } catch (error) {
+      console.warn("[genoma:deck-logo-intake]", error instanceof Error ? error.message : error);
+    }
+
+    const heuristic = await buildHeuristicLogoCandidatesFromPdfCover({
+      pdfBuffer: input.buffer,
+      fileName: input.fileName,
+      contentSha256,
+      userEmail: input.userEmail,
+      totalPages,
+      pageNumbers: deckLogoVisionPageNumbers(totalPages),
+      limitPerPage: 1,
+    });
+    if (heuristic.length) {
+      return {
+        candidates: heuristic,
+        contentSha256,
+        pdfStorageKey,
+        totalPages,
+        pagesWithLogo: new Set(heuristic.map((row) => row.value.sourcePageNumber ?? 1)).size,
+        visionDetail: `${heuristic.length} logo (heurística deck · logo-intake vacío)`,
+      };
+    }
+    return {
+      candidates: [],
+      contentSha256,
+      pdfStorageKey,
+      totalPages,
+      pagesWithLogo: 0,
+      visionDetail: "Sin logo claro · logo-intake",
+    };
+  }
+
   const audit = await runDeckLogoVisionAudit({
     buffer: input.buffer,
     fileName: input.fileName,
@@ -189,6 +248,25 @@ export async function extractLogoCandidatesFromDeckPdf(input: {
   });
 
   if (!pageVisionAuditHasLogos(audit)) {
+    const heuristic = await buildHeuristicLogoCandidatesFromPdfCover({
+      pdfBuffer: input.buffer,
+      fileName: input.fileName,
+      contentSha256,
+      userEmail: input.userEmail,
+      totalPages,
+      pageNumbers: deckLogoVisionPageNumbers(totalPages),
+      limitPerPage: 1,
+    });
+    if (heuristic.length) {
+      return {
+        candidates: heuristic,
+        contentSha256,
+        pdfStorageKey,
+        totalPages,
+        pagesWithLogo: new Set(heuristic.map((row) => row.value.sourcePageNumber ?? 1)).size,
+        visionDetail: `${heuristic.length} logo (heurística deck)`,
+      };
+    }
     return {
       candidates: [],
       contentSha256,
@@ -201,7 +279,7 @@ export async function extractLogoCandidatesFromDeckPdf(input: {
 
   const entries = await buildProvisionalLogoCandidatesFromPageVision(audit, input.buffer, contentSha256.slice(0, 16));
   const pagesWithLogo = new Set(entries.map((entry) => entry.pageNumber)).size;
-  const candidates: Candidate<LogoValue>[] = [];
+  let candidates: Candidate<LogoValue>[] = [];
 
   for (let index = 0; index < entries.length; index += 1) {
     candidates.push(
@@ -216,12 +294,28 @@ export async function extractLogoCandidatesFromDeckPdf(input: {
     );
   }
 
+  if (!candidates.length) {
+    candidates = await buildHeuristicLogoCandidatesFromPdfCover({
+      pdfBuffer: input.buffer,
+      fileName: input.fileName,
+      contentSha256,
+      userEmail: input.userEmail,
+      totalPages,
+      pageNumbers: [...new Set(audit.pages.map((page) => page.pageNumber))],
+      limitPerPage: 1,
+    });
+  }
+
   return {
     candidates,
     contentSha256,
     pdfStorageKey,
     totalPages,
-    pagesWithLogo,
-    visionDetail: `${candidates.length} candidatos · ${pagesWithLogo} pág.`,
+    pagesWithLogo: candidates.length
+      ? new Set(candidates.map((row) => row.value.sourcePageNumber ?? 1)).size
+      : pagesWithLogo,
+    visionDetail: candidates.some((row) => row.provenance.detail.includes("heurística"))
+      ? `${candidates.length} candidatos · heurística deck`
+      : `${candidates.length} candidatos · ${pagesWithLogo} pág.`,
   };
 }

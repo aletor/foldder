@@ -3,6 +3,7 @@
 import type { CandidateDerived } from "@/lib/genoma/model/evidence";
 import type { LogoValue } from "@/lib/genoma/model/trait-values";
 import { resolveLogoDisplayUrl, resolveLogoVariantUrl } from "@/lib/genoma/projection/logo-display-url";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 
 export function GenomaLogoImage({
   logo,
@@ -24,7 +25,12 @@ export function GenomaLogoImage({
   if (!src) return null;
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt={alt} aria-hidden={ariaHidden} className={className} />
+    <GenomaMediaImage
+      src={src}
+      alt={alt}
+      aria-hidden={ariaHidden}
+      className={className}
+      eager
+    />
   );
 }

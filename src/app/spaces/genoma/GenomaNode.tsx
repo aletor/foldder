@@ -25,6 +25,7 @@ import { StudioCanvasNodeShell } from "../studio-node/studio-canvas-node";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import { getNodeGridFrameForType } from "../canvas-grid-layout";
 import { GenomaStudio } from "./GenomaStudio";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 import "./genoma.css";
 
 export type { GenomaNodeData } from "@/lib/genoma/genoma-types";
@@ -110,12 +111,12 @@ export const GenomaNode = memo(({ id, data, selected }: NodeProps<any>) => {
             onDoubleClick={() => openStudio()}
             title="Doble clic para abrir Genoma"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <GenomaMediaImage
               src={GENOMA_EMPTY_BG}
               alt=""
               className="genoma-node-bg absolute inset-0 h-full w-full object-cover opacity-80"
               draggable={false}
+              eager
             />
             <div className="relative z-[1] flex flex-col items-center px-4 text-center text-white">
               {isEmpty ? (
@@ -131,8 +132,15 @@ export const GenomaNode = memo(({ id, data, selected }: NodeProps<any>) => {
               ) : (
                 <div className="genoma-node-card-preview">
                   {logoPreview ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={logoPreview} alt="" className="genoma-node-card-preview__logo" draggable={false} />
+                    <div className="genoma-node-card-preview__logo-wrap" aria-hidden>
+                      <GenomaMediaImage
+                        src={logoPreview}
+                        alt=""
+                        className="genoma-node-card-preview__logo"
+                        draggable={false}
+                        eager
+                      />
+                    </div>
                   ) : null}
                   <div className="genoma-node-card-preview__swatches" aria-hidden>
                     {swatches.map((hex) => (

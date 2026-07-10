@@ -13,7 +13,22 @@ vi.mock("@/lib/spaces-access-control", () => ({
 }));
 
 vi.mock("@/lib/genoma/ingest/genoma-source-pdf-store", () => ({
-  loadGenomaSourcePdf: vi.fn(async () => mockPdfBuffer),
+  loadGenomaSourceForLogoAdjust: vi.fn(async () => ({
+    buffer: mockPdfBuffer,
+    kind: "pdf" as const,
+  })),
+}));
+
+vi.mock("@/lib/genoma/ingest/genoma-logo-adjust-page", () => ({
+  buildLogoAdjustPagePayload: vi.fn(async () => ({
+    imageBase64: mockPng.toString("base64"),
+    mime: "image/png",
+    width: 1200,
+    height: 675,
+    page: 1,
+    bboxPage: [0.05, 0.04, 0.21, 0.11],
+    sourceKind: "pdf",
+  })),
 }));
 
 vi.mock("@/lib/brain/pdf-page-render", () => ({
@@ -29,6 +44,11 @@ vi.mock("@/lib/brain/pdf-page-render", () => ({
 
 vi.mock("@/lib/genoma/genoma-logo-crop-server", () => ({
   cropLogoFromPdfPage: vi.fn(async () => ({
+    buffer: mockCropped,
+    width: 180,
+    height: 72,
+  })),
+  cropLogoFromRasterPage: vi.fn(async () => ({
     buffer: mockCropped,
     width: 180,
     height: 72,

@@ -21,8 +21,10 @@ export type GenomaCrawlProgressState = {
 
 const LLM_STEP_LABELS: Record<GenomaLlmStepId, string> = {
   logo_vision: "Logo (visión)",
+  logo_crop_verify: "Verificando recorte del logo",
   pdf_logo_vision: "Logo (deck PDF)",
   pdf_brand_vision: "Manual de marca (PDF)",
+  brand_board_vision: "Brand board (imagen)",
   voice: "Voz",
   values: "Creencias",
   oneliner: "Headline",
@@ -129,11 +131,14 @@ export function reduceCrawlProgress(state: GenomaCrawlProgressState, event: Geno
     if (status && status !== "pending") {
       nextResolved.add(event.slotId);
     }
+    const logoValue = event.slotId === "logo" ? (event.patch.value as { previewUrl?: string } | undefined) : undefined;
+    const logoReady = event.slotId === "logo" && Boolean(logoValue?.previewUrl);
     return {
       ...state,
       activeSlot: status === "pending" ? event.slotId : state.activeSlot,
       resolvedSlots: nextResolved,
-      message: status === "pending" ? `Analizando ${GENOMA_SLOT_LABELS[event.slotId]}…` : state.message,
+      phase: logoReady ? "visual" : state.phase,
+      message: logoReady ? "Logo recortado listo" : status === "pending" ? `Analizando ${GENOMA_SLOT_LABELS[event.slotId]}…` : state.message,
     };
   }
 

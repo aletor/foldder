@@ -1130,6 +1130,10 @@
   background: linear-gradient(180deg, #2a2a30 0%, #141418 100%);
 }
 
+.genoma-studio--v2 .genoma-v2-tile--logo .genoma-v2-logo-plinth--light {
+  background: linear-gradient(180deg, #eceae6 0%, #e2e0db 100%);
+}
+
 .genoma-studio--v2 .genoma-v2-tile--palette .genoma-v2-block__body {
   display: flex;
   flex-direction: column;

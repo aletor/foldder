@@ -42,6 +42,7 @@ import type {
 import { cx, formatCmyk, formatRgb, G, hexToRgb, readableTextOn, rgbToCmyk } from "./face-utils";
 import { resolveLogoDisplayUrl, resolveLogoUiFromTrait } from "@/lib/genoma/projection/logo-display-url";
 import { GenomaLogoImage } from "./GenomaLogoImage";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 import { GenomaIngestFeedback } from "./GenomaIngestFeedback";
 import { GenomaPageVisionBadge, GenomaSourcesPanel } from "./GenomaPageVisionBadge";
 import { GenomaDepthPanel } from "./GenomaDepthPanel";
@@ -712,8 +713,7 @@ function VisualTerritoryCard({
           clickable && "cursor-pointer ring-1 ring-inset ring-[var(--secondary)]/35",
         )}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={generated} alt={category} className="aspect-[4/3] w-full object-cover" />
+        <GenomaMediaImage src={generated} alt={category} className="aspect-[4/3] w-full object-cover" eager />
         {clickable && <ProposedDot />}
       </div>
     );
@@ -726,11 +726,11 @@ function VisualTerritoryCard({
     >
       {dna.referenceImageUrl ? (
         <div className="relative border-b border-[var(--border)]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <GenomaMediaImage
             src={dna.referenceImageUrl}
             alt=""
             className="aspect-[4/3] w-full object-cover opacity-40"
+            eager
           />
           <span className={cx("absolute left-0 top-0 bg-black/60 px-3 py-1", G.label, "text-white/70")}>
             referencia

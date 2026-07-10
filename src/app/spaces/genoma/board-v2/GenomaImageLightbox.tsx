@@ -2,6 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { GenomaPreviewImage } from "./GenomaPreviewImage";
 
 type GenomaImageLightboxContextValue = {
   openImage: (src: string) => void;
@@ -38,8 +39,9 @@ export function GenomaImageLightboxProvider({ children }: { children: React.Reac
           >
             <X size={18} />
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt="" className="genoma-lightbox__img" onClick={(event) => event.stopPropagation()} />
+          <div onClick={(event) => event.stopPropagation()}>
+            <GenomaPreviewImage src={src} alt="" className="genoma-lightbox__img" eager />
+          </div>
         </div>
       ) : null}
     </GenomaImageLightboxContext.Provider>

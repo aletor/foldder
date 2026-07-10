@@ -190,7 +190,7 @@ export function GalleryBlock({
                             <div key={`${category}-${slotIndex}`} className="genoma-v2-generated-slot">
                               {item?.previewUrl ? (
                                 <div className="genoma-v2-gallery-generated">
-                                  <GenomaClickableImage src={item.previewUrl} fit="cover" />
+                                  <GenomaClickableImage src={item.previewUrl} fit="cover" eager />
                                   <div className="genoma-v2-gallery-verdicts">
                                     <button
                                       type="button"

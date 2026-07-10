@@ -17,6 +17,7 @@ import {
   trimBBoxOnPage,
 } from "@/lib/genoma/logo-intake/bbox-editor-client";
 import { cx, G } from "./face-utils";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 
 const SAVE_BTN =
   "w-full border-2 border-[#FFBD1B] bg-[#FFBD1B] px-5 py-3 text-base font-semibold lowercase tracking-wide text-black shadow-lg shadow-[#FFBD1B]/20 transition hover:bg-[#e5aa18] disabled:cursor-not-allowed disabled:opacity-50";
@@ -301,8 +302,7 @@ export function LogoIntakeBboxEditor({
                 onPointerUp={onPointerUp}
                 onPointerLeave={onPointerUp}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
+                <GenomaMediaImage
                   ref={imgRef}
                   src={`data:${page.mime};base64,${page.imageBase64}`}
                   alt=""
@@ -310,6 +310,7 @@ export function LogoIntakeBboxEditor({
                   className="block h-auto max-w-full"
                   width={page.width}
                   height={page.height}
+                  eager
                 />
                 <div className="pointer-events-none absolute inset-0">
                   <div
@@ -337,8 +338,7 @@ export function LogoIntakeBboxEditor({
           <p className={G.label}>preview del recorte</p>
           <div className="flex min-h-[120px] items-center justify-center border border-white/15 bg-white p-4">
             {previewUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="preview recorte" className="max-h-[28vh] max-w-full object-contain" />
+              <GenomaMediaImage src={previewUrl} alt="preview recorte" className="max-h-[28vh] max-w-full object-contain" eager />
             ) : (
               <span className="text-sm text-white/40">…</span>
             )}

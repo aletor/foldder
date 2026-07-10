@@ -10,7 +10,7 @@ import {
   type RegionSampleInput,
 } from "@/lib/genoma/logo-intake/palette-sample";
 import { scoreLogoQuality } from "@/lib/genoma/logo-intake/quality";
-import type { IntakeDocInput, IntakeFrame } from "@/lib/genoma/logo-intake/render";
+import type { IntakeDocInput, IntakeFrame, IntakePageSelector } from "@/lib/genoma/logo-intake/render";
 import type { LogoCandidate, LogoProposal } from "@/lib/genoma/logo-intake/types";
 import type { ParsedVisionBrandColorRegion, ParsedVisionLogo, ParsedVisionResponse } from "@/lib/genoma/logo-intake/vision-schema";
 import { invokeLogoIntakeVision } from "@/lib/genoma/logo-intake/vision-invoker";
@@ -250,6 +250,7 @@ export async function runLogoIntakePipeline(input: {
   batchId: string;
   docs: IntakeDocInput[];
   userEmail?: string;
+  selectPages?: IntakePageSelector;
   onEvent?: (event: LogoIntakePipelineEvent) => void;
 }): Promise<LogoProposal> {
   const totalStarted = Date.now();
@@ -258,6 +259,7 @@ export async function runLogoIntakePipeline(input: {
   const renderStarted = Date.now();
   const frames = await renderIntakeFrames(input.docs, {
     onPagePrepared: (done, total) => emit({ type: "pages_preparing", done, total }),
+    selectPages: input.selectPages,
   });
   const renderMs = Date.now() - renderStarted;
 

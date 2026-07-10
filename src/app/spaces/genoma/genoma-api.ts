@@ -7,7 +7,12 @@ import { setSourceAuthoritative } from "@/lib/genoma/genoma-source-policy";
 import { normalizeGenomaUrlInput } from "@/lib/genoma/crawl/url-utils";
 import type { GenomaStreamEvent } from "@/lib/genoma/crawl/types";
 import { compileGenoma } from "@/lib/genoma/compile-genoma";
-import { fetchPostWithWalletPreflight, notifyWalletFromApiResponse } from "@/lib/wallet-fetch-preflight";
+import { confirmGenomaV2IngestCost } from "@/lib/genoma/ingest/genoma-ingest-preflight";
+import {
+  fetchPostWithWalletPreflight,
+  FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER,
+  notifyWalletFromApiResponse,
+} from "@/lib/wallet-fetch-preflight";
 
 const NOW = () => new Date().toISOString();
 
@@ -152,20 +157,36 @@ export async function streamGenomaIngest(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (!files.length) return { ok: false, message: "No hay archivos" };
 
+  const enableLlm = options?.enableLlm !== false;
+  const costDecision = await confirmGenomaV2IngestCost({ files, enableLlm, language: "es" });
+  if (!costDecision.allowed) {
+    return {
+      ok: false,
+      message:
+        costDecision.reason === "insufficient_balance"
+          ? "Saldo insuficiente para esta ingesta."
+          : "Ingesta cancelada.",
+    };
+  }
+
   const form = new FormData();
   for (const file of files) form.append("files", file);
-  if (options?.enableLlm === false) form.append("enableLlm", "false");
+  if (!enableLlm) form.append("enableLlm", "false");
 
   const res = await fetch("/api/spaces/genoma/ingest", {
     method: "POST",
     body: form,
+    headers: { [FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER]: "1" },
   });
 
   if (!res.ok || !res.body) {
+    await notifyWalletFromApiResponse(res);
     return { ok: false, message: await parseApiError(res) };
   }
 
-  return consumeNdjsonStream(res, onEvent);
+  const streamed = await consumeNdjsonStream(res, onEvent);
+  if (streamed.ok) await notifyWalletFromApiResponse(res);
+  return streamed;
 }
 
 export type GenomaGalleryGenerateProgress = {

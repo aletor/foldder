@@ -1,3 +1,5 @@
+import { stableKnowledgeFileUrlFromMaybeUrl } from "@/lib/s3-media-hydrate";
+
 const GENOMA_MEDIA_PROXY_PATH = "/api/spaces/genoma/media-proxy";
 
 /** URLs externas http(s) que el navegador suele bloquear por hotlinking. */
@@ -14,9 +16,11 @@ export function needsGenomaMediaProxy(src: string): boolean {
 export function resolveGenomaPreviewUrl(src: string): string {
   const trimmed = src.trim();
   if (!trimmed) return "";
+  const stable = stableKnowledgeFileUrlFromMaybeUrl(trimmed);
+  if (stable?.includes("/api/spaces/s3-file")) return stable;
   const normalized = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
   if (needsGenomaMediaProxy(normalized)) {
     return `${GENOMA_MEDIA_PROXY_PATH}?url=${encodeURIComponent(normalized)}`;
   }
-  return trimmed;
+  return stable ?? normalized;
 }

@@ -35,6 +35,17 @@ export function deckLogoVisionPageNumbers(totalPages: number): number[] {
   return [...picked].sort((a, b) => a - b);
 }
 
+/** Manual de marca: todas las páginas si ≤12; si no, portada + cierre + muestra. */
+export function brandManualVisionPageNumbers(totalPages: number): number[] {
+  if (totalPages <= 0) return [];
+  if (totalPages <= 12) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const picked = new Set<number>([1, 2, 3, 4, totalPages]);
+  if (totalPages >= 2) picked.add(totalPages - 1);
+  return [...picked].sort((a, b) => a - b);
+}
+
 /** Portada, 2–4, contraportada y las dos anteriores. */
 export function guaranteedVisionPageNumbers(totalPages: number): number[] {
   if (totalPages <= 0) return [];

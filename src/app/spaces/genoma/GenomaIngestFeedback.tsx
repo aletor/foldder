@@ -13,6 +13,7 @@ import {
 import { copySourceUnreadable } from "@/lib/genoma/ingest/feedback-copy";
 import { GenomaMaterialPromptCard } from "./GenomaMaterialPromptModal";
 import { G, cx } from "./face-utils";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 import { useMicroFade } from "./use-genoma-ingest";
 
 function FineSpinner({ className }: { className?: string }) {
@@ -45,8 +46,7 @@ function SectionPreview({ preview }: { preview: SectionRowState["preview"] }) {
   }
   if (p.kind === "logo") {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img src={p.imageUrl} alt="" className="h-5 w-auto max-w-[64px] object-contain opacity-80" />
+      <GenomaMediaImage src={p.imageUrl} alt="" className="h-5 w-auto max-w-[64px] object-contain opacity-80" eager />
     );
   }
   if (p.kind === "typography") {
@@ -159,12 +159,12 @@ function TimelineRow({ step }: { step: IngestTimelineStep }) {
         {step.thumbs?.length ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {step.thumbs.map((thumb, idx) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              <GenomaMediaImage
                 key={`${thumb.slice(0, 24)}-${idx}`}
                 src={thumb}
                 alt=""
                 className="h-10 w-10 rounded-sm object-cover opacity-80 ring-1 ring-[var(--border)] motion-safe:animate-pulse"
+                eager
               />
             ))}
           </div>

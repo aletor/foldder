@@ -33,9 +33,16 @@ import { uploadGenomaIngestFile } from "./upload-genoma-file";
 import { bufferContentSha256 } from "./paid-operations-server";
 import {
   releaseGenomaIngestAnalysisCharge,
+  releaseUnusedGenomaIngestAnalysisCharge,
   reserveGenomaIngestAnalysisCharge,
   settleGenomaIngestAnalysisCharge,
 } from "./genoma-ingest-wallet";
+import { applyLogoCropVerificationToCandidates } from "./genoma-logo-crop-verify";
+import {
+  extractBrandBoardVisualsFromImage,
+  isLikelyBrandBoardImage,
+  measureBrandBoardSignals,
+} from "../genoma-brand-board-image";
 import { inferImageFormat } from "../crawl/url-utils";
 
 const NOW = () => new Date().toISOString();
@@ -175,7 +182,95 @@ export async function* runGenomaIngest(
       message: `Procesando ${file.name}…`,
     };
 
-    if (triage.kind === "logo_image" || triage.kind === "gallery_image") {
+    if (triage.kind === "logo_image" || triage.kind === "gallery_image" || triage.kind === "brand_board_image") {
+      const boardSignals = await measureBrandBoardSignals(file.buffer);
+      const treatAsBrandBoard =
+        triage.kind === "brand_board_image" ||
+        (triage.kind === "gallery_image" && isLikelyBrandBoardImage(file.name, boardSignals));
+
+      if (treatAsBrandBoard) {
+        const boardSha = bufferContentSha256(file.buffer);
+        const boardVisionOn = options?.pdfLogoVisionEnabled === true && Boolean(options?.userEmail);
+        yield {
+          type: "llm_progress",
+          step: "brand_board_vision",
+          status: "running",
+          detail: boardVisionOn
+            ? "Analizando brand board (logo, paleta, tipografía)…"
+            : "Extrayendo paleta del brand board…",
+        };
+        let boardCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
+        let boardFocusCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
+        try {
+          if (boardVisionOn) {
+            boardCharge = await reserveGenomaIngestAnalysisCharge({
+              userEmail: options?.userEmail,
+              contentSignature: boardSha,
+              kind: "brand_board",
+            });
+            boardFocusCharge = await reserveGenomaIngestAnalysisCharge({
+              userEmail: options?.userEmail,
+              contentSignature: `${boardSha}:logo-focus`,
+              kind: "brand_board_logo_focus",
+            });
+          }
+          const board = await extractBrandBoardVisualsFromImage({
+            buffer: file.buffer,
+            fileName: file.name,
+            mime: file.mime,
+            userEmail: options?.userEmail ?? "",
+            route: "/api/spaces/genoma/ingest",
+            visionEnabled: boardVisionOn,
+            allowLogoFocusVision: boardVisionOn,
+          });
+          if (boardVisionOn) {
+            await settleGenomaIngestAnalysisCharge(boardCharge, "brand_board");
+            boardCharge = null;
+            if (board.logoFocusVisionUsed) {
+              await settleGenomaIngestAnalysisCharge(boardFocusCharge, "brand_board_logo_focus");
+            } else {
+              await releaseUnusedGenomaIngestAnalysisCharge(boardFocusCharge, "logo_focus_not_needed");
+            }
+            boardFocusCharge = null;
+          }
+          if (board.logoCandidates.length) logoCandidates.push(...board.logoCandidates);
+          paletteSignals.push(...board.paletteSignals);
+          typographyFamilies.push(...board.typographyFamilies);
+          if (board.brandName && !brandName) brandName = board.brandName;
+          galleryItems.push({
+            assetId: board.uploadedUrl,
+            previewUrl: board.uploadedUrl,
+            included: true,
+            provenance: fileProvenance(board.uploadedFileId, "brand board"),
+          });
+          if (board.logoCandidates.length) {
+            const earlyLogos = mergeRankedLogoCandidates(logoCandidates);
+            yield {
+              type: "slot_update",
+              slotId: "logo",
+              patch: slotPatch(buildLogoSlotPatch(earlyLogos)),
+            };
+          }
+          yield {
+            type: "llm_progress",
+            step: "brand_board_vision",
+            status: "done",
+            detail: board.visionDetail ?? "Brand board procesado",
+          };
+        } catch (error) {
+          await releaseGenomaIngestAnalysisCharge(boardCharge, error);
+          await releaseGenomaIngestAnalysisCharge(boardFocusCharge, error);
+          console.error("[genoma/ingest/brand_board_vision]", error);
+          yield {
+            type: "llm_progress",
+            step: "brand_board_vision",
+            status: "failed",
+            detail: "No pude analizar el brand board",
+          };
+        }
+        continue;
+      }
+
       const uploaded = await uploadGenomaIngestFile({
         userEmail: options?.userEmail ?? "",
         filename: file.name,
@@ -239,7 +334,7 @@ export async function* runGenomaIngest(
           try {
             if (pdfVisionOn) {
               manualCharge = await reserveGenomaIngestAnalysisCharge({
-                userEmail: options.userEmail,
+                userEmail: options?.userEmail,
                 contentSignature: manualSha,
                 kind: "brand_manual",
               });
@@ -247,7 +342,7 @@ export async function* runGenomaIngest(
             const manual = await extractBrandManualVisualsFromPdf({
               buffer: file.buffer,
               fileName: file.name,
-              userEmail: options.userEmail ?? "",
+              userEmail: options?.userEmail ?? "",
               route: "/api/spaces/genoma/ingest",
               visionEnabled: pdfVisionOn,
             });
@@ -306,14 +401,14 @@ export async function* runGenomaIngest(
           let visionCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
           try {
             visionCharge = await reserveGenomaIngestAnalysisCharge({
-              userEmail: options.userEmail,
+              userEmail: options?.userEmail,
               contentSignature: deckSha,
               kind: "deck_logo",
             });
             const vision = await extractLogoCandidatesFromDeckPdf({
               buffer: file.buffer,
               fileName: file.name,
-              userEmail: options.userEmail ?? "",
+              userEmail: options?.userEmail ?? "",
               route: "/api/spaces/genoma/ingest",
             });
             await settleGenomaIngestAnalysisCharge(visionCharge, "deck_logo");
@@ -430,11 +525,61 @@ export async function* runGenomaIngest(
     yield { type: "llm_progress", step: "logo_vision", status: "done", detail: `${rankedLogos.length} candidatos` };
   }
 
-  yield {
-    type: "slot_update",
-    slotId: "logo",
-    patch: slotPatch(buildLogoSlotPatch(rankedLogos)),
-  };
+  const emitLogoSlot = () =>
+    ({
+      type: "slot_update",
+      slotId: "logo",
+      patch: slotPatch(buildLogoSlotPatch(rankedLogos)),
+    }) satisfies GenomaStreamEvent;
+
+  yield emitLogoSlot();
+
+  if (options?.allowLogoCropVerify && rankedLogos.length && options?.userEmail) {
+    yield {
+      type: "llm_progress",
+      step: "logo_crop_verify",
+      status: "running",
+      detail: "Verificando recorte del logo…",
+    };
+    const verifySha = bufferContentSha256(
+      Buffer.from(JSON.stringify(rankedLogos.map((row) => row.value.previewUrl ?? row.value.assetId))),
+    );
+    let verifyCharge: Awaited<ReturnType<typeof reserveGenomaIngestAnalysisCharge>> = null;
+    try {
+      verifyCharge = await reserveGenomaIngestAnalysisCharge({
+        userEmail: options.userEmail,
+        contentSignature: `${verifySha}:logo-crop-verify`,
+        kind: "logo_crop_verify",
+      });
+      const verified = await applyLogoCropVerificationToCandidates(rankedLogos, {
+        userEmail: options.userEmail,
+        route: "/api/spaces/genoma/ingest",
+        contentSignature: verifySha,
+      });
+      rankedLogos = verified.candidates;
+      if (verified.verifyUsed) {
+        await settleGenomaIngestAnalysisCharge(verifyCharge, "logo_crop_verify");
+      } else {
+        await releaseUnusedGenomaIngestAnalysisCharge(verifyCharge, "logo_crop_verify_not_needed");
+      }
+      verifyCharge = null;
+      yield {
+        type: "llm_progress",
+        step: "logo_crop_verify",
+        status: "done",
+        detail: verified.verifyUsed ? "Recorte verificado" : "Verificación omitida",
+      };
+      yield emitLogoSlot();
+    } catch (error) {
+      await releaseGenomaIngestAnalysisCharge(verifyCharge, error);
+      yield {
+        type: "llm_progress",
+        step: "logo_crop_verify",
+        status: "failed",
+        detail: "No pude verificar el recorte",
+      };
+    }
+  }
 
   const paletteBuilt = buildPaletteValue(paletteSignals);
   if (paletteBuilt) {

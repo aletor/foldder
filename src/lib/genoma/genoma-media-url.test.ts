@@ -18,6 +18,12 @@ describe("genoma-media-url", () => {
     expect(needsGenomaMediaProxy("data:image/png;base64,abc")).toBe(false);
   });
 
+  it("normalizes bare knowledge-files keys to s3-file route", () => {
+    expect(resolveGenomaPreviewUrl("knowledge-files/u/genoma/ingest/logo.png")).toBe(
+      "/api/spaces/s3-file?key=knowledge-files%2Fu%2Fgenoma%2Fingest%2Flogo.png",
+    );
+  });
+
   it("normalizes protocol-relative URLs", () => {
     const url = "//cdn.example.com/a.webp";
     expect(resolveGenomaPreviewUrl(url)).toBe(

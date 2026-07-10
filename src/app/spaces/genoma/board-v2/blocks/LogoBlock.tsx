@@ -22,8 +22,12 @@ function logoPageHint(logo?: LogoValue): string | null {
   return `${doc}${genomaLocaleEs.logoPageSignal(logo.sourcePageNumber, logo.totalDocPages ?? 0)}`;
 }
 
-function plinthClassForLogo(url?: string): string {
-  if (!url) return "genoma-v2-logo-plinth--neutral";
+function plinthClassForLogo(logo?: LogoValue): string {
+  if (!logo?.previewUrl) return "genoma-v2-logo-plinth--neutral";
+  if (logo.background === "solid") return "genoma-v2-logo-plinth--light";
+  if (logo.detectionMethod === "vision_bbox" || logo.detectionMethod === "adjusted") {
+    return "genoma-v2-logo-plinth--light";
+  }
   return "genoma-v2-logo-plinth--adaptive";
 }
 
@@ -69,7 +73,7 @@ export function LogoBlock({
   activeSlotId?: SlotId;
 }) {
   const logo = slot.value as LogoValue | undefined;
-  const plinthClass = useMemo(() => plinthClassForLogo(logo?.previewUrl), [logo?.previewUrl]);
+  const plinthClass = useMemo(() => plinthClassForLogo(logo), [logo]);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const pageHint = logoPageHint(logo);
   const adjustControl =
@@ -91,7 +95,7 @@ export function LogoBlock({
   const resolvedPlinth = logo?.previewUrl ? (
     <div className={`genoma-v2-logo-plinth ${plinthClass}`}>
       {pageHint ? <p className="genoma-v2-logo-page-hint">{pageHint}</p> : null}
-      <GenomaClickableImage src={logo.previewUrl} fit="logo" />
+      <GenomaClickableImage src={logo.previewUrl} fit="logo" eager />
       <GenomaSupplementalPanel slot={slot} />
     </div>
   ) : null;
@@ -114,7 +118,7 @@ export function LogoBlock({
               <GenomaLogoRankMeta candidate={candidate} rank={index + 1} />
               <div className="genoma-v2-logo-candidate__preview">
                 {value.previewUrl ? (
-                  <GenomaClickableImage src={value.previewUrl} fit="cover" />
+                  <GenomaClickableImage src={value.previewUrl} fit="cover" eager />
                 ) : (
                   <span className="genoma-v2-muted">{value.assetId}</span>
                 )}

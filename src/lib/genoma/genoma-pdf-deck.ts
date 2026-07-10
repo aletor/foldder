@@ -1,14 +1,13 @@
 import { countPdfPagesInBuffer } from "@/lib/brain/pdf-brand-extract";
 import { isLikelyBrandManualPdf } from "./genoma-pdf-brand-manual-detect";
+import {
+  buildDeckPdfHeuristicsFromMetadata,
+  isLikelyDeckPdfFromHeuristics,
+  type DeckPdfHeuristics,
+} from "./genoma-pdf-deck-detect";
 
-const DECK_NAME_RE = /deck|pitch|investor|presentaci[oó]n|slides|one-?pager|dossier/i;
-const HEX_IN_TEXT_RE = /#([0-9a-fA-F]{6})\b/;
-
-export type DeckPdfHeuristics = {
-  pageCount: number;
-  nameLooksLikeDeck: boolean;
-  fewHexColorsInText: boolean;
-};
+export type { DeckPdfHeuristics } from "./genoma-pdf-deck-detect";
+export { isLikelyDeckPdfFromHeuristics } from "./genoma-pdf-deck-detect";
 
 export async function analyzeDeckPdfHeuristics(
   buffer: Buffer,
@@ -16,10 +15,7 @@ export async function analyzeDeckPdfHeuristics(
   textSample = "",
 ): Promise<DeckPdfHeuristics> {
   const pageCount = await countPdfPagesInBuffer(buffer, 200).catch(() => 0);
-  const nameLooksLikeDeck = DECK_NAME_RE.test(fileName);
-  const hexMatches = textSample.match(HEX_IN_TEXT_RE) ?? [];
-  const fewHexColorsInText = hexMatches.length < 2;
-  return { pageCount, nameLooksLikeDeck, fewHexColorsInText };
+  return buildDeckPdfHeuristicsFromMetadata(pageCount, fileName, textSample);
 }
 
 export async function isLikelyDeckPdf(
@@ -29,8 +25,5 @@ export async function isLikelyDeckPdf(
 ): Promise<boolean> {
   if (isLikelyBrandManualPdf(fileName, textSample)) return false;
   const h = await analyzeDeckPdfHeuristics(buffer, fileName, textSample);
-  if (h.nameLooksLikeDeck) return true;
-  if (h.pageCount >= 6) return true;
-  if (h.pageCount >= 3 && h.fewHexColorsInText) return true;
-  return false;
+  return isLikelyDeckPdfFromHeuristics(h);
 }

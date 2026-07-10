@@ -327,11 +327,25 @@
   width: 100%;
   height: 100%;
   padding: 16px;
+  overflow: hidden;
+}
+
+.genoma-node-card-preview__logo-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .genoma-node-card-preview__logo {
-  width: 56px;
-  height: 56px;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 56px;
+  max-height: 56px;
   object-fit: contain;
 }
 
@@ -975,8 +989,10 @@
 
 .genoma-v2-logo-plinth {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: 220px;
   border-radius: 12px;
   padding: 24px;
@@ -984,6 +1000,10 @@
 
 .genoma-v2-logo-plinth--adaptive {
   background: linear-gradient(180deg, #2a2a30 0%, #141418 100%);
+}
+
+.genoma-v2-logo-plinth--light {
+  background: linear-gradient(180deg, #eceae6 0%, #e2e0db 100%);
 }
 
 .genoma-v2-logo-plinth--neutral {
@@ -1084,8 +1104,8 @@
   pointer-events: auto;
 }
 
-.genoma-v2-board.is-loading .genoma-v2-block:not(:has(.genoma-v2-headline, .genoma-v2-logo-plinth__img, .genoma-v2-swatch)),
-.genoma-v2-bento-board.is-loading .genoma-v2-block:not(:has(.genoma-v2-headline, .genoma-v2-logo-plinth__img, .genoma-v2-swatch)) {
+.genoma-v2-board.is-loading .genoma-v2-block:not(:has(.genoma-v2-headline, .genoma-v2-logo-plinth__img, .genoma-preview-image, .genoma-v2-swatch)),
+.genoma-v2-bento-board.is-loading .genoma-v2-block:not(:has(.genoma-v2-headline, .genoma-v2-logo-plinth__img, .genoma-preview-image, .genoma-v2-swatch)) {
   opacity: 0.88;
 }
 

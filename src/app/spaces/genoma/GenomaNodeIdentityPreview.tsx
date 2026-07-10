@@ -4,6 +4,7 @@ import type { GenomaBookView } from "@/lib/genoma/projection/book-view";
 import { resolveLogoDisplayUrl } from "@/lib/genoma/projection/logo-display-url";
 import type { LogoCandidate, LogoProposal } from "@/lib/genoma/logo-intake/types";
 import { GenomaLogoImage } from "./GenomaLogoImage";
+import { GenomaMediaImage } from "./GenomaMediaImage";
 
 export type GenomaNodeIdentityState =
   | "empty"
@@ -43,11 +44,11 @@ export function deriveGenomaNodeIdentityState(
 function ProposedLogoPreview({ candidate }: { candidate: LogoCandidate }) {
   return (
     <div className="relative flex h-16 w-full items-center justify-center rounded-sm bg-white/95 px-3 py-2 ring-1 ring-white/30">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <GenomaMediaImage
         src={candidateImageSrc(candidate)}
         alt="logo propuesto"
         className="max-h-12 max-w-full object-contain opacity-80"
+        eager
       />
       <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-black/70 px-2 py-0.5 text-[9px] lowercase tracking-wide text-white/90">
         propuesto · confirmar

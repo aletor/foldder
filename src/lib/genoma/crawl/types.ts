@@ -2,7 +2,16 @@ import type { Provenance, SlotId, SlotState } from "../genoma-types";
 
 export type GenomaCrawlPhaseId = "connect" | "crawl" | "visual" | "copy" | "llm" | "finalize";
 
-export type GenomaLlmStepId = "voice" | "values" | "oneliner" | "logo_vision" | "pdf_logo_vision" | "pdf_brand_vision" | "batch";
+export type GenomaLlmStepId =
+  | "voice"
+  | "values"
+  | "oneliner"
+  | "logo_vision"
+  | "logo_crop_verify"
+  | "pdf_logo_vision"
+  | "pdf_brand_vision"
+  | "brand_board_vision"
+  | "batch";
 
 export type GenomaLlmBatchSubstep = "essence" | "voice" | "visualWorld";
 

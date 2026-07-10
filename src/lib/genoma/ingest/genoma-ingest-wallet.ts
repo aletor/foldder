@@ -91,6 +91,18 @@ export async function settleGenomaIngestAnalysisCharge(
   });
 }
 
+export async function releaseUnusedGenomaIngestAnalysisCharge(
+  charge: ApiWalletCharge | null,
+  reason: string,
+): Promise<void> {
+  if (!charge) return;
+  try {
+    await charge.release({ reason, metadata: { unused: true } });
+  } catch (error) {
+    console.error("[genoma/ingest/wallet] failed to release unused charge:", error);
+  }
+}
+
 export async function releaseGenomaIngestAnalysisCharge(
   charge: ApiWalletCharge | null,
   error: unknown,

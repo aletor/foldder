@@ -48,6 +48,20 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "off",
     },
   },
+  {
+    files: ["src/app/spaces/genoma/**/*.{tsx,jsx}"],
+    ignores: ["src/app/spaces/genoma/board-v2/GenomaPreviewImage.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXOpeningElement[name.name='img']",
+          message:
+            "Usa <GenomaMediaImage /> desde src/app/spaces/genoma/GenomaMediaImage.tsx en lugar de <img> en Genoma.",
+        },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

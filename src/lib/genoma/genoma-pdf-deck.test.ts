@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeDeckPdfHeuristics, isLikelyDeckPdf } from "./genoma-pdf-deck";
+import { analyzeDeckPdfHeuristics, isLikelyDeckPdf, isLikelyDeckPdfFromHeuristics } from "./genoma-pdf-deck";
 import { deckLogoVisionPageNumbers } from "./ingest/page-vision-pass-selection";
 
 describe("isLikelyDeckPdf", () => {
@@ -26,5 +26,37 @@ describe("isLikelyDeckPdf with brand manual guard", () => {
   it("returns false for 6-page brand manuals", async () => {
     const text = "logotypes pantone typographie charte graphique marque";
     expect(await isLikelyDeckPdf(Buffer.from("x"), "manual.pdf", text)).toBe(false);
+  });
+});
+
+describe("isLikelyDeckPdfFromHeuristics", () => {
+  it("detecta deck por pageCount aunque el nombre sea genérico", () => {
+    expect(
+      isLikelyDeckPdfFromHeuristics({
+        pageCount: 12,
+        nameLooksLikeDeck: false,
+        fewHexColorsInText: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("detecta deck corto con pocos hex en texto", () => {
+    expect(
+      isLikelyDeckPdfFromHeuristics({
+        pageCount: 4,
+        nameLooksLikeDeck: false,
+        fewHexColorsInText: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("no clasifica informe corto con paleta en texto", () => {
+    expect(
+      isLikelyDeckPdfFromHeuristics({
+        pageCount: 4,
+        nameLooksLikeDeck: false,
+        fewHexColorsInText: false,
+      }),
+    ).toBe(false);
   });
 });

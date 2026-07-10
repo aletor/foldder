@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
-import { loadGenomaSourcePdf } from "@/lib/genoma/ingest/genoma-source-pdf-store";
+import { loadGenomaSourceForLogoAdjust } from "@/lib/genoma/ingest/genoma-source-pdf-store";
 import { uploadGenomaIngestFile } from "@/lib/genoma/ingest/upload-genoma-file";
 import {
   cropLogoFromPdfPage,
+  cropLogoFromRasterPage,
   pageTupleToLogoSourceBbox,
   type NormalizedBboxPage,
 } from "@/lib/genoma/genoma-logo-crop-server";
@@ -49,18 +50,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid_bbox" }, { status: 400 });
   }
 
-  const pdfBuffer = await loadGenomaSourcePdf(auth.user.email, contentSha256);
-  if (!pdfBuffer) {
-    return NextResponse.json({ error: "pdf_not_found" }, { status: 404 });
+  const source = await loadGenomaSourceForLogoAdjust(auth.user.email, contentSha256);
+  if (!source) {
+    return NextResponse.json({ error: "source_not_found" }, { status: 404 });
   }
 
-  const cropped = await cropLogoFromPdfPage({
-    pdfBuffer,
-    pageNumber,
-    bboxPage,
-  });
+  let cropped: { buffer: Buffer; width: number; height: number };
+  try {
+    cropped =
+      source.kind === "pdf"
+        ? await cropLogoFromPdfPage({
+            pdfBuffer: source.buffer,
+            pageNumber,
+            bboxPage,
+          })
+        : await cropLogoFromRasterPage({
+            rasterBuffer: source.buffer,
+            bboxPage,
+          });
+  } catch {
+    return NextResponse.json({ error: "crop_failed" }, { status: 500 });
+  }
 
-  const docName = body.docName?.trim() || "documento.pdf";
+  const docName = body.docName?.trim() || "documento";
   const stem = docName.replace(/\.[^.]+$/, "").slice(0, 40);
   const uploaded = await uploadGenomaIngestFile({
     userEmail: auth.user.email,
@@ -82,7 +94,7 @@ export async function POST(request: NextRequest) {
     sourceBbox: pageTupleToLogoSourceBbox(bboxPage),
     sourceDocName: previous?.sourceDocName ?? docName,
     sourcePdfSha256: contentSha256,
-    totalDocPages: previous?.totalDocPages,
+    totalDocPages: previous?.totalDocPages ?? (source.kind === "raster" ? 1 : undefined),
     detectionMethod: "adjusted",
   };
 

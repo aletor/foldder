@@ -22,6 +22,8 @@ import {
 import { extractNativeLogoInBbox, type NativeLogoAsset } from "./page-vision-native-extract";
 import type { PaintWalkAudit } from "./page-vision-pdf-vector-walk";
 import type { LogoVariantAsset } from "../model/trait-values";
+import { refineAndCropPdfLogoInstance } from "./ingest-logo-pdf-refine";
+import { buildHeuristicLogoCandidatesFromPdfCover } from "./ingest-logo-heuristic";
 
 const LOGO_CROP_DPI = Math.max(PAGE_VISION_PASS_DPI, 216);
 
@@ -33,13 +35,6 @@ export type PageVisionLogoCandidateEntry = {
   slot: "primary" | "secondary";
   pathAudit?: PaintWalkAudit;
   wordmarkIntegrityOk?: boolean;
-};
-
-type HarvestedLogo = {
-  pageNumber: number;
-  instance: PageVisionLogoInstance;
-  buffer: Buffer;
-  logoPHash: string;
 };
 
 function bboxXYXYToPixel(bbox: BBoxXYXY, pageWidth: number, pageHeight: number): PixelBBox {
@@ -169,15 +164,48 @@ async function harvestLogosFromAudit(
     if (!page.ok || !page.result?.logoInstances.length) continue;
     for (const instance of page.result.logoInstances) {
       try {
-        const cropBuffer = await cropObservation(
-          buffer,
-          page.pageNumber,
-          instance.bbox,
-          LOGO_CROP_DPI,
-          pageDimCache,
-        );
+        let cropBuffer: Buffer | null = null;
+        let cropBbox: BBoxXYXY = instance.bbox;
+
+        const refined = await refineAndCropPdfLogoInstance({
+          pdfBuffer: buffer,
+          pageNumber: page.pageNumber,
+          instance,
+        });
+        if (refined) {
+          cropBuffer = refined.png;
+          cropBbox = refined.refinedBbox;
+        }
+
+        if (!cropBuffer) {
+          cropBuffer = await cropObservation(
+            buffer,
+            page.pageNumber,
+            instance.bbox,
+            LOGO_CROP_DPI,
+            pageDimCache,
+          );
+          cropBbox = instance.bbox;
+        } else {
+          const meta = await sharp(cropBuffer).metadata();
+          if ((meta.width ?? 0) < 24 || (meta.height ?? 0) < 12) {
+            cropBuffer = await cropObservation(
+              buffer,
+              page.pageNumber,
+              cropBbox,
+              LOGO_CROP_DPI,
+              pageDimCache,
+            );
+          }
+        }
+
         const logoPHash = await harvestLogoPHash(cropBuffer);
-        out.push({ pageNumber: page.pageNumber, instance, buffer: cropBuffer, logoPHash });
+        out.push({
+          pageNumber: page.pageNumber,
+          instance: { ...instance, bbox: cropBbox },
+          buffer: cropBuffer,
+          logoPHash,
+        });
       } catch {
         /* instancia descartada — crop inválido */
       }

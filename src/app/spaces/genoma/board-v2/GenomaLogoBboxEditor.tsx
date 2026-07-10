@@ -14,6 +14,7 @@ import type { LogoValue } from "@/lib/genoma/genoma-types";
 import { isValidBboxPage, logoSourceBboxToPageTuple } from "@/lib/genoma/genoma-logo-bbox";
 import { genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
 import { GenomaFoldderButton } from "./GenomaFoldderButton";
+import { GenomaMediaImage } from "../GenomaMediaImage";
 import { Check, X } from "lucide-react";
 
 type EditPagePayload = {
@@ -30,10 +31,11 @@ const HANDLES: Exclude<BboxHandle, "move">[] = ["nw", "n", "ne", "e", "se", "s",
 const ERROR_LABELS: Record<string, string> = {
   missing_fields: "Faltan datos para recortar el logo",
   invalid_bbox: "Área inválida — ajusta la caja amarilla",
-  pdf_not_found: "No encuentro el PDF fuente en el servidor",
+  source_not_found: "No encuentro el archivo fuente en el servidor",
+  pdf_not_found: "No encuentro el archivo fuente en el servidor",
   crop_failed: "No pude guardar el recorte",
-  edit_page_failed: "No pude cargar la página",
-  missing_pdf_context: "Este logo no tiene PDF de origen",
+  edit_page_failed: "No pude cargar la imagen fuente",
+  missing_pdf_context: "Este logo no tiene archivo de origen guardado",
 };
 
 function formatEditorError(code: string): string {
@@ -273,8 +275,7 @@ export function GenomaLogoBboxEditor({
               onPointerLeave={onPointerUp}
               onPointerCancel={onPointerUp}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <GenomaMediaImage
                 ref={imgRef}
                 src={`data:${page.mime};base64,${page.imageBase64}`}
                 alt=""
@@ -282,6 +283,7 @@ export function GenomaLogoBboxEditor({
                 draggable={false}
                 width={page.width}
                 height={page.height}
+                eager
               />
               <div className="genoma-v2-logo-adjust__overlay">
                 <div
@@ -306,8 +308,7 @@ export function GenomaLogoBboxEditor({
             <p className="genoma-v2-logo-adjust__preview-label">{genomaLocaleEs.logoCropPreview}</p>
             <div className="genoma-v2-logo-adjust__preview-frame">
               {previewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt="" className="genoma-v2-logo-adjust__preview-img" />
+                <GenomaMediaImage src={previewUrl} alt="" className="genoma-v2-logo-adjust__preview-img" eager />
               ) : (
                 <span className="genoma-v2-muted">…</span>
               )}

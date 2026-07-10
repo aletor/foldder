@@ -37,6 +37,17 @@ export function selectPdfPages(totalPages: number): number[] {
   return [...picked].sort((a, b) => a - b);
 }
 
+export type IntakePageSelector = (totalPages: number, doc: IntakeDocInput) => number[];
+
+function resolvePdfPages(
+  totalPages: number,
+  doc: IntakeDocInput,
+  selectPages?: IntakePageSelector,
+): number[] {
+  const picked = selectPages?.(totalPages, doc) ?? selectPdfPages(totalPages);
+  return [...new Set(picked.filter((p) => p >= 1 && p <= totalPages))].sort((a, b) => a - b);
+}
+
 async function resizeToJpeg(pngBuffer: Buffer): Promise<{ jpeg: Buffer; width: number; height: number }> {
   const meta = await sharp(pngBuffer).metadata();
   const width = meta.width ?? 0;
@@ -57,14 +68,17 @@ async function resizeToJpeg(pngBuffer: Buffer): Promise<{ jpeg: Buffer; width: n
 
 export async function renderIntakeFrames(
   docs: IntakeDocInput[],
-  opts?: { onPagePrepared?: (done: number, total: number) => void },
+  opts?: {
+    onPagePrepared?: (done: number, total: number) => void;
+    selectPages?: IntakePageSelector;
+  },
 ): Promise<IntakeFrame[]> {
   let totalPages = 0;
   for (const doc of docs) {
     if (doc.kind === "image") totalPages += 1;
     else {
       const total = await countPdfPagesInBuffer(doc.buffer, 500);
-      totalPages += selectPdfPages(total).length;
+      totalPages += resolvePdfPages(total, doc, opts?.selectPages).length;
     }
   }
   let donePages = 0;
@@ -93,7 +107,7 @@ export async function renderIntakeFrames(
     }
 
     const totalPagesInDoc = await countPdfPagesInBuffer(doc.buffer, 500);
-    const pages = selectPdfPages(totalPagesInDoc);
+    const pages = resolvePdfPages(totalPagesInDoc, doc, opts?.selectPages);
     const rendered = await renderPdfPagesAt(doc.buffer, pages, {
       dpi: LOGO_INTAKE_RENDER_DPI,
       concurrency: LOGO_INTAKE_RENDER_CONCURRENCY,

@@ -344,12 +344,19 @@ export function WalletCostGuardDialog() {
         ) : null}
 
         {!insufficient && !blocked ? (
-          <p
-            id="wallet-cost-description"
-            className="border-b border-white/8 px-3 py-2 text-[9px] leading-snug text-white/42"
-          >
-            {description}
-          </p>
+          <div id="wallet-cost-description" className="border-b border-white/8 px-3 py-2 text-[9px] leading-snug text-white/42">
+            {request.detailLines?.length ? (
+              <ul className="m-0 list-none space-y-1 p-0">
+                {request.detailLines.map((line) => (
+                  <li key={line} className={line.startsWith("Total") || line.startsWith("Estimated") ? "pt-1 font-semibold text-white/72" : ""}>
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="m-0">{description}</p>
+            )}
+          </div>
         ) : null}
 
         <div className="grid grid-cols-2 divide-x divide-white/10">
