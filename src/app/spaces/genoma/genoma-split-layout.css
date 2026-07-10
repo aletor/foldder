@@ -1165,6 +1165,120 @@
   color: var(--probe-text);
 }
 
+.genoma-probe-modal__other-images {
+  border-radius: 12px;
+  border: 1px solid var(--probe-border);
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.genoma-probe-modal__other-images-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.genoma-probe-modal__other-images-summary::-webkit-details-marker {
+  display: none;
+}
+
+.genoma-probe-modal__other-images-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--probe-text-secondary);
+}
+
+.genoma-probe-modal__other-images-chevron {
+  color: var(--probe-text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.genoma-probe-modal__other-images[open] .genoma-probe-modal__other-images-chevron {
+  transform: rotate(180deg);
+}
+
+.genoma-probe-modal__other-images-list {
+  margin: 0;
+  padding: 0 16px 14px;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--probe-border);
+}
+
+.genoma-probe-modal__other-images-empty {
+  margin: 0;
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--probe-border);
+}
+
+.genoma-probe-modal__other-image-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--probe-surface);
+  border: 1px solid var(--probe-border);
+}
+
+.genoma-probe-modal__other-image-thumb-wrap {
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--probe-border);
+  background: #e8ecf1;
+}
+
+.genoma-probe-modal__other-image-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.genoma-probe-modal__other-image-thumb-fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+}
+
+.genoma-probe-modal__other-image-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.genoma-probe-modal__other-image-page {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--probe-text-muted);
+}
+
+.genoma-probe-modal__other-image-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--probe-text);
+}
+
 .genoma-probe-modal__panel {
   padding: 14px 16px;
   border-radius: 12px;

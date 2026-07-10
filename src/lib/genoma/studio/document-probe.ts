@@ -13,9 +13,15 @@ import { parseJsonObjectFromVisionModelText } from "@/lib/brain/brain-vision-jso
 import type {
   GenomaDocumentProbeColor,
   GenomaDocumentProbeLogo,
+  GenomaDocumentProbeOtherImage,
   GenomaDocumentProbeResult,
 } from "./document-probe-types";
 import { refineProbeLogoBboxFromBackground } from "./document-probe-bbox-refine";
+import {
+  mergeOtherImageLists,
+  PROBE_BRAND_PDF_PAGES,
+  selectPdfPagesForExtendedImageProbe,
+} from "./document-probe-image-scan";
 
 const PROBE_MODEL =
   process.env.GENOMA_DOCUMENT_PROBE_MODEL?.trim() ||
@@ -24,8 +30,11 @@ const PROBE_MODEL =
 
 const PROBE_MAX_LONG_EDGE = 640;
 const PROBE_JPEG_QUALITY = 65;
-const PROBE_PDF_PAGES = 4;
 const PROBE_TEXT_SAMPLE_CHARS = 6000;
+const OTHER_IMAGE_THUMB_MAX_EDGE = 96;
+const OTHER_IMAGES_MAX_SHORT = 10;
+const OTHER_IMAGES_MAX_LONG = 24;
+const OTHER_IMAGES_PER_PAGE_MAX = 6;
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg", "ico"]);
 const DOC_EXT = new Set(["pdf", "docx", "doc", "txt", "md", "rtf", "html", "htm", "pptx", "ppt", "key"]);
@@ -62,11 +71,29 @@ async function resizeToJpegBase64(buffer: Buffer): Promise<string> {
   return jpeg.toString("base64");
 }
 
+async function buildPdfProbeFrames(buffer: Buffer, pageNumbers: number[]): Promise<ProbeFrame[]> {
+  const rendered = await renderPdfPagesAt(buffer, pageNumbers, { dpi: 96 });
+  const frames: ProbeFrame[] = [];
+  for (const page of rendered) {
+    frames.push({
+      label: `page_${page.pageNumber}`,
+      pageNumber: page.pageNumber,
+      jpegBase64: await resizeToJpegBase64(page.pngBuffer),
+    });
+  }
+  return frames;
+}
+
 async function buildProbeFrames(
   buffer: Buffer,
   fileName: string,
   mime: string,
-): Promise<{ documentType: string; frames: ProbeFrame[]; textSample: string }> {
+): Promise<{
+  documentType: string;
+  frames: ProbeFrame[];
+  textSample: string;
+  totalPdfPages: number | null;
+}> {
   const documentType = inferDocumentType(fileName, mime);
   let textSample = "";
 
@@ -78,21 +105,13 @@ async function buildProbeFrames(
   }
 
   if (documentType === "pdf") {
-    const totalPages = await countPdfPagesInBuffer(buffer, 200).catch(() => PROBE_PDF_PAGES);
+    const totalPages = await countPdfPagesInBuffer(buffer, 200).catch(() => PROBE_BRAND_PDF_PAGES);
     const pageNumbers = Array.from(
-      { length: Math.min(PROBE_PDF_PAGES, Math.max(1, totalPages)) },
+      { length: Math.min(PROBE_BRAND_PDF_PAGES, Math.max(1, totalPages)) },
       (_, index) => index + 1,
     );
-    const rendered = await renderPdfPagesAt(buffer, pageNumbers, { dpi: 96 });
-    const frames: ProbeFrame[] = [];
-    for (const page of rendered) {
-      frames.push({
-        label: `page_${page.pageNumber}`,
-        pageNumber: page.pageNumber,
-        jpegBase64: await resizeToJpegBase64(page.pngBuffer),
-      });
-    }
-    return { documentType, frames, textSample };
+    const frames = await buildPdfProbeFrames(buffer, pageNumbers);
+    return { documentType, frames, textSample, totalPdfPages: totalPages };
   }
 
   if (documentType === "imagen") {
@@ -105,11 +124,12 @@ async function buildProbeFrames(
         documentType,
         frames: [{ label: "image_1", pageNumber: null, jpegBase64 }],
         textSample,
+        totalPdfPages: null,
       };
     }
   }
 
-  return { documentType, frames: [], textSample };
+  return { documentType, frames: [], textSample, totalPdfPages: null };
 }
 
 function clamp01(value: unknown): number {
@@ -233,11 +253,99 @@ async function refinePrimaryLogoBbox(
   return { logos: nextLogos, primaryLogo: nextPrimary };
 }
 
+type NormalizedBbox = Pick<GenomaDocumentProbeLogo, "x" | "y" | "width" | "height">;
+
+async function buildOtherImageThumbnail(
+  jpegBase64: string,
+  bbox: NormalizedBbox,
+): Promise<string | null> {
+  const buffer = Buffer.from(jpegBase64, "base64");
+  const meta = await sharp(buffer).metadata();
+  const iw = meta.width ?? 1;
+  const ih = meta.height ?? 1;
+
+  const left = Math.max(0, Math.floor(bbox.x * iw));
+  const top = Math.max(0, Math.floor(bbox.y * ih));
+  const width = Math.max(1, Math.min(iw - left, Math.ceil(bbox.width * iw)));
+  const height = Math.max(1, Math.min(ih - top, Math.ceil(bbox.height * ih)));
+
+  const thumb = await sharp(buffer)
+    .extract({ left, top, width, height })
+    .resize({
+      width: OTHER_IMAGE_THUMB_MAX_EDGE,
+      height: OTHER_IMAGE_THUMB_MAX_EDGE,
+      fit: "inside",
+      withoutEnlargement: false,
+    })
+    .jpeg({ quality: 70 })
+    .toBuffer();
+
+  return thumb.toString("base64");
+}
+
+function parseOtherImagesArray(
+  raw: unknown,
+  max: number,
+): Array<Omit<GenomaDocumentProbeOtherImage, "thumbnailBase64">> {
+  if (!Array.isArray(raw)) return [];
+  const otherImages: Array<Omit<GenomaDocumentProbeOtherImage, "thumbnailBase64">> = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const x = clamp01(row.x);
+    const y = clamp01(row.y);
+    const width = clamp01(row.width);
+    const height = clamp01(row.height);
+    const description =
+      typeof row.description === "string" ? row.description.trim().slice(0, 200) : "";
+    if (width <= 0 || height <= 0 || !description) continue;
+    otherImages.push({
+      page: typeof row.page === "number" && row.page >= 1 ? Math.round(row.page) : null,
+      x,
+      y,
+      width,
+      height,
+      description,
+    });
+    if (otherImages.length >= max) break;
+  }
+  return otherImages;
+}
+
+async function enrichOtherImagesWithThumbnails(
+  otherImages: Array<Omit<GenomaDocumentProbeOtherImage, "thumbnailBase64">>,
+  frames: ProbeFrame[],
+): Promise<GenomaDocumentProbeOtherImage[]> {
+  const jpegByPage = new Map<number | null, string>();
+  for (const frame of frames) jpegByPage.set(frame.pageNumber, frame.jpegBase64);
+
+  return Promise.all(
+    otherImages.map(async (image) => {
+      const jpeg = jpegByPage.get(image.page) ?? jpegByPage.get(null);
+      const thumbnailBase64 = jpeg
+        ? await buildOtherImageThumbnail(jpeg, image).catch(() => null)
+        : null;
+      return { ...image, thumbnailBase64 };
+    }),
+  );
+}
+
 function parseProbeResponse(
   raw: unknown,
   fileName: string,
   fallbackType: string,
-): Omit<GenomaDocumentProbeResult, "latencyMs" | "model" | "pagePreviews"> {
+): Omit<
+  GenomaDocumentProbeResult,
+  | "latencyMs"
+  | "model"
+  | "pagePreviews"
+  | "primaryLogo"
+  | "otherImages"
+  | "llmCallCount"
+  | "pdfTotalPages"
+> & {
+  otherImages: Array<Omit<GenomaDocumentProbeOtherImage, "thumbnailBase64">>;
+} {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
 
   const logos: GenomaDocumentProbeLogo[] = [];
@@ -279,6 +387,8 @@ function parseProbeResponse(
     }
   }
 
+  const otherImages = parseOtherImagesArray(o.otherImages, OTHER_IMAGES_MAX_SHORT);
+
   const summaryRaw = Array.isArray(o.textSummary) ? o.textSummary : [];
   const textSummary: [string, string, string] = [
     typeof summaryRaw[0] === "string" ? summaryRaw[0].trim().slice(0, 240) : "",
@@ -293,8 +403,8 @@ function parseProbeResponse(
         : fallbackType,
     fileName,
     logos,
-    primaryLogo: null,
     primaryColors,
+    otherImages,
     textSummary,
   };
 }
@@ -335,9 +445,110 @@ const PROBE_RESPONSE_SCHEMA = {
       type: Type.ARRAY,
       items: { type: Type.STRING },
     },
+    otherImages: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          page: { type: Type.INTEGER, nullable: true },
+          x: { type: Type.NUMBER },
+          y: { type: Type.NUMBER },
+          width: { type: Type.NUMBER },
+          height: { type: Type.NUMBER },
+          description: { type: Type.STRING },
+        },
+        required: ["x", "y", "width", "height", "description"],
+      },
+    },
   },
-  required: ["documentType", "logos", "primaryColors", "textSummary"],
+  required: ["documentType", "logos", "primaryColors", "textSummary", "otherImages"],
 };
+
+const EXTENDED_OTHER_IMAGES_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    otherImages: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          page: { type: Type.INTEGER, nullable: true },
+          x: { type: Type.NUMBER },
+          y: { type: Type.NUMBER },
+          width: { type: Type.NUMBER },
+          height: { type: Type.NUMBER },
+          description: { type: Type.STRING },
+        },
+        required: ["x", "y", "width", "height", "description"],
+      },
+    },
+  },
+  required: ["otherImages"],
+};
+
+function formatLogoExclusionHint(logos: GenomaDocumentProbeLogo[]): string {
+  if (!logos.length) return "Ningún logo previo en las primeras páginas.";
+  return logos
+    .map((logo) => {
+      const page = logo.page ? `pág. ${logo.page}` : "imagen";
+      const label = logo.label ? ` (${logo.label})` : "";
+      return `- ${page}${label}: x=${logo.x.toFixed(3)}, y=${logo.y.toFixed(3)}, w=${logo.width.toFixed(3)}, h=${logo.height.toFixed(3)}`;
+    })
+    .join("\n");
+}
+
+async function runExtendedOtherImagesProbe(input: {
+  ai: GoogleGenAI;
+  fileName: string;
+  frames: ProbeFrame[];
+  knownLogos: GenomaDocumentProbeLogo[];
+  maxImages: number;
+}): Promise<Array<Omit<GenomaDocumentProbeOtherImage, "thumbnailBase64">>> {
+  const pageList = input.frames
+    .map((frame) => `- ${frame.label}${frame.pageNumber ? ` (pág. ${frame.pageNumber})` : ""}`)
+    .join("\n");
+
+  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+    {
+      text: [
+        "Inventario visual de páginas adicionales de un PDF. Responde SOLO JSON según el schema.",
+        `Archivo: ${input.fileName}`,
+        `Páginas adjuntas:\n${pageList}`,
+        "",
+        "otherImages: fotografías, ilustraciones, diagramas o gráficos que NO sean logos ni iconos de marca.",
+        `Máximo ${input.maxImages} entradas en total.`,
+        `Hasta ${OTHER_IMAGES_PER_PAGE_MAX} imágenes distintas por página si hay varias.`,
+        "page = número de página PDF (1-based). x, y, width, height: bbox normalizado 0–1.",
+        "description: frase breve en español sobre qué hay en la imagen.",
+        "NO repitas logos ya detectados en las primeras páginas:",
+        formatLogoExclusionHint(input.knownLogos),
+      ].join("\n"),
+    },
+  ];
+
+  for (const frame of input.frames) {
+    parts.push({ text: frame.label });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: frame.jpegBase64 } });
+  }
+
+  const response = await withGeminiRetries({
+    run: async () =>
+      input.ai.models.generateContent({
+        model: PROBE_MODEL,
+        contents: [{ role: "user", parts }],
+        config: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: EXTENDED_OTHER_IMAGES_SCHEMA,
+        },
+      }),
+  });
+
+  const parsed = parseJsonObjectFromVisionModelText((response as { text?: string }).text ?? "");
+  if (!parsed || typeof parsed !== "object") return [];
+  const row = parsed as Record<string, unknown>;
+  return parseOtherImagesArray(row.otherImages, input.maxImages);
+}
 
 export async function runGenomaDocumentProbe(input: {
   buffer: Buffer;
@@ -347,11 +558,14 @@ export async function runGenomaDocumentProbe(input: {
   const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY no configurada");
 
-  const { documentType, frames, textSample } = await buildProbeFrames(
+  const { documentType, frames, textSample, totalPdfPages } = await buildProbeFrames(
     input.buffer,
     input.fileName,
     input.mime,
   );
+
+  const useExtendedImageScan =
+    documentType === "pdf" && totalPdfPages != null && totalPdfPages > PROBE_BRAND_PDF_PAGES;
 
   const pageList = frames
     .map((frame) => `- ${frame.label}${frame.pageNumber ? ` (pág. ${frame.pageNumber})` : ""}`)
@@ -371,6 +585,9 @@ export async function runGenomaDocumentProbe(input: {
         "legibility: 0–1 — qué tan claro y completo es ese logo (nitidez, sin recortes, wordmark legible).",
         "Si hay varias variantes del mismo logo con calidad parecida, el servidor prioriza la que tenga el fondo más claro.",
         "primaryColors: máximo 5 colores corporativos dominantes con hex #RRGGBB.",
+        "otherImages: fotografías, ilustraciones, diagramas o gráficos visibles que NO sean logos ni iconos de marca.",
+        "otherImages: NO dupliques nada listado en logos[]. Excluye iconos pequeños de UI/app. Máximo 10 entradas.",
+        "otherImages: page + bbox normalizado 0–1 (igual que logos) y description breve en español (qué hay en la imagen).",
         "textSummary: exactamente 3 líneas de resumen del contenido textual.",
         textSample ? `\nTexto extraído (muestra):\n${textSample}` : "",
       ]
@@ -400,6 +617,8 @@ export async function runGenomaDocumentProbe(input: {
       }),
   });
 
+  let llmCallCount = 1;
+
   const parsed = parseJsonObjectFromVisionModelText((response as { text?: string }).text ?? "");
   if (!parsed) throw new Error("document_probe_parse_failed");
 
@@ -409,15 +628,50 @@ export async function runGenomaDocumentProbe(input: {
   const refined = await refinePrimaryLogoBbox(logos, primaryLogo, frames);
   primaryLogo = refined.primaryLogo;
 
+  const allFrames = [...frames];
+  let mergedOtherImages = normalized.otherImages;
+
+  if (useExtendedImageScan && totalPdfPages != null) {
+    const extraPageNumbers = await selectPdfPagesForExtendedImageProbe(
+      input.buffer,
+      totalPdfPages,
+    );
+    if (extraPageNumbers.length) {
+      const extraFrames = await buildPdfProbeFrames(input.buffer, extraPageNumbers);
+      allFrames.push(...extraFrames);
+      const slotsLeft = Math.max(0, OTHER_IMAGES_MAX_LONG - mergedOtherImages.length);
+      if (slotsLeft > 0) {
+        const extendedOtherImages = await runExtendedOtherImagesProbe({
+          ai,
+          fileName: input.fileName,
+          frames: extraFrames,
+          knownLogos: refined.logos,
+          maxImages: slotsLeft,
+        });
+        llmCallCount = 2;
+        mergedOtherImages = mergeOtherImageLists(
+          mergedOtherImages,
+          extendedOtherImages,
+          OTHER_IMAGES_MAX_LONG,
+        );
+      }
+    }
+  }
+
+  const otherImages = await enrichOtherImagesWithThumbnails(mergedOtherImages, allFrames);
+
   return {
     ...normalized,
     logos: refined.logos,
     primaryLogo,
+    otherImages,
     pagePreviews: frames.map((frame) => ({
       pageNumber: frame.pageNumber,
       jpegBase64: frame.jpegBase64,
     })),
     latencyMs: Date.now() - started,
     model: PROBE_MODEL,
+    llmCallCount,
+    pdfTotalPages: totalPdfPages,
   };
 }

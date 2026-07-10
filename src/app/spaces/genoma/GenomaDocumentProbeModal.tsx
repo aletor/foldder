@@ -2,7 +2,7 @@
 
 import React from "react";
 import { createPortal } from "react-dom";
-import { FileText, Loader2, X } from "lucide-react";
+import { ChevronDown, FileText, Loader2, X } from "lucide-react";
 import type {
   GenomaDocumentProbeLogo,
   GenomaDocumentProbePagePreview,
@@ -16,11 +16,6 @@ type GenomaDocumentProbeModalProps = {
   onClose: () => void;
 };
 
-function formatBbox(logo: GenomaDocumentProbeResult["logos"][number]): string {
-  const pct = (value: number) => `${Math.round(value * 1000) / 10}%`;
-  return `${pct(logo.x)}, ${pct(logo.y)} · ${pct(logo.width)} × ${pct(logo.height)}`;
-}
-
 function previewForPrimaryLogo(
   primaryLogo: GenomaDocumentProbeLogo | null,
   previews: GenomaDocumentProbePagePreview[],
@@ -33,17 +28,6 @@ function previewForPrimaryLogo(
     null;
   if (!preview) return null;
   return { preview, logo: primaryLogo };
-}
-
-function isSameLogo(a: GenomaDocumentProbeLogo, b: GenomaDocumentProbeLogo): boolean {
-  return (
-    a.page === b.page &&
-    a.x === b.x &&
-    a.y === b.y &&
-    a.width === b.width &&
-    a.height === b.height &&
-    a.label === b.label
-  );
 }
 
 function bboxStyle(logo: GenomaDocumentProbeLogo): React.CSSProperties {
@@ -90,13 +74,21 @@ export function GenomaDocumentProbeModal({
       >
         <header className="genoma-probe-modal__header">
           <div className="genoma-probe-modal__header-main">
-            <span className="genoma-probe-modal__badge">Modo prueba · 1 LLM</span>
+            <span className="genoma-probe-modal__badge">
+              Modo prueba · {result?.llmCallCount ?? 1} LLM
+              {result?.pdfTotalPages && result.pdfTotalPages > 4
+                ? ` · ${result.pdfTotalPages} pág.`
+                : ""}
+            </span>
             <h2 className="genoma-probe-modal__title">
               {result?.fileName ?? "Analizando documento…"}
             </h2>
             {result ? (
               <p className="genoma-probe-modal__subtitle">
                 {result.model} · {(result.latencyMs / 1000).toFixed(1)} s
+                {result.pdfTotalPages && result.pdfTotalPages > 4
+                  ? " · barrido visual en páginas 5+"
+                  : ""}
               </p>
             ) : null}
           </div>
@@ -169,43 +161,45 @@ export function GenomaDocumentProbeModal({
               </div>
             </div>
 
-            <section className="genoma-probe-modal__panel">
-              <h3 className="genoma-probe-modal__panel-title">
-                Logos encontrados
-                <span className="genoma-probe-modal__count">{result.logos.length}</span>
-              </h3>
-              {result.logos.length ? (
-                <ul className="genoma-probe-modal__logo-list">
-                  {result.logos.map((logo, index) => {
-                    const isPrimary =
-                      result.primaryLogo != null && isSameLogo(logo, result.primaryLogo);
-                    return (
-                    <li
-                      key={`logo-${index}`}
-                      className={`genoma-probe-modal__logo-row${isPrimary ? " is-primary" : ""}`}
-                    >
-                      <div className="genoma-probe-modal__logo-head">
-                        <span className="genoma-probe-modal__logo-name">
-                          {logo.label ?? `Logo ${index + 1}`}
-                        </span>
-                        <span className="genoma-probe-modal__logo-badges">
-                          {isPrimary ? (
-                            <span className="genoma-probe-modal__logo-primary">principal</span>
-                          ) : null}
-                          {logo.page ? (
-                            <span className="genoma-probe-modal__logo-page">pág. {logo.page}</span>
-                          ) : null}
-                        </span>
+            <details className="genoma-probe-modal__other-images">
+              <summary className="genoma-probe-modal__other-images-summary">
+                <span className="genoma-probe-modal__other-images-label">
+                  Imágenes encontradas
+                  <span className="genoma-probe-modal__count">{result.otherImages.length}</span>
+                </span>
+                <ChevronDown size={16} className="genoma-probe-modal__other-images-chevron" aria-hidden />
+              </summary>
+              {result.otherImages.length ? (
+                <ul className="genoma-probe-modal__other-images-list">
+                  {result.otherImages.map((image, index) => (
+                    <li key={`other-image-${index}`} className="genoma-probe-modal__other-image-row">
+                      <div className="genoma-probe-modal__other-image-thumb-wrap">
+                        {image.thumbnailBase64 ? (
+                          /* eslint-disable-next-line @next/next/no-img-element */
+                          <img
+                            className="genoma-probe-modal__other-image-thumb"
+                            src={`data:image/jpeg;base64,${image.thumbnailBase64}`}
+                            alt=""
+                          />
+                        ) : (
+                          <span className="genoma-probe-modal__other-image-thumb-fallback" aria-hidden />
+                        )}
                       </div>
-                      <code className="genoma-probe-modal__logo-coords">{formatBbox(logo)}</code>
+                      <div className="genoma-probe-modal__other-image-copy">
+                        {image.page ? (
+                          <span className="genoma-probe-modal__other-image-page">pág. {image.page}</span>
+                        ) : null}
+                        <p className="genoma-probe-modal__other-image-desc">{image.description}</p>
+                      </div>
                     </li>
-                    );
-                  })}
+                  ))}
                 </ul>
               ) : (
-                <p className="genoma-probe-modal__empty">Ninguno detectado en las páginas enviadas.</p>
+                <p className="genoma-probe-modal__empty genoma-probe-modal__other-images-empty">
+                  Ninguna imagen relevante aparte de logos.
+                </p>
               )}
-            </section>
+            </details>
 
             <section className="genoma-probe-modal__panel">
               <h3 className="genoma-probe-modal__panel-title">

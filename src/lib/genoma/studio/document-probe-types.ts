@@ -18,6 +18,18 @@ export type GenomaDocumentProbeColor = {
   label: string | null;
 };
 
+/** Fotografías, ilustraciones o gráficos que no son logos ni iconos de marca. */
+export type GenomaDocumentProbeOtherImage = {
+  page: number | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  description: string;
+  /** Recorte JPEG generado en servidor a partir del bbox. */
+  thumbnailBase64: string | null;
+};
+
 /** Misma imagen JPEG enviada al LLM (coords normalizados respecto a esta vista). */
 export type GenomaDocumentProbePagePreview = {
   pageNumber: number | null;
@@ -31,8 +43,13 @@ export type GenomaDocumentProbeResult = {
   /** Logo principal elegido para el recuadro de vista previa. */
   primaryLogo: GenomaDocumentProbeLogo | null;
   primaryColors: GenomaDocumentProbeColor[];
+  otherImages: GenomaDocumentProbeOtherImage[];
   textSummary: [string, string, string];
   pagePreviews: GenomaDocumentProbePagePreview[];
   latencyMs: number;
   model: string;
+  /** Llamadas al modelo en esta ejecución (1 corto, 2 si PDF largo + barrido). */
+  llmCallCount: number;
+  /** Total de páginas del PDF cuando aplica. */
+  pdfTotalPages: number | null;
 };
