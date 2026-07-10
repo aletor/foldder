@@ -3,7 +3,7 @@
  * Depende del formato interno de args de pdf.js — ver pdfjs-construct-path-canary.test.ts
  */
 
-import type { BBoxXYXY } from "./page-vision-pass-bbox";
+import { brandBBoxXYXY, type BBoxXYXY } from "./page-vision-pass-bbox";
 
 type PathSegment = { op: number; coords: number[] };
 
@@ -70,12 +70,12 @@ function pdfMinMaxToNorm(minMax: PdfMinMax, pw: number, ph: number): BBoxXYXY {
   const y1 = 1 - minMax.y2 / ph;
   const x2 = minMax.x2 / pw;
   const y2 = 1 - minMax.y1 / ph;
-  return [
+  return brandBBoxXYXY([
     Math.max(0, Math.min(x1, x2)),
     Math.max(0, Math.min(y1, y2)),
     Math.min(1, Math.max(x1, x2)),
     Math.min(1, Math.max(y1, y2)),
-  ];
+  ]);
 }
 
 function pathAreaRatio(minMax: PdfMinMax, pw: number, ph: number): number {

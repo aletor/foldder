@@ -139,7 +139,7 @@ function mergeRankedLogoCandidates(candidates: Candidate<LogoValue>[]): Candidat
 
 export async function* runGenomaIngest(
   files: GenomaIngestFile[],
-  jobId = randomUUID(),
+  jobId: string = randomUUID(),
   options?: GenomaCrawlOptions,
 ): AsyncGenerator<GenomaStreamEvent> {
   if (!files.length) {

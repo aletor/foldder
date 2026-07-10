@@ -64,7 +64,7 @@ export async function vectorizeRasterBuffer(input: VectorizeImageInput): Promise
   console.info(`[vectorize] called: reason=${reason} logoSignature=${logoSignature} cached=${cached}`);
 
   const form = new FormData();
-  const blob = new Blob([input.buffer], { type: input.contentType || "image/png" });
+  const blob = new Blob([new Uint8Array(input.buffer)], { type: input.contentType || "image/png" });
   form.append("image", blob, input.filename);
   form.append("mode", input.mode ?? "production");
   form.append("output.file_format", "svg");

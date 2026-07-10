@@ -5,7 +5,7 @@
 import type { PageVisionPassRunAudit } from "./page-vision-pass-runner";
 import type { PageVisionBrandNameEvidence } from "./page-vision-pass-schema";
 import { enrichIndexBrandNameEvidenceFromTypography } from "./page-vision-pass-nivel1-schema";
-import { filterProductContentTitles } from "./page-vision-content-titles";
+import { contentTitleTexts, filterProductContentTitles } from "./page-vision-content-titles";
 import { createCandidate, signal } from "../model/evidence";
 import { textSignature } from "../model/signature";
 import type { VoiceExtraction } from "../extractors/voice";
@@ -271,7 +271,7 @@ export function aggregateBrandNameEvidence(audit: PageVisionPassRunAudit): Class
         pageKind: page.result.pageKind,
         brandNameEvidence,
         typographyRoles: page.result.typographyRoles,
-        contentTitles: page.result.contentTitles,
+        contentTitles: contentTitleTexts(page.result.contentTitles),
       });
     }
     if (!brandNameEvidence.length) continue;

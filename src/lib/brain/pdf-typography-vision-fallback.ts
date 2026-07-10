@@ -40,7 +40,7 @@ function parseTypographyVisionJson(raw: unknown): PdfTypographyDraft | null {
     if (!family || isBrandFontStopword(family)) return;
     const weightsRaw = (slot as Record<string, unknown>).weights;
     const weights = Array.isArray(weightsRaw)
-      ? weightsRaw.filter((w): w is string => typeof w === "string" && w.trim()).map((w) => w.trim())
+      ? weightsRaw.filter((w): w is string => typeof w === "string" && w.trim().length > 0).map((w) => w.trim())
       : ["Regular"];
     draft[key] = { family, weights: weights.length ? weights : ["Regular"] };
   };
@@ -85,7 +85,7 @@ export async function defaultTypographyVisionInvoker(input: {
     operation: "typography_vision_fallback",
     costIsKnown: false,
     costUsd: 0,
-    metadata: parseGeminiUsageMetadata(r),
+    metadata: parseGeminiUsageMetadata(r) ?? undefined,
   });
 
   const raw = parseJsonObjectFromVisionModelText(r.text ?? "");

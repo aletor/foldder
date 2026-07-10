@@ -92,7 +92,11 @@ export function applyLogoCandidateSidecar(
     const existing = boardMeta.interpretation[key];
     if (existing?.status === "validated" || existing?.status === "rejected") continue;
     if (candidate.logoPHash && isPhashNearRejected(candidate.logoPHash, rejectedSignatures)) {
-      boardMeta = patchMeta(boardMeta, key, { status: "rejected", validatedAt: undefined });
+      boardMeta = patchMeta(boardMeta, key, {
+        ...(existing ?? { confidence: 0.4, evidence: [] }),
+        status: "rejected",
+        validatedAt: undefined,
+      });
       continue;
     }
     if (existing?.status === "proposed") continue;

@@ -117,7 +117,7 @@ export async function streamCombinedMaterialDrop(input: {
   genome: Genome;
   onEvent: (event: GenomaIngestStreamEvent) => void;
 }): Promise<{ genome: Genome; prompts: MaterialPromptPayload[]; logoIntake?: LogoIntakeAnalyzeResult }> {
-  const paidKind = await resolveGenomaIngestPaidKind({ files: input.files });
+  const paidKind = await resolveGenomaIngestPaidKind({ files: input.files, genome: input.genome });
   let paidApproved = false;
   let paidOperationId: string | undefined;
 

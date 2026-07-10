@@ -5,7 +5,12 @@ export type NormalizedBboxPage = readonly [number, number, number, number];
 function scaleBboxCoordsIfNeeded(values: readonly [number, number, number, number]): NormalizedBboxPage {
   const max = Math.max(...values);
   if (max > 1.001 && max <= 1000) {
-    return values.map((value) => value / 1000) as NormalizedBboxPage;
+    return [
+      values[0] / 1000,
+      values[1] / 1000,
+      values[2] / 1000,
+      values[3] / 1000,
+    ] as const;
   }
   return values;
 }

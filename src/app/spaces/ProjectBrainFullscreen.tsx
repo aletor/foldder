@@ -552,6 +552,7 @@ function compactBrainDocumentForVisualRequest(doc: KnowledgeDocumentEntry): Know
     return {
       id: doc.id,
       name: doc.name,
+      size: doc.size,
       mime: doc.mime,
       scope: doc.scope,
       type: doc.type,
@@ -567,6 +568,7 @@ function compactBrainDocumentForVisualRequest(doc: KnowledgeDocumentEntry): Know
   return {
     id: doc.id,
     name: doc.name,
+    size: doc.size,
     mime: doc.mime,
     scope: doc.scope,
     type: doc.type,

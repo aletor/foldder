@@ -12849,7 +12849,11 @@ export function FreehandStudioCanvas({
   const designerDatasetSchemaFields = useMemo(() => {
     if (!designerConnectedDataset || !designerDatasetListId || !designerDatasetFieldKind) return [];
     const list = designerConnectedDataset.lists.find((row) => row.id === designerDatasetListId);
-    return list?.schema.filter((field) => field.type === designerDatasetFieldKind) ?? [];
+    return (
+      list?.schema
+        .filter((field) => field.type === designerDatasetFieldKind)
+        .map((field) => ({ id: field.id, label: field.label })) ?? []
+    );
   }, [designerConnectedDataset, designerDatasetFieldKind, designerDatasetListId]);
 
   const applyDesignerDatasetTextBinding = useCallback(
@@ -13132,7 +13136,14 @@ export function FreehandStudioCanvas({
         isBrandKitConstantId(f.id) &&
         (designerDatasetFieldKind === "image" ? f.type === "image" : f.type === "text"),
     );
-    return filterBrandKitConstantsForPicker(filtered, brainNodeId);
+    const picked = filterBrandKitConstantsForPicker(
+      filtered.map((field) => ({ id: field.id, type: field.type })),
+      brainNodeId,
+    );
+    return picked.map((row) => {
+      const def = filtered.find((field) => field.id === row.id);
+      return { id: row.id, label: def?.label ?? row.id };
+    });
   }, [designerConnectedDataset, designerDatasetFieldKind, designerDatasetBinding]);
 
   const designerActiveBrandKitConstantId = useMemo(() => {

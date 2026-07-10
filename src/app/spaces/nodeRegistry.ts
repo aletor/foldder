@@ -601,20 +601,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       inputs: [],
     },
   },
-  genoma: {
-    type: 'genoma',
-    label: 'Genoma',
-    description:
-      'ADN de marca editable con procedencia: logo, paleta, tipografías, voz, valores, galería y prohibiciones. Extrae desde web o archivos; confirma con un tap.',
-    inputs: [],
-    outputs: [],
-    dataSchema: {
-      label: 'string (optional title on the card)',
-      genoma: 'GenomaDocument { brandName, sources, slots, compiled }',
-      status: 'empty | running | done | partial',
-      jobId: 'string (async job, optional)',
-    },
-  },
   presenter: {
     type: 'presenter',
     label: 'Presenter',
@@ -751,7 +737,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   genoma:
-    "label (título opcional); genoma (GenomaDocument en node.data); status empty|running|partial|done; abre Genoma Studio v2 (crawl web + board); sin salidas al grafo en v1",
+    "label (título opcional); genome (Genome en node.data: candidatos rankeados + coronas); salidas brand y dataset; abre Genoma Studio (ingesta PDF/imagen + board)",
   projectBrain:
     "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
   projectAssets:

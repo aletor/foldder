@@ -3,6 +3,7 @@ import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { loadGenomaSourceForLogoAdjust } from "@/lib/genoma/ingest/genoma-source-pdf-store";
 import { buildLogoAdjustPagePayload } from "@/lib/genoma/ingest/genoma-logo-adjust-page";
 import type { NormalizedBboxPage } from "@/lib/genoma/genoma-logo-bbox";
+import { isValidBboxPage } from "@/lib/genoma/genoma-logo-bbox";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -13,7 +14,7 @@ function parseBboxPage(raw: string | null): NormalizedBboxPage | null {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed) || parsed.length !== 4) return null;
     const nums = parsed.map((value) => Number(value));
-    if (nums.some((value) => !Number.isFinite(value))) return null;
+    if (!isValidBboxPage(nums)) return null;
     return nums as NormalizedBboxPage;
   } catch {
     return null;

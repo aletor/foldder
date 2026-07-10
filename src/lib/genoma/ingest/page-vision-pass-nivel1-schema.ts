@@ -13,7 +13,7 @@ import {
   type ValidatedPageVisionPass,
   type FailedPageVisionPass,
 } from "./page-vision-pass-schema";
-import { normalizeContentTitleEntries } from "./page-vision-content-titles";
+import { contentTitleTexts, normalizeContentTitleEntries } from "./page-vision-content-titles";
 import {
   GENOMA_PAGE_VISION_NIVEL1_VERSION,
   PAGE_VISION_NIVEL1_CONTENT_TITLES_MAX,
@@ -223,7 +223,7 @@ export function validateNivel1SlimPage(
     pageKind: validated.result.pageKind,
     brandNameEvidence: validated.result.brandNameEvidence,
     typographyRoles: validated.result.typographyRoles,
-    contentTitles: validated.result.contentTitles,
+    contentTitles: contentTitleTexts(validated.result.contentTitles),
   });
 
   const contentTitles = slim.data.contentTitles;

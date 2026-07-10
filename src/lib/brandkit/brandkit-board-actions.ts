@@ -100,7 +100,7 @@ export function crownLogoCandidateOnAssets(
 export function selectLogoCandidateOnAssets(
   assets: ProjectAssetsMetadata,
   candidateUrl: string,
-  options?: Pick<LogoCrownInput, "elementKey" | "phash">,
+  options?: { elementKey?: ElementKey; phash?: string | null },
 ): ProjectAssetsMetadata {
   const boardMeta = normalizeBrandKitBoardMeta(assets.brainMeta?.boardMeta);
   const match = listLogoCandidates(assets, boardMeta).find((c) => c.url === candidateUrl);

@@ -816,7 +816,7 @@ function normalizeDiscoveredBrandAsset(raw: unknown): BrainDiscoveredBrandAsset 
     ...(Array.isArray(o.sourceDocumentIds)
       ? {
           sourceDocumentIds: o.sourceDocumentIds
-            .filter((x): x is string => typeof x === "string" && x.trim())
+            .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
             .map((x) => x.trim().slice(0, 180))
             .slice(0, 40),
         }

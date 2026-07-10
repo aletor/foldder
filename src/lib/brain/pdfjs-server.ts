@@ -88,7 +88,9 @@ export async function loadPdfJsDocumentFromBuffer(
   options?: LoadPdfJsDocumentOptions,
 ): Promise<{
   pdfjs: Awaited<ReturnType<typeof configurePdfJsForNodeServer>>;
-  pdf: Awaited<ReturnType<Awaited<ReturnType<typeof configurePdfJsForNodeServer>>["getDocument"]>>["promise"];
+  pdf: Awaited<
+    Awaited<ReturnType<Awaited<ReturnType<typeof configurePdfJsForNodeServer>>["getDocument"]>>["promise"]
+  >;
 }> {
   const pdfjs = await configurePdfJsForNodeServer();
   const pdf = await pdfjs

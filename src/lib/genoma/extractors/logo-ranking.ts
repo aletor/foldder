@@ -131,7 +131,7 @@ export function finalizeLogoHarvestRanking(entries: ScoredGenomaLogoHarvest[]): 
       ...entry,
       slot: assignPrimarySlot(entry, rank),
     }))
-    .filter((entry) => entry.slot !== "discard");
+    .filter((entry): entry is RankedGenomaLogoHarvest => entry.slot !== "discard");
 
   if (!ranked.some((entry) => entry.slot === "primary")) {
     const best = ranked.find((entry) => !isPhotoLikePrimary(entry));

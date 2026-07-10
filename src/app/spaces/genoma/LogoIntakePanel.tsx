@@ -9,7 +9,8 @@ import type {
   LogoProposal,
 } from "@/lib/genoma/logo-intake/types";
 import type { ValidateLogoIntakeResult } from "@/lib/genoma/logo-intake/service";
-import type { Genome } from "@/lib/genoma/model/trait";
+import { crownedCandidates, type Genome } from "@/lib/genoma/model/trait";
+import type { LogoValue } from "@/lib/genoma/model/trait-values";
 import type { TraitId } from "@/lib/genoma/model/trait-ids";
 import { formatLogoIntakeProvenance } from "@/lib/genoma/logo-intake/genome-bridge";
 import { resolveLogoDisplayUrl } from "@/lib/genoma/projection/logo-display-url";
@@ -697,11 +698,11 @@ function ValidatedView({
   onToggleBg: () => void;
 }) {
   const asset = state.asset!;
-  const crowned = genome?.traits["logo.primary"];
-  const crownedCandidate = crowned?.candidates.find((c) => c.id === crowned.crownId);
-  const genomeLogoUrl =
-    crownedCandidate?.value &&
-    resolveLogoDisplayUrl(crownedCandidate.value as import("@/lib/genoma/model/trait-values").LogoValue, crownedCandidate.derived);
+  const crownedTrait = genome?.traits["logo.primary"];
+  const crownedCandidate = crownedTrait ? crownedCandidates(crownedTrait)[0] : undefined;
+  const genomeLogoUrl = crownedCandidate?.value
+    ? resolveLogoDisplayUrl(crownedCandidate.value as LogoValue, crownedCandidate.derived)
+    : undefined;
 
   const candidate = {
     cropPng: "",

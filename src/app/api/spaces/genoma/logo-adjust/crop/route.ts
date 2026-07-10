@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
   await recordGenomaLogoUserPattern(auth.user.email, {
     contentSha256,
     pageNumber,
-    bboxPage,
+    bboxPage: [...bboxPage] as [number, number, number, number],
   }).catch(() => undefined);
 
   return NextResponse.json({ logo });

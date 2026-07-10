@@ -22,7 +22,6 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   backgroundRemover: "#a6c85e",
   layerizer: "#ff6666",
   dataset: "#37B7DF",
-  genoma: "#7C6BC4",
   loop: "#FD52EB",
   populate: "#33FFCC",
   vfxGenerator: "#6B597F",

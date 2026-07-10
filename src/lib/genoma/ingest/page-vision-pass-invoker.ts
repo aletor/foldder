@@ -2,7 +2,7 @@
  * Invocador Gemini — una página, tool-use forzado, temperature/seed del servidor.
  */
 
-import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
+import { GoogleGenAI, FunctionCallingConfigMode, Type, type GenerateContentConfig } from "@google/genai";
 import { GEMINI_VISION_ANALYSIS_SERVICE_ID } from "@/lib/brain/brain-vision-usage";
 import { parseJsonObjectFromVisionModelText } from "@/lib/brain/brain-vision-json-from-text";
 import { GenomaVisionPassError } from "./genoma-vision-pass-error";
@@ -83,7 +83,7 @@ export async function invokePageVisionPassModel(
               parameters: {
                 type: Type.OBJECT,
                 properties: toolDecl.parameters.properties as Record<string, unknown>,
-                required: toolDecl.parameters.required,
+                required: [...toolDecl.parameters.required],
               },
             },
           ],
@@ -95,7 +95,7 @@ export async function invokePageVisionPassModel(
           allowedFunctionNames: [PAGE_VISION_PASS_TOOL_NAME],
         },
       },
-    },
+    } as GenerateContentConfig,
   });
 
   const { recordApiUsage, parseGeminiUsageMetadata } = await import("@/lib/api-usage");
@@ -107,7 +107,7 @@ export async function invokePageVisionPassModel(
     operation: input.operationId,
     costIsKnown: false,
     costUsd: 0,
-    metadata: parseGeminiUsageMetadata(r),
+    metadata: parseGeminiUsageMetadata(r) ?? undefined,
   });
 
   const fromTool = extractFunctionCallArgs(r);

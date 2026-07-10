@@ -57,7 +57,8 @@ export async function mirrorExternalImagesForCrawl(
   urls: string[],
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
-  if (!userEmail?.trim()) return result;
+  const email = userEmail?.trim() ?? "";
+  if (!email) return result;
 
   const unique = [...new Set(urls.filter((url) => url.startsWith("http") && !isAlreadyMirrored(url)))];
   if (!unique.length) return result;
@@ -67,7 +68,7 @@ export async function mirrorExternalImagesForCrawl(
     while (index < unique.length) {
       const current = unique[index];
       index += 1;
-      const mirrored = await mirrorRemoteImageUrl(userEmail, current);
+      const mirrored = await mirrorRemoteImageUrl(email, current);
       if (mirrored && mirrored !== current) result.set(current, mirrored);
     }
   }

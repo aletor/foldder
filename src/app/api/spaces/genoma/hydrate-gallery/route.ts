@@ -13,8 +13,8 @@ export async function POST(req: NextRequest) {
   const rawUrls = Array.isArray(body?.urls) ? body.urls : [];
   const urls = rawUrls
     .filter((value: unknown): value is string => typeof value === "string")
-    .map((value) => value.trim())
-    .filter((value) => value.startsWith("http"))
+    .map((value: string) => value.trim())
+    .filter((value: string) => value.startsWith("http"))
     .slice(0, 24);
 
   if (!urls.length) {

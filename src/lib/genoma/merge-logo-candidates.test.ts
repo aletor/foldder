@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Candidate, LogoValue } from "./genoma-types";
+import { bboxIoU } from "./genoma-bbox-iou";
 import { mergeLogoCandidatesByIoU } from "./merge-logo-candidates";
 
 function candidate(
@@ -56,5 +57,12 @@ describe("mergeLogoCandidatesByIoU", () => {
       sourceBbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 },
     });
     expect(mergeLogoCandidatesByIoU([a, b])).toHaveLength(2);
+  });
+});
+
+describe("bboxIoU", () => {
+  it("returns 1 for identical boxes", () => {
+    const box: [number, number, number, number] = [0.1, 0.1, 0.5, 0.4];
+    expect(bboxIoU(box, box)).toBeCloseTo(1);
   });
 });

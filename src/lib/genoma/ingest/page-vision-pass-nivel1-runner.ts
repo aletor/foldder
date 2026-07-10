@@ -23,6 +23,7 @@ import {
 import {
   runPageVisionPrepass,
   selectNivel1GuaranteedVisionPages,
+  type PageVisionPrepassResult,
 } from "./page-vision-prepass";
 import type {
   PageVisionPassPageAudit,
@@ -113,7 +114,7 @@ export async function runPageVisionPassNivel1ForPdf(
       totalPages,
       selectedPages,
       batchInputs: [],
-      prepassPromise,
+      prepass: prepassPromise,
       renderMs,
       batchImagePayloadBytes: 0,
       batchImagePayloadBytesByPage: {},
@@ -145,19 +146,22 @@ export async function runPageVisionPassNivel1ForPdf(
     console.warn("[page-vision-nivel1] batch invoke failed — degraded audit:", error);
   }
 
-  const prepass = await prepassPromise.catch((error) => {
+  const prepassResolved = await prepassPromise.catch((error) => {
     console.warn("[page-vision-nivel1] prepass failed — continuing batch without prepass:", error);
     return {
+      totalPages,
+      templateClusters: [] as PageVisionPrepassResult["templateClusters"],
       durationMs: 0,
       recurrentXObjectPages: [] as number[],
       embeddedSvgCount: 0,
+      embeddedSvgLabels: [] as string[],
       domainHints: [] as string[],
       logoLikelyPages: selectedPages,
       degraded: true,
       prepassErrors: [error instanceof Error ? error.message : String(error)],
-    };
+    } satisfies PageVisionPrepassResult;
   });
-  prepass.totalPages = totalPages;
+  const prepass = { ...prepassResolved, totalPages };
 
   if (!batch) {
     return finishNivel1RunAudit(input, {

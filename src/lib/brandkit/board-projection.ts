@@ -173,7 +173,7 @@ function readTypographyWeights(assets: ProjectAssetsMetadata): string[] {
   if (!primary || typeof primary !== "object") return [];
   const weights = (primary as Record<string, unknown>).weights;
   if (!Array.isArray(weights)) return [];
-  return weights.filter((w): w is string => typeof w === "string" && w.trim()).map((w) => w.trim());
+  return weights.filter((w): w is string => typeof w === "string" && w.trim().length > 0).map((w) => w.trim());
 }
 
 /** Meta ghost por defecto exportado para UI. */

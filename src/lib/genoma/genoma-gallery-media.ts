@@ -36,8 +36,10 @@ export function applyGalleryMediaMirrors(
   if (!mirrored || (mirrored instanceof Map ? !mirrored.size : !Object.keys(mirrored).length)) {
     return gallery;
   }
-  const lookup = (url: string): string | undefined =>
-    mirrored instanceof Map ? mirrored.get(url) : mirrored[url];
+  const lookup = (url: string): string | undefined => {
+    if (mirrored instanceof Map) return mirrored.get(url);
+    return (mirrored as Record<string, string>)[url];
+  };
 
   let changed = false;
   const harvested = gallery.harvested.map((item) => {

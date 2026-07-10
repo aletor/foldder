@@ -77,7 +77,7 @@ async function extractVectorNativeSvg(
   opts?: { collectAudit?: boolean; textInLogo?: string },
 ): Promise<{ svg: string | null; audit?: PaintWalkAudit; wordmarkIntegrity?: WordmarkIntegrityResult }> {
   const pdfjs = await configurePdfJsForNodeServer();
-  const ops = pdfjs.OPS;
+  const ops = pdfjs.OPS as Record<string, number | undefined>;
   const pdf = await pdfjs
     .getDocument(pdfJsGetDocumentInit(buffer) as Parameters<typeof pdfjs.getDocument>[0])
     .promise;
@@ -169,7 +169,7 @@ export async function extractNativeLogoInBbox(input: {
   }
 
   const pdfjs = await configurePdfJsForNodeServer();
-  const ops = pdfjs.OPS;
+  const ops = pdfjs.OPS as Record<string, number | undefined>;
   const pdf = await pdfjs
     .getDocument(pdfJsGetDocumentInit(input.buffer) as Parameters<typeof pdfjs.getDocument>[0])
     .promise;

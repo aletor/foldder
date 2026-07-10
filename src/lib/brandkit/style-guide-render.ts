@@ -352,9 +352,10 @@ export function renderStyleGuideHtml(
 
   const typoPrimary = view.typography.primaryFamily;
   const typoSecondary = view.typography.secondaryFamily;
-  const showTypography =
+  const showTypography = Boolean(
     (typoPrimary && shouldIncludeInStyleGuide(view.typography.metaPrimary, soloValidado)) ||
-    (typoSecondary && shouldIncludeInStyleGuide(view.typography.metaSecondary, soloValidado));
+      (typoSecondary && shouldIncludeInStyleGuide(view.typography.metaSecondary, soloValidado)),
+  );
 
   const logoUsageHtml = renderLogoUsage(derivations);
   const hasLogoUsage =

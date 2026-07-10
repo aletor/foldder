@@ -33,7 +33,7 @@ export function formatLogoIntakeProvenance(
   if (!origin) return "origen desconocido";
   if (origin.kind === "manual") return `manual · ${origin.fileName}`;
   const label = docName ?? origin.docId.slice(0, 8);
-  const pageLabel = page ?? (origin.kind !== "manual" ? undefined : undefined);
+  const pageLabel = page;
   const pageSuffix = pageLabel ? ` pág. ${pageLabel}` : "";
   if (origin.kind === "adjusted") return `ajustado · ${label}${pageSuffix}`;
   return `${label}${pageSuffix}`;
@@ -78,8 +78,8 @@ export function applyLogoIntakeValidateToGenome(
     value: logoValue,
     signature: input.pHash,
     signals: [
-      signal("user-supplied", "validado en logo-intake"),
-      signal("recurrence", provenance),
+      signal("user-supplied", { detail: "validado en logo-intake" }),
+      signal("recurrence", { detail: provenance }),
     ],
   });
 

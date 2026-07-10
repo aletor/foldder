@@ -120,7 +120,7 @@ export function LogoBlock({
   ) : null;
 
   let body: React.ReactNode;
-  const pickerCandidates = slot.candidates.slice(0, 4);
+  const pickerCandidates = slot.candidates.slice(0, 4) as Candidate<LogoValue>[];
   const showDetectionEmpty =
     (slot.status === "needs_user" && !pickerCandidates.length) ||
     (slot.status === "candidates" && !pickerCandidates.length);

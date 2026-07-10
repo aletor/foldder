@@ -14,7 +14,7 @@ export type BBoxXYXY = readonly [number, number, number, number] & {
 
 const BBOX_EPS = 1e-6;
 
-function brandBBoxXYXY(tuple: readonly [number, number, number, number]): BBoxXYXY {
+export function brandBBoxXYXY(tuple: readonly [number, number, number, number]): BBoxXYXY {
   return tuple as BBoxXYXY;
 }
 

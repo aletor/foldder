@@ -19,7 +19,6 @@ export const LEGACY_BRANDKIT_FIELD_SUFFIXES = [
   BRANDKIT_FIELD_IDS.logo,
   BRANDKIT_FIELD_IDS.primaryColor,
   BRANDKIT_FIELD_IDS.secondaryColor,
-  BRANDKIT_FIELD_IDS.accentColor,
   BRANDKIT_FIELD_IDS.socialHandle,
   "accentColor",
 ] as const;

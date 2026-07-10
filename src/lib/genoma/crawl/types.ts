@@ -38,6 +38,7 @@ export type GenomaStreamEvent =
       pageCount?: number;
     }
   | { type: "triage_plan"; items: { name: string; kind: string; action: string }[] }
+  | { type: "source_error"; fileName: string; message: string }
   | { type: "done"; jobId: string }
   | { type: "error"; message: string };
 

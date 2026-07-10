@@ -5,6 +5,7 @@ import type {
   ProjectBrandKit,
 } from "@/app/spaces/project-assets-metadata";
 import { canWriteBrainScope } from "@/lib/brain/brain-scope-policy";
+import { normalizeBrainMeta } from "@/lib/brain/brain-meta";
 import type { ElementKey, EvidenceKind, BrandKitBoardMeta } from "./types";
 import type { BrandPipelineMergeFieldLog, BrandPipelineMergeFieldOutcome } from "./brand-pipeline-diagnostics";
 import { BRANDKIT_REF_CATEGORIES } from "./types";
@@ -305,10 +306,10 @@ export function applyGuardedAssetMerge(
   return {
     assets: {
       ...assets,
-      brainMeta: {
+      brainMeta: normalizeBrainMeta({
         ...assets.brainMeta,
         boardMeta,
-      },
+      }),
     },
     boardMeta,
     conflictsRaised,

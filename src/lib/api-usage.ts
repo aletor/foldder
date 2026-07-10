@@ -82,6 +82,7 @@ export const USAGE_SERVICES = [
   { id: "layerizer-amodal", label: "Gemini · Layerizer completado amodal", category: "ia-image" as const },
   { id: "openai-brain-analyze", label: "OpenAI · Brain análisis documental", category: "brain" as const },
   { id: "genoma-crawl", label: "Genoma · Crawl web (estático)", category: "brain" as const },
+  { id: "genoma-ingest", label: "Genoma · Ingesta archivos (PDF/imagen)", category: "brain" as const },
   { id: "genoma-llm-synthesis", label: "Gemini · Genoma síntesis (voz/valores/claim)", category: "brain" as const },
   { id: "openai-brain-chat", label: "OpenAI · Brain chat conocimiento", category: "brain" as const },
   { id: "openai-brain-content", label: "OpenAI · Brain generación contenido", category: "brain" as const },

@@ -4,7 +4,7 @@ import React from "react";
 import { Lock, RotateCcw, Unlock } from "lucide-react";
 import type { SlotAction, SlotId, SlotState } from "@/lib/genoma/genoma-types";
 import { confirmLabelForSlot, genomaLocaleEs } from "@/lib/genoma/genoma-locale.es";
-import { getSlotAttention } from "@/lib/genoma/genoma-board-status";
+import { getSlotAttention, type SlotAttention } from "@/lib/genoma/genoma-board-status";
 import { GenomaSlotIcon } from "./genoma-slot-icons";
 import { GenomaFoldderButton } from "./GenomaFoldderButton";
 
@@ -35,7 +35,8 @@ export function DnaBlock({
 }: DnaBlockProps) {
   const hasToolbar = Boolean(slot && onAction && slotId && (slot.status === "resolved" || slot.history.length > 0));
   const confirmLabel = slotId ? confirmLabelForSlot[slotId] ?? genomaLocaleEs.confirm : genomaLocaleEs.confirm;
-  const attention = slot && slotId ? getSlotAttention(slot, activeSlotId) : { kind: null as const };
+  const attention: SlotAttention =
+    slot && slotId ? getSlotAttention(slot, activeSlotId) : { kind: null };
 
   const slotToolbar =
     hasToolbar && slot && slotId && onAction ? (

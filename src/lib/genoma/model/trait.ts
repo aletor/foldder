@@ -198,7 +198,7 @@ const CANDIDATE_STATUSES: readonly CandidateStatus[] = ["proposed", "crowned", "
 function repairLogoCandidate<T>(candidate: Candidate<T>): Candidate<T> {
   const value = candidate.value;
   if (!value || typeof value !== "object" || !("imageUrl" in value)) return candidate;
-  const logo = value as LogoValue;
+  const logo = value as unknown as LogoValue;
   const imageUrl = logo.imageUrl?.trim();
   if (!imageUrl) return candidate;
 

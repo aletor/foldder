@@ -76,7 +76,7 @@ export function resolveLogoUiFromTrait(
   if (crowned?.value && typeof crowned.value === "object" && "imageUrl" in crowned.value) {
     const logo = crowned.value as LogoValue;
     const url = resolveLogoDisplayUrl(logo, crowned.derived);
-    if (isUiSafeLogoUrl(url) || url?.startsWith("data:")) {
+    if (isUiSafeLogoUrl(url)) {
       return { logo, derived: crowned.derived };
     }
   }

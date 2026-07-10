@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { configurePdfJsForNodeServer, pdfJsGetDocumentInit } from "@/lib/brain/pdfjs-server";
 import {
   bboxOverlapRatioXYXY,
+  brandBBoxXYXY,
   expandBBoxXYXY,
   unionBBoxXYXY,
   type BBoxXYXY,
@@ -175,12 +176,12 @@ async function snapBboxToInkContrast(
   maxX = Math.min(w - 1, maxX + pad);
   maxY = Math.min(h - 1, maxY + pad);
 
-  return [
+  return brandBBoxXYXY([
     (left + minX) / frameWidth,
     (top + minY) / frameHeight,
     (left + maxX + 1) / frameWidth,
     (top + maxY + 1) / frameHeight,
-  ];
+  ]);
 }
 
 async function cropLogoFromFrame(

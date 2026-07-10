@@ -27,7 +27,10 @@ let pdfiumLibraryPromise: Promise<PDFiumLibraryType> | null = null;
 async function getPdfiumLibrary(): Promise<PDFiumLibraryType> {
   pdfiumLibraryPromise ??= (async () => {
     if (fs.existsSync(PDFIUM_WASM_PATH)) {
-      return PDFiumLibrary.init({ wasmBinary: fs.readFileSync(PDFIUM_WASM_PATH) });
+      const wasmBytes = fs.readFileSync(PDFIUM_WASM_PATH);
+      return PDFiumLibrary.init({
+        wasmBinary: wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength),
+      });
     }
     return PDFiumLibrary.init();
   })();

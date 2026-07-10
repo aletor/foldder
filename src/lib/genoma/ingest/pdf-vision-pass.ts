@@ -142,7 +142,7 @@ function parseThirdParty(raw: unknown): GenomaVisionThirdPartyLogo[] {
       return {
         page: Math.round(page),
         bbox,
-        label: typeof o.label === "string" ? o.label.trim() : undefined,
+        ...(typeof o.label === "string" && o.label.trim() ? { label: o.label.trim() } : {}),
       };
     })
     .filter((v): v is GenomaVisionThirdPartyLogo => v !== null);
@@ -177,7 +177,7 @@ function parseTypography(raw: unknown): GenomaVisionTypographyHint | undefined {
   const readWeights = (key: string) => {
     const v = o[key];
     if (!Array.isArray(v)) return undefined;
-    return v.filter((w): w is string => typeof w === "string" && w.trim()).map((w) => w.trim());
+    return v.filter((w): w is string => typeof w === "string" && w.trim().length > 0).map((w) => w.trim());
   };
   const hint: GenomaVisionTypographyHint = {
     primaryFamily: readFamily("primaryFamily"),
@@ -215,7 +215,7 @@ function parseVisual(raw: unknown): GenomaVisionVisualEntry[] {
       return {
         category: category as GenomaVisionVisualEntry["category"],
         description,
-        imageRefIndex: Number.isFinite(imageRefIndex) ? Math.round(imageRefIndex) : undefined,
+        ...(Number.isFinite(imageRefIndex) ? { imageRefIndex: Math.round(imageRefIndex) } : {}),
       };
     })
     .filter((v): v is GenomaVisionVisualEntry => v !== null);
@@ -302,7 +302,7 @@ export async function defaultGenomaVisionPassInvoker(input: {
     operation: input.operationId,
     costIsKnown: false,
     costUsd: 0,
-    metadata: parseGeminiUsageMetadata(r),
+    metadata: parseGeminiUsageMetadata(r) ?? undefined,
   });
 
   const rawText = r.text ?? "";

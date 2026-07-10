@@ -4,7 +4,7 @@
  * thinkingBudget: 0 en todas las llamadas batch.
  */
 
-import { GoogleGenAI, FunctionCallingConfigMode, Type } from "@google/genai";
+import { GoogleGenAI, FunctionCallingConfigMode, Type, type GenerateContentConfig } from "@google/genai";
 import { GEMINI_VISION_ANALYSIS_SERVICE_ID } from "@/lib/brain/brain-vision-usage";
 import { parseJsonObjectFromVisionModelText } from "@/lib/brain/brain-vision-json-from-text";
 import { estimateGeminiUsd } from "@/lib/pricing-config";
@@ -126,7 +126,7 @@ async function recordBatchUsage(input: {
     operation: input.operationId,
     costIsKnown: true,
     costUsd: input.estimatedCostUsd,
-    metadata: parseGeminiUsageMetadata(input.response as { usageMetadata?: object }),
+    metadata: parseGeminiUsageMetadata(input.response as { usageMetadata?: object }) ?? undefined,
   });
 }
 
@@ -181,7 +181,7 @@ async function invokeBatchGenerateContent(input: {
                   parameters: {
                     type: Type.OBJECT,
                     properties: batchDecl.parameters.properties as Record<string, unknown>,
-                    required: batchDecl.parameters.required as string[],
+                    required: [...batchDecl.parameters.required],
                   },
                 },
               ],
@@ -198,7 +198,7 @@ async function invokeBatchGenerateContent(input: {
   const r = await ai.models.generateContent({
     model: input.modelName,
     contents: [{ role: "user", parts }],
-    config,
+    config: config as GenerateContentConfig,
   });
 
   const usageMeta = (r as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } })
@@ -208,9 +208,10 @@ async function invokeBatchGenerateContent(input: {
     usageMeta?.promptTokenCount ?? 0,
     usageMeta?.candidatesTokenCount ?? 0,
   );
-  const usage = snapshotGeminiUsageMetadata(r, {
-    maxOutputTokens: PAGE_VISION_NIVEL1_MAX_OUTPUT_TOKENS,
-  });
+  const usage =
+    snapshotGeminiUsageMetadata(r, {
+      maxOutputTokens: PAGE_VISION_NIVEL1_MAX_OUTPUT_TOKENS,
+    }) ?? { maxOutputTokens: PAGE_VISION_NIVEL1_MAX_OUTPUT_TOKENS };
 
   try {
     await recordBatchUsage({

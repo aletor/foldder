@@ -83,7 +83,6 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   crop: CropNode,
   designer: DesignerNode,
   projectBrain: ProjectBrainNode,
-  genoma: GenomaNode,
   projectAssets: ProjectAssetsNode,
   presenter: PresenterNode,
   canvasGroup: CanvasGroupNode,

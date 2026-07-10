@@ -50,7 +50,9 @@ export function useGenomaDepthPopoverPosition(
       panel && typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(() => update())
         : null;
-    observer?.observe(panel);
+    if (observer && panel) {
+      observer.observe(panel);
+    }
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {

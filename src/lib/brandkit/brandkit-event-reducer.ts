@@ -72,7 +72,7 @@ export function reduceBrandKitEvent(
         board: {
           ...boardMeta.board,
           lastRunId: event.runId,
-          sectionState: mergeSectionState(clearRunningSections(boardMeta.board.sectionState), errorPatch),
+          sectionState: { ...clearRunningSections(boardMeta.board.sectionState), ...errorPatch },
         },
       };
     }

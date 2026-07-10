@@ -34,7 +34,7 @@ export async function refineAndCropPdfLogoInstance(input: {
     if (!refined.logoCropPng.length) return null;
     return {
       png: refined.logoCropPng,
-      refinedBbox: refined.refinedBbox,
+      refinedBbox: resolveAuditBbox(refined.refinedBbox),
       method: refined.method,
     };
   } catch {
