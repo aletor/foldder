@@ -199,10 +199,13 @@ export function areNodesConnectable(
       return sourceHandleType === "dataset";
     }
     if (connection.targetHandle === "content") {
-      return (
-        sourceNode.type === "populate" &&
-        (connection.sourceHandle === "out" || connection.sourceHandle === "media_list")
-      );
+      if (sourceNode.type === "populate") {
+        return connection.sourceHandle === "out" || connection.sourceHandle === "media_list";
+      }
+      if (sourceNode.type === "designer") {
+        return connection.sourceHandle === "media_list";
+      }
+      return false;
     }
     if (connection.targetHandle === "media") {
       return sourceHandleType === "image";

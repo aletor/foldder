@@ -134,6 +134,8 @@ export type PublishState = {
   slug?: string;
   publishedAt?: string;
   snapshotHash?: string;
+  /** URL pública servida por /site/{slug} */
+  publicUrl?: string;
 };
 
 export type SiteProject = {

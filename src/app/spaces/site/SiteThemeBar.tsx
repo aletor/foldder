@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Monitor, Smartphone, Upload } from "lucide-react";
+import { Archive, Monitor, Smartphone, Upload } from "lucide-react";
 import type { SiteGraphConnectionStatus } from "@/lib/site/site-bindings";
 import type { SitePreviewMode, ThemeState } from "@/lib/site/site-types";
 
@@ -174,19 +174,47 @@ export function SitePublishBar({
   onPreviewModeChange,
   publishLabel,
   onPublish,
+  onExportZip,
   canPublish,
   publishHash,
+  publicUrl,
+  publishing,
+  exporting,
+  publishError,
+  isStale,
 }: {
   previewMode: SitePreviewMode;
   onPreviewModeChange: (mode: SitePreviewMode) => void;
   publishLabel: string;
   onPublish: () => void;
+  onExportZip?: () => void;
   canPublish: boolean;
   publishHash?: string;
+  publicUrl?: string;
+  publishing?: boolean;
+  exporting?: boolean;
+  publishError?: string | null;
+  isStale?: boolean;
 }) {
   return (
     <div className="site-studio__publish-bar">
       <div className="site-studio__publish-meta">
+        {isStale ? (
+          <span className="site-studio__publish-stale" title="El borrador difiere del último snapshot publicado">
+            Cambios sin publicar
+          </span>
+        ) : null}
+        {publicUrl ? (
+          <a
+            className="site-studio__publish-url"
+            href={publicUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Abrir sitio publicado"
+          >
+            {publicUrl.replace(/^https?:\/\//, "")}
+          </a>
+        ) : null}
         {publishHash ? (
           <span className="site-studio__publish-hash" title="Hash del último snapshot publicado">
             Snapshot {publishHash.slice(0, 12)}…
@@ -194,6 +222,7 @@ export function SitePublishBar({
         ) : (
           <span className="site-studio__publish-hash site-studio__publish-hash--muted">Sin publicar aún</span>
         )}
+        {publishError ? <span className="site-studio__publish-error">{publishError}</span> : null}
       </div>
       <div className="site-studio__preview-toggle" role="group" aria-label="Vista previa">
         <button
@@ -213,15 +242,27 @@ export function SitePublishBar({
           Móvil
         </button>
       </div>
+      {onExportZip ? (
+        <button
+          type="button"
+          className="site-studio__publish-btn site-studio__publish-btn--secondary"
+          onClick={onExportZip}
+          disabled={!canPublish || exporting || publishing}
+          title={canPublish ? "Descargar ZIP estático" : "Añade al menos una sección para exportar"}
+        >
+          <Archive size={14} aria-hidden />
+          {exporting ? "Exportando…" : "Export ZIP"}
+        </button>
+      ) : null}
       <button
         type="button"
         className="site-studio__publish-btn"
         onClick={onPublish}
-        disabled={!canPublish}
+        disabled={!canPublish || publishing || exporting}
         title={canPublish ? "Publicar sitio" : "Añade al menos una sección para publicar"}
       >
         <Upload size={14} aria-hidden />
-        {publishLabel}
+        {publishing ? "Publicando…" : publishLabel}
       </button>
     </div>
   );

@@ -1,12 +1,31 @@
 import type { MediaListOutput } from "@/app/spaces/media-list-output";
+import type { PopulateTemplateBinding } from "@/app/spaces/populate/populate-types";
+import { resolvePopulateSlotValues } from "@/app/spaces/populate/populate-designer-form";
 import type { Dataset, FieldValue } from "@/app/spaces/dataset/dataset-types";
-import type { Block, CollectionContent, CollectionItem, MediaContent, SiteProject } from "./site-types";
+import type {
+  Block,
+  CollectionContent,
+  CollectionItem,
+  MediaContent,
+  SiteProject,
+  TextContent,
+} from "./site-types";
 import { getActiveSitePage, updateActiveSitePage } from "./site-project";
 
 export type SiteGraphBindingSources = {
   dataset: Dataset | null;
   contentMediaList: MediaListOutput | null;
+  populateBindings: PopulateTemplateBinding[] | null;
+  populateNodeId: string | null;
+  /** Dataset cableado al nodo Populate (picks de fila). */
+  populateDataset: Dataset | null;
+  populateListId: string | null;
   mediaUrl: string | null;
+};
+
+export type PopulateResolvedSlotMaps = {
+  text: Record<string, string>;
+  images: Record<string, string>;
 };
 
 export type SiteGraphConnectionStatus = {
@@ -23,6 +42,26 @@ export function emptySiteGraphConnectionStatus(): SiteGraphConnectionStatus {
   };
 }
 
+function fieldValueScalar(value: FieldValue | undefined): string | undefined {
+  if (!value) return undefined;
+  switch (value.type) {
+    case "text":
+    case "url":
+    case "select":
+    case "color":
+      return value.value?.trim() || undefined;
+    case "number":
+      return Number.isFinite(value.value) ? String(value.value) : undefined;
+    case "boolean":
+      return value.value ? "true" : "false";
+    case "image":
+    case "video":
+      return value.url?.trim() || undefined;
+    default:
+      return undefined;
+  }
+}
+
 function fieldValueUrl(value: FieldValue | undefined): string | undefined {
   if (!value) return undefined;
   if (value.type === "image" && value.url?.trim()) return value.url.trim();
@@ -30,11 +69,16 @@ function fieldValueUrl(value: FieldValue | undefined): string | undefined {
   return undefined;
 }
 
-/** Filas del dataset → ítems de colección (primera columna imagen del listado). */
-export function datasetToCollectionItems(
-  dataset: Dataset,
-  options?: { listId?: string; imageFieldId?: string },
-): CollectionItem[] {
+export type DatasetCollectionOptions = {
+  listId?: string;
+  imageFieldId?: string;
+  map?: Record<string, string>;
+  sort?: { field: string; dir: "asc" | "desc" };
+  limit?: number;
+};
+
+/** Filas del dataset → ítems de colección con map/sort/limit. */
+export function datasetToCollectionItems(dataset: Dataset, options?: DatasetCollectionOptions): CollectionItem[] {
   const list = options?.listId
     ? dataset.lists.find((entry) => entry.id === options.listId)
     : dataset.lists[0];
@@ -44,14 +88,43 @@ export function datasetToCollectionItems(
     (options?.imageFieldId
       ? list.schema.find((field) => field.id === options.imageFieldId)
       : undefined) ?? list.schema.find((field) => field.type === "image");
-  if (!imageField) return [];
 
-  return list.cards
+  let cards = [...list.cards];
+  const sortFieldKey = options?.sort?.field?.trim();
+  if (sortFieldKey) {
+    const sortField =
+      list.schema.find((field) => field.key === sortFieldKey || field.id === sortFieldKey) ?? null;
+    if (sortField) {
+      const dir = options?.sort?.dir ?? "asc";
+      cards.sort((left, right) => {
+        const a = fieldValueScalar(left.values[sortField.id]) ?? "";
+        const b = fieldValueScalar(right.values[sortField.id]) ?? "";
+        return dir === "desc" ? b.localeCompare(a, "es") : a.localeCompare(b, "es");
+      });
+    }
+  }
+
+  if (typeof options?.limit === "number" && options.limit > 0) {
+    cards = cards.slice(0, options.limit);
+  }
+
+  const map = options?.map ?? (imageField ? { src: imageField.key } : {});
+
+  return cards
     .map((card) => {
-      const url = fieldValueUrl(card.values[imageField.id]);
-      if (!url) return null;
-      const item: CollectionItem = { src: url };
-      return item;
+      const item: CollectionItem = {};
+      for (const [itemKey, fieldKey] of Object.entries(map)) {
+        const field =
+          list.schema.find((entry) => entry.key === fieldKey || entry.id === fieldKey) ?? null;
+        if (!field) continue;
+        const scalar = fieldValueScalar(card.values[field.id]);
+        if (scalar) item[itemKey] = scalar;
+      }
+      if (!item.src && imageField) {
+        const url = fieldValueUrl(card.values[imageField.id]);
+        if (url) item.src = url;
+      }
+      return Object.keys(item).length > 0 ? item : null;
     })
     .filter((item): item is CollectionItem => item !== null);
 }
@@ -69,10 +142,7 @@ export function mediaListToCollectionItems(mediaList: MediaListOutput): Collecti
     .filter((item): item is CollectionItem => item !== null);
 }
 
-function resolveDatasetOptionsForSection(
-  section: Block,
-  dataset: Dataset,
-): { listId?: string; imageFieldId?: string } {
+function resolveDatasetOptionsForSection(section: Block, dataset: Dataset): DatasetCollectionOptions {
   if (section.type !== "collection") return {};
   const content = section.content as CollectionContent;
   const listId = content.binding?.listId ?? dataset.lists[0]?.id;
@@ -86,7 +156,103 @@ function resolveDatasetOptionsForSection(
       : undefined) ??
     list.schema.find((field) => field.type === "image")?.id;
 
-  return { listId: list.id, imageFieldId };
+  return {
+    listId: list.id,
+    imageFieldId,
+    map: content.binding?.map,
+    sort: content.binding?.sort,
+    limit: content.binding?.limit,
+  };
+}
+
+function pickedRowsForSiteBinding(
+  binding: PopulateTemplateBinding,
+  dataset: Dataset,
+  listId: string,
+): Record<string, string> {
+  const list = dataset.lists.find((entry) => entry.id === listId) ?? dataset.lists[0];
+  const pickedRows: Record<string, string> = { ...(binding.defaultPickedRows ?? {}) };
+  if (!list?.cards.length) return pickedRows;
+  for (const pick of binding.picks) {
+    if (pickedRows[pick.id]) continue;
+    const cardId = list.cards[0]?.id;
+    if (cardId) pickedRows[pick.id] = cardId;
+  }
+  return pickedRows;
+}
+
+/** Resuelve slots Populate desde manual + picks del Dataset conectado al nodo Populate. */
+export function resolvePopulateBindingSlotMaps(
+  bindings: PopulateTemplateBinding[] | null,
+  dataset: Dataset | null,
+  listId: string | null,
+): PopulateResolvedSlotMaps {
+  const text: Record<string, string> = {};
+  const images: Record<string, string> = {};
+  if (!bindings?.length) return { text, images };
+
+  for (const binding of bindings) {
+    for (const [slotKey, manualValue] of Object.entries(binding.manualSlotValues ?? {})) {
+      if (manualValue?.trim()) text[slotKey] = manualValue.trim();
+    }
+  }
+
+  if (!dataset || !listId?.trim()) return { text, images };
+
+  for (const binding of bindings) {
+    const slotValues = resolvePopulateSlotValues({
+      binding,
+      dataset,
+      listId,
+      pickedRows: pickedRowsForSiteBinding(binding, dataset, listId),
+      manualValues: binding.manualSlotValues ?? {},
+      pickedPoses: binding.entityPoseColumnFieldId,
+    });
+    for (const [slotKey, value] of Object.entries(slotValues)) {
+      if (value.kind === "text" && value.text.trim()) {
+        text[slotKey] = value.text.trim();
+      } else if (value.kind === "image" && value.url?.trim()) {
+        images[slotKey] = value.url.trim();
+      }
+    }
+  }
+
+  return { text, images };
+}
+
+export function populateBindingsToTextValues(
+  bindings: PopulateTemplateBinding[] | null,
+  dataset?: Dataset | null,
+  listId?: string | null,
+): Record<string, string> {
+  return resolvePopulateBindingSlotMaps(bindings, dataset ?? null, listId ?? null).text;
+}
+
+function patchPopulateTextBlocks(section: Block, textValues: Record<string, string>, ref?: string): Block {
+  if (!Object.keys(textValues).length) return section;
+
+  const patchBlock = (block: Block): Block => {
+    if (block.type === "text") {
+      const slotKey = block.source.ref?.trim();
+      const value = slotKey ? textValues[slotKey] : undefined;
+      if (value) {
+        return {
+          ...block,
+          source: { kind: "populate", ref: slotKey },
+          content: { ...(block.content as TextContent), value },
+        };
+      }
+    }
+    if (block.children?.length) {
+      const children = block.children.map(patchBlock);
+      if (children.some((child, index) => child !== block.children![index])) {
+        return { ...block, children };
+      }
+    }
+    return block;
+  };
+
+  return patchBlock(section);
 }
 
 function patchCollectionSection(
@@ -102,6 +268,34 @@ function patchCollectionSection(
     source: { kind: sourceKind, ref },
     content: { ...content, items },
   };
+}
+
+function patchPopulateImageBlocks(section: Block, imageValues: Record<string, string>, ref?: string): Block {
+  if (!Object.keys(imageValues).length) return section;
+
+  const patchBlock = (block: Block): Block => {
+    if (block.type === "media") {
+      const slotKey = block.source.ref?.trim();
+      const url = slotKey ? imageValues[slotKey] : undefined;
+      if (url) {
+        const content = block.content as MediaContent;
+        return {
+          ...block,
+          source: { kind: "populate", ref: slotKey },
+          content: { ...content, src: url, mediaType: content.mediaType === "embed" ? "image" : content.mediaType },
+        };
+      }
+    }
+    if (block.children?.length) {
+      const children = block.children.map(patchBlock);
+      if (children.some((child, index) => child !== block.children![index])) {
+        return { ...block, children };
+      }
+    }
+    return block;
+  };
+
+  return patchBlock(section);
 }
 
 function patchFirstEmptyMedia(section: Block, url: string): Block {
@@ -137,35 +331,66 @@ export function applySiteGraphBindings(
   project: SiteProject,
   sources: SiteGraphBindingSources,
 ): SiteProject {
-  const { dataset, contentMediaList, mediaUrl } = sources;
-  if (!dataset && !contentMediaList?.items.length && !mediaUrl?.trim()) {
+  const {
+    dataset,
+    contentMediaList,
+    populateBindings,
+    populateNodeId,
+    populateDataset,
+    populateListId,
+    mediaUrl,
+  } = sources;
+  const populateSlots = resolvePopulateBindingSlotMaps(
+    populateBindings,
+    populateDataset,
+    populateListId,
+  );
+  const populateText = populateSlots.text;
+  const populateImages = populateSlots.images;
+  if (
+    !dataset &&
+    !contentMediaList?.items.length &&
+    !mediaUrl?.trim() &&
+    !Object.keys(populateText).length &&
+    !Object.keys(populateImages).length
+  ) {
     return project;
   }
 
   const populateItems = contentMediaList ? mediaListToCollectionItems(contentMediaList) : [];
-  const active = getActiveSitePage(project);
 
-  const sections = active.sections.map((section) => {
-    let next = section;
+  const pages = project.pages.map((page) => {
+    const sections = page.sections.map((section) => {
+      let next = section;
 
-    if (populateItems.length > 0 && section.type === "collection") {
-      next = patchCollectionSection(next, populateItems, "populate", contentMediaList?.sourceNodeId);
-    } else if (dataset && section.type === "collection") {
-      const options = resolveDatasetOptionsForSection(section, dataset);
-      const items = datasetToCollectionItems(dataset, options);
-      if (items.length > 0) {
-        next = patchCollectionSection(next, items, "dataset", dataset.id);
+      if (Object.keys(populateText).length > 0) {
+        next = patchPopulateTextBlocks(next, populateText, populateNodeId ?? undefined);
       }
-    }
 
-    if (mediaUrl?.trim()) {
-      next = patchFirstEmptyMedia(next, mediaUrl.trim());
-    }
+      if (Object.keys(populateImages).length > 0) {
+        next = patchPopulateImageBlocks(next, populateImages, populateNodeId ?? undefined);
+      }
 
-    return next;
+      if (populateItems.length > 0 && section.type === "collection") {
+        next = patchCollectionSection(next, populateItems, "populate", contentMediaList?.sourceNodeId);
+      } else if (dataset && section.type === "collection") {
+        const options = resolveDatasetOptionsForSection(section, dataset);
+        const items = datasetToCollectionItems(dataset, options);
+        if (items.length > 0) {
+          next = patchCollectionSection(next, items, "dataset", dataset.id);
+        }
+      }
+
+      if (mediaUrl?.trim()) {
+        next = patchFirstEmptyMedia(next, mediaUrl.trim());
+      }
+
+      return next;
+    });
+    return { ...page, sections };
   });
 
-  return updateActiveSitePage(project, { sections });
+  return { ...project, pages };
 }
 
 export function buildSiteGraphConnectionStatus(args: {

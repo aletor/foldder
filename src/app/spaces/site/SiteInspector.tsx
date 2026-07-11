@@ -13,6 +13,7 @@ import {
   patchBlockContent,
   patchBlockLayout,
   patchBlockMotion,
+  updateBlockInSection,
 } from "@/lib/site/site-block-tree";
 import { COLLECTION_VIEW_LABELS, defaultViewOptions, switchCollectionView } from "@/lib/site/site-collection-views";
 import { LEDGER_PATH_PRESETS } from "@/lib/site/site-theme-ledger";
@@ -324,6 +325,49 @@ function CollectionContentEditor({
               </select>
             </Field>
           ) : null}
+          <Field label="Límite filas">
+            <input
+              className="site-studio__field-input"
+              type="number"
+              min={1}
+              value={content.binding?.limit ?? ""}
+              placeholder="Sin límite"
+              onChange={(event) => {
+                const raw = event.target.value.trim();
+                onChange({
+                  ...content,
+                  binding: {
+                    ...content.binding,
+                    listId: selectedListId,
+                    imageFieldId: selectedImageFieldId,
+                    map: content.binding?.map ?? { src: imageFields[0]?.key ?? "photo" },
+                    limit: raw ? Math.max(1, Number(raw)) : undefined,
+                  },
+                });
+              }}
+            />
+          </Field>
+          <Field label="Ordenar por (columna key)">
+            <input
+              className="site-studio__field-input"
+              value={content.binding?.sort?.field ?? ""}
+              placeholder="nombre"
+              onChange={(event) =>
+                onChange({
+                  ...content,
+                  binding: {
+                    ...content.binding,
+                    listId: selectedListId,
+                    imageFieldId: selectedImageFieldId,
+                    map: content.binding?.map ?? { src: imageFields[0]?.key ?? "photo" },
+                    sort: event.target.value.trim()
+                      ? { field: event.target.value.trim(), dir: content.binding?.sort?.dir ?? "asc" }
+                      : undefined,
+                  },
+                })
+              }
+            />
+          </Field>
         </>
       ) : null}
       <Field label="Vista">
@@ -524,20 +568,73 @@ function CollectionContentEditor({
   );
 }
 
+function BlockSourceEditor({
+  block,
+  onPatchBlock,
+}: {
+  block: Block;
+  onPatchBlock: (block: Block) => void;
+}) {
+  return (
+    <>
+      <Field label="Fuente">
+        <select
+          className="site-studio__field-input"
+          value={block.source.kind}
+          onChange={(event) =>
+            onPatchBlock({
+              ...block,
+              source: {
+                ...block.source,
+                kind: event.target.value as Block["source"]["kind"],
+              },
+            })
+          }
+        >
+          <option value="manual">Manual</option>
+          <option value="dataset">Dataset</option>
+          <option value="populate">Populate</option>
+          <option value="designer">Designer</option>
+        </select>
+      </Field>
+      <Field label="Ref / slot Populate">
+        <input
+          className="site-studio__field-input"
+          value={block.source.ref ?? ""}
+          placeholder="slot::entidad::text"
+          onChange={(event) =>
+            onPatchBlock({
+              ...block,
+              source: { ...block.source, ref: event.target.value.trim() || undefined },
+            })
+          }
+        />
+      </Field>
+    </>
+  );
+}
+
 function BlockContentEditor({
   block,
   onChange,
+  onPatchBlock,
   graphStatus,
   connectedDataset,
 }: {
   block: Block;
   onChange: (content: Block["content"]) => void;
+  onPatchBlock: (block: Block) => void;
   graphStatus?: SiteGraphConnectionStatus;
   connectedDataset?: Dataset | null;
 }) {
   const { content } = block;
   if (block.type === "text" && isTextContent(content)) {
-    return <TextContentEditor content={content} onChange={onChange} />;
+    return (
+      <>
+        <BlockSourceEditor block={block} onPatchBlock={onPatchBlock} />
+        <TextContentEditor content={content} onChange={onChange} />
+      </>
+    );
   }
   if (block.type === "media" && isMediaContent(content)) {
     return (
@@ -926,6 +1023,9 @@ export function SiteInspector({
                 graphStatus={graphStatus}
                 connectedDataset={connectedDataset}
                 onChange={(content) => onPatchSection(patchBlockContent(section, activeBlock.id, content))}
+                onPatchBlock={(nextBlock) =>
+                  onPatchSection(updateBlockInSection(section, activeBlock.id, () => nextBlock))
+                }
               />
             </div>
           ) : null}

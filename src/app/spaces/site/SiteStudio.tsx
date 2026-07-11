@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applySiteAdnToProject } from "@/lib/site/site-adn";
 import { applyBrandKitContentToProject } from "@/lib/site/site-adn-content";
+import { findBlockInSection, patchBlockContent } from "@/lib/site/site-block-tree";
 import {
   applySiteGraphBindings,
   graphBindingsPending,
@@ -10,7 +11,8 @@ import {
   reorderSiteNavInclude,
   reorderSiteSections,
 } from "@/lib/site/site-bindings";
-import { computeSiteSnapshotHash, sitePublishSlug } from "@/lib/site/site-publish";
+import { resolveSitePublishStatus } from "@/lib/site/site-publish-stale";
+import { sitePublishSlug } from "@/lib/site/site-publish";
 import {
   addSitePage,
   getActiveSitePage,
@@ -34,6 +36,7 @@ import type {
   SitePage,
   SitePreviewMode,
   SiteProject,
+  TextContent,
   ThemeOverride,
   ThemeState,
 } from "@/lib/site/site-types";
@@ -84,6 +87,9 @@ export function SiteStudio({
   const [inspectorScope, setInspectorScope] = useState<"section" | "page">("section");
   const [inspectorTab, setInspectorTab] = useState<SiteInspectorTab>("content");
   const [previewMode, setPreviewMode] = useState<SitePreviewMode>("desktop");
+  const [publishing, setPublishing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const autoSyncRef = useRef<string | null>(null);
 
   const patchProject = useCallback(
@@ -317,6 +323,22 @@ export function SiteStudio({
     [activePage.sections, patchActivePage],
   );
 
+  const handleInlineTextEdit = useCallback(
+    (sectionId: string, blockId: string, value: string) => {
+      const section = activePage.sections.find((entry) => entry.id === sectionId);
+      if (!section) return;
+      const block = findBlockInSection(section, blockId);
+      if (!block || block.type !== "text") return;
+      handlePatchSection(
+        patchBlockContent(section, blockId, {
+          ...(block.content as TextContent),
+          value,
+        }),
+      );
+    },
+    [activePage.sections, handlePatchSection],
+  );
+
   const handlePatchPage = useCallback(
     (patch: Partial<SitePage>) => {
       patchActivePage(patch);
@@ -348,26 +370,102 @@ export function SiteStudio({
   }, [adn, patchProject, project]);
 
   const handlePublish = useCallback(async () => {
-    const slug = sitePublishSlug(project);
-    const publishProject = previewProject;
-    const snapshotHash = await computeSiteSnapshotHash(publishProject, {
-      sectionLabels,
-      adn,
-      locale: previewLocale,
-    });
-    patchSiteData({
-      project: {
-        ...publishProject,
-        slug,
-        publish: {
-          status: "published",
-          publishedAt: new Date().toISOString(),
-          slug,
-          snapshotHash,
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const slug = sitePublishSlug(project);
+      const publishProject = previewProject;
+      const response = await fetch("/api/spaces/site/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: { ...publishProject, slug },
+          sectionLabels,
+          locale: previewLocale,
+          nodeId,
+          projectId: project.id,
+          adn: adn.ready
+            ? {
+                ready: true,
+                brandKitNodeId: adn.brandKitNodeId,
+                brandName: adn.brandName,
+                oneLiner: adn.oneLiner,
+                document: adn.document,
+              }
+            : null,
+        }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        publicUrl?: string;
+        slug?: string;
+        publishedAt?: string;
+        snapshotHash?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "No se pudo publicar el sitio.");
+      }
+
+      patchSiteData({
+        project: {
+          ...publishProject,
+          slug: payload.slug ?? slug,
+          publish: {
+            status: "published",
+            publishedAt: payload.publishedAt ?? new Date().toISOString(),
+            slug: payload.slug ?? slug,
+            snapshotHash: payload.snapshotHash,
+            publicUrl: payload.publicUrl,
+          },
         },
-      },
-    });
-  }, [adn, patchSiteData, previewLocale, previewProject, project, sectionLabels]);
+      });
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "Error al publicar");
+    } finally {
+      setPublishing(false);
+    }
+  }, [adn, nodeId, patchSiteData, previewLocale, previewProject, project.id, sectionLabels]);
+
+  const handleExportZip = useCallback(async () => {
+    setExporting(true);
+    setPublishError(null);
+    try {
+      const slug = sitePublishSlug(project);
+      const response = await fetch("/api/spaces/site/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: { ...previewProject, slug },
+          sectionLabels,
+          locale: previewLocale,
+          adn: adn.ready
+            ? {
+                ready: true,
+                brandKitNodeId: adn.brandKitNodeId,
+                brandName: adn.brandName,
+                oneLiner: adn.oneLiner,
+                document: adn.document,
+              }
+            : null,
+        }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        throw new Error(payload.error || "No se pudo exportar el sitio.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${slug || "sitio"}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "Error al exportar");
+    } finally {
+      setExporting(false);
+    }
+  }, [adn, previewLocale, previewProject, project, sectionLabels]);
 
   useEffect(() => {
     if (inspectorScope === "page") return;
@@ -385,6 +483,32 @@ export function SiteStudio({
       setSelectedBlockId(firstId);
     }
   }, [activePage.sections, inspectorScope, selectedSectionId]);
+
+  useEffect(() => {
+    if (project.publish.status !== "published" && project.publish.status !== "stale") return;
+    if (!project.publish.snapshotHash) return;
+    let cancelled = false;
+    void resolveSitePublishStatus({
+      project,
+      previewProject,
+      sectionLabels,
+      locale: previewLocale,
+      adn,
+    }).then((status) => {
+      if (cancelled || status === project.publish.status) return;
+      patchProject({ publish: { ...project.publish, status } });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    adn.fingerprint,
+    patchProject,
+    previewLocale,
+    previewProject,
+    project,
+    sectionLabels,
+  ]);
 
   useEffect(() => {
     if (adn.ready) {
@@ -445,7 +569,13 @@ export function SiteStudio({
 
   const title = nodeLabel?.trim() || "Site";
   const sectionCount = activePage.sections.length;
-  const publishLabel = project.publish.status === "published" ? "Republicar" : "Publicar";
+  const publishLabel =
+    project.publish.status === "stale"
+      ? "Republicar cambios"
+      : project.publish.status === "published"
+        ? "Republicar"
+        : "Publicar";
+  const isStale = project.publish.status === "stale";
 
   return (
     <div
@@ -489,8 +619,14 @@ export function SiteStudio({
         onPreviewModeChange={setPreviewMode}
         publishLabel={publishLabel}
         onPublish={() => void handlePublish()}
+        onExportZip={() => void handleExportZip()}
         canPublish={sectionCount > 0}
         publishHash={project.publish.snapshotHash}
+        publicUrl={project.publish.publicUrl}
+        publishing={publishing}
+        exporting={exporting}
+        publishError={publishError}
+        isStale={isStale}
       />
 
       <div className="site-studio site-studio--split min-h-0 flex-1">
@@ -523,6 +659,7 @@ export function SiteStudio({
           sectionLabels={sectionLabels}
           adn={adn}
           onSelectSection={handleSelectSection}
+          onInlineTextEdit={handleInlineTextEdit}
         />
         {inspectorScope === "page" ? (
           <SitePageInspector

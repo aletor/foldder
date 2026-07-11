@@ -3,6 +3,7 @@
 import React from "react";
 import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, FileText, GripVertical, Plus, Trash2 } from "lucide-react";
 import { SITE_FACTORY_PRESETS } from "@/lib/site/site-presets";
+import { siteSectionPreviewLine } from "@/lib/site/site-section-preview";
 import type { Block, SiteFactoryPresetId, SitePage } from "@/lib/site/site-types";
 
 export function SiteCompositionRail({
@@ -103,6 +104,7 @@ export function SiteCompositionRail({
             const inNav = navInclude.includes(section.id);
             const isSelected = selectedSectionId === section.id;
             const isDragging = dragSectionId === section.id;
+            const previewLine = siteSectionPreviewLine(section);
             return (
               <div
                 key={section.id}
@@ -137,8 +139,8 @@ export function SiteCompositionRail({
                   >
                     <GripVertical size={14} aria-hidden />
                   </span>
-                  <span className="site-studio__section-thumb" aria-hidden>
-                    <span className="site-studio__section-thumb-inner" />
+                  <span className="site-studio__section-thumb" aria-hidden title={previewLine}>
+                    <span className="site-studio__section-thumb-inner">{previewLine.slice(0, 2).toUpperCase()}</span>
                   </span>
                   <span className="site-studio__section-meta">
                     <input

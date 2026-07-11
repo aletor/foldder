@@ -180,6 +180,32 @@ a { color: inherit; }
 .site-page__nav a:hover,
 .site-page__nav a:focus-visible { color: var(--c-fg); }
 
+.site-page__site-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-unit) * 0.5);
+  max-width: var(--site-max-width);
+  margin: 0 auto;
+  padding: calc(var(--space-unit) * 0.5) calc(var(--space-unit) * 1.25);
+  border-bottom: 1px solid var(--c-rule);
+}
+
+.site-page__site-nav a {
+  text-decoration: none;
+  font-size: 0.875rem;
+  color: var(--c-fg-soft);
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+.site-page__site-nav a[aria-current="page"] {
+  color: var(--c-fg);
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+}
+
+.site-page__site-nav a:hover,
+.site-page__site-nav a:focus-visible { color: var(--c-fg); }
+
 .site-page__main { display: block; }
 
 .site-section { padding-block: calc(var(--space-unit) * 2.5); }
@@ -339,7 +365,22 @@ a { color: inherit; }
 .site-collection--density-airy { gap: calc(var(--space-unit) * 1.1); }
 .site-collection__item { min-width: 0; }
 
-.site-collection--carousel { display: block; overflow: hidden; }
+.site-collection--carousel { display: block; overflow: hidden; position: relative; }
+.site-collection__nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  border: 1px solid var(--c-rule);
+  background: color-mix(in srgb, var(--c-bg) 88%, transparent);
+  color: var(--c-fg);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.site-collection__nav--prev { left: 0.35rem; }
+.site-collection__nav--next { right: 0.35rem; }
 .site-collection__carousel-track {
   display: flex;
   gap: calc(var(--space-unit) * 0.75);
@@ -385,8 +426,22 @@ a { color: inherit; }
   to { transform: translateX(-50%); }
 }
 
+.site-section--motion-trigger-scroll {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.6s var(--motion-ease, ease), transform 0.6s var(--motion-ease, ease);
+}
+.site-section--motion-trigger-scroll.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
 .site-section--motion-trigger-appear {
   animation: site-section-appear 0.7s var(--motion-ease, ease) both;
+}
+
+.site-media[data-duotone="true"] .site-media__asset {
+  filter: grayscale(1) contrast(1.08);
+  mix-blend-mode: multiply;
 }
 .site-section--motion-soft { --motion-ease: cubic-bezier(0.22, 1, 0.36, 1); }
 .site-section--motion-expo { --motion-ease: cubic-bezier(0.16, 1, 0.3, 1); animation-duration: 0.55s; }

@@ -100,6 +100,7 @@ export function isSiteProjectEmpty(project: SiteProject): boolean {
 export function computeSiteNodeStatus(project: SiteProject): SiteNodeStatus {
   if (isSiteProjectEmpty(project)) return "empty";
   if (project.publish.status === "published") return "published";
+  if (project.publish.status === "stale") return "draft";
   return "draft";
 }
 

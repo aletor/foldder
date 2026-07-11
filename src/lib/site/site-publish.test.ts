@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createDemoTextMediaSection } from "./site-presets";
 import { createEmptySiteProject } from "./site-defaults";
 import { getActiveSitePage } from "./site-project";
-import { computeSiteSnapshotHash, sitePublishSlug } from "./site-publish";
+import { computeSiteSnapshotHash } from "./site-publish-hash";
+import { sitePublishSlug } from "./site-publish-slug";
 
 describe("site-publish", () => {
   it("derives slug from seo title", () => {

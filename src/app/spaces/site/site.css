@@ -186,8 +186,38 @@
 
 .site-studio__publish-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 10px;
   min-width: 0;
+}
+
+.site-studio__publish-url {
+  color: var(--site-accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-studio__publish-url:hover {
+  text-decoration: underline;
+}
+
+.site-studio__publish-stale {
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.site-studio__publish-error {
+  color: #f87171;
+  font-size: 11px;
 }
 
 .site-studio__publish-hash {
@@ -255,6 +285,17 @@
 .site-studio__publish-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.site-studio__publish-btn--secondary {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--site-glass-border);
+  color: var(--site-ink-soft);
+}
+
+.site-studio__publish-btn--secondary:hover:not(:disabled) {
+  color: var(--site-ink);
+  border-color: color-mix(in srgb, var(--site-accent) 35%, transparent);
 }
 
 /* ── Composition rail ── */
@@ -332,9 +373,15 @@
 }
 
 .site-studio__section-thumb-inner {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--site-ink-soft);
   background: linear-gradient(135deg, rgba(110, 196, 168, 0.35), rgba(255, 255, 255, 0.06));
 }
 
