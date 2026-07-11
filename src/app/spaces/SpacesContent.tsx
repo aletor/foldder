@@ -26,21 +26,11 @@ import { DesignerSpaceIdContext } from "@/contexts/DesignerSpaceIdContext";
 import { SpacesActiveProjectIdContext } from "@/contexts/SpacesActiveProjectIdContext";
 import { useLanguage } from "@/components/LanguageProvider";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
-import { ProjectBrainCanvasContext } from "./project-brain-canvas-context";
 import { ProjectAssetsCanvasContext } from "./project-assets-canvas-context";
 import { DatasetCanvasContext } from "./dataset/dataset-canvas-context";
 import { SpacesMapCanvasContext } from "./spaces-map-canvas-context";
 import { registerProjectDatasetConsumers } from "./dataset/dataset-api";
 import { collectGlobalDatasetIdsFromSpaces } from "./dataset/dataset-project";
-import { createDataset, normalizeDataset } from "./dataset/dataset-logic";
-import type { DatasetNodeData } from "./dataset/dataset-types";
-import {
-  brandKitAssetsSignature,
-  brandKitDatasetContentSignature,
-  patchDatasetNodeWithBrandKit,
-  syncBrandKitAssetsToDataset,
-} from "./brandkit/brandkit-dataset-sync";
-
 import {
   applyCanvasGroupCollapse,
   createCanvasGroupFromNodeIds,
@@ -81,9 +71,6 @@ import {
   NOTE_MIN_HEIGHT,
   NOTE_WIDTH,
 } from "./NotesSticky";
-import { ProjectBrainFullscreen, type BrainMainSection } from "./ProjectBrainFullscreen";
-import { BrandBoardStudio } from "./brandkit/BrandBoardStudio";
-import { isBrandBoardAsLandingEnabled } from "@/lib/brandkit/brand-board-flags";
 import { ProjectAssetsFullscreen } from "./ProjectAssetsFullscreen";
 import { PerformanceHud } from "./PerformanceHud";
 import {
@@ -108,7 +95,6 @@ import {
 } from "@/lib/ai-job-notifications";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import "./spaces.css";
-import { touchStudioNodeData } from "./studio-node/foldder-studio-touched";
 import { type ProjectAssetsMetadata } from "./project-assets-metadata";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import {
@@ -783,8 +769,6 @@ export function SpacesContent() {
     metadataVersionRef.current += 1;
     metadataIdentityRef.current = metadata;
   }
-  /** True hasta el próximo guardado: análisis visual en memoria distinto del último persistido. */
-  const [visualReferenceAnalysisDirty, setVisualReferenceAnalysisDirty] = useState(false);
   
   const [isSaving, setIsSaving] = useState(false);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
@@ -892,8 +876,6 @@ export function SpacesContent() {
     cardBg?: string;
   } | null>(null);
   const connectDragRafRef = useRef<number | null>(null);
-  const [projectBrainOpen, setProjectBrainOpen] = useState(false);
-  const [brainInitialSection, setBrainInitialSection] = useState<BrainMainSection | null>(null);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
   /** Aísla caché (p. ej. sugerencias de imagen) cuando aún no hay `activeProjectId`; evita reutilizar `__local__` entre borradores. */
   const [localWorkspaceScopeId, setLocalWorkspaceScopeId] = useState(() => newLocalWorkspaceScopeId());
@@ -993,70 +975,6 @@ export function SpacesContent() {
     [nodes, getNodeDataSignatureToken],
   );
 
-  const brainFlowNodesSignature = useMemo(
-    () =>
-      (nodes as Node[])
-        .map((node) => {
-          const data = (node.data ?? {}) as { label?: unknown; title?: unknown; name?: unknown };
-          return [
-            node.id,
-            node.type ?? "",
-            typeof data.label === "string" ? data.label : "",
-            typeof data.title === "string" ? data.title : "",
-            typeof data.name === "string" ? data.name : "",
-          ].join(":");
-        })
-        .join("|"),
-    [nodes],
-  );
-
-  const brainFlowNodes = useMemo(
-    () =>
-      (nodes as Node[]).map((node) => {
-        const data = (node.data ?? {}) as { label?: unknown; title?: unknown; name?: unknown };
-        return {
-          id: node.id,
-          type: node.type,
-          data: {
-            label: typeof data.label === "string" ? data.label : undefined,
-            title: typeof data.title === "string" ? data.title : undefined,
-            name: typeof data.name === "string" ? data.name : undefined,
-          },
-        };
-      }),
-    // Only rebuild when the Brain-relevant identity/label signature changes; node position changes should not refresh Brain cards.
-    [brainFlowNodesSignature],
-  );
-
-  const brainFlowEdges = useMemo(
-    () =>
-      (edges as Edge[]).map((edge) => ({
-        source: edge.source,
-        target: edge.target,
-        sourceHandle: edge.sourceHandle,
-        targetHandle: edge.targetHandle,
-      })),
-    [edges],
-  );
-
-  const projectBrainCanvasValue = useMemo(
-    () => ({
-      assetsMetadata: metadata.assets,
-      projectScopeId,
-      openProjectBrain: () => {
-        setBrainInitialSection(null);
-        setProjectBrainOpen(true);
-      },
-      openProjectBrainReview: () => {
-        setBrainInitialSection("review");
-        setProjectBrainOpen(true);
-      },
-      flowNodes: brainFlowNodes,
-      flowEdges: brainFlowEdges,
-    }),
-    [metadata.assets, projectScopeId, brainFlowNodes, brainFlowEdges],
-  );
-
   const reconciledFoldderLibrary = useMemo(
     () =>
       reconcileFoldderLibraryRegistry({
@@ -1119,90 +1037,21 @@ export function SpacesContent() {
     ],
   );
 
-  const onBrainAssetsMetadataChange = useCallback(
+  const onAssetsMetadataChange = useCallback(
     (next: ProjectAssetsMetadata) => {
       setMetadata((m: Record<string, unknown>) => ({ ...m, assets: next }));
-      if (projectBrainOpen) {
-        setNodes((nds) =>
-          nds.map((n) =>
-            n.type === "projectBrain"
-              ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>) }
-              : n,
-          ),
-        );
-      }
     },
-    [projectBrainOpen, setNodes],
+    [],
   );
 
   const datasetCanvasValue = useMemo(
     () => ({
       projectScopeId,
       assetsMetadata: metadata.assets,
-      onAssetsMetadataChange: onBrainAssetsMetadataChange,
-      openProjectBrain: () => {
-        setBrainInitialSection(null);
-        setProjectBrainOpen(true);
-      },
+      onAssetsMetadataChange,
     }),
-    [metadata.assets, onBrainAssetsMetadataChange, projectScopeId],
+    [metadata.assets, onAssetsMetadataChange, projectScopeId],
   );
-
-  const brandKitAssetsSyncSigRef = useRef<Map<string, string>>(new Map());
-
-  useEffect(() => {
-    setNodes((nds) => {
-      let changed = false;
-      const nextNodes = nds.map((node) => {
-        if (node.type !== "dataset") return node;
-        const data = (node.data ?? {}) as DatasetNodeData;
-        const link = data.brandKitLink;
-        if (!link?.brainNodeId) return node;
-        const connected = edges.some(
-          (edge) =>
-            edge.target === node.id &&
-            edge.targetHandle === "brandkit" &&
-            edge.source === link.brainNodeId,
-        );
-        if (!connected || data.datasetRef?.datasetId) return node;
-
-        const assetsSig = brandKitAssetsSignature(metadata.assets, link.brainNodeId);
-        if (brandKitAssetsSyncSigRef.current.get(node.id) === assetsSig) return node;
-
-        const base = data.dataset
-          ? normalizeDataset(data.dataset)
-          : createDataset(data.label?.trim() || "Dataset", "local", projectScopeId);
-        const currentSig = brandKitDatasetContentSignature(base, link);
-        if (currentSig === assetsSig) {
-          brandKitAssetsSyncSigRef.current.set(node.id, assetsSig);
-          return node;
-        }
-
-        const synced = syncBrandKitAssetsToDataset(base, link.brainNodeId, metadata.assets);
-        brandKitAssetsSyncSigRef.current.set(node.id, assetsSig);
-        changed = true;
-        return {
-          ...node,
-          data: {
-            ...data,
-            dataset: { ...synced.dataset, scope: "local", projectId: projectScopeId },
-            brandKitLink: synced.link,
-            label: synced.dataset.name,
-          },
-        };
-      });
-      return changed ? nextNodes : nds;
-    });
-  }, [edges, metadata.assets, projectScopeId, setNodes]);
-
-  useEffect(() => {
-    const onOpenBrain = () => {
-      setBrainInitialSection(null);
-      setProjectBrainOpen(true);
-    };
-    window.addEventListener("foldder-open-project-brain", onOpenBrain);
-    return () => window.removeEventListener("foldder-open-project-brain", onOpenBrain);
-  }, []);
 
   useEffect(() => {
     const onOpenAssets = () => openFoldder();
@@ -2082,11 +1931,6 @@ export function SpacesContent() {
       fileId?: string,
       appId?: string,
     ) => {
-      if (nodeType === "projectBrain") {
-        setBrainInitialSection(null);
-        setProjectBrainOpen(true);
-        return;
-      }
       if (nodeType === "projectAssets") {
         openFoldder();
         return;
@@ -4071,7 +3915,6 @@ export function SpacesContent() {
           const next = preserveBrainVisualCollageMetadata(serverMetadata, currentStable);
           return projectMetadataEqual(currentStable, next) ? current : next;
         });
-        setVisualReferenceAnalysisDirty(false);
       } else {
         console.info(
           "[FOLDDER save] Se ignora metadata antigua recibida del servidor porque hubo cambios locales durante el guardado.",
@@ -4407,7 +4250,6 @@ export function SpacesContent() {
       lastSavedUiFingerprintRef.current = null;
       setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
       setMetadata({});
-      setVisualReferenceAnalysisDirty(false);
       setCurrentName(trimmed);
       setCardsFocusIndex(0);
       setCanvasViewMode('free');
@@ -4593,7 +4435,6 @@ export function SpacesContent() {
       setCurrentName(project.name || projectMeta.name);
       setSpacesMap(spaces as Record<string, any>);
       setMetadata(loadedStableMetadata);
-      setVisualReferenceAnalysisDirty(false);
 
       const nav = ui?.navigationStack;
       setNavigationStack(
@@ -5044,29 +4885,6 @@ export function SpacesContent() {
       const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'def'}-${targetHandle || 'def'}-${Math.random().toString(36).substring(2, 6)}`;
       setEdges((eds) => addEdge({ ...params, targetHandle, id: edgeId, type: 'buttonEdge' }, eds));
       const srcNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.source);
-      if (
-        srcNode?.type === "projectBrain" &&
-        targetNode?.type === "dataset" &&
-        targetHandle === "brandkit"
-      ) {
-        setNodes((nds) =>
-          nds.map((n) => {
-            if (n.id !== params.target) return n;
-            return {
-              ...n,
-              data: {
-                ...(n.data as Record<string, unknown>),
-                ...patchDatasetNodeWithBrandKit(
-                  (n.data ?? {}) as DatasetNodeData,
-                  params.source,
-                  metadata.assets,
-                  projectScopeId,
-                ),
-              },
-            };
-          }),
-        );
-      }
       if (
         srcNode?.type === "nanoBanana" &&
         (params.sourceHandle === "image" || params.sourceHandle == null || params.sourceHandle === "")
@@ -6479,7 +6297,6 @@ export function SpacesContent() {
         {/* Wheel: listener global (ratón→zoom, trackpad→pan); panOnScroll false para no solapar con XY Flow. noPanClassName placeholder evita .nopan bloqueando wheel en nodos */}
         <SpacesActiveProjectIdContext.Provider value={activeProjectId}>
         <ProjectAssetsCanvasContext.Provider value={projectAssetsCanvasValue}>
-        <ProjectBrainCanvasContext.Provider value={projectBrainCanvasValue}>
         <DatasetCanvasContext.Provider value={datasetCanvasValue}>
         <SpacesMapCanvasContext.Provider value={spacesMap}>
         <DesignerSpaceIdContext.Provider value={activeSpaceId === "root" ? null : activeSpaceId}>
@@ -6568,7 +6385,6 @@ export function SpacesContent() {
         </DesignerSpaceIdContext.Provider>
         </SpacesMapCanvasContext.Provider>
         </DatasetCanvasContext.Provider>
-        </ProjectBrainCanvasContext.Provider>
         </ProjectAssetsCanvasContext.Provider>
         </SpacesActiveProjectIdContext.Provider>
 
@@ -6998,50 +6814,6 @@ export function SpacesContent() {
             </div>
           )}
         </div>
-        )}
-
-        {isAuthenticated && (
-          isBrandBoardAsLandingEnabled() ? (
-            <BrandBoardStudio
-              open={projectBrainOpen}
-              onClose={() => {
-                setProjectBrainOpen(false);
-                setBrainInitialSection(null);
-              }}
-              assetsMetadata={metadata.assets}
-              projectId={activeProjectId}
-              workspaceId={projectScopeId}
-              canvasNodes={nodes}
-              canvasEdges={edges}
-              initialSection={brainInitialSection}
-              visualReferenceAnalysisDirty={visualReferenceAnalysisDirty}
-              onVisualReferenceAnalysisDirty={() => setVisualReferenceAnalysisDirty(true)}
-              onBrainAssetsFullReset={() => setVisualReferenceAnalysisDirty(false)}
-              onSaveProjectFromBrain={() => saveProject(undefined, { silentError: true })}
-              isSavingProject={isSaving}
-              onAssetsMetadataChange={onBrainAssetsMetadataChange}
-            />
-          ) : (
-          <ProjectBrainFullscreen
-            open={projectBrainOpen}
-            onClose={() => {
-              setProjectBrainOpen(false);
-              setBrainInitialSection(null);
-            }}
-            assetsMetadata={metadata.assets}
-            projectId={activeProjectId}
-            workspaceId={projectScopeId}
-            canvasNodes={nodes}
-            canvasEdges={edges}
-            initialSection={brainInitialSection}
-            visualReferenceAnalysisDirty={visualReferenceAnalysisDirty}
-            onVisualReferenceAnalysisDirty={() => setVisualReferenceAnalysisDirty(true)}
-            onBrainAssetsFullReset={() => setVisualReferenceAnalysisDirty(false)}
-            onSaveProjectFromBrain={() => saveProject(undefined, { silentError: true })}
-            isSavingProject={isSaving}
-            onAssetsMetadataChange={onBrainAssetsMetadataChange}
-          />
-          )
         )}
 
         {isAuthenticated && (

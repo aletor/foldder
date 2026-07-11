@@ -1,0 +1,72 @@
+"use client";
+
+import React, { useState } from "react";
+import type { BrandKitDocument } from "@/lib/brandkit/brand-kit-types";
+import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
+import { Star, ChevronDown } from "lucide-react";
+
+type BrandKitSidebarSourcesProps = {
+  doc: BrandKitDocument;
+  onSetAuthoritativeSource?: (sourceRef: string, authoritative: boolean) => void;
+};
+
+function sourceShortLabel(ref: string): string {
+  if (ref.length <= 36) return ref;
+  return `${ref.slice(0, 18)}…${ref.slice(-14)}`;
+}
+
+export function BrandKitSidebarSources({ doc, onSetAuthoritativeSource }: BrandKitSidebarSourcesProps) {
+  const [open, setOpen] = useState(false);
+  const sourcesCount = doc.sources.length;
+  if (!sourcesCount) return null;
+
+  const primary = doc.sources[0];
+  const label = primary ? sourceShortLabel(primary.ref) : "";
+
+  return (
+    <section className="brandKit-sidebar-sources" aria-label="Fuentes">
+      <button
+        type="button"
+        className="brandKit-sidebar-sources__toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span>
+          {sourcesCount} {sourcesCount === 1 ? "fuente" : "fuentes"}
+          {!open && label ? ` · ${label}` : ""}
+        </span>
+        <ChevronDown size={14} className={`brandKit-sidebar-sources__chevron${open ? " is-open" : ""}`} aria-hidden />
+      </button>
+
+      {open ? (
+        <ul className="brandKit-split-sources__list">
+          {doc.sources.map((source, index) => (
+            <li key={`${source.ref}-${source.ts}-${index}`} title={source.ref}>
+              <span className="brandKit-split-sources__ref">{source.ref}</span>
+              <span className="brandKit-split-sources__kind">{source.kind === "url" ? "web" : "archivo"}</span>
+              {onSetAuthoritativeSource ? (
+                <button
+                  type="button"
+                  className={`brandKit-split-sources__star${source.authoritative ? " is-active" : ""}`}
+                  aria-label={
+                    source.authoritative
+                      ? brandKitLocaleEs.unmarkAuthoritative
+                      : brandKitLocaleEs.markAuthoritative
+                  }
+                  title={
+                    source.authoritative
+                      ? brandKitLocaleEs.unmarkAuthoritative
+                      : `${brandKitLocaleEs.markAuthoritative} — ${brandKitLocaleEs.authoritativeTooltip}`
+                  }
+                  onClick={() => onSetAuthoritativeSource(source.ref, !source.authoritative)}
+                >
+                  <Star size={12} fill={source.authoritative ? "currentColor" : "none"} />
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}

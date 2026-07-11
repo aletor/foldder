@@ -5,11 +5,11 @@ import type {
   BrainRuntimeVisualDnaLayer,
 } from "./brain-creative-memory-types";
 import { getBrainFreshnessSummary, getBrainVersion, normalizeBrainMeta } from "./brain-meta";
-import { pickValidatedBrandState } from "@/lib/brandkit/pick-validated-brand-state";
+import { pickValidatedBrandState } from "@/lib/brandkit-runtime/pick-validated-brand-state";
 import {
   buildVisualReferencesRuntime,
   isGenerativeVisualNodeType,
-} from "@/lib/brandkit/visual-references-runtime";
+} from "@/lib/brandkit-runtime/visual-references-runtime";
 import { normalizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/normalize";
 import type { VisualDnaLayer } from "@/lib/brain/visual-dna-slot/types";
 import { buildSelectedVisualDnaSlotRuntimeView, summarizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/runtime-layer";

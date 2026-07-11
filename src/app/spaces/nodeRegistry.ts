@@ -500,19 +500,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       cropConfig: '{ x: number, y: number, w: number, h: number } (Percentages 0-100)'
     }
   },
-  projectBrain: {
-    type: 'projectBrain',
-    label: 'BrandKit',
-    description:
-      'Identidad y conocimiento del proyecto: logo, colores de marca y documentos/links, editables en un único punto. Conéctalo a un Designer para enlazar en vivo el logo y los colores de marca a cualquier objeto; al editarlo cambian todos los Designers que lo usan.',
-    inputs: [],
-    outputs: [
-      { id: 'brain', label: 'BrandKit out', type: 'brain' as HandleType },
-    ],
-    dataSchema: {
-      label: 'string (optional title on the card)',
-    },
-  },
   projectAssets: {
     type: 'projectAssets',
     label: 'Foldder',
@@ -574,7 +561,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     description:
       'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management. Accepts an Image Layout from Layerizer: layers arrive pre-mounted at their original positions for drag-reordering.',
     inputs: [
-      { id: 'brain', label: 'BrandKit', type: 'brain' as HandleType },
+      { id: 'brain', label: 'Marca', type: 'brain' as HandleType },
       { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
       { id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType },
     ],
@@ -619,7 +606,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     label: 'Dataset',
     description:
       'Tabla tipada y persistente: cards iterables (una pieza por card en el destino) + constantes compartidas que se inyectan en todas las piezas. Fuente de verdad reutilizable; expone filas tipadas + constantes a cualquier nodo de materialización (Designer, Cine, Animate).',
-    inputs: [{ id: 'brandkit', label: 'BrandKit', type: 'brain' as HandleType }],
+    inputs: [],
     outputs: [{ id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType }],
     dataSchema: {
       label: 'string (nombre del Dataset)',
@@ -685,19 +672,35 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       memberIds: 'string[] (child node ids)',
     }
   },
-  genoma: {
-    type: 'genoma',
-    label: 'Genoma',
+  brandKit: {
+    type: 'brandKit',
+    label: 'BrandKit',
     description:
-      'Libro de estilo vivo: rankea evidencia de marca (tipografía, logo, color, voz, universo visual) y el usuario corona con un tap. Sin merge — solo lista ordenada y corona. Suelta PDFs e imágenes para construir el genoma.',
+      'Libro de estilo vivo: rankea evidencia de marca (tipografía, logo, color, voz, universo visual) y el usuario corona con un tap. Sin merge — solo lista ordenada y corona. Suelta PDFs e imágenes para construir el brandKit.',
     inputs: [],
-    outputs: [
-      { id: 'brand', label: 'Marca', type: 'brain' as HandleType },
-      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
-    ],
+    outputs: [{ id: 'brand', label: 'Marca', type: 'brain' as HandleType }],
     dataSchema: {
       label: 'string (título opcional en la tarjeta)',
-      genome: 'Genome (candidatos rankeados + coronas en node.data)',
+      brandKit: 'BrandKitDocument (slots, sources, compiled en node.data.brandKit)',
+    },
+  },
+  site: {
+    type: 'site',
+    label: 'Site',
+    description:
+      'Compilador de marca a web: pila de bloques (texto, media, botón, collection) con tema global. Conecta BrandKit (ADN), Dataset, Populate o Designer; funciona completo sin edges.',
+    inputs: [
+      { id: 'adn', label: 'ADN', type: 'brain' as HandleType },
+      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
+      { id: 'content', label: 'Contenido', type: 'json' as HandleType },
+      { id: 'media', label: 'Media', type: 'image' as HandleType },
+    ],
+    outputs: [],
+    dataSchema: {
+      label: 'string (título opcional)',
+      project: 'SiteProject { page, theme, publish, ledger }',
+      sectionLabels: 'Record<sectionId, string>',
+      status: 'empty | draft | published',
     },
   },
 };
@@ -709,7 +712,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   promptInput: "value (texto del prompt), label (título visible encima del nodo — obligatorio si el usuario pide nombres/etiquetas por nodo)",
   nanoBanana:
-    "modelKey (flash31|flash25|pro3), aspect_ratio, resolution (1k|2k|4k), thinking (bool), value/s3Key (salida), label; entrada brain desde projectBrain mezcla ADN visual (metadata.assets) con el prompt del usuario",
+    "modelKey (flash31|flash25|pro3), aspect_ratio, resolution (1k|2k|4k), thinking (bool), value/s3Key (salida), label; entrada brain desde BrandKit (marca)",
   grokProcessor: "duration (number, 5|10), resolution, aspect_ratio, value (salida vídeo URL), type ('video'), label",
   geminiVideo:
     "videoModel (veo31|seedance2), videoFormat (16:9|9:16|1:1), resolution (720p|1080p|4K Veo), duration (s), audio (bool), seed, negativePrompt, animationPrompt, cameraPreset, value (salida vídeo URL), type ('video'), s3Key, label",
@@ -736,10 +739,10 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   backgroundRemover: "threshold, expansion, feather",
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
-  genoma:
-    "label (título opcional); genome (Genome en node.data: candidatos rankeados + coronas); salidas brand y dataset; abre Genoma Studio (ingesta PDF/imagen + board)",
-  projectBrain:
-    "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
+  brandKit:
+    "label (título opcional); brandKit (BrandKitDocument en node.data); salida brand (tipo brain → Site adn, Designer, generadores); abre BrandKit Studio",
+  site:
+    "label (título opcional); project (SiteProject: secciones Block[], theme, publish); entradas adn (BrandKit brand), dataset, content (Populate), media (Designer); abre Site Studio",
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:

@@ -15183,17 +15183,17 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
 }
 
 /* ============================================================================
-   Genoma studio — frameless content + shared studio chrome (data-foldder-genoma-studio)
+   BrandKit studio — frameless content + shared studio chrome (data-foldder-brandkit-studio)
    ============================================================================ */
-[data-foldder-genoma-studio] {
+[data-foldder-brandkit-studio] {
   --foldder-studio-accent: #ffbd1b;
 }
 
-.genoma-studio-root {
+.brandKit-studio-root {
   isolation: isolate;
 }
 
-[data-foldder-genoma-studio] .genoma-studio--split {
+[data-foldder-brandkit-studio] .brandKit-studio--split {
   background: var(--surface, #f6f5f2);
   color: var(--text-main, #141414);
 }
@@ -17453,23 +17453,23 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   }
 }
 
-/* Genoma · panel de profundidad (···) — frameless, portal fijo */
-.genoma-depth-trigger-wrap {
+/* BrandKit · panel de profundidad (···) — frameless, portal fijo */
+.brandKit-depth-trigger-wrap {
   position: absolute;
   right: 12px;
   bottom: 12px;
   z-index: 2;
 }
 
-.genoma-depth-trigger-wrap--dark .genoma-depth-trigger {
+.brandKit-depth-trigger-wrap--dark .brandKit-depth-trigger {
   color: rgba(255, 255, 255, 0.72);
 }
 
-.genoma-depth-trigger-wrap--dark .genoma-depth-trigger:hover {
+.brandKit-depth-trigger-wrap--dark .brandKit-depth-trigger:hover {
   color: #ffbd1b;
 }
 
-.genoma-depth-trigger {
+.brandKit-depth-trigger {
   border: 0;
   background: transparent;
   padding: 4px 6px;
@@ -17483,11 +17483,11 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   transition: color 0.15s ease;
 }
 
-.genoma-depth-trigger:hover {
+.brandKit-depth-trigger:hover {
   color: var(--text-main, #1f2328);
 }
 
-.genoma-depth-popover__backdrop {
+.brandKit-depth-popover__backdrop {
   position: fixed;
   inset: 0;
   z-index: 10040;
@@ -17496,7 +17496,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   cursor: default;
 }
 
-.genoma-depth-popover {
+.brandKit-depth-popover {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -17510,7 +17510,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   font-size: 13px;
 }
 
-.genoma-depth-popover__header {
+.brandKit-depth-popover__header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -17519,7 +17519,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   border-bottom: 1px solid rgba(31, 35, 40, 0.08);
 }
 
-.genoma-depth-popover__title {
+.brandKit-depth-popover__title {
   margin: 0;
   font-size: 11px;
   font-weight: 700;
@@ -17527,7 +17527,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   text-transform: lowercase;
 }
 
-.genoma-depth-popover__close {
+.brandKit-depth-popover__close {
   border: 0;
   background: transparent;
   padding: 0;
@@ -17536,11 +17536,11 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   cursor: pointer;
 }
 
-.genoma-depth-popover__close:hover {
+.brandKit-depth-popover__close:hover {
   color: var(--foldder-frameless-text-primary, #1f2328);
 }
 
-.genoma-depth-popover__list {
+.brandKit-depth-popover__list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -17549,34 +17549,34 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   min-height: 0;
 }
 
-.genoma-depth-popover__empty {
+.brandKit-depth-popover__empty {
   padding: 16px;
   color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
 }
 
-.genoma-depth-popover__row {
+.brandKit-depth-popover__row {
   padding: 12px 16px;
   border-bottom: 1px solid rgba(31, 35, 40, 0.06);
 }
 
-.genoma-depth-popover__row:last-child {
+.brandKit-depth-popover__row:last-child {
   border-bottom: 0;
 }
 
-.genoma-depth-popover__row-head {
+.brandKit-depth-popover__row-head {
   display: flex;
   align-items: flex-start;
   gap: 10px;
 }
 
-.genoma-depth-popover__swatch {
+.brandKit-depth-popover__swatch {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
   border-radius: 0;
 }
 
-.genoma-depth-popover__logo {
+.brandKit-depth-popover__logo {
   flex-shrink: 0;
   width: 40px;
   height: 40px;
@@ -17584,12 +17584,12 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   background: rgba(255, 255, 255, 0.85);
 }
 
-.genoma-depth-popover__row-copy {
+.brandKit-depth-popover__row-copy {
   min-width: 0;
   flex: 1;
 }
 
-.genoma-depth-popover__row-title {
+.brandKit-depth-popover__row-title {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -17597,27 +17597,27 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   font-weight: 600;
 }
 
-.genoma-depth-popover__score {
+.brandKit-depth-popover__score {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 500;
   color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
 }
 
-.genoma-depth-popover__sublabel {
+.brandKit-depth-popover__sublabel {
   margin: 4px 0 0;
   font-size: 11px;
   color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
 }
 
-.genoma-depth-popover__signals {
+.brandKit-depth-popover__signals {
   margin: 8px 0 0;
   padding: 0 0 0 14px;
   font-size: 11px;
   color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
 }
 
-.genoma-depth-popover__actions {
+.brandKit-depth-popover__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -17625,7 +17625,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   margin-top: 10px;
 }
 
-.genoma-depth-popover__action {
+.brandKit-depth-popover__action {
   border: 0;
   background: transparent;
   padding: 0;
@@ -17637,31 +17637,31 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   cursor: pointer;
 }
 
-.genoma-depth-popover__action:hover:not(:disabled) {
+.brandKit-depth-popover__action:hover:not(:disabled) {
   color: var(--secondary, #ffbd1b);
 }
 
-.genoma-depth-popover__action:disabled {
+.brandKit-depth-popover__action:disabled {
   opacity: 0.45;
   cursor: wait;
 }
 
-.genoma-depth-popover__action--primary {
+.brandKit-depth-popover__action--primary {
   color: var(--primary, #6c5ce7);
 }
 
-.genoma-depth-popover__status {
+.brandKit-depth-popover__status {
   font-size: 11px;
   font-weight: 600;
   color: var(--foldder-frameless-text-secondary, rgba(31, 35, 40, 0.68));
 }
 
-.genoma-depth-popover__sources {
+.brandKit-depth-popover__sources {
   padding: 10px 16px 14px;
   border-top: 1px solid rgba(31, 35, 40, 0.08);
 }
 
-.genoma-depth-popover__sources-title {
+.brandKit-depth-popover__sources-title {
   margin: 0 0 6px;
   font-size: 11px;
   font-weight: 700;
@@ -17669,7 +17669,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   text-transform: lowercase;
 }
 
-.genoma-depth-popover__sources-list {
+.brandKit-depth-popover__sources-list {
   margin: 0;
   padding: 0;
   list-style: none;

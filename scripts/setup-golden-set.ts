@@ -4,11 +4,11 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { LOGO_LAB_FIXTURES } from "../src/lib/genoma/logo-lab/fixtures";
-import { loadLatestAuditByPrefix } from "../src/lib/genoma/logo-lab/load-audit";
-import { goldenSetDir, visionCacheDir } from "../src/lib/genoma/logo-lab/golden/paths";
-import { writeVisionCache } from "../src/lib/genoma/logo-lab/golden/vision-cache";
-import { loadGoldenManifest } from "../src/lib/genoma/logo-lab/golden/manifest";
+import { LOGO_LAB_FIXTURES } from "../src/lib/brandKit/logo-lab/fixtures";
+import { loadLatestAuditByPrefix } from "../src/lib/brandKit/logo-lab/load-audit";
+import { goldenSetDir, visionCacheDir } from "../src/lib/brandKit/logo-lab/golden/paths";
+import { writeVisionCache } from "../src/lib/brandKit/logo-lab/golden/vision-cache";
+import { loadGoldenManifest } from "../src/lib/brandKit/logo-lab/golden/manifest";
 
 const FIXTURE_FILE_MAP: Record<string, string> = {
   catalogo26: "catalogo26.pdf",

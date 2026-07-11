@@ -4,8 +4,7 @@
  */
 export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   projectAssets: "/logo-folder.png",
-  projectBrain: "/assets/nodes/brain-empty.jpg",
-  genoma: "/assets/nodes/brain-empty.jpg",
+  brandKit: "/assets/nodes/brain-empty.jpg",
   brain: "/assets/nodes/brain-empty.jpg",
   cine: "/assets/nodes/cine-empty-red.png",
   designer: "/assets/nodes/designer-empty-lime.png",
@@ -15,6 +14,7 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   geminiVideo: "/assets/nodes/gemini-video-empty-blue.png",
   nanoBanana: "/assets/nodes/nano-banana-empty-pink.png",
   presenter: "/assets/nodes/presenter-empty-yellow.jpg",
+  site: "/assets/nodes/presenter-empty-yellow.jpg",
   video_editor: "/assets/nodes/video-editor-empty.jpg",
   videoEditor: "/assets/nodes/video-editor-empty.jpg",
   imageCreationAdvanced: "/assets/nodes/nano-banana-empty-pink.png",
@@ -28,7 +28,7 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
 };
 
 const NODE_TYPE_ALIASES: Record<string, string> = {
-  brain: "projectBrain",
+  brain: "brandKit",
   videoEditor: "video_editor",
 };
 

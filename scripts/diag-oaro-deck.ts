@@ -2,12 +2,12 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { loadScriptEnv } from "./load-script-env";
-import { prepareIntakeDocFromBuffer } from "../src/lib/genoma/logo-intake/ingest-files";
-import { runLogoIntakePipeline } from "../src/lib/genoma/logo-intake/pipeline";
-import { saveBatchDocs } from "../src/lib/genoma/logo-intake/batch-store";
-import { ingestPdfIntoGenome } from "../src/lib/genoma/ingest/pdf-ingest-server";
-import { emptyGenome } from "../src/lib/genoma/model/trait";
-import { extractVisualFromPdf, visualTerritoryCount } from "../src/lib/genoma/extractors/visual";
+import { prepareIntakeDocFromBuffer } from "../src/lib/brandKit/logo-intake/ingest-files";
+import { runLogoIntakePipeline } from "../src/lib/brandKit/logo-intake/pipeline";
+import { saveBatchDocs } from "../src/lib/brandKit/logo-intake/batch-store";
+import { ingestPdfIntoGenome } from "../src/lib/brandKit/ingest/pdf-ingest-server";
+import { emptyGenome } from "../src/lib/brandKit/model/trait";
+import { extractVisualFromPdf, visualTerritoryCount } from "../src/lib/brandKit/extractors/visual";
 
 const PDF = "/Users/alejandrotornero/Desktop/OARO/Investor Deck V1.pdf";
 

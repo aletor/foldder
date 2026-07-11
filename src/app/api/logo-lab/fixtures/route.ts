@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import {
   LOGO_LAB_FIXTURES,
   type LogoLabFixtureId,
-} from "@/lib/genoma/logo-lab/fixtures";
-import { auditFileNameForPrefix, loadLatestAuditByPrefix } from "@/lib/genoma/logo-lab/load-audit";
+} from "@/lib/brandkit/logo-lab/fixtures";
+import { auditFileNameForPrefix, loadLatestAuditByPrefix } from "@/lib/brandkit/logo-lab/load-audit";
 
 export const runtime = "nodejs";
 

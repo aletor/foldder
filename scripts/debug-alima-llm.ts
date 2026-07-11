@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildCopyCorpus } from "../src/lib/genoma/crawl/copy-corpus";
-import { fetchCrawlPages } from "../src/lib/genoma/crawl/run-crawl";
-import { synthesizeValues, synthesizeVoice } from "../src/lib/genoma/llm/genoma-llm-synthesis";
+import { buildCopyCorpus } from "../src/lib/brandKit/crawl/copy-corpus";
+import { fetchCrawlPages } from "../src/lib/brandKit/crawl/run-crawl";
+import { synthesizeValues, synthesizeVoice } from "../src/lib/brandKit/llm/brandKit-llm-synthesis";
 
 function loadEnvLocal() {
   try {

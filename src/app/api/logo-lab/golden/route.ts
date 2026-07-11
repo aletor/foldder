@@ -1,16 +1,16 @@
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { countPdfPagesInBuffer } from "@/lib/brain/pdf-brand-extract";
-import { bufferContentSha256 } from "@/lib/genoma/ingest/paid-operations-server";
+import { bufferContentSha256 } from "@/lib/brandkit/ingest/paid-operations-server";
 import {
   getGoldenDocument,
   loadGoldenManifest,
   sanitizeGoldenDocument,
   saveGoldenManifest,
   upsertGoldenDocument,
-} from "@/lib/genoma/logo-lab/golden/manifest";
-import { goldenPdfExists, goldenSetDir, resolveGoldenPdfPath } from "@/lib/genoma/logo-lab/golden/paths";
-import type { GoldenDocument, GoldenSetManifest } from "@/lib/genoma/logo-lab/golden/types";
+} from "@/lib/brandkit/logo-lab/golden/manifest";
+import { goldenPdfExists, goldenSetDir, resolveGoldenPdfPath } from "@/lib/brandkit/logo-lab/golden/paths";
+import type { GoldenDocument, GoldenSetManifest } from "@/lib/brandkit/logo-lab/golden/types";
 
 export const runtime = "nodejs";
 

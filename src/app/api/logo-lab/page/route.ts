@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import { getLogoLabFixture } from "@/lib/genoma/logo-lab/fixtures";
-import { getGoldenDocument } from "@/lib/genoma/logo-lab/golden/manifest";
-import { goldenPdfExists, resolveGoldenPdfPath } from "@/lib/genoma/logo-lab/golden/paths";
-import { renderVisionBatchFramePng } from "@/lib/genoma/logo-lab/render-page";
-import { getLogoLabUpload } from "@/lib/genoma/logo-lab/upload-store";
+import { getLogoLabFixture } from "@/lib/brandkit/logo-lab/fixtures";
+import { getGoldenDocument } from "@/lib/brandkit/logo-lab/golden/manifest";
+import { goldenPdfExists, resolveGoldenPdfPath } from "@/lib/brandkit/logo-lab/golden/paths";
+import { renderVisionBatchFramePng } from "@/lib/brandkit/logo-lab/render-page";
+import { getLogoLabUpload } from "@/lib/brandkit/logo-lab/upload-store";
 
 export const runtime = "nodejs";
 

@@ -1,0 +1,118 @@
+/* BrandKit board — auto-theming from brand ADN (scoped to bento board only) */
+
+.brandKit-v2-bento-board {
+  --brandKit-brand-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --brandKit-brand-duration: 700ms;
+}
+
+/* Alias existing board tokens when brand theme is active */
+.brandKit-v2-bento-board[data-brand-ready="true"] {
+  --brandKit-v2-bg: var(--brand-surface-page);
+  --brandKit-v2-surface: var(--brand-surface-raised);
+  --brandKit-v2-text: var(--brand-ink);
+  --brandKit-v2-heading: var(--brand-ink);
+  --brandKit-v2-muted: var(--brand-ink-soft);
+  --brandKit-v2-divider: var(--brand-rule);
+  --brandKit-v2-border: var(--brand-rule);
+  --brandKit-v2-accent: var(--brand-accent);
+  --brandKit-v2-font: var(--brand-font-text);
+  background: var(--brand-surface-page);
+  color: var(--brand-ink);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-bento-grid {
+  background: var(--brand-rule);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-tile {
+  background: var(--brand-surface-raised);
+  color: var(--brand-ink);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-header {
+  border-bottom-color: var(--brand-rule);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-header__title {
+  font-family: var(--brand-font-display);
+  color: var(--brand-ink);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-header__completeness,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-header__pending,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-header__ready,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-muted {
+  color: var(--brand-ink-soft);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-chapter-label {
+  font-family: var(--brand-font-display);
+  color: var(--brand-ink-soft);
+  border-top-color: var(--brand-rule);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-palette-card__human-name {
+  font-family: var(--brand-font-display);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-prose,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-semantic__summary {
+  color: var(--brand-ink);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-chip {
+  border-color: var(--brand-rule);
+  color: var(--brand-ink);
+}
+
+/* CTAs inside board canvas */
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-foldder-btn:not(.brandKit-foldder-btn--muted):not(.brandKit-foldder-btn--ghost) {
+  background: var(--brand-cta-bg);
+  color: var(--brand-cta-ink);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-foldder-btn--muted {
+  background: color-mix(in srgb, var(--brand-ink) 8%, transparent);
+  color: var(--brand-ink);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-foldder-btn--ghost {
+  color: var(--brand-ink-soft);
+}
+
+/* Motion accent follows brand when themed */
+.brandKit-v2-bento-board[data-brand-ready="true"] {
+  --brandKit-motion-accent: var(--brand-accent);
+}
+
+/* A3 — dark editorial: auto plinth uses derived light surface, not pure white */
+.brandKit-v2-bento-board[data-brand-ready="true"][data-brand-polarity="dark"] .brandKit-v2-logo-plinth--brand-auto {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--brand-plinth-auto-surface) 92%, #ffffff) 0%,
+    var(--brand-plinth-auto-surface) 100%
+  );
+}
+
+/* Crossfade only on live theme changes (not mount) */
+@media (prefers-reduced-motion: no-preference) {
+  .brandKit-v2-bento-board[data-brand-animate="true"],
+  .brandKit-v2-bento-board[data-brand-animate="true"] .brandKit-v2-tile,
+  .brandKit-v2-bento-board[data-brand-animate="true"] .brandKit-v2-header,
+  .brandKit-v2-bento-board[data-brand-animate="true"] .brandKit-v2-block__label,
+  .brandKit-v2-bento-board[data-brand-animate="true"] .brandKit-v2-prose,
+  .brandKit-v2-bento-board[data-brand-animate="true"] .brandKit-v2-muted,
+  .brandKit-v2-bento-board[data-brand-animate="true"] .brandKit-foldder-btn:not(.brandKit-foldder-btn--ghost) {
+    transition:
+      background-color var(--brandKit-brand-duration) var(--brandKit-brand-ease),
+      color var(--brandKit-brand-duration) var(--brandKit-brand-ease),
+      border-color var(--brandKit-brand-duration) var(--brandKit-brand-ease);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brandKit-v2-bento-board[data-brand-animate="true"],
+  .brandKit-v2-bento-board[data-brand-animate="true"] * {
+    transition: none !important;
+  }
+}

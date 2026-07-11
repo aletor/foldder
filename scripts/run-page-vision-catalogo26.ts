@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
  * Corrida Fase A — fixture principal catalogo26.pdf (+ audit log).
- * Requiere GEMINI_API_KEY y GENOMA_PAGE_VISION_PASS_ENABLED=1
+ * Requiere GEMINI_API_KEY y BRAND_KIT_PAGE_VISION_PASS_ENABLED=1
  */
 
 import fs from "node:fs";
@@ -9,15 +9,15 @@ import {
   CATALOGO26_FILENAME,
   CATALOGO26_PDF,
   hasCatalogo26Pdf,
-} from "../src/lib/genoma/fixtures/brandkit-paths";
-import { bufferContentSha256 } from "../src/lib/genoma/ingest/paid-operations-server";
-import { runPageVisionPassForPdf, summarizePageVisionPassRun } from "../src/lib/genoma/ingest/page-vision-pass-runner";
+} from "../src/lib/brandKit/fixtures/brandkit-paths";
+import { bufferContentSha256 } from "../src/lib/brandKit/ingest/paid-operations-server";
+import { runPageVisionPassForPdf, summarizePageVisionPassRun } from "../src/lib/brandKit/ingest/page-vision-pass-runner";
 import { assertValidGeminiApiKey } from "./load-script-env";
 
 async function main() {
   assertValidGeminiApiKey();
-  if (process.env.GENOMA_PAGE_VISION_PASS_ENABLED !== "1") {
-    console.error("Set GENOMA_PAGE_VISION_PASS_ENABLED=1 en .env.local");
+  if (process.env.BRAND_KIT_PAGE_VISION_PASS_ENABLED !== "1") {
+    console.error("Set BRAND_KIT_PAGE_VISION_PASS_ENABLED=1 en .env.local");
     process.exit(1);
   }
   if (!hasCatalogo26Pdf()) {

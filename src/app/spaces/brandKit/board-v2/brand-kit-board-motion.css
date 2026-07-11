@@ -1,0 +1,275 @@
+/* Board slot materialization — crawl/ingest live sequencing */
+
+.brandKit-studio--v2 {
+  --brandKit-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --brandKit-motion-enter: 450ms;
+  --brandKit-motion-glow: 1200ms;
+  --brandKit-motion-accent: var(--foldder-studio-accent, #ffbd1b);
+  --brandKit-motion-radius: 18px;
+}
+
+/* ── Tile enter ── */
+@keyframes brandKit-tile-materialize {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.brandKit-v2-tile--materialize {
+  animation: brandKit-tile-materialize var(--brandKit-motion-enter) var(--brandKit-motion-ease) both;
+}
+
+/* ── Update glow (2ª fuente) ── */
+@keyframes brandKit-tile-glow {
+  0% {
+    box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--brandKit-motion-accent) 0%, transparent);
+  }
+  18% {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--brandKit-motion-accent) 52%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 color-mix(in srgb, var(--brandKit-motion-accent) 0%, transparent);
+  }
+}
+
+.brandKit-v2-tile--glow {
+  animation: brandKit-tile-glow var(--brandKit-motion-glow) var(--brandKit-motion-ease) both;
+}
+
+/* ── Analyze skeleton shimmer (light theme) ── */
+@keyframes brandKit-block-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.brandKit-block-skeleton__line,
+.brandKit-block-skeleton__logo-plinth,
+.brandKit-block-skeleton__swatch,
+.brandKit-block-skeleton__thumb {
+  background: linear-gradient(
+    90deg,
+    rgba(20, 20, 20, 0.05) 0%,
+    rgba(20, 20, 20, 0.1) 50%,
+    rgba(20, 20, 20, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: brandKit-block-skeleton-shimmer 1.6s ease-in-out infinite;
+  border-radius: var(--brandKit-motion-radius);
+}
+
+/* Logo skeleton */
+.brandKit-block-skeleton--logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  flex: 1;
+}
+
+.brandKit-block-skeleton__logo-plinth {
+  width: min(72%, 220px);
+  height: 120px;
+  border-radius: var(--brandKit-motion-radius);
+}
+
+/* Palette skeleton */
+.brandKit-block-skeleton--palette {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  min-height: 120px;
+}
+
+.brandKit-block-skeleton__swatch {
+  flex: 1 1 140px;
+  min-height: 112px;
+  max-width: 220px;
+  border-radius: var(--brandKit-motion-radius);
+}
+
+/* Typography skeleton */
+.brandKit-block-skeleton--typography {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  min-height: 120px;
+}
+
+.brandKit-block-skeleton__type-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.brandKit-block-skeleton__line--short {
+  width: 28%;
+  height: 10px;
+}
+
+.brandKit-block-skeleton__line--title {
+  width: 55%;
+  height: 22px;
+}
+
+.brandKit-block-skeleton__line--specimen {
+  width: 100%;
+  height: 48px;
+  margin-top: 8px;
+}
+
+/* Semantic skeleton */
+.brandKit-block-skeleton--semantic {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.brandKit-block-skeleton__line--headline {
+  width: 62%;
+  height: 18px;
+}
+
+.brandKit-block-skeleton__line--body {
+  width: 100%;
+  height: 12px;
+}
+
+.brandKit-block-skeleton__line--narrow {
+  width: 78%;
+}
+
+/* Gallery skeleton */
+.brandKit-block-skeleton--gallery {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 280px;
+}
+
+.brandKit-block-skeleton__thumb {
+  aspect-ratio: 1;
+  border-radius: 12px;
+}
+
+/* ── Internal stagger (after tile enter) ── */
+@keyframes brandKit-stagger-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes brandKit-logo-unblur {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes brandKit-stagger-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.brandKit-v2-tile--materialize .brandKit-palette-card {
+  opacity: 0;
+  animation: brandKit-stagger-fade-up 360ms var(--brandKit-motion-ease) forwards;
+  animation-delay: calc(var(--brandKit-stagger-i, 0) * 70ms);
+}
+
+.brandKit-v2-tile--materialize .brandKit-type-column__head {
+  opacity: 0;
+  animation: brandKit-stagger-fade-up 320ms var(--brandKit-motion-ease) forwards;
+}
+
+.brandKit-v2-tile--materialize .brandKit-type-column__specimens {
+  opacity: 0;
+  animation: brandKit-stagger-fade 200ms var(--brandKit-motion-ease) 200ms forwards;
+}
+
+.brandKit-v2-tile--materialize .brandKit-v2-logo-plinth,
+.brandKit-v2-tile--materialize .brandKit-v2-logo-candidate__preview {
+  animation: brandKit-logo-unblur var(--brandKit-motion-enter) var(--brandKit-motion-ease) both;
+}
+
+.brandKit-v2-tile--materialize .brandKit-v2-semantic__summary,
+.brandKit-v2-tile--materialize .brandKit-v2-headline,
+.brandKit-v2-tile--materialize .brandKit-v2-semantic__headline {
+  opacity: 0;
+  animation: brandKit-stagger-fade-up 340ms var(--brandKit-motion-ease) forwards;
+}
+
+.brandKit-v2-tile--materialize .brandKit-v2-semantic__chips,
+.brandKit-v2-tile--materialize .brandKit-v2-prose,
+.brandKit-v2-tile--materialize .brandKit-v2-semantic__rest,
+.brandKit-v2-tile--materialize .brandKit-v2-voice-descriptors,
+.brandKit-v2-tile--materialize .brandKit-v2-visual-traits {
+  opacity: 0;
+  animation: brandKit-stagger-fade 280ms var(--brandKit-motion-ease) 120ms forwards;
+}
+
+.brandKit-v2-tile--materialize .brandKit-v2-gallery-item-wrap,
+.brandKit-v2-tile--materialize .brandKit-v2-gallery-generated {
+  opacity: 0;
+  animation: brandKit-stagger-fade-up 300ms var(--brandKit-motion-ease) forwards;
+  animation-delay: min(calc(var(--brandKit-stagger-i, 0) * 50ms), 400ms);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .brandKit-v2-tile--materialize,
+  .brandKit-v2-tile--glow {
+    animation: none !important;
+  }
+
+  .brandKit-block-skeleton__line,
+  .brandKit-block-skeleton__logo-plinth,
+  .brandKit-block-skeleton__swatch,
+  .brandKit-block-skeleton__thumb {
+    animation: none !important;
+    background: rgba(20, 20, 20, 0.07);
+  }
+
+  .brandKit-v2-tile--materialize .brandKit-palette-card,
+  .brandKit-v2-tile--materialize .brandKit-type-column__head,
+  .brandKit-v2-tile--materialize .brandKit-type-column__specimens,
+  .brandKit-v2-tile--materialize .brandKit-v2-logo-plinth,
+  .brandKit-v2-tile--materialize .brandKit-v2-semantic__summary,
+  .brandKit-v2-tile--materialize .brandKit-v2-headline,
+  .brandKit-v2-tile--materialize .brandKit-v2-semantic__headline,
+  .brandKit-v2-tile--materialize .brandKit-v2-semantic__chips,
+  .brandKit-v2-tile--materialize .brandKit-v2-prose,
+  .brandKit-v2-tile--materialize .brandKit-v2-semantic__rest,
+  .brandKit-v2-tile--materialize .brandKit-v2-voice-descriptors,
+  .brandKit-v2-tile--materialize .brandKit-v2-visual-traits,
+  .brandKit-v2-tile--materialize .brandKit-v2-gallery-item-wrap,
+  .brandKit-v2-tile--materialize .brandKit-v2-gallery-generated {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    animation: none !important;
+  }
+}

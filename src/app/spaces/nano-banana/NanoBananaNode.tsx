@@ -26,8 +26,8 @@ import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
 import { useInputMode } from "../input-mode-context";
 import { useNanoBananaViewerTouch } from "./nano-banana-viewer-touch";
-import { composeBrainImageGeneratorPromptWithRuntime, type BrainImageGeneratorPromptDiagnostics } from "@/lib/brain/build-brain-visual-prompt-context";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
+import type { BrainImageGeneratorPromptDiagnostics } from "@/lib/brain/build-brain-visual-prompt-context";
 import {
   FoldderNodeContentDock,
   FoldderNodeContentDockActions,
@@ -52,8 +52,6 @@ import { resolveMediaUrlFromEdgeSource } from "../resolve-connected-media-url";
 import { useAuthedMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
 import { nodeFrameNeedsSync, parseAspectRatioValue, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
-import { useProjectBrainCanvas } from "../project-brain-canvas-context";
-import { normalizeProjectAssets } from "../project-assets-metadata";
 import { takePendingNanoStudioOpenFromCine } from "../cine/cine-nano-open-pending";
 import type { CineImageStudioResult, CineImageStudioSession } from "../cine-types";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
@@ -151,8 +149,7 @@ function selectNanoBananaFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId:
   for (const edge of state.edges) {
     if (edge.target !== nodeId) continue;
     if (!brainConnected && edge.targetHandle === "brain") {
-      const source = state.nodeLookup.get(edge.source);
-      brainConnected = source?.type === "projectBrain";
+      brainConnected = true;
     } else if (!promptEdge && edge.targetHandle === "prompt") {
       promptEdge = edge;
     }
@@ -2360,7 +2357,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       if (!active) requestAnimationFrame(() => updateNodeInternals(id));
     }, [id, updateNodeInternals]),
   );
-  const brainCanvasCtx = useProjectBrainCanvas();
   const brainTelemetry = useBrainNodeTelemetry({ canvasNodeId: id, nodeType: "IMAGE_GENERATOR" });
   const [brainImageDiag, setBrainImageDiag] = useState<BrainImageGeneratorPromptDiagnostics | null>(null);
   const brainDiagRef = useRef<BrainImageGeneratorPromptDiagnostics | null>(null);
@@ -2384,18 +2380,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       }),
     [nanoFlowSnapshot],
   );
-
-  const composeBrainForStudio = useMemo(() => {
-    if (!brainConnected || !brainCanvasCtx?.assetsMetadata) return undefined;
-    return (userThemePrompt: string): { prompt: string; diagnostics: BrainImageGeneratorPromptDiagnostics } | null => {
-      try {
-        const assets = normalizeProjectAssets(brainCanvasCtx.assetsMetadata);
-        return composeBrainImageGeneratorPromptWithRuntime({ assets, userThemePrompt, targetNodeId: id });
-      } catch {
-        return null;
-      }
-    };
-  }, [brainConnected, brainCanvasCtx?.assetsMetadata, id]);
 
   const refreshNanoHandleGeometry = useCallback(() => {
     if (canvasPerformanceModeRef.current) return;
@@ -2623,23 +2607,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       targetAspectRatio: nodeData.aspect_ratio || "16:9",
       textOnlyRecreation,
     });
-    let promptToSend = userPromptRaw;
-    let diagForRun: BrainImageGeneratorPromptDiagnostics | null = null;
-    if (brainConnected && brainCanvasCtx?.assetsMetadata) {
-      try {
-        const assets = normalizeProjectAssets(brainCanvasCtx.assetsMetadata);
-        const pack = composeBrainImageGeneratorPromptWithRuntime({
-          assets,
-          userThemePrompt: userPromptRaw,
-          targetNodeId: id,
-        });
-        promptToSend = pack.prompt;
-        diagForRun = pack.diagnostics;
-      } catch {
-        promptToSend = userPromptRaw;
-        diagForRun = null;
-      }
-    }
+    const promptToSend = userPromptRaw;
 
     const epoch = ++graphGenEpochRef.current;
     setStatus('running');
@@ -2689,16 +2657,16 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         }));
         genFinishedOk = true;
         setStudioTouched(true);
-        setBrainImageDiagSync(diagForRun);
+        setBrainImageDiagSync(null);
         brainTelemetry.track({
           kind: "IMAGE_GENERATED",
           artifactType: "image",
           custom: {
             brainConnected,
-            confirmedVisualPatternsUsed: diagForRun?.confirmedVisualPatternsUsed ?? false,
-            trustedVisualAnalysisCount: diagForRun?.trustedVisualAnalysisCount ?? 0,
-            textOnlyGeneration: diagForRun?.textOnlyGeneration ?? false,
-            usedBrainVisualCompose: Boolean(diagForRun),
+            confirmedVisualPatternsUsed: false,
+            trustedVisualAnalysisCount: 0,
+            textOnlyGeneration: false,
+            usedBrainVisualCompose: false,
           },
         });
         brainTelemetry.track({
@@ -2786,7 +2754,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         type: "target",
         id: "brain",
         dataType: "brain",
-        label: brainConnected ? "✓ BrandKit" : "BrandKit",
+        label: brainConnected ? "✓ Marca" : "Marca",
         labelStyle: brainConnected ? { color: "#a78bfa" } : undefined,
       },
     ];
@@ -2827,7 +2795,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const formatLabel = nodeData.aspect_ratio || "16:9";
   const inputsLabel = useMemo(() => {
     const parts: string[] = [];
-    if (brainConnected) parts.push("BrandKit");
+    if (brainConnected) parts.push("Marca");
     if (promptConnected) parts.push("Prompt");
     const refCount = connectedSlots.filter(Boolean).length;
     if (refCount > 0) parts.push(`${refCount} ref${refCount === 1 ? "" : "s"}`);
@@ -2838,7 +2806,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     : "—";
   const statusLabel = mapNanoBananaStatusLabel(status, isEmpty, isActivelyGenerating);
   const previewLine = isEmpty
-    ? "Conecta Prompt, refs o BrandKit y abre Studio."
+    ? "Conecta Prompt, refs o Marca y abre Studio."
     : isActivelyGenerating
       ? `Generando imagen… ${Math.round(progress)}%`
       : hasGeneratedOutput
@@ -3085,7 +3053,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               <div className="nano-banana-node-empty-hint" aria-hidden>
                 <span className="nano-banana-node-empty-hint__title">Image Creation vacío</span>
                 <span className="nano-banana-node-empty-hint__body">
-                  Conecta Prompt, refs o BrandKit y abre Studio.
+                  Conecta Prompt, refs o Marca y abre Studio.
                 </span>
               </div>
               <FoldderStudioModeCenterButton
@@ -3181,7 +3149,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             thinking={!!nodeData.thinking}
             prompt={studioPrompt}
             externalPromptIgnored={!cineStudioPrompt}
-            composeBrainImageGeneratorPrompt={composeBrainForStudio}
             onBrainImageGeneratorDiagnostics={setBrainImageDiagSync}
             topBarCloseMode={nanoStudioTopBarCloseMode}
             generationHistory={isCineStudioSession ? cineStudioHistory : persistedGenerationHistory}

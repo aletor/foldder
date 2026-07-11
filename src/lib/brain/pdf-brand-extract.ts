@@ -324,7 +324,7 @@ export async function extractPdfRenderPalettePageRecurrence(
   const pages = await renderPdfPages(buffer, { maxPages, dpi });
   if (pages.length === 0) return new Map();
 
-  if (process.env.GENOMA_RENDER_CHANNEL_DEBUG === "1") {
+  if (process.env.BRAND_KIT_RENDER_CHANNEL_DEBUG === "1") {
     const sample = pages[0]!;
     const { data } = await sharp(sample.pngBuffer)
       .extract({ left: Math.floor(sample.width / 2), top: Math.floor(sample.height / 2), width: 1, height: 1 })

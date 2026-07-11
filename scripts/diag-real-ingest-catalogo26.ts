@@ -7,10 +7,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { loadScriptEnv } from "./load-script-env";
-import { ingestPdfIntoGenome } from "../src/lib/genoma/ingest/pdf-ingest-server";
-import { emptyGenome, getTrait } from "../src/lib/genoma/model/trait";
-import { CATALOGO26_FILENAME } from "../src/lib/genoma/fixtures/brandkit-paths";
-import type { LogoValue } from "../src/lib/genoma/model/trait-values";
+import { ingestPdfIntoGenome } from "../src/lib/brandKit/ingest/pdf-ingest-server";
+import { emptyGenome, getTrait } from "../src/lib/brandKit/model/trait";
+import { CATALOGO26_FILENAME } from "../src/lib/brandKit/fixtures/brandkit-paths";
+import type { LogoValue } from "../src/lib/brandKit/model/trait-values";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const PDF = path.join(REPO_ROOT, "fixtures/brandkit/catalogo26.pdf");
@@ -77,7 +77,7 @@ async function main() {
       name: "flags-off",
       cwd: REPO_ROOT,
       opts: { allowPaidAnalysis: true, allowMaterialPrompts: false },
-      env: { GENOMA_PAGE_VISION_PASS_ENABLED: "0", GENOMA_PAGE_VISION_NIVEL1: "0" },
+      env: { BRAND_KIT_PAGE_VISION_PASS_ENABLED: "0", BRAND_KIT_PAGE_VISION_NIVEL1: "0" },
     },
   ] as const;
 

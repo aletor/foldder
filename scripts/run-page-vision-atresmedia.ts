@@ -9,9 +9,9 @@ import {
   ATRESMEDIA_CATALOG_FILENAME,
   ATRESMEDIA_CATALOG_PDF,
   hasAtresmediaCatalogPdf,
-} from "../src/lib/genoma/fixtures/brandkit-paths";
-import { bufferContentSha256 } from "../src/lib/genoma/ingest/paid-operations-server";
-import { runPageVisionPassForPdf, summarizePageVisionPassRun } from "../src/lib/genoma/ingest/page-vision-pass-runner";
+} from "../src/lib/brandKit/fixtures/brandkit-paths";
+import { bufferContentSha256 } from "../src/lib/brandKit/ingest/paid-operations-server";
+import { runPageVisionPassForPdf, summarizePageVisionPassRun } from "../src/lib/brandKit/ingest/page-vision-pass-runner";
 import { assertValidGeminiApiKey } from "./load-script-env";
 
 async function main() {

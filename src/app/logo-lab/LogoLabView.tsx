@@ -1,22 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PageVisionPassRunAudit } from "@/lib/genoma/ingest/page-vision-pass-runner";
-import type { PageVisionLogoInstance } from "@/lib/genoma/ingest/page-vision-pass-schema";
-import type { LogoLabFixtureId } from "@/lib/genoma/logo-lab/fixtures";
+import type { PageVisionPassRunAudit } from "@/lib/brandkit/ingest/page-vision-pass-runner";
+import type { PageVisionLogoInstance } from "@/lib/brandkit/ingest/page-vision-pass-schema";
+import type { LogoLabFixtureId } from "@/lib/brandkit/logo-lab/fixtures";
 import { LogoLabNav } from "./LogoLabNav";
 import {
   bboxXYXYToCssPercent,
   logoLabBboxColor,
   logoLabBboxInterpretation,
   resolveLogoLabBbox,
-} from "@/lib/genoma/logo-lab/bbox-overlay";
-import { auditPageNumbers } from "@/lib/genoma/logo-lab/upload-store";
+} from "@/lib/brandkit/logo-lab/bbox-overlay";
+import { auditPageNumbers } from "@/lib/brandkit/logo-lab/upload-store";
 import {
   logoLabRefineKey,
   type LogoLabDocumentHarvest,
-} from "@/lib/genoma/logo-lab/harvest-types";
-import type { LogoLabDocumentCandidate, LogoLabRefinePayload } from "@/lib/genoma/logo-lab/pick-best-logo";
+} from "@/lib/brandkit/logo-lab/harvest-types";
+import type { LogoLabDocumentCandidate, LogoLabRefinePayload } from "@/lib/brandkit/logo-lab/pick-best-logo";
 import type { LogoLabFixturesResponse } from "@/app/api/logo-lab/fixtures/route";
 import "./logo-lab.css";
 
@@ -458,7 +458,7 @@ export function LogoLabView() {
       ) : null}
       <header className="logo-lab-header">
         <div>
-          <p className="logo-lab-kicker">genoma · laboratorio</p>
+          <p className="logo-lab-kicker">brandKit · laboratorio</p>
           <h1 className="logo-lab-title">logo-lab</h1>
           <p className="logo-lab-subtitle">
             Gemini localiza la zona (semilla ámbar). El código afina a bordes exactos: snap PDF (Nivel 2) o

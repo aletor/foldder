@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildCopyCorpus } from "../src/lib/genoma/crawl/copy-corpus";
-import { fetchCrawlPages } from "../src/lib/genoma/crawl/run-crawl";
+import { buildCopyCorpus } from "../src/lib/brandKit/crawl/copy-corpus";
+import { fetchCrawlPages } from "../src/lib/brandKit/crawl/run-crawl";
 import {
   parseVoiceLlmResponse,
   validateVoiceAgainstCorpus,
-} from "../src/lib/genoma/llm/genoma-llm-validate";
+} from "../src/lib/brandKit/llm/brandKit-llm-validate";
 import { GoogleGenAI } from "@google/genai";
 import { parseJsonObjectFromVisionModelText } from "../src/lib/brain/brain-vision-json-from-text";
 

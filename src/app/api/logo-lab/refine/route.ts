@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import { getLogoLabFixture } from "@/lib/genoma/logo-lab/fixtures";
-import { renderVisionBatchFramePng } from "@/lib/genoma/logo-lab/render-page";
-import { refineLogoLabBbox } from "@/lib/genoma/logo-lab/refine-bbox";
-import { resolveAuditBbox } from "@/lib/genoma/ingest/page-vision-pass-bbox";
-import { getLogoLabUpload } from "@/lib/genoma/logo-lab/upload-store";
+import { getLogoLabFixture } from "@/lib/brandkit/logo-lab/fixtures";
+import { renderVisionBatchFramePng } from "@/lib/brandkit/logo-lab/render-page";
+import { refineLogoLabBbox } from "@/lib/brandkit/logo-lab/refine-bbox";
+import { resolveAuditBbox } from "@/lib/brandkit/ingest/page-vision-pass-bbox";
+import { getLogoLabUpload } from "@/lib/brandkit/logo-lab/upload-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

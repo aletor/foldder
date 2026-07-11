@@ -10,7 +10,7 @@ import { loadEnvConfig } from "@next/env";
 export const GEMINI_KEY_ERROR_MESSAGE =
   "GEMINI_API_KEY ausente o inválida en .env.local — añádela y relanza";
 
-const ENV_LOCAL_OVERRIDE = /^(GEMINI_API_KEY|GOOGLE_API_KEY|GENOMA_.+)$/;
+const ENV_LOCAL_OVERRIDE = /^(GEMINI_API_KEY|GOOGLE_API_KEY|BRAND_KIT_.+)$/;
 
 let envLoaded = false;
 

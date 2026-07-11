@@ -184,11 +184,11 @@ describe("wallet-fetch-preflight", () => {
     }) as unknown as typeof fetch;
 
     const response = await runWalletFetchPreflight({
-      route: "/api/spaces/genoma/gallery/generate",
-      requestInput: "/api/spaces/genoma/gallery/generate",
+      route: "/api/spaces/brandKit/gallery/generate",
+      requestInput: "/api/spaces/brandKit/gallery/generate",
       requestInit: {
         method: "POST",
-        body: JSON.stringify({ genoma: { slots: {} } }),
+        body: JSON.stringify({ brandKit: { slots: {} } }),
       },
       fetcher,
     });
@@ -196,6 +196,6 @@ describe("wallet-fetch-preflight", () => {
     window.removeEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
 
     expect(response).toBeNull();
-    expect(requestedRoute).toBe("/api/spaces/genoma/gallery/generate");
+    expect(requestedRoute).toBe("/api/spaces/brandKit/gallery/generate");
   });
 });

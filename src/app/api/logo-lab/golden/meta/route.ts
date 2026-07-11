@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
 import { countPdfPagesInBuffer } from "@/lib/brain/pdf-brand-extract";
-import { getGoldenDocument } from "@/lib/genoma/logo-lab/golden/manifest";
-import { goldenPdfExists, resolveGoldenPdfPath } from "@/lib/genoma/logo-lab/golden/paths";
+import { getGoldenDocument } from "@/lib/brandkit/logo-lab/golden/manifest";
+import { goldenPdfExists, resolveGoldenPdfPath } from "@/lib/brandkit/logo-lab/golden/paths";
 
 export const runtime = "nodejs";
 

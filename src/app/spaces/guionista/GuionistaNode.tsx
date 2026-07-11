@@ -16,8 +16,6 @@ import {
 } from "../foldder-node-ui";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
 import { nodeFrameNeedsSync, resolveNodeFrameWidth } from "../studio-node-aspect";
-import { normalizeProjectAssets } from "../project-assets-metadata";
-import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import {
   normalizeGuionistaData,
   plainTextFromMarkdown,
@@ -39,7 +37,7 @@ import { useFoldderRenderMetric } from "../use-performance-metrics";
 const GUIONISTA_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "30%", type: "target", id: "prompt", dataType: "prompt", label: "Prompt" },
   { side: "left", top: "52%", type: "target", id: "text", dataType: "txt", label: "Text" },
-  { side: "left", top: "74%", type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
+  { side: "left", top: "74%", type: "target", id: "brain", dataType: "brain", label: "Marca" },
   { side: "right", top: "38%", type: "source", id: "text", dataType: "txt", label: "Text out" },
   { side: "right", top: "68%", type: "source", id: "prompt", dataType: "prompt", label: "Prompt out" },
 ];
@@ -54,7 +52,6 @@ function selectGuionistaConnections(
   state: ReactFlowState<Node, Edge>,
   nodeId: string,
 ): { promptConnected: boolean; textConnected: boolean; brainConnected: boolean; hasConnections: boolean } {
-  const nodeLookup = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
   let promptConnected = false;
   let textConnected = false;
   let brainConnected = false;
@@ -64,8 +61,6 @@ function selectGuionistaConnections(
     if (!handle || handle === "prompt") promptConnected = true;
     if (handle === "text") textConnected = true;
     if (handle === "brain") brainConnected = true;
-    const source = nodeLookup.get(edge.source) ?? state.nodes.find((node) => node.id === edge.source);
-    if (source?.type === "projectBrain") brainConnected = true;
   }
   return {
     promptConnected,
@@ -75,49 +70,8 @@ function selectGuionistaConnections(
   };
 }
 
-function summarizeGuionistaBrainContext(assetsMetadata: unknown, enabled: boolean): GuionistaBrainContext {
-  if (!enabled) return { enabled: false };
-  const assets = normalizeProjectAssets(assetsMetadata);
-  const strategy = assets.strategy;
-  const content = strategy.contentDna;
-  return {
-    enabled: true,
-    tone: [
-      ...strategy.languageTraits,
-      ...strategy.syntaxPatterns,
-      ...(content?.writingDo ?? []),
-    ].filter(Boolean).slice(0, 12),
-    projectContext: [
-      content?.topics?.length ? `Topics: ${content.topics.slice(0, 8).join(", ")}` : "",
-      content?.contentPillars?.length ? `Pillars: ${content.contentPillars.slice(0, 8).join(", ")}` : "",
-      content?.preferredFormats?.length ? `Formats: ${content.preferredFormats.slice(0, 8).join(", ")}` : "",
-    ].filter(Boolean).join("\n"),
-    approvedClaims: [
-      ...strategy.approvedPhrases,
-      ...(content?.approvedClaims ?? []),
-      ...strategy.approvedPatterns,
-    ].filter(Boolean).slice(0, 12),
-    avoidPhrases: [
-      ...strategy.tabooPhrases,
-      ...strategy.forbiddenTerms,
-      ...(content?.forbiddenClaims ?? []),
-      ...(content?.writingAvoid ?? []),
-      ...strategy.rejectedPatterns,
-    ].filter(Boolean).slice(0, 16),
-    notes: [
-      ...(content?.narrativeAngles ?? []),
-      ...(content?.articleStructures ?? []),
-      ...strategy.funnelMessages.map((message) => `${message.stage}: ${message.text}`),
-    ].filter(Boolean).slice(0, 10),
-    references: [
-      ...strategy.factsAndEvidence.map((fact) => [fact.claim, ...fact.evidence].filter(Boolean).join(" · ")).filter(Boolean),
-      ...(content?.evidence ?? []).map((entry) => typeof entry === "string" ? entry : JSON.stringify(entry).slice(0, 240)),
-    ].slice(0, 10),
-    editorialStyle: [
-      ...strategy.preferredTerms.map((term) => `Preferred: ${term}`),
-      ...strategy.voiceExamples.map((example) => example.text).filter(Boolean),
-    ].slice(0, 10),
-  };
+function summarizeGuionistaBrainContext(_enabled: boolean): GuionistaBrainContext {
+  return { enabled: false };
 }
 
 type GuionistaAssetVisualMeta = {
@@ -295,7 +249,7 @@ function selectGuionistaInputSnapshot(
   for (const edge of state.edges) {
     if (edge.target !== nodeId) continue;
     const source = nodeLookup.get(edge.source) ?? state.nodes.find((node) => node.id === edge.source);
-    if (!brainConnected && (source?.type === "projectBrain" || edge.targetHandle === "brain")) {
+    if (!brainConnected && edge.targetHandle === "brain") {
       brainConnected = true;
     }
     const text = textFromStudioSourceNode(source);
@@ -344,7 +298,6 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
     shallow,
   );
   const assetsCtx = useProjectAssetsCanvas();
-  const brainCtx = useProjectBrainCanvas();
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
   const { isStudioOpen, openStudio: openStudioController, closeStudio } = useStudioNodeController({
     nodeId: id,
@@ -411,8 +364,8 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
     [brainConnected],
   );
   const brainContext = useMemo(
-    () => summarizeGuionistaBrainContext(brainCtx?.assetsMetadata, brainConnected),
-    [brainCtx?.assetsMetadata, brainConnected],
+    () => summarizeGuionistaBrainContext(brainConnected),
+    [brainConnected],
   );
   const activeVersionIndex = useMemo(() => {
     const versions = nodeData.versions ?? [];
@@ -423,7 +376,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
     const parts: string[] = [];
     if (connectionSnapshot.promptConnected) parts.push("Prompt");
     if (connectionSnapshot.textConnected) parts.push("Text");
-    if (brainConnected) parts.push("BrandKit");
+    if (brainConnected) parts.push("Marca");
     return parts.length > 0 ? parts.join(" · ") : "—";
   }, [brainConnected, connectionSnapshot.promptConnected, connectionSnapshot.textConnected]);
   const derivativesLabel =
@@ -577,7 +530,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
           {!hasDock ? (
             <>
               <div className="guionista-node-empty-hint" aria-hidden>
-                Conecta Prompt, Text o BrandKit y abre Studio para escribir.
+                Conecta Prompt, Text o Marca y abre Studio para escribir.
               </div>
               <FoldderStudioModeCenterButton
                 label={currentVersion ? "Abrir" : "Empezar"}
@@ -649,7 +602,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
                 <FoldderNodeContentMeta>
                   <FoldderNodeContentMetaRow label="Formato" value={compactTypeLabel} />
                   <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
-                  <FoldderNodeContentMetaRow label="BrandKit" value={brainConnected ? "Conectado" : "—"} />
+                  <FoldderNodeContentMetaRow label="Marca" value={brainConnected ? "Conectado" : "—"} />
                   <FoldderNodeContentMetaRow label="Versión" value={versionLabel} />
                   <FoldderNodeContentMetaRow label="Derivados" value={derivativesLabel} />
                   <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />

@@ -204,10 +204,10 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "Video Editor" };
     case "videoEditor":
       return { label: "Video Editor" };
-    case "projectBrain":
-      return { label: "Brain" };
-    case "genoma":
-      return { label: "Genoma", status: "empty" as const };
+    case "brandKit":
+      return { label: "BrandKit", status: "empty" as const };
+    case "site":
+      return { label: "Site", status: "empty" as const };
     case "projectAssets":
       return { label: "Assets" };
     case "notes":

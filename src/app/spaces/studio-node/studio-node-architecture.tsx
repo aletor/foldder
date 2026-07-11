@@ -82,22 +82,21 @@ export const STUDIO_NODE_MANIFESTS = {
     ownsPortal: false,
     description: "Preproducción audiovisual, reparto, fondos, storyboard y prompts de frames.",
   },
-  projectBrain: {
-    nodeType: "projectBrain",
-    appId: "brain",
+  brandKit: {
+    nodeType: "brandKit",
     label: "BrandKit",
     chrome: "brain",
-    modulePath: "src/app/spaces/ProjectBrainFullscreen.tsx",
-    ownsPortal: true,
-    description: "Gestor de memoria creativa, fuentes, ADN, looks visuales y aprendizajes.",
-  },
-  genoma: {
-    nodeType: "genoma",
-    label: "Genoma",
-    chrome: "brain",
-    modulePath: "src/app/spaces/genoma/GenomaStudio.tsx",
+    modulePath: "src/app/spaces/brandKit/BrandKitStudio.tsx",
     ownsPortal: true,
     description: "ADN de marca editable con procedencia y confirmación por slot.",
+  },
+  site: {
+    nodeType: "site",
+    label: "Site",
+    chrome: "editorial",
+    modulePath: "src/app/spaces/site/SiteStudio.tsx",
+    ownsPortal: true,
+    description: "Compilador de marca a web: bloques, tema y publish SSG.",
   },
   nanoBanana: {
     nodeType: "nanoBanana",

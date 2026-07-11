@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { bufferContentSha256 } from "@/lib/genoma/ingest/paid-operations-server";
-import { runPageVisionPassNivel1ForPdf } from "@/lib/genoma/ingest/page-vision-pass-nivel1-runner";
-import { harvestLogoLabDocument } from "@/lib/genoma/logo-lab/harvest-document-logos";
-import { storeLogoLabUpload } from "@/lib/genoma/logo-lab/upload-store";
+import { bufferContentSha256 } from "@/lib/brandkit/ingest/paid-operations-server";
+import { runPageVisionPassNivel1ForPdf } from "@/lib/brandkit/ingest/page-vision-pass-nivel1-runner";
+import { harvestLogoLabDocument } from "@/lib/brandkit/logo-lab/harvest-document-logos";
+import { storeLogoLabUpload } from "@/lib/brandkit/logo-lab/upload-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;

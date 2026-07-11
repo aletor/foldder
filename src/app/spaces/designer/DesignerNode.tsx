@@ -51,13 +51,6 @@ import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import { useDesignerConnectedDataset } from "./use-designer-connected-dataset";
 import {
-  brainBrandSignature,
-  mergeBrainBrandIntoConstants,
-} from "@/app/spaces/brandkit/brandkit-logic";
-import { shouldUseLegacyBrainBrandMerge } from "@/lib/brandkit/brandkit-legacy-migration";
-import { useProjectBrainCanvas } from "../project-brain-canvas-context";
-import { normalizeProjectAssets } from "../project-assets-metadata";
-import {
   applyDatasetToAllPages,
   collectDatasetLoopListId,
   reconcileDatasetLoopPages,
@@ -80,7 +73,7 @@ function resolveDesignerNodeHeight(args: { baseHeight: number; hasDock: boolean 
 }
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
-  { side: "left", top: "20%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
+  { side: "left", top: "20%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Marca" },
   { side: "left", top: "40%", style: { transform: "translateY(-50%)" }, type: "target", id: "dataset", dataType: "dataset", label: "Dataset" },
   { side: "left", top: "80%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
   { side: "right", top: "30%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
@@ -171,49 +164,9 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       [id],
     ),
   );
-  const brainSourceNode = useStore(
-    useCallback(
-      (state: ReactFlowState<Node, Edge>) => {
-        if (!brainNodeId) return null;
-        return state.nodeLookup.get(brainNodeId) ?? state.nodes.find((n) => n.id === brainNodeId) ?? null;
-      },
-      [brainNodeId],
-    ),
-    shallow,
-  );
   const brainConnected = !!brainNodeId;
-  const brainCanvasCtx = useProjectBrainCanvas();
-  const brainBrand = useMemo(() => {
-    if (!brainNodeId) return null;
-    if (brainSourceNode?.type === "genoma") {
-      return null;
-    }
-    return normalizeProjectAssets(brainCanvasCtx?.assetsMetadata).brand;
-  }, [brainNodeId, brainSourceNode, brainCanvasCtx?.assetsMetadata]);
-  const brainBrandSig = useMemo(() => brainBrandSignature(brainNodeId, brainBrand), [brainNodeId, brainBrand]);
-  const { datasetConnected, connectedDataset, datasetLoading, brandKitLink } = useDesignerConnectedDataset(id);
-  /**
-   * Dataset efectivo: el conectado + la marca del BrandKit (Brain) conectado —logo/colores—
-   * inyectados como constantes namespaced. Es lo que se aplica a las páginas y se pasa al estudio,
-   * de modo que los bindings `source: "node"`/`"constant"` resuelven por la vía de constantes ya
-   * existente.
-   */
-  const effectiveDataset = useMemo(
-    () => {
-      const useLegacyMerge = shouldUseLegacyBrainBrandMerge({
-        brainNodeId,
-        connectedDataset,
-        brandKitLink,
-      });
-      if (brainNodeId && brainBrand && useLegacyMerge) {
-        return mergeBrainBrandIntoConstants(connectedDataset, brainNodeId, brainBrand);
-      }
-      return connectedDataset;
-    },
-    // brainBrandSig captura el cambio de contenido sin re-fusionar en cada tick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [connectedDataset, brainBrandSig, brandKitLink, brainNodeId],
-  );
+  const { datasetConnected, connectedDataset, datasetLoading } = useDesignerConnectedDataset(id);
+  const effectiveDataset = connectedDataset;
   const currentNodeFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
     shallow,
@@ -503,8 +456,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       lastNodeDatasetSyncRef.current = null;
       return;
     }
-    // La firma de la marca (Brain) entra en la clave: editar el BrandKit re-aplica aunque el Dataset no cambie.
-    const syncKey = `${ds.id}:${ds.version}:${brainBrandSig}`;
+    const syncKey = `${ds.id}:${ds.version}`;
     // Con el estudio abierto manda el estudio; solo marcamos para no duplicar al cerrar.
     if (isStudioOpen) {
       lastNodeDatasetSyncRef.current = syncKey;
@@ -537,7 +489,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
           : n,
       ),
     );
-  }, [effectiveDataset, brainBrandSig, isStudioOpen, id, setNodes, nodeData.pages, activeIdx]);
+  }, [effectiveDataset, isStudioOpen, id, setNodes, nodeData.pages, activeIdx]);
 
   /**
    * Layerizer → Designer: al conectar un Image Layout, abrir un documento nuevo del tamaño
@@ -628,7 +580,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const objectsLabel = `${objectCount} objeto${objectCount === 1 ? "" : "s"}`;
   const inputsLabel = useMemo(() => {
     const parts: string[] = [];
-    if (brainConnected) parts.push("BrandKit");
+    if (brainConnected) parts.push("Marca");
     if (datasetConnected) parts.push("Dataset");
     if (layerizerConnected) parts.push("Layout");
     return parts.length > 0 ? parts.join(" · ") : "—";
@@ -649,7 +601,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       ? `${pagesLabel} · ${objectsLabel}`
       : hasConnections
         ? "Entradas conectadas. Abre Studio para diseñar."
-        : "Componé páginas, enlazá Dataset o BrandKit y exportá.";
+        : "Componé páginas, enlazá Dataset o Marca y exportá.";
 
   return (
     <StudioCanvasNodeShell
@@ -729,7 +681,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
               <div className="designer-node-empty-hint" aria-hidden>
                 <span className="designer-node-empty-hint__title">Designer vacío</span>
                 <span className="designer-node-empty-hint__body">
-                  Conecta BrandKit, Dataset o Layout y abre Studio.
+                  Conecta Marca, Dataset o Layout y abre Studio.
                 </span>
               </div>
               <FoldderStudioModeCenterButton
@@ -779,7 +731,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             initialPageThumbnails={nodeData.pageThumbnails ?? {}}
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
-            datasetConnected={datasetConnected || !!(effectiveDataset && effectiveDataset !== connectedDataset)}
+            datasetConnected={datasetConnected}
             designerConnectedDataset={effectiveDataset}
             designerConnectedDatasetLoading={datasetLoading}
             onClose={() => {

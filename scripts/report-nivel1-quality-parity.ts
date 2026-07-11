@@ -2,9 +2,9 @@
 /** Consolida paridad Fase B desde audits cacheados (último audit por sha). */
 import fs from "node:fs";
 import path from "node:path";
-import { arbitrateBrandIdentity } from "../src/lib/genoma/ingest/page-vision-identity-arbitration";
-import { buildLogoCandidatesFromPageVision } from "../src/lib/genoma/ingest/page-vision-pass-apply";
-import { assessWordmarkIntegrityStatus } from "../src/lib/genoma/ingest/page-vision-wordmark-integrity";
+import { arbitrateBrandIdentity } from "../src/lib/brandKit/ingest/page-vision-identity-arbitration";
+import { buildLogoCandidatesFromPageVision } from "../src/lib/brandKit/ingest/page-vision-pass-apply";
+import { assessWordmarkIntegrityStatus } from "../src/lib/brandKit/ingest/page-vision-wordmark-integrity";
 
 const RUNS = path.join(process.cwd(), "fixtures/page-vision-pass/runs");
 

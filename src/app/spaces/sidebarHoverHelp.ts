@@ -16,12 +16,8 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Cine',
     line: 'Preproducción audiovisual: guion, reparto, fondos, storyboard y prompts de frames',
   },
-  projectBrain: {
+  brandKit: {
     title: 'BrandKit',
-    line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre el BrandKit para editar',
-  },
-  genoma: {
-    title: 'Genoma',
     line: 'Libro de estilo vivo: evidencia rankeada y coronación con un tap; sin merge de Brain',
   },
   projectAssets: {
@@ -111,6 +107,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   presenter: {
     title: 'Presenter',
     line: 'Conecta Document del Designer: cada página es un slide con animaciones, transiciones y vídeos en imágenes',
+  },
+  site: {
+    title: 'Site',
+    line: 'Compila tu marca en web: bloques + tema. Conecta BrandKit (ADN), Dataset, Populate o Designer',
   },
   video_editor: {
     title: 'Video Editor',

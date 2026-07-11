@@ -18,7 +18,8 @@ describe("Studio node architecture", () => {
 
   it("resolves manifests by node type or app id", () => {
     expect(getStudioNodeManifest("designer")?.label).toBe("Designer");
-    expect(getStudioNodeManifest("brain")?.nodeType).toBe("projectBrain");
+    expect(getStudioNodeManifest("brandKit")?.label).toBe("BrandKit");
+    expect(getStudioNodeManifest("brain")).toBeUndefined();
     expect(getStudioNodeManifest("unknown")).toBeUndefined();
   });
 });

@@ -6,7 +6,7 @@
 import {
   formatBenchmarkTable,
   runLogoBenchmark,
-} from "../src/lib/genoma/logo-lab/golden/benchmark";
+} from "../src/lib/brandKit/logo-lab/golden/benchmark";
 
 function parseArgs(argv: string[]): { docId?: string; noCache?: boolean } {
   const options: { docId?: string; noCache?: boolean } = {};

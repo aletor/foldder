@@ -3,7 +3,7 @@ import { LogoLabView } from "./LogoLabView";
 import "./logo-lab.css";
 
 export const metadata: Metadata = {
-  title: "Logo Lab · Genoma",
+  title: "Logo Lab · BrandKit",
   description: "Laboratorio de bbox del modelo sobre páginas PDF — camino limpio sin fallback determinista",
   robots: { index: false, follow: false },
 };

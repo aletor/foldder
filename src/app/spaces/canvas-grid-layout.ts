@@ -41,6 +41,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   painter: { cols: 5, rows: 3 },
   lightroom: { cols: 5, rows: 3 },
   presenter: { cols: 5, rows: 3 },
+  site: { cols: 5, rows: 3 },
 
   // Tier 2b — 4×4 · datasets de proyecto
   dataset: { cols: 4, rows: 4 },
@@ -59,8 +60,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   imageExport: { cols: 3, rows: 2 },
   export_multimedia: { cols: 5, rows: 4 },
   exportMultiple: { cols: 5, rows: 4 },
-  projectBrain: { cols: 3, rows: 2 },
-  genoma: { cols: 3, rows: 2 },
+  brandKit: { cols: 3, rows: 2 },
   projectAssets: { cols: 3, rows: 2 },
   space: { cols: 3, rows: 2 },
 

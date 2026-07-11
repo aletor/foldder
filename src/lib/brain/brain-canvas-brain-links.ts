@@ -1,6 +1,6 @@
 import type { BrainNodeType } from "./brain-telemetry";
 
-/** Forma mínima de nodo/edge del canvas para derivar enlaces Brain. */
+/** Forma mínima de nodo/edge del canvas para derivar enlaces de marca. */
 export type BrainFlowNodeLite = {
   id: string;
   type?: string;
@@ -16,14 +16,12 @@ export type BrainFlowEdgeLite = {
 
 export type BrainDownstreamClient = {
   id: string;
-  /** Tipo de nodo en el registro del canvas (p. ej. designer, photoRoom). */
   canvasType: string;
-  /** Tipo estable para UI / telemetría. */
   brainNodeType: BrainNodeType | "OTHER";
   label: string;
 };
 
-const BRAIN_OUT = "brain";
+const BRAND_KIT_BRAND_OUT = "brand";
 
 function pickLabel(n: BrainFlowNodeLite): string {
   const d = n.data;
@@ -41,7 +39,7 @@ function humanizeCanvasType(t: string): string {
     designer: "Designer",
     photoRoom: "Photoroom",
     articleWriter: "Article Writer",
-    projectBrain: "Brain",
+    brandKit: "BrandKit",
     nanoBanana: "Imagen",
     presentation: "Presentación",
   };
@@ -68,29 +66,31 @@ function toBrainNodeType(canvasType: string | undefined): BrainNodeType | "OTHER
   }
 }
 
-/** Ids de nodos Brain (projectBrain) en el grafo. */
-export function findProjectBrainNodeIds(nodes: BrainFlowNodeLite[]): string[] {
-  return nodes.filter((n) => n.type === "projectBrain").map((n) => n.id);
+/** Ids de nodos BrandKit en el grafo. */
+export function findBrandKitNodeIds(nodes: BrainFlowNodeLite[]): string[] {
+  return nodes.filter((n) => n.type === "brandKit").map((n) => n.id);
 }
 
-/**
- * Nodos que reciben salida Brain (arista desde projectBrain con handle `brain`).
- * Placeholder para futuro `listConnectedBrainNodes(projectId)`.
- */
+/** @deprecated Use findBrandKitNodeIds */
+export function findProjectBrainNodeIds(nodes: BrainFlowNodeLite[]): string[] {
+  return findBrandKitNodeIds(nodes);
+}
+
+/** Nodos que reciben salida de marca (arista desde brandKit con handle `brand`). */
 export function listDownstreamBrainClients(
   nodes: BrainFlowNodeLite[] | undefined,
   edges: BrainFlowEdgeLite[] | undefined,
 ): BrainDownstreamClient[] {
   if (!nodes?.length || !edges?.length) return [];
-  const brainIds = new Set(findProjectBrainNodeIds(nodes));
-  if (brainIds.size === 0) return [];
+  const brandKitIds = new Set(findBrandKitNodeIds(nodes));
+  if (brandKitIds.size === 0) return [];
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const seen = new Set<string>();
   const out: BrainDownstreamClient[] = [];
   for (const e of edges) {
-    if (!brainIds.has(e.source)) continue;
-    if (e.sourceHandle !== BRAIN_OUT) continue;
-    if (e.targetHandle !== "brain") continue;
+    if (!brandKitIds.has(e.source)) continue;
+    if (e.sourceHandle !== BRAND_KIT_BRAND_OUT) continue;
+    if (e.targetHandle !== "brain" && e.targetHandle !== "adn") continue;
     if (seen.has(e.target)) continue;
     const target = byId.get(e.target);
     if (!target) continue;

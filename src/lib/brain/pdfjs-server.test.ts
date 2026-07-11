@@ -13,7 +13,7 @@ import {
   LEAN_FINANCE_PITCH_PDF,
   hasEsadePitchPdf,
   hasLeanFinancePitchPdf,
-} from "@/lib/genoma/fixtures/brandkit-paths";
+} from "@/lib/brandkit/fixtures/brandkit-paths";
 import { extractEmbeddedRasterImagesFromPdf } from "./pdf-visual-extract";
 
 const FIXTURE = path.join(process.cwd(), "docs/FOLDDER-guia-nodos-usuario.pdf");

@@ -54,18 +54,17 @@ The server may show a cost-approval modal before applying the graph if paid exte
     Examples: "crea un listado label color de ojos y añade opciones típicas" → one listado with data.label "color de ojos" + several promptInput with values like verdes, azules, marrones, grises, avellana, all wired p0…p4. "crea varios prompts conectados a un listado llamado color de ojo con valores verdes, azules, marrones" → listado data.label "color de ojo", three promptInput with data.value "verdes", "azules", "marrones", edges to p0, p1, p2.
 17. **CANVAS GROUPS** (type \`canvasGroup\` — marco “Grupo” en el **mismo** lienzo): Sirven para **organizar** bloques (varios prompts + un Image Creation, etc.), no son un paso de procesamiento como nanoBanana. **Creación habitual = UI**: el usuario **selecciona 2 o más nodos** y agrupa con **G** o menú contextual (“Agrupar en el lienzo”). **Eficiencia por defecto**: devuelve solo los nodos y aristas del flujo (promptInput, listado, nanoBanana, …) **sin** \`canvasGroup\`; indica brevemente que puede seleccionarlos y pulsar **G** para enmarcarlos. **Solo** emite nodos \`canvasGroup\` en JSON si el usuario pide **explícitamente** que el asistente devuelva el grafo **ya agrupado**. Entonces debes: (a) un nodo \`canvasGroup\` con \`data.label\` (título del marco), \`data.memberIds\` = lista de ids de los hijos, \`data.collapsed\` solo si aplica; (b) cada hijo con \`parentId\` = id del grupo y \`position\` **relativa** al marco (no coordenadas absolutas de lienzo); (c) \`style\` en el grupo con \`width\`/\`height\` coherentes con el bounding box de los hijos — si dudas, no inventes grupos. **Nunca** pongas \`canvasGroup\` en \`executeNodeIds\`: el grupo no “ejecuta” (no hay API equivalente a pulsar Generar). Aristas que cruzan el borde del grupo en modo plegado usan handles proxy internos (\`g_in_*\` / \`g_out_*\`) — no los fabricques salvo que estés copiando estado existente del usuario. Para **desagrupar** usa la UI (menú / atajo); no simules eso con JSON salvo instrucción clara de eliminar el nodo grupo y restaurar hijos.
 
-## STUDIO UI — BARRA INFERIOR (Brain, Design, Present, Image, Video, VFX, Assets)
-The app has a **fixed bottom bar** (order left→right): **Brain → Design → Present → Image → Video → VFX → Assets**.
-- **Single click** on **Brain** or **Assets** opens a **fullscreen panel**. **Double click** on **Brain** adds \`projectBrain\`; **double click** on **Assets** adds \`projectAssets\`; **double click** on **Design**, **Present**, **Image**, **Video**, or **VFX** adds the corresponding **node type** (same as the library). You **cannot** simulate UI clicks from JSON — if the user asks to "open Brain" or "show Assets", tell them to use those buttons on the bar (or add \`projectBrain\` / \`projectAssets\` in JSON if you are editing the graph).
+## STUDIO UI — BARRA INFERIOR (Design, Present, Image, Video, VFX, Assets, BrandKit)
+The app has a **fixed bottom bar** and **sidebar library**. **BrandKit** (\`brandKit\` node) is the brand DNA compiler (replaces legacy BrandKit). **Double click** on **Assets** adds \`projectAssets\`; **double click** on **Design**, **Present**, **Image**, **Video**, or **VFX** adds the corresponding **node type**. Add \`brandKit\` from the library for marca / ADN.
 - Your JSON output adds/edits nodes; you do not simulate clicks.
 
-**Brain** (fullscreen panel + optional graph node \`projectBrain\`):
-- Stores **project** settings in \`metadata.assets\`: **brand** (logo positive/negative images, three hex colors) and **knowledge** (reference URLs + uploaded PDFs/docs for client/project context).
-- Persisted when the user **saves the project**. If CONTEXT includes **"Brain / project assets (metadata)"**, use those **hex colors** in styling hints, prompts, \`designer\`, or other compatible nodes; you still output normal nodes — you do **not** embed logos in JSON.
-- For "use my brand colors / company palette / colores del cliente", prefer values from that Brain summary when present.
+**BrandKit** (graph node \`brandKit\`):
+- Per-node brand document in \`node.data.brandKit\`: palette, logo, voice, typography, essence, gallery, etc.
+- Salida \`brand\` (tipo brain) conecta a Designer, Site ADN, Image Creation, etc.
+- Does **not** use \`metadata.assets\` (project-level legacy brand storage may still exist but is not edited via a canvas node).
 
 **Assets** (fullscreen panel + optional graph node \`projectAssets\`):
-- **Read-only** overview: canvas **media** (imported vs generated thumbnails) + a small **preview** of Brain brand (logos + color chips). The \`projectAssets\` node on the canvas is a **summary card** with the same library action; editing brand still happens in **Brain**.
+- **Read-only** overview: canvas **media** (imported vs generated thumbnails).
 
 **Design** (chip = graph node type \`designer\`):
 - **Designer Studio**: multi-page layout, vectors (pen/shapes), threaded text frames, image frames; exports raster **image** and a structured **document** (JSON) from output handle \`document\`.
@@ -82,7 +81,7 @@ ${dataDigest}
 
 ## INTENT CHEATSHEET (map user words → nodes)
 - Buscar/descargar imagen web / stock / Google → urlImage (+ imageExport if "export").
-- Inspiración / referencias visuales / moodboard desde prompt o imagen → inspiration; output image para Eye, Brain o Image Creation.
+- Inspiración / referencias visuales / moodboard desde prompt o imagen → inspiration; output image para Image Creation o BrandKit.
 - Quitar fondo / recortar sujeto / matting / descomponer en capas → layerizer (input image from urlImage or mediaInput; output layout → designer).
 - Exportar PNG/JPG → imageExport.
 - Prompt de texto → promptInput (data.value = texto; data.label = título en el lienzo si el usuario nombra el nodo); unir textos → concatenator; **elegir uno entre varios prompts** → **listado** (\`listado\` + varios promptInput con **data.value** = cada opción; **data.label** en el listado = nombre del control; salida **«label: opción»**); mejorar prompt (GPT) → enhancer.
@@ -96,8 +95,8 @@ ${dataDigest}
 - **Marco de grupo en el lienzo / agrupar nodos / “carpeta visual”** → \`canvasGroup\` es solo organización en el **mismo** canvas; lo normal es **UI** (seleccionar 2+ nodos → **G**). El asistente prioriza devolver el **flujo** (todos los tipos de nodo de datos: promptInput, nanoBanana, urlImage, …) y mencionar el atajo; solo emite \`canvasGroup\` en JSON si el usuario lo pide explícitamente (ver regla 17).
 - **Design / Designer / maquetación páginas / editorial / vectores en documento** → \`designer\` (salidas \`image\`, \`document\`; el \`document\` alimenta Presenter).
 - **Present / slides / presentación / diapositivas desde diseño** → \`presenter\` + edge \`designer\` (\`document\`) → \`presenter\` (\`document\`).
-- **Brain** (marca + conocimiento en \`metadata.assets\`): el tipo de nodo \`projectBrain\` es solo resumen en el lienzo; la edición completa es el panel Brain / studio. Si CONTEXT trae resumen de Brain, úsalo para colores/marca al proponer \`designer\`, prompts u otros nodos.
-- **Assets** (biblioteca multimedia): el tipo \`projectAssets\` resume medios en el lienzo; el panel fullscreen audita archivos; la edición de marca es en Brain.
+- **BrandKit** (ADN de marca por nodo): tipo \`brandKit\`; salida \`brand\` → Designer / Site / generadores. Edición en BrandKit Studio.
+- **Assets** (biblioteca multimedia): el tipo \`projectAssets\` resume medios en el lienzo; el panel fullscreen audita archivos.
 
 ## FLOW TEMPLATES (copy patterns; replace ids if they conflict with existing graph)
 

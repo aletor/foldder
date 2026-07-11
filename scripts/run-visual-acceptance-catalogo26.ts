@@ -1,22 +1,22 @@
 #!/usr/bin/env npx tsx
 /**
  * Informe de aceptación visual Fase B — catalogo26.
- * Emite: path audit diff, variantes claro/oscuro, integridad wordmark, genoma fresco.
+ * Emite: path audit diff, variantes claro/oscuro, integridad wordmark, brandKit fresco.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
-import { CATALOGO26_FILENAME, CATALOGO26_PDF } from "../src/lib/genoma/fixtures/brandkit-paths";
-import { buildLogoCandidatesFromPageVision } from "../src/lib/genoma/ingest/page-vision-pass-apply";
-import { arbitrateBrandIdentity } from "../src/lib/genoma/ingest/page-vision-identity-arbitration";
-import { ingestPdfIntoGenome } from "../src/lib/genoma/ingest/pdf-ingest-server";
-import { emptyGenome } from "../src/lib/genoma/model/trait";
-import { findCrownedLogoVectorizeJob } from "../src/lib/genoma/projection/logo-vectorize-action";
-import type { PageVisionPassRunAudit } from "../src/lib/genoma/ingest/page-vision-pass-runner";
-import type { LogoVariantAsset } from "../src/lib/genoma/model/trait-values";
+import { CATALOGO26_FILENAME, CATALOGO26_PDF } from "../src/lib/brandKit/fixtures/brandkit-paths";
+import { buildLogoCandidatesFromPageVision } from "../src/lib/brandKit/ingest/page-vision-pass-apply";
+import { arbitrateBrandIdentity } from "../src/lib/brandKit/ingest/page-vision-identity-arbitration";
+import { ingestPdfIntoGenome } from "../src/lib/brandKit/ingest/pdf-ingest-server";
+import { emptyGenome } from "../src/lib/brandKit/model/trait";
+import { findCrownedLogoVectorizeJob } from "../src/lib/brandKit/projection/logo-vectorize-action";
+import type { PageVisionPassRunAudit } from "../src/lib/brandKit/ingest/page-vision-pass-runner";
+import type { LogoVariantAsset } from "../src/lib/brandKit/model/trait-values";
 
-const OUT = "docs/genoma-evidence";
+const OUT = "docs/brandKit-evidence";
 const AUDIT_PATH =
   process.env.CATALOGO26_AUDIT_PATH ??
   "fixtures/page-vision-pass/runs/f9e683edde0a-2026-07-07T06-37-27-385Z.audit.json";
@@ -73,7 +73,7 @@ async function main() {
   }
 
   let genome = emptyGenome();
-  if (process.env.GENOMA_PAGE_VISION_PASS_ENABLED === "1") {
+  if (process.env.BRAND_KIT_PAGE_VISION_PASS_ENABLED === "1") {
     for await (const event of ingestPdfIntoGenome(buffer, CATALOGO26_FILENAME, genome, {
       allowPaidAnalysis: true,
       allowMaterialPrompts: false,

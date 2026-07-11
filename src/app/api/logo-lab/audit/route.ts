@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import { getLogoLabFixture } from "@/lib/genoma/logo-lab/fixtures";
-import { harvestLogoLabDocument } from "@/lib/genoma/logo-lab/harvest-document-logos";
+import { getLogoLabFixture } from "@/lib/brandkit/logo-lab/fixtures";
+import { harvestLogoLabDocument } from "@/lib/brandkit/logo-lab/harvest-document-logos";
 import {
   getCachedLogoLabHarvest,
   logoLabFixtureHarvestCacheKey,
   setCachedLogoLabHarvest,
-} from "@/lib/genoma/logo-lab/harvest-cache";
-import { loadLatestAuditByPrefix } from "@/lib/genoma/logo-lab/load-audit";
+} from "@/lib/brandkit/logo-lab/harvest-cache";
+import { loadLatestAuditByPrefix } from "@/lib/brandkit/logo-lab/load-audit";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;

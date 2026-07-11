@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LogoLabNav } from "../LogoLabNav";
-import { bboxXYXYToCssPercent } from "@/lib/genoma/logo-lab/bbox-overlay";
-import type { GoldenDocument, GroundTruthLogo, DocumentResult } from "@/lib/genoma/logo-lab/golden/types";
+import { bboxXYXYToCssPercent } from "@/lib/brandkit/logo-lab/bbox-overlay";
+import type { GoldenDocument, GroundTruthLogo, DocumentResult } from "@/lib/brandkit/logo-lab/golden/types";
 import "../logo-lab.css";
 
 type AnnotatedLogo = GroundTruthLogo & { clientId: string };
@@ -305,7 +305,7 @@ export function GoldenAnnotateView({
     <div className="logo-lab">
       <header className="logo-lab-header">
         <div>
-          <p className="logo-lab-kicker">genoma · golden set</p>
+          <p className="logo-lab-kicker">brandKit · golden set</p>
           <h1 className="logo-lab-title">anotación GT</h1>
           <p className="logo-lab-subtitle">
             Dibuja rects en espacio de página (0–1). Solo guarda en desarrollo.

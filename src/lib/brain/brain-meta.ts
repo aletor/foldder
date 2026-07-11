@@ -1,6 +1,6 @@
 import type { BrainMeta, BrainMetaAnalysisStatus } from "./brain-creative-memory-types";
-import { normalizeBrandPipelineDiagnostics } from "@/lib/brandkit/brand-pipeline-diagnostics";
-import { normalizeBrandKitBoardMeta } from "@/lib/brandkit/interpretation";
+import { normalizeBrandPipelineDiagnostics } from "@/lib/brandkit-runtime/brand-pipeline-diagnostics";
+import { normalizeBrandKitBoardMeta } from "@/lib/brandkit-runtime/interpretation";
 import { filterOutStaleReasons, KNOWLEDGE_STALE_REASONS, VISUAL_STALE_REASONS } from "./brain-stale-reasons";
 
 export function normalizeBrainMeta(raw: unknown): BrainMeta {

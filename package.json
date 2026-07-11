@@ -13,7 +13,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:genoma-regression": "vitest run src/lib/genoma/ingest/genoma-real-ingest-gate.test.ts src/lib/genoma/ingest/genoma-regression-matrix.test.ts src/lib/genoma/ingest/page-vision-prepass-jpx.test.ts src/lib/brain/pdfjs-server.test.ts",
+    "test:brand-kit-regression": "vitest run src/lib/brandkit/ingest/brand-kit-real-ingest-gate.test.ts src/lib/brandkit/ingest/brand-kit-regression-matrix.test.ts src/lib/brandkit/ingest/page-vision-prepass-jpx.test.ts src/lib/brain/pdfjs-server.test.ts",
     "test:watch": "vitest",
     "perf:budget": "tsx scripts/check-performance-budget.ts",
     "migrate:dynamo": "tsx scripts/migrate-json-to-dynamo.ts",

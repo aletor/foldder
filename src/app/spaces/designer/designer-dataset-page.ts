@@ -6,8 +6,7 @@ import {
   getListFieldTextAtRow,
 } from "@/app/spaces/dataset/dataset-logic";
 import type { Dataset, FieldValue } from "@/app/spaces/dataset/dataset-types";
-import { brandKitConstantId } from "@/app/spaces/brandkit/brandkit-logic";
-import { applyDesignerDatasetPropertyBindings } from "./designer-dataset-property";
+import { applyDesignerDatasetPropertyBindings, brandKitConstantId } from "./designer-dataset-property";
 import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { patchStoryContentPlain } from "../indesign/text-threading";
 import type { DesignerPageState } from "./DesignerNode";

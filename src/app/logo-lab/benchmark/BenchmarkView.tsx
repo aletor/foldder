@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { LogoLabNav } from "../LogoLabNav";
-import type { BenchmarkResult } from "@/lib/genoma/logo-lab/golden/types";
+import type { BenchmarkResult } from "@/lib/brandkit/logo-lab/golden/types";
 import "../logo-lab.css";
 
 export function BenchmarkView() {
@@ -32,7 +32,7 @@ export function BenchmarkView() {
     <div className="logo-lab">
       <header className="logo-lab-header">
         <div>
-          <p className="logo-lab-kicker">genoma · evaluación</p>
+          <p className="logo-lab-kicker">brandKit · evaluación</p>
           <h1 className="logo-lab-title">benchmark logos</h1>
           <p className="logo-lab-subtitle">
             Baseline del pipeline actual vs golden set. Click en fila para inspección visual.

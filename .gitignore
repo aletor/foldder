@@ -63,7 +63,7 @@ next-env.d.ts
 /vision-cache/
 
 # Logo intake persistencia local (fallback DynamoDB)
-/data/genoma-brand-logo/
+/data/brand-kit-brand-logo/
 /data/logo-intake-events.jsonl
 /data/logo-intake-batches/
 

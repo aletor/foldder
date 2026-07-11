@@ -4,9 +4,9 @@ import {
   countPdfImageObjects,
   extractVisualImagesFromPdfBuffer,
 } from "../src/lib/brain/pdf-visual-extract";
-import { hexColorsFromCss } from "../src/lib/genoma/crawl/parsers";
-import { triageGenomaFilename } from "../src/lib/genoma/ingest/triage";
-import { isExplicitPdfLogoAsset } from "../src/lib/genoma/genoma-logo-policy";
+import { hexColorsFromCss } from "../src/lib/brandKit/crawl/parsers";
+import { triageBrandKitFilename } from "../src/lib/brandKit/ingest/triage";
+import { isExplicitPdfLogoAsset } from "../src/lib/brandKit/brandKit-logo-policy";
 
 async function main() {
   const path = process.argv[2];
@@ -21,7 +21,7 @@ async function main() {
   console.log("=== PDF ingest diagnostic ===");
   console.log("file:", name);
   console.log("size:", buf.length);
-  console.log("triage:", triageGenomaFilename(name, "application/pdf"));
+  console.log("triage:", triageBrandKitFilename(name, "application/pdf"));
   console.log("raw /Subtype /Image count:", countPdfImageObjects(buf));
 
   let text = "";

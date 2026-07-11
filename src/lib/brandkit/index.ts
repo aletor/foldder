@@ -1,19 +1,19 @@
-export * from "./types";
-export * from "./element-registry";
-export * from "./interpretation";
-export * from "./completeness";
-export * from "./board-projection";
-export * from "./pick-validated-brand-state";
-export * from "./brand-board-labels";
-export * from "./brandkit-event-reducer";
-export * from "./brandkit-board-actions";
-export * from "./brandkit-pipeline-bridge";
-export * from "./brandkit-card-projection";
-export * from "./style-guide-filter";
-export * from "./style-guide-render";
-export * from "./brand-board-flags";
-export * from "./element-section";
-export * from "./guarded-merge";
-export * from "./raw-artifact";
-export * from "./voice-projection";
-export * from "./run-event-adapter";
+/**
+ * BrandKit — API pública del núcleo.
+ *
+ * Un libro de estilo vivo que rankea evidencia y el usuario corona con un tap.
+ * No fusiona: solo lista ordenada + corona. La cara (React) y el servidor
+ * (rutas API) se apoyan en este núcleo puro y testeable.
+ */
+
+export * from "./brand-kit-version";
+export * from "./model/trait-ids";
+export * from "./model/evidence";
+export * from "./model/signature";
+export * from "./model/trait";
+export * from "./model/new-material";
+export * from "./model/trait-values";
+export * from "./extractors/typography";
+export * from "./projection/book-view";
+export * from "./projection/completeness";
+export * from "./fixtures";

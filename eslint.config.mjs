@@ -49,15 +49,15 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: ["src/app/spaces/genoma/**/*.{tsx,jsx}"],
-    ignores: ["src/app/spaces/genoma/board-v2/GenomaPreviewImage.tsx"],
+    files: ["src/app/spaces/brandKit/**/*.{tsx,jsx}"],
+    ignores: ["src/app/spaces/brandKit/board-v2/BrandKitPreviewImage.tsx"],
     rules: {
       "no-restricted-syntax": [
         "error",
         {
           selector: "JSXOpeningElement[name.name='img']",
           message:
-            "Usa <GenomaMediaImage /> desde src/app/spaces/genoma/GenomaMediaImage.tsx en lugar de <img> en Genoma.",
+            "Usa <BrandKitMediaImage /> desde src/app/spaces/brandKit/BrandKitMediaImage.tsx en lugar de <img> en BrandKit.",
         },
       ],
     },

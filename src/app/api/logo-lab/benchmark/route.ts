@@ -3,7 +3,7 @@ import {
   listBenchmarkRuns,
   loadBenchmarkRun,
   loadLatestBenchmarkRun,
-} from "@/lib/genoma/logo-lab/golden/benchmark";
+} from "@/lib/brandkit/logo-lab/golden/benchmark";
 
 export const runtime = "nodejs";
 

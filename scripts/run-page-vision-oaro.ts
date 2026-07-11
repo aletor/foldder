@@ -6,11 +6,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { bufferContentSha256 } from "../src/lib/genoma/ingest/paid-operations-server";
+import { bufferContentSha256 } from "../src/lib/brandKit/ingest/paid-operations-server";
 import {
   runPageVisionPassNivel1ForPdf,
   summarizeNivel1PageVisionRun,
-} from "../src/lib/genoma/ingest/page-vision-pass-nivel1-runner";
+} from "../src/lib/brandKit/ingest/page-vision-pass-nivel1-runner";
 import { assertValidGeminiApiKey } from "./load-script-env";
 
 const OARO_PDF = path.join(process.cwd(), "fixtures/brandkit/sample-brand-deck.pdf");
@@ -18,12 +18,12 @@ const OARO_FILENAME = "sample-brand-deck.pdf";
 
 async function main() {
   assertValidGeminiApiKey();
-  if (process.env.GENOMA_PAGE_VISION_PASS_ENABLED !== "1") {
-    console.error("Set GENOMA_PAGE_VISION_PASS_ENABLED=1 en .env.local");
+  if (process.env.BRAND_KIT_PAGE_VISION_PASS_ENABLED !== "1") {
+    console.error("Set BRAND_KIT_PAGE_VISION_PASS_ENABLED=1 en .env.local");
     process.exit(1);
   }
-  if (process.env.GENOMA_PAGE_VISION_NIVEL1 !== "1") {
-    console.error("Set GENOMA_PAGE_VISION_NIVEL1=1 en .env.local");
+  if (process.env.BRAND_KIT_PAGE_VISION_NIVEL1 !== "1") {
+    console.error("Set BRAND_KIT_PAGE_VISION_NIVEL1=1 en .env.local");
     process.exit(1);
   }
   if (!fs.existsSync(OARO_PDF)) {

@@ -7,7 +7,6 @@ export type DatasetCanvasContextValue = {
   projectScopeId: string;
   assetsMetadata?: unknown;
   onAssetsMetadataChange?: (next: ProjectAssetsMetadata) => void;
-  openProjectBrain?: () => void;
 };
 
 export const DatasetCanvasContext = createContext<DatasetCanvasContextValue>({

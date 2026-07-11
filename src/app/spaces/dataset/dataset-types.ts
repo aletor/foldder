@@ -6,7 +6,13 @@
  */
 
 import type { ImageGenerationHistoryEntry } from "./dataset-image-history";
-import type { BrandKitDatasetLink } from "../brandkit/brandkit-dataset-schema";
+
+/** Legacy persisted link from Dataset → BrandKit (brandKit replaces this). */
+export interface BrandKitDatasetLink {
+  brainNodeId: string;
+  messagesListId: string;
+  galleryListId: string;
+}
 
 export type FieldType =
   | "text"

@@ -205,8 +205,6 @@ import { fieldValueAsText, getConstantFieldValue, getListFieldImageAtRow, getLis
 import type { DesignerDatasetFieldBinding, DesignerDatasetPropertyBinding } from "@/app/spaces/dataset/dataset-types";
 import { DesignerDatasetPropertyLink } from "./designer/DesignerDatasetPropertyLink";
 import { isPendingDesignerBinding, makePendingDesignerBinding } from "./designer/designer-dataset-binding";
-import { isBrandKitConstantId } from "./brandkit/brandkit-logic";
-import { filterBrandKitConstantsForPicker } from "@/lib/brandkit/brandkit-legacy-migration";
 import {
   applyDesignerDatasetPropertyBindings,
   dragGestureDatasetPropertyKeys,
@@ -473,7 +471,6 @@ import { TopbarGlyphDesignerStudio } from "./TopbarPinIcons";
 import { ImageFrameFittingGlyph } from "./freehand/ImageFrameFittingGlyph";
 import { normalizeProjectAssets, type VisualCapsule, type VisualCapsuleSuggestion } from "./project-assets-metadata";
 import { hydrateKnowledgeImageDocumentsWithViewUrlsClient } from "@/lib/brain/brain-knowledge-image-view-urls-client";
-import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 import { useProjectAssetsCanvas } from "./project-assets-canvas-context";
 import { collectProjectMedia, projectMediaDedupeKey, type ProjectMediaItem } from "./project-media-inventory";
 import {
@@ -9010,12 +9007,11 @@ export function FreehandStudioCanvas({
   designerGenerativeFillRef.current = designerGenerativeFill;
   const photoRoomStudioEmbedRef = useRef(!!photoRoomStudioEmbed);
   photoRoomStudioEmbedRef.current = !!photoRoomStudioEmbed;
-  const projectBrainCtx = useProjectBrainCanvas();
   const projectAssetsCtx = useProjectAssetsCanvas();
-  const projectScopeId = projectAssetsCtx?.projectScopeId || projectBrainCtx?.projectScopeId || "__local__";
+  const projectScopeId = projectAssetsCtx?.projectScopeId || "__local__";
   const brainAssets = useMemo(
-    () => normalizeProjectAssets(projectBrainCtx?.assetsMetadata),
-    [projectBrainCtx?.assetsMetadata],
+    () => normalizeProjectAssets(projectAssetsCtx?.assetsMetadata),
+    [projectAssetsCtx?.assetsMetadata],
   );
   const [designerBrainAssets, setDesignerBrainAssets] = useState(brainAssets);
   useEffect(() => {
@@ -13127,24 +13123,7 @@ export function FreehandStudioCanvas({
     });
   }, [pushHistory, singleSelected]);
 
-  const designerDatasetBrandKitFields = useMemo(() => {
-    if (!designerConnectedDataset || designerDatasetFieldKind === null) return [];
-    const brainNodeId =
-      designerDatasetBinding?.source === "node" ? designerDatasetBinding.nodeId ?? null : null;
-    const filtered = (designerConnectedDataset.constants.fields ?? []).filter(
-      (f) =>
-        isBrandKitConstantId(f.id) &&
-        (designerDatasetFieldKind === "image" ? f.type === "image" : f.type === "text"),
-    );
-    const picked = filterBrandKitConstantsForPicker(
-      filtered.map((field) => ({ id: field.id, type: field.type })),
-      brainNodeId,
-    );
-    return picked.map((row) => {
-      const def = filtered.find((field) => field.id === row.id);
-      return { id: row.id, label: def?.label ?? row.id };
-    });
-  }, [designerConnectedDataset, designerDatasetFieldKind, designerDatasetBinding]);
+  const designerDatasetBrandKitFields = useMemo(() => [], []);
 
   const designerActiveBrandKitConstantId = useMemo(() => {
     const activeNodeBinding =

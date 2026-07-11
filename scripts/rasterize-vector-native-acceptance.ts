@@ -3,10 +3,10 @@
 import fs from "node:fs";
 import sharp from "sharp";
 import { renderPdfPageCrop } from "../src/lib/brain/pdf-page-render";
-import { extractNativeLogoInBbox } from "../src/lib/genoma/ingest/page-vision-native-extract";
-import { parseRawBBoxTuple, type BBoxXYXY } from "../src/lib/genoma/ingest/page-vision-pass-bbox";
+import { extractNativeLogoInBbox } from "../src/lib/brandKit/ingest/page-vision-native-extract";
+import { parseRawBBoxTuple, type BBoxXYXY } from "../src/lib/brandKit/ingest/page-vision-pass-bbox";
 
-const OUT = "docs/genoma-evidence";
+const OUT = "docs/brandKit-evidence";
 const BBOX_RESULT = parseRawBBoxTuple([0.308, 0.46, 0.69, 0.54]);
 if (!BBOX_RESULT.ok) throw new Error(BBOX_RESULT.reason);
 const BBOX: BBoxXYXY = BBOX_RESULT.bbox;

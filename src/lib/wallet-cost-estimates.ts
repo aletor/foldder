@@ -1,7 +1,7 @@
 import {
-  GENOMA_GALLERY_GENERATE_IMAGE_COUNT,
-  GENOMA_GALLERY_PER_IMAGE_USD,
-} from "@/lib/genoma/genoma-gallery-cost";
+  BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT,
+  BRAND_KIT_GALLERY_PER_IMAGE_USD,
+} from "@/lib/brandkit/brand-kit-gallery-cost";
 import {
   estimateGeminiImageGenerationUsd,
   estimateGeminiUsd,
@@ -324,13 +324,13 @@ export function estimateWalletCostForRoute(
     });
   }
 
-  if (route === "/api/spaces/genoma/crawl") {
+  if (route === "/api/spaces/brandKit/crawl") {
     if (body.enableLlm === false) return null;
     const model = "gemini-2.5-flash";
     const textCall = estimateGeminiUsd(model, 6500, 900);
     const estimated = roundedUsd(textCall * 2.5 + 0.008);
     return {
-      label: "Genoma · analizar web",
+      label: "BrandKit · analizar web",
       route,
       category: "analysis",
       estimatedCostMicros: usdToMicros(estimated),
@@ -339,13 +339,13 @@ export function estimateWalletCostForRoute(
     };
   }
 
-  if (route === "/api/spaces/genoma/ingest") {
+  if (route === "/api/spaces/brandKit/ingest") {
     if (body.enableLlm === false) return null;
     const model = "gemini-2.5-flash";
     const textCall = estimateGeminiUsd(model, 6500, 900);
     const estimated = roundedUsd(textCall * 2 + 0.008);
     return {
-      label: "Genoma · ingestar archivos",
+      label: "BrandKit · ingestar archivos",
       route,
       category: "analysis",
       estimatedCostMicros: usdToMicros(estimated),
@@ -354,10 +354,10 @@ export function estimateWalletCostForRoute(
     };
   }
 
-  if (route === "/api/spaces/genoma/gallery/generate") {
-    const estimated = roundedUsd(GENOMA_GALLERY_PER_IMAGE_USD * GENOMA_GALLERY_GENERATE_IMAGE_COUNT);
+  if (route === "/api/spaces/brandKit/gallery/generate") {
+    const estimated = roundedUsd(BRAND_KIT_GALLERY_PER_IMAGE_USD * BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT);
     return {
-      label: "Genoma · generar galería",
+      label: "BrandKit · generar galería",
       route,
       category: "image",
       estimatedCostMicros: usdToMicros(estimated),
@@ -409,10 +409,10 @@ export function estimateWalletCostForRoute(
     };
   }
 
-  if (route === "/api/spaces/genoma/visual/generate") {
+  if (route === "/api/spaces/brandKit/visual/generate") {
     const estimated = estimateGeminiImageGenerationUsd("flash31", "1k");
     return {
-      label: "Genoma · imagen de referencia",
+      label: "BrandKit · imagen de referencia",
       route,
       category: "image",
       estimatedCostMicros: usdToMicros(estimated),
@@ -421,10 +421,10 @@ export function estimateWalletCostForRoute(
     };
   }
 
-  if (route === "/api/spaces/genoma/logo/vectorize") {
+  if (route === "/api/spaces/brandKit/logo/vectorize") {
     const estimated = 0.05;
     return {
-      label: "Genoma · vectorizar logo",
+      label: "BrandKit · vectorizar logo",
       route,
       category: "utility",
       estimatedCostMicros: usdToMicros(estimated),
@@ -433,11 +433,11 @@ export function estimateWalletCostForRoute(
     };
   }
 
-  if (route === "/api/spaces/genoma/ingest") {
+  if (route === "/api/spaces/brandKit/ingest") {
     const kind = stringValue(body.paidAnalysisKind, "pdf");
     const estimated = kind === "url" ? 0.012 : 0.045;
     return {
-      label: kind === "url" ? "Genoma · refinado de voz (web)" : "Genoma · análisis de marca (PDF)",
+      label: kind === "url" ? "BrandKit · refinado de voz (web)" : "BrandKit · análisis de marca (PDF)",
       route,
       category: "analysis",
       estimatedCostMicros: usdToMicros(estimated),

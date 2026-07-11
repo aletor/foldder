@@ -304,7 +304,7 @@ export function useSpacesCanvasKeyboard(
         case 'p': addNode('promptInput'); break;
         case 'm': addNode('mediaInput'); break;
         case 'u': addNode('inspiration'); break;
-        case '2': addNode('projectBrain'); break;
+        case '2': addNode('brandKit'); break;
         case '3': addNode('projectAssets'); break;
         // ── Inteligencia ─────────────────────────────────────────────────
         case 'n': addNode('nanoBanana'); break;

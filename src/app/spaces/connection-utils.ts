@@ -185,22 +185,28 @@ export function areNodesConnectable(
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'image') return true;
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'url') return true;
 
-  // BrandKit / Genoma → Dataset (input dedicado en Dataset).
-  if (targetNode.type === "dataset" && connection.targetHandle === "brandkit") {
-    return (
-      (sourceNode.type === "projectBrain" && connection.sourceHandle === "brain") ||
-      (sourceNode.type === "genoma" && connection.sourceHandle === "brand")
-    );
-  }
-
-  // Genoma brand → brain inputs (Designer, etc.).
-  if (sourceNode.type === "genoma" && connection.sourceHandle === "brand" && targetHandleType === "brain") {
+  // BrandKit brand → brain inputs (Designer, Site ADN, etc.).
+  if (sourceNode.type === "brandKit" && connection.sourceHandle === "brand" && targetHandleType === "brain") {
     return true;
   }
 
-  // Genoma dataset → dataset inputs.
-  if (sourceNode.type === "genoma" && connection.sourceHandle === "dataset" && targetHandleType === "dataset") {
-    return true;
+  // Site puertos dedicados.
+  if (targetNode.type === "site") {
+    if (connection.targetHandle === "adn") {
+      return sourceNode.type === "brandKit" && connection.sourceHandle === "brand";
+    }
+    if (connection.targetHandle === "dataset") {
+      return sourceHandleType === "dataset";
+    }
+    if (connection.targetHandle === "content") {
+      return (
+        sourceNode.type === "populate" &&
+        (connection.sourceHandle === "out" || connection.sourceHandle === "media_list")
+      );
+    }
+    if (connection.targetHandle === "media") {
+      return sourceHandleType === "image";
+    }
   }
 
   // Brain handle should only connect to brain-compatible inputs.
@@ -613,7 +619,6 @@ const DEFAULT_W: Record<string, number> = {
   geminiVideo: 340,
   vfxGenerator: 340,
   space: 320,
-  projectBrain: 340,
   projectAssets: 260,
   guionista: 524,
 };
@@ -637,7 +642,6 @@ export function estimateNodeHeight(node: Node): number {
   if (styleH) return styleH;
   const gridFrame = getNodeGridFrameForType(node.type as string | undefined, node.data);
   if (gridFrame) return gridFrame.height;
-  if (node.type === "projectBrain") return 248;
   return 240;
 }
 

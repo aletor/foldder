@@ -21,7 +21,6 @@ import {
   PainterNode,
   CropNode,
   DesignerNode,
-  ProjectBrainNode,
   ProjectAssetsNode,
   PresenterNode,
   ButtonEdge,
@@ -41,7 +40,8 @@ import { LightroomNode } from "./lightroom/LightroomNode";
 import { DatasetNode } from "./dataset/DatasetNode";
 import { LoopNode } from "./loop/LoopNode";
 import { PopulateNode } from "./populate/PopulateNode";
-import { GenomaNode } from "./genoma/GenomaNode";
+import { BrandKitNode } from "./brandKit/BrandKitNode";
+import { SiteNode } from "./site/SiteNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -69,7 +69,8 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   dataset: DatasetNode,
   loop: LoopNode,
   populate: PopulateNode,
-  genoma: GenomaNode,
+  brandKit: BrandKitNode,
+  site: SiteNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,
   urlImage: UrlImageNode,
@@ -82,7 +83,6 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   painter: PainterNode,
   crop: CropNode,
   designer: DesignerNode,
-  projectBrain: ProjectBrainNode,
   projectAssets: ProjectAssetsNode,
   presenter: PresenterNode,
   canvasGroup: CanvasGroupNode,

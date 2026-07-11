@@ -17,17 +17,17 @@ import {
   hasAtresmediaEinfPdf,
   hasCatalogo26Pdf,
   hasSampleBrandDeckPdf,
-} from "../src/lib/genoma/fixtures/brandkit-paths";
-import { bufferContentSha256 } from "../src/lib/genoma/ingest/paid-operations-server";
+} from "../src/lib/brandKit/fixtures/brandkit-paths";
+import { bufferContentSha256 } from "../src/lib/brandKit/ingest/paid-operations-server";
 import {
   auditHasMeasuredNivel1Metrics,
   runPageVisionPassNivel1ForPdf,
   summarizeNivel1PageVisionRun,
-} from "../src/lib/genoma/ingest/page-vision-pass-nivel1-runner";
-import type { PageVisionPassRunAudit } from "../src/lib/genoma/ingest/page-vision-pass-runner";
+} from "../src/lib/brandKit/ingest/page-vision-pass-nivel1-runner";
+import type { PageVisionPassRunAudit } from "../src/lib/brandKit/ingest/page-vision-pass-runner";
 import { assertValidGeminiApiKey } from "./load-script-env";
 
-const EVIDENCE_PATH = path.join(process.cwd(), "docs/genoma-evidence/nivel1-ingest-metrics.json");
+const EVIDENCE_PATH = path.join(process.cwd(), "docs/brandKit-evidence/nivel1-ingest-metrics.json");
 
 function metricsSnapshot(key: string, audit: PageVisionPassRunAudit) {
   const m = audit.ingestMetrics!;
@@ -83,12 +83,12 @@ async function record(pdfPath: string, fileName: string): Promise<PageVisionPass
 
 async function main() {
   assertValidGeminiApiKey();
-  if (process.env.GENOMA_PAGE_VISION_PASS_ENABLED !== "1") {
-    console.error("Set GENOMA_PAGE_VISION_PASS_ENABLED=1 en .env.local");
+  if (process.env.BRAND_KIT_PAGE_VISION_PASS_ENABLED !== "1") {
+    console.error("Set BRAND_KIT_PAGE_VISION_PASS_ENABLED=1 en .env.local");
     process.exit(1);
   }
-  if (process.env.GENOMA_PAGE_VISION_NIVEL1 !== "1") {
-    console.error("Set GENOMA_PAGE_VISION_NIVEL1=1 en .env.local");
+  if (process.env.BRAND_KIT_PAGE_VISION_NIVEL1 !== "1") {
+    console.error("Set BRAND_KIT_PAGE_VISION_NIVEL1=1 en .env.local");
     process.exit(1);
   }
 

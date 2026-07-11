@@ -222,9 +222,9 @@ function ownerHashFromUserScopedKey(key: string): string | null {
   if (key.startsWith(USER_ASSETS_PREFIX)) {
     return key.slice(USER_ASSETS_PREFIX.length).split("/")[0] || null;
   }
-  // Legacy genoma ingest (pre user-assets): knowledge-files/{ownerHash}/genoma/...
-  const legacyGenoma = key.match(/^knowledge-files\/([a-f0-9]{20})\/genoma\//);
-  if (legacyGenoma?.[1]) return legacyGenoma[1];
+  // Legacy brandKit ingest (pre user-assets): knowledge-files/{ownerHash}/brandKit/...
+  const legacyBrandKit = key.match(/^knowledge-files\/([a-f0-9]{20})\/brandKit\//);
+  if (legacyBrandKit?.[1]) return legacyBrandKit[1];
   return null;
 }
 

@@ -15,9 +15,9 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/runway/generate",
   "/api/seedance/video",
   "/api/spaces/assistant",
-  "/api/spaces/genoma/crawl",
-  "/api/spaces/genoma/ingest",
-  "/api/spaces/genoma/gallery/generate",
+  "/api/spaces/brandKit/crawl",
+  "/api/spaces/brandKit/ingest",
+  "/api/spaces/brandKit/gallery/generate",
   "/api/spaces/cine/analyze",
   "/api/spaces/describe",
   "/api/spaces/matte",
@@ -27,8 +27,8 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/spaces/video-matte",
   "/api/video-editor/render",
   "/api/video-editor/subtitles/transcribe",
-  "/api/spaces/genoma/visual/generate",
-  "/api/spaces/genoma/logo/vectorize",
+  "/api/spaces/brandKit/visual/generate",
+  "/api/spaces/brandKit/logo/vectorize",
 ] as const;
 
 function sampleBodyForRoute(route: string): Record<string, unknown> {
@@ -46,16 +46,16 @@ function sampleBodyForRoute(route: string): Record<string, unknown> {
   if (route === "/api/spaces/guionista") return { task: "draft", idea: "Idea" };
   if (route === "/api/spaces/text-content") return { action: "correct", text: "Corrige esta frase." };
   if (route === "/api/spaces/assistant") return { prompt: "Create nodes", nodes: [], edges: [] };
-  if (route === "/api/spaces/genoma/crawl") return { url: "https://example.com", enableLlm: true };
-  if (route === "/api/spaces/genoma/ingest") return { enableLlm: true };
-  if (route === "/api/spaces/genoma/gallery/generate") return { genoma: { slots: {} } };
+  if (route === "/api/spaces/brandKit/crawl") return { url: "https://example.com", enableLlm: true };
+  if (route === "/api/spaces/brandKit/ingest") return { enableLlm: true };
+  if (route === "/api/spaces/brandKit/gallery/generate") return { brandKit: { slots: {} } };
   if (route === "/api/spaces/cine/analyze") return { script: "INT. ROOM - DAY", mode: "scenes" };
   if (route === "/api/video-editor/render") {
     return { manifest: { durationSeconds: 30, settings: { fps: 30, width: 1920, height: 1080 } } };
   }
   if (route === "/api/video-editor/subtitles/transcribe") return { durationSeconds: 120 };
-  if (route === "/api/spaces/genoma/visual/generate") return { axes: { sujeto: "personas" } };
-  if (route === "/api/spaces/genoma/logo/vectorize") return { logoUrl: "https://example.com/logo.png", logoSignature: "abc" };
+  if (route === "/api/spaces/brandKit/visual/generate") return { axes: { sujeto: "personas" } };
+  if (route === "/api/spaces/brandKit/logo/vectorize") return { logoUrl: "https://example.com/logo.png", logoSignature: "abc" };
   return {};
 }
 

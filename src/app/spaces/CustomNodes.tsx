@@ -7478,7 +7478,6 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
 
 export { VfxGeneratorNode } from "./VfxGeneratorNode";
 export { DesignerNode } from "./designer/DesignerNode";
-export { ProjectBrainNode } from "./ProjectBrainNode";
-export { GenomaNode } from "./genoma/GenomaNode";
+export { BrandKitNode } from "./brandKit/BrandKitNode";
 export { ProjectAssetsNode } from "./ProjectAssetsNode";
 export { PresenterNode } from "./presenter/PresenterNode";

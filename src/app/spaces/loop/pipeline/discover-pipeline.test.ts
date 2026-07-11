@@ -143,7 +143,7 @@ describe("discoverPipeline — descubrimiento del subgrafo", () => {
       { id: "pop", type: "loop" },
       { id: "ds", type: "dataset" },
       { id: "img", type: "nanoBanana" },
-      { id: "brain", type: "projectBrain" },
+      { id: "brain", type: "brandKit" },
     ];
     const edges: PipelineEdge[] = [
       edge("ds", "pop", "dataset"),
@@ -308,7 +308,7 @@ describe("analyzePipeline — integración", () => {
     const nodes: N[] = [
       { id: "pop", type: "loop" },
       { id: "ds", type: "dataset" },
-      { id: "brain", type: "projectBrain" },
+      { id: "brain", type: "brandKit" },
       { id: "img", type: "nanoBanana" },
       { id: "bg", type: "layerizer" },
     ];
@@ -340,7 +340,7 @@ describe("analyzePipeline — integración", () => {
     const nodes: N[] = [
       { id: "pop", type: "loop" },
       { id: "ds", type: "dataset" },
-      { id: "brain", type: "projectBrain" },
+      { id: "brain", type: "brandKit" },
       { id: "imgA", type: "nanoBanana" },
       { id: "imgB", type: "nanoBanana" },
     ];

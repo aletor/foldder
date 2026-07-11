@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import { buildCopyCorpus } from "../src/lib/genoma/crawl/copy-corpus";
-import { fetchCrawlPages } from "../src/lib/genoma/crawl/run-crawl";
+import { buildCopyCorpus } from "../src/lib/brandKit/crawl/copy-corpus";
+import { fetchCrawlPages } from "../src/lib/brandKit/crawl/run-crawl";
 
 async function main() {
   const pages = await fetchCrawlPages("https://alimafilms.com/");

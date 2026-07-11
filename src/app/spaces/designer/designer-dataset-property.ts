@@ -10,8 +10,11 @@ import type {
   FieldDef,
   FieldType,
 } from "@/app/spaces/dataset/dataset-types";
-import { brandKitConstantId } from "@/app/spaces/brandkit/brandkit-logic";
 import { normalizeHexColor } from "../freehand/extract-document-colors";
+
+export function brandKitConstantId(nodeId: string, fieldId: string): string {
+  return `bk:${nodeId}:${fieldId}`;
+}
 import { solidFill } from "../freehand/fill";
 
 /** Propiedades del Designer enlazables a campos del Dataset. */

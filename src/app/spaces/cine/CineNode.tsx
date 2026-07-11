@@ -87,7 +87,7 @@ function selectCineInputSnapshot(state: ReactFlowState<Node, Edge>, nodeId: stri
     if (!sourceScriptNode && (edge.targetHandle === "script" || edge.targetHandle === "prompt" || edge.targetHandle === "text")) {
       sourceScriptNode = nodeLookup.get(edge.source);
     }
-    if (!brainConnected && (edge.targetHandle === "brain" || nodeLookup.get(edge.source)?.type === "projectBrain")) {
+    if (!brainConnected && edge.targetHandle === "brain") {
       brainConnected = true;
     }
     if (sourceScriptNode && brainConnected) break;
@@ -205,7 +205,7 @@ function useCineNodeResolvedImageUrl(src?: string, s3Key?: string): { url?: stri
 const CINE_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "30%", type: "target", id: "prompt", dataType: "prompt", label: "Guion" },
   { side: "left", top: "54%", type: "target", id: "text", dataType: "txt", label: "Text" },
-  { side: "left", top: "78%", type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
+  { side: "left", top: "78%", type: "target", id: "brain", dataType: "brain", label: "Marca" },
   { side: "right", top: "52%", type: "source", id: "media_list", dataType: "generic", label: "Media List" },
 ];
 
@@ -391,7 +391,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
   const inputsLabel = useMemo(() => {
     const parts: string[] = [];
     if (sourceScriptText.trim()) parts.push("Guion");
-    if (brainConnected) parts.push("BrandKit");
+    if (brainConnected) parts.push("Marca");
     return parts.length > 0 ? parts.join(" · ") : "—";
   }, [brainConnected, sourceScriptText]);
   const scenesLabel = `${nodeData.scenes.length} escena${nodeData.scenes.length === 1 ? "" : "s"}`;
@@ -595,7 +595,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
               <div className="cine-node-empty-hint" aria-hidden>
                 <span className="cine-node-empty-hint__title">Cine vacío</span>
                 <span className="cine-node-empty-hint__body">
-                  Conecta Guion, Text o BrandKit y abre Studio.
+                  Conecta Guion, Text o Marca y abre Studio.
                 </span>
               </div>
               <FoldderStudioModeCenterButton
