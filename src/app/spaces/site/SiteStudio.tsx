@@ -3,11 +3,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applySiteAdnToProject } from "@/lib/site/site-adn";
 import { applyBrandKitContentToProject } from "@/lib/site/site-adn-content";
-import { findBlockInSection, patchBlockContent } from "@/lib/site/site-block-tree";
+import { duplicateBlockInSection, findBlockInSection, patchBlockContent } from "@/lib/site/site-block-tree";
 import {
   applySiteGraphBindings,
   graphBindingsPending,
-  moveSiteSection,
   reorderSiteNavInclude,
   reorderSiteSections,
 } from "@/lib/site/site-bindings";
@@ -27,7 +26,6 @@ import {
 import { applyGeneratedCopyToSection, type SiteGenerateCopyAction } from "@/lib/site/site-generate-copy";
 import { patchButtonLocaleLabel } from "@/lib/site/site-i18n";
 import type { SiteLeadsOutput } from "@/lib/site/site-leads";
-import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import {
   computeSiteNodeStatus,
   createSiteId,
@@ -40,20 +38,17 @@ import type {
   SiteInspectorTab,
   SiteNodeData,
   SitePage,
-  SitePreviewMode,
   SiteProject,
   TextContent,
   ButtonContent,
   ThemeOverride,
   ThemeState,
 } from "@/lib/site/site-types";
-import { SiteCanvas } from "./SiteCanvas";
-import { SiteCompositionRail } from "./SiteCompositionRail";
-import { SiteInspector, SitePageInspector } from "./SiteInspector";
-import { SitePublishBar, SiteThemeBar } from "./SiteThemeBar";
+import { SiteEditorShell } from "./SiteEditorShell";
 import { useSiteAdnConnection } from "./use-site-adn";
 import { useSiteConnections } from "./use-site-connections";
 import "./site.css";
+import "./site-editor.css";
 
 const SITE_STUDIO_ACCENT = "#6ec4a8";
 
@@ -93,7 +88,6 @@ export function SiteStudio({
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [inspectorScope, setInspectorScope] = useState<"section" | "page">("section");
   const [inspectorTab, setInspectorTab] = useState<SiteInspectorTab>("content");
-  const [previewMode, setPreviewMode] = useState<SitePreviewMode>("desktop");
   const [publishing, setPublishing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [generatingCopy, setGeneratingCopy] = useState(false);
@@ -167,10 +161,9 @@ export function SiteStudio({
     setInspectorScope("section");
     setSelectedSectionId(sectionId);
     setSelectedBlockId(sectionId);
-    setInspectorTab("content");
   }, []);
 
-  const handleSelectPage = useCallback(() => {
+  const handleSelectPageSettings = useCallback(() => {
     setInspectorScope("page");
     setSelectedSectionId(null);
     setSelectedBlockId(null);
@@ -250,6 +243,31 @@ export function SiteStudio({
     [activePage.nav, activePage.sections, handleSelectSection, patchSiteData, project, sectionLabels],
   );
 
+  const handleDuplicateBlock = useCallback(
+    (sectionId: string, blockId: string) => {
+      const sourceSection = activePage.sections.find((section) => section.id === sectionId);
+      if (!sourceSection) return;
+      if (sourceSection.id === blockId) {
+        handleDuplicateSection(sectionId);
+        return;
+      }
+      const { section: nextSection, newBlockId } = duplicateBlockInSection(
+        sourceSection,
+        blockId,
+        createSiteId(),
+      );
+      if (!newBlockId) return;
+      patchSiteData({
+        project: updateActiveSitePage(project, {
+          sections: activePage.sections.map((section) => (section.id === sectionId ? nextSection : section)),
+        }),
+      });
+      setSelectedSectionId(sectionId);
+      setSelectedBlockId(newBlockId);
+    },
+    [activePage.sections, handleDuplicateSection, patchSiteData, project],
+  );
+
   const handleRemoveSection = useCallback(
     (sectionId: string) => {
       const nextSections = activePage.sections.filter((section) => section.id !== sectionId);
@@ -292,20 +310,6 @@ export function SiteStudio({
     [patchSectionLabels, sectionLabels],
   );
 
-  const handleMoveSection = useCallback(
-    (sectionId: string, direction: "up" | "down") => {
-      const nextSections = moveSiteSection(activePage.sections, sectionId, direction);
-      if (nextSections === activePage.sections) return;
-      patchActivePage({
-        sections: nextSections,
-        nav: {
-          ...activePage.nav,
-          include: reorderSiteNavInclude(activePage.nav.include, nextSections),
-        },
-      });
-    },
-    [activePage.nav, activePage.sections, patchActivePage],
-  );
 
   const handleReorderSections = useCallback(
     (dragId: string, dropId: string) => {
@@ -715,166 +719,77 @@ export function SiteStudio({
         : "Publicar";
   const isStale = project.publish.status === "stale";
 
-  const selectedSectionIndex = useMemo(() => {
-    if (!selectedSectionId) return -1;
-    return activePage.sections.findIndex((section) => section.id === selectedSectionId);
-  }, [activePage.sections, selectedSectionId]);
-
-  const canvasSectionActions = useMemo(() => {
-    if (!selectedSectionId || selectedSectionIndex < 0) return null;
-    return {
-      onDuplicate: () => handleDuplicateSection(selectedSectionId),
-      onRemove: () => handleRemoveSection(selectedSectionId),
-      onMoveUp: () => handleMoveSection(selectedSectionId, "up"),
-      onMoveDown: () => handleMoveSection(selectedSectionId, "down"),
-      onToggleNav: () => handleToggleNav(selectedSectionId),
-      inNav: activePage.nav.include.includes(selectedSectionId),
-      canMoveUp: selectedSectionIndex > 0,
-      canMoveDown: selectedSectionIndex < activePage.sections.length - 1,
-    };
-  }, [
-    activePage.nav.include,
-    activePage.sections.length,
-    handleDuplicateSection,
-    handleMoveSection,
-    handleRemoveSection,
-    handleToggleNav,
-    selectedSectionId,
-    selectedSectionIndex,
-  ]);
-
   return (
-    <div
-      className="site-studio-root fixed inset-0 z-[100090] flex flex-col"
-      data-foldder-studio-panel
-      data-foldder-studio-canvas
-      data-foldder-site-studio
-      role="dialog"
-      aria-modal="true"
-      aria-label="Site studio"
-      style={{ ["--foldder-studio-accent" as string]: SITE_STUDIO_ACCENT }}
-    >
-      <FoldderStudioHeader
-        nodeType="site"
-        nodeLabel={title}
-        subtitle={`Compilador de marca a web · ${sectionCount} sección${sectionCount === 1 ? "" : "es"} · ${previewLocale}`}
-        onClose={onClose}
-      />
-
-      <SiteThemeBar
-        theme={project.theme}
-        brandConnected={brandLinked && adn.ready}
-        brandName={adn.brandName || adn.document?.brandName?.value?.trim()}
-        motionDnaSource={adn.motionDnaSource}
-        graphStatus={graphStatus}
-        datasetLoading={datasetLoading}
-        onFinishPreset={(preset) => patchTheme({ finishPreset: preset })}
-        onRhythmChange={(rhythm) => patchTheme({ dials: { ...project.theme.dials, rhythm } })}
-        onMotionIntensityChange={(motionIntensity) =>
-          patchTheme({ dials: { ...project.theme.dials, motionIntensity } })
-        }
-        graphApplyPending={graphApplyPending}
-        autoGraphSync={project.autoGraphSync}
-        onApplyGraphBindings={project.autoGraphSync ? undefined : handleApplyGraphBindings}
-        onAutoGraphSyncChange={(enabled) => patchProject({ autoGraphSync: enabled })}
-        onFillBrandContent={handleFillBrandContent}
-      />
-
-      <SitePublishBar
-        previewMode={previewMode}
-        onPreviewModeChange={setPreviewMode}
-        publishLabel={publishLabel}
-        onPublish={() => void handlePublish()}
-        onExportZip={() => void handleExportZip()}
-        canPublish={sectionCount > 0}
-        publishHash={project.publish.snapshotHash}
-        publicUrl={project.publish.publicUrl}
-        publishing={publishing}
-        exporting={exporting}
-        publishError={publishError}
-        isStale={isStale}
-      />
-
-      <div className="site-studio site-studio--split min-h-0 flex-1">
-        <SiteCompositionRail
-          pages={project.pages}
-          activePageId={project.activePageId}
-          sections={activePage.sections}
-          sectionLabels={sectionLabels}
-          sectionLibrary={project.sectionLibrary ?? []}
-          navInclude={activePage.nav.include}
-          selectedSectionId={selectedSectionId}
-          pageSelected={inspectorScope === "page"}
-          onSelectSection={handleSelectSection}
-          onSelectPage={handleSelectPage}
-          onSelectSitePage={handleSelectSitePage}
-          onAddSitePage={handleAddSitePage}
-          onRemoveSitePage={handleRemoveSitePage}
-          onAddSection={handleAddSection}
-          onDuplicateSection={handleDuplicateSection}
-          onRemoveSection={handleRemoveSection}
-          onToggleNav={handleToggleNav}
-          onRenameSection={handleRenameSection}
-          onMoveSection={handleMoveSection}
-          onReorderSections={handleReorderSections}
-          onSaveSectionToLibrary={handleSaveSectionToLibrary}
-          onAddSectionFromLibrary={handleAddSectionFromLibrary}
-          onRemoveLibraryEntry={handleRemoveLibraryEntry}
-        />
-        <SiteCanvas
-          project={previewProject}
-          previewMode={previewMode}
-          previewLocale={previewLocale}
-          selectedSectionId={selectedSectionId}
-          sectionLabels={sectionLabels}
-          adn={adn}
-          onSelectSection={handleSelectSection}
-          onInlineTextEdit={handleInlineTextEdit}
-          onInlineButtonEdit={handleInlineButtonEdit}
-          selectedSectionLabel={selectedSectionId ? sectionLabels[selectedSectionId] : null}
-          sectionActions={canvasSectionActions}
-        />
-        {inspectorScope === "page" ? (
-          <SitePageInspector
-            page={activePage}
-            slug={project.slug}
-            publish={project.publish}
-            locales={project.locales}
-            previewLocale={previewLocale}
-            ledger={project.ledger}
-            leadsOutput={data.leadsOutput}
-            refreshingLeads={refreshingLeads}
-            onRefreshLeads={() => void refreshLeadsOutput(sitePublishSlug(project))}
-            onPatchPage={handlePatchPage}
-            onPatchSlug={handlePatchSlug}
-            onPatchPublish={(patch) => patchProject({ publish: { ...project.publish, ...patch } })}
-            onPatchLocales={(locales) =>
-              patchProject({
-                locales: locales.length ? locales : ["es"],
-                previewLocale: locales.includes(previewLocale) ? previewLocale : locales[0] ?? "es",
-              })
-            }
-            onPreviewLocaleChange={(locale) => patchProject({ previewLocale: locale })}
-            onPatchLedger={handlePatchLedger}
-          />
-        ) : (
-          <SiteInspector
-            section={selectedSection}
-            selectedBlockId={selectedBlockId ?? selectedSection?.id ?? null}
-            onSelectBlock={setSelectedBlockId}
-            onPatchSection={handlePatchSection}
-            tab={inspectorTab}
-            onTabChange={setInspectorTab}
-            previewLocale={previewLocale}
-            brandReady={adn.ready}
-            generatingCopy={generatingCopy}
-            onGenerateCopy={(action) => void handleGenerateCopy(action)}
-            graphStatus={graphStatus}
-            connectedDataset={graphBindings.dataset}
-            contentSourceLabel={graphStatus.content.label}
-          />
-        )}
-      </div>
-    </div>
+    <SiteEditorShell
+      accent={SITE_STUDIO_ACCENT}
+      title={title}
+      slug={project.slug}
+      project={project}
+      previewProject={previewProject}
+      sectionLabels={sectionLabels}
+      previewLocale={previewLocale}
+      adn={adn}
+      brandLinked={brandLinked}
+      graphStatus={graphStatus}
+      datasetLoading={datasetLoading}
+      graphApplyPending={graphApplyPending}
+      publishing={publishing}
+      exporting={exporting}
+      publishError={publishError}
+      publishLabel={publishLabel}
+      canPublish={sectionCount > 0}
+      isStale={isStale}
+      leadsOutput={data.leadsOutput}
+      refreshingLeads={refreshingLeads}
+      graphBindingsDataset={graphBindings.dataset}
+      contentSourceLabel={graphStatus.content.label}
+      generatingCopy={generatingCopy}
+      onClose={onClose}
+      onPublish={() => void handlePublish()}
+      onExportZip={() => void handleExportZip()}
+      onPatchProject={patchProject}
+      onPatchTheme={patchTheme}
+      onApplyGraphBindings={project.autoGraphSync ? undefined : handleApplyGraphBindings}
+      onAutoGraphSyncChange={(enabled) => patchProject({ autoGraphSync: enabled })}
+      onFillBrandContent={handleFillBrandContent}
+      onRefreshLeads={() => void refreshLeadsOutput(sitePublishSlug(project))}
+      onPatchPage={handlePatchPage}
+      onPatchSlug={handlePatchSlug}
+      onPatchPublish={(patch) => patchProject({ publish: { ...project.publish, ...patch } })}
+      onPatchLocales={(locales) =>
+        patchProject({
+          locales: locales.length ? locales : ["es"],
+          previewLocale: locales.includes(previewLocale) ? previewLocale : locales[0] ?? "es",
+        })
+      }
+      onPreviewLocaleChange={(locale) => patchProject({ previewLocale: locale })}
+      onPatchLedger={handlePatchLedger}
+      onGenerateCopy={(action) => void handleGenerateCopy(action)}
+      selectedSectionId={selectedSectionId}
+      selectedBlockId={selectedBlockId}
+      onSelectSection={handleSelectSection}
+      onSelectBlock={setSelectedBlockId}
+      onSelectPageSettings={handleSelectPageSettings}
+      inspectorScope={inspectorScope}
+      onSetInspectorScope={setInspectorScope}
+      inspectorTab={inspectorTab}
+      onInspectorTabChange={setInspectorTab}
+      onPatchSection={handlePatchSection}
+      onDuplicateSection={handleDuplicateSection}
+      onDuplicateBlock={handleDuplicateBlock}
+      onRemoveSection={handleRemoveSection}
+      onToggleNav={handleToggleNav}
+      onRenameSection={handleRenameSection}
+      onReorderSections={handleReorderSections}
+      onAddSection={handleAddSection}
+      onSaveSectionToLibrary={handleSaveSectionToLibrary}
+      onAddSectionFromLibrary={handleAddSectionFromLibrary}
+      onRemoveLibraryEntry={handleRemoveLibraryEntry}
+      onSelectSitePage={handleSelectSitePage}
+      onAddSitePage={handleAddSitePage}
+      onRemoveSitePage={handleRemoveSitePage}
+      onInlineTextEdit={handleInlineTextEdit}
+      onInlineButtonEdit={handleInlineButtonEdit}
+    />
   );
 }

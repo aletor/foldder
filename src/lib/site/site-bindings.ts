@@ -2,6 +2,7 @@ import type { MediaListOutput } from "@/app/spaces/media-list-output";
 import type { PopulateTemplateBinding } from "@/app/spaces/populate/populate-types";
 import { resolvePopulateSlotValues } from "@/app/spaces/populate/populate-designer-form";
 import type { Dataset, FieldValue } from "@/app/spaces/dataset/dataset-types";
+import { resolveFullQualityMediaUrl } from "@/lib/canvas-media-thumbnail";
 import type {
   Block,
   CollectionContent,
@@ -42,6 +43,16 @@ export function emptySiteGraphConnectionStatus(): SiteGraphConnectionStatus {
   };
 }
 
+function fieldValueMediaUrl(value: FieldValue): string | undefined {
+  if (value.type === "image") {
+    return resolveFullQualityMediaUrl(value.url, value.s3Key);
+  }
+  if (value.type === "video") {
+    return resolveFullQualityMediaUrl(value.url);
+  }
+  return undefined;
+}
+
 function fieldValueScalar(value: FieldValue | undefined): string | undefined {
   if (!value) return undefined;
   switch (value.type) {
@@ -56,7 +67,7 @@ function fieldValueScalar(value: FieldValue | undefined): string | undefined {
       return value.value ? "true" : "false";
     case "image":
     case "video":
-      return value.url?.trim() || undefined;
+      return fieldValueMediaUrl(value);
     default:
       return undefined;
   }
@@ -64,7 +75,9 @@ function fieldValueScalar(value: FieldValue | undefined): string | undefined {
 
 function fieldValueUrl(value: FieldValue | undefined): string | undefined {
   if (!value) return undefined;
-  if (value.type === "image" && value.url?.trim()) return value.url.trim();
+  if (value.type === "image" || value.type === "video") {
+    return fieldValueMediaUrl(value);
+  }
   if (value.type === "url" && value.value?.trim()) return value.value.trim();
   return undefined;
 }
@@ -132,7 +145,7 @@ export function datasetToCollectionItems(dataset: Dataset, options?: DatasetColl
 export function mediaListToCollectionItems(mediaList: MediaListOutput): CollectionItem[] {
   return mediaList.items
     .map((item) => {
-      const url = item.url?.trim();
+      const url = resolveFullQualityMediaUrl(item.url, item.s3Key);
       if (!url) return null;
       const row: CollectionItem = { src: url };
       const caption = item.title?.trim();

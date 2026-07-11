@@ -8,6 +8,7 @@ import { readMediaListFromNode } from "@/app/spaces/media-list-consumers";
 import type { PopulateNodeData } from "@/app/spaces/populate/populate-types";
 import { getMediaSinkInfo } from "@/app/spaces/space-media-list";
 import { isMediaListOutput, type MediaListOutput } from "@/app/spaces/media-list-output";
+import { resolveFullQualityMediaUrl } from "@/lib/canvas-media-thumbnail";
 import {
   buildSiteGraphConnectionStatus,
   type SiteGraphBindingSources,
@@ -127,7 +128,7 @@ function selectSiteMediaConnection(
 
   return {
     connected: true,
-    url: sink?.url?.trim() || null,
+    url: resolveFullQualityMediaUrl(sink?.url, sink?.s3Key) ?? null,
     label,
   };
 }

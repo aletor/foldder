@@ -6335,7 +6335,7 @@ export function SpacesContent() {
           edgesFocusable={!isTouchUI}
           elevateEdgesOnSelect={!isTouchUI}
           elevateNodesOnSelect={!isTouchUI}
-          onlyRenderVisibleElements
+          onlyRenderVisibleElements={!studioCanvasOpen}
 
           nodeTypes={nodeTypes}
           edgeTypes={isTouchUI ? touchCanvasEdgeTypes : edgeTypes}

@@ -77,6 +77,20 @@ describe("site-render", () => {
     expect(srcDoc).toContain("data-section-id");
   });
 
+  it("absolutizes media urls and base tag in studio preview", () => {
+    const project = demoProject();
+    const media = project.pages[0]!.sections[0]!.children?.find((block) => block.type === "media");
+    if (media?.type === "media") {
+      (media.content as { src: string }).src = "/api/spaces/s3-file?key=test.png";
+    }
+    const srcDoc = buildSiteSrcDoc(project, {
+      editorMode: true,
+      previewOrigin: "https://app.test",
+    });
+    expect(srcDoc).toContain('<base href="https://app.test/" />');
+    expect(srcDoc).toContain('src="https://app.test/api/spaces/s3-file?key=test.png"');
+  });
+
   it("applies brandKit ADN tokens in css output", () => {
     const adn = resolveSiteAdnFromBrandKit(createDemoBrandKitFixture());
     const output = renderSiteProject(demoProject(), { adn });

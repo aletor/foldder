@@ -13,15 +13,27 @@ import {
   patchBlockContent,
   patchBlockLayout,
   patchBlockMotion,
+  patchBlockMotionInSection,
   updateBlockInSection,
 } from "@/lib/site/site-block-tree";
 import { COLLECTION_VIEW_LABELS, defaultViewOptions, switchCollectionView } from "@/lib/site/site-collection-views";
+import { SiteScrubNumberInput } from "./SiteScrubNumberInput";
 import { LEDGER_PATH_PRESETS } from "@/lib/site/site-theme-ledger";
 import { createSiteId } from "@/lib/site/site-defaults";
 import { resolveButtonLabel, patchTextLocaleValue, patchButtonLocaleLabel } from "@/lib/site/site-i18n";
 import { DEFAULT_SITE_LEAD_FORM, type SiteLeadsOutput } from "@/lib/site/site-leads";
 import { foldderCdnHostname } from "@/lib/site/site-domain";
 import type { SiteGenerateCopyAction } from "@/lib/site/site-generate-copy";
+import type { SiteAdvancedInspectorContext } from "./site-editor-ui-types";
+import {
+  AlignmentControl,
+  MaxWidthControl,
+  MotionModeControl,
+  MotionPresetControl,
+  MotionTriggerControl,
+  QuickField,
+  TextRoleControl,
+} from "./site-block-controls";
 import type {
   Block,
   BlockLayout,
@@ -38,7 +50,6 @@ import type {
   PublishState,
   TableOpts,
   TextContent,
-  TextRole,
   ThemeOverride,
 } from "@/lib/site/site-types";
 
@@ -48,7 +59,6 @@ const TABS: Array<{ id: SiteInspectorTab; label: string }> = [
   { id: "motion", label: "Movimiento" },
 ];
 
-const TEXT_ROLES: TextRole[] = ["h1", "h2", "h3", "body", "quote", "caption"];
 const BLEED_OPTIONS: Array<{ value: NonNullable<BlockLayout["bleed"]>; label: string }> = [
   { value: "contained", label: "Contenido" },
   { value: "full", label: "Ancho completo" },
@@ -88,19 +98,9 @@ function TextContentEditor({
 
   return (
     <>
-      <Field label="Rol tipográfico">
-        <select
-          className="site-studio__field-input"
-          value={content.role}
-          onChange={(event) => onChange({ ...content, role: event.target.value as TextRole })}
-        >
-          {TEXT_ROLES.map((role) => (
-            <option key={role} value={role}>
-              {role}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <QuickField label="Rol tipográfico">
+        <TextRoleControl value={content.role} onChange={(role) => onChange({ ...content, role })} compact />
+      </QuickField>
       <Field label={`Texto (${previewLocale})`}>
         <textarea
           className="site-studio__field-textarea"
@@ -114,32 +114,18 @@ function TextContentEditor({
       {previewLocale !== "es" && content.value.trim() ? (
         <p className="site-studio__inspector-hint">Fallback (es): {content.value.slice(0, 80)}</p>
       ) : null}
-      <Field label="Alineación">
-        <select
-          className="site-studio__field-input"
+      <QuickField label="Alineación">
+        <AlignmentControl
           value={content.align ?? "left"}
-          onChange={(event) =>
-            onChange({ ...content, align: event.target.value as TextContent["align"] })
-          }
-        >
-          <option value="left">Izquierda</option>
-          <option value="center">Centro</option>
-          <option value="right">Derecha</option>
-        </select>
-      </Field>
-      <Field label="Ancho máximo">
-        <select
-          className="site-studio__field-input"
+          onChange={(align) => onChange({ ...content, align })}
+        />
+      </QuickField>
+      <QuickField label="Ancho máximo">
+        <MaxWidthControl
           value={content.maxWidth ?? "normal"}
-          onChange={(event) =>
-            onChange({ ...content, maxWidth: event.target.value as TextContent["maxWidth"] })
-          }
-        >
-          <option value="narrow">Estrecho</option>
-          <option value="normal">Normal</option>
-          <option value="full">Completo</option>
-        </select>
-      </Field>
+          onChange={(maxWidth) => onChange({ ...content, maxWidth })}
+        />
+      </QuickField>
     </>
   );
 }
@@ -348,15 +334,13 @@ function CollectionContentEditor({
               </select>
             </Field>
           ) : null}
-          <Field label="Límite filas">
-            <input
-              className="site-studio__field-input"
-              type="number"
-              min={1}
-              value={content.binding?.limit ?? ""}
-              placeholder="Sin límite"
-              onChange={(event) => {
-                const raw = event.target.value.trim();
+          <Field label="Límite filas (0 = sin límite)">
+            <SiteScrubNumberInput
+              value={content.binding?.limit ?? 0}
+              min={0}
+              step={1}
+              onKeyboardCommit={(n) => {
+                const limit = Math.max(0, Math.round(n));
                 onChange({
                   ...content,
                   binding: {
@@ -364,10 +348,24 @@ function CollectionContentEditor({
                     listId: selectedListId,
                     imageFieldId: selectedImageFieldId,
                     map: content.binding?.map ?? { src: imageFields[0]?.key ?? "photo" },
-                    limit: raw ? Math.max(1, Number(raw)) : undefined,
+                    limit: limit > 0 ? limit : undefined,
                   },
                 });
               }}
+              onScrubLive={(n) => {
+                const limit = Math.max(0, Math.round(n));
+                onChange({
+                  ...content,
+                  binding: {
+                    ...content.binding,
+                    listId: selectedListId,
+                    imageFieldId: selectedImageFieldId,
+                    map: content.binding?.map ?? { src: imageFields[0]?.key ?? "photo" },
+                    limit: limit > 0 ? limit : undefined,
+                  },
+                });
+              }}
+              onScrubEnd={() => {}}
             />
           </Field>
           <Field label="Ordenar por (columna key)">
@@ -425,25 +423,31 @@ function CollectionContentEditor({
       {content.view === "grid" ? (
         <>
           <Field label="Columnas">
-            <select
-              className="site-studio__field-input"
+            <SiteScrubNumberInput
               value={gridOpts?.columns ?? 3}
-              onChange={(event) =>
+              min={1}
+              max={4}
+              step={1}
+              onKeyboardCommit={(n) =>
                 onChange({
                   ...content,
                   viewOptions: {
-                    columns: Number(event.target.value) as GridOpts["columns"],
+                    columns: Math.min(4, Math.max(1, Math.round(n))) as GridOpts["columns"],
                     density: gridOpts?.density ?? "normal",
                   },
                 })
               }
-            >
-              {[1, 2, 3, 4].map((columns) => (
-                <option key={columns} value={columns}>
-                  {columns}
-                </option>
-              ))}
-            </select>
+              onScrubLive={(n) =>
+                onChange({
+                  ...content,
+                  viewOptions: {
+                    columns: Math.min(4, Math.max(1, Math.round(n))) as GridOpts["columns"],
+                    density: gridOpts?.density ?? "normal",
+                  },
+                })
+              }
+              onScrubEnd={() => {}}
+            />
           </Field>
           <Field label="Densidad">
             <select
@@ -553,24 +557,33 @@ function CollectionContentEditor({
       {content.view === "marquee" ? (
         <>
           <Field label="Velocidad">
-            <select
-              className="site-studio__field-input"
+            <SiteScrubNumberInput
               value={marqueeOpts?.speed ?? 2}
-              onChange={(event) =>
+              min={1}
+              max={3}
+              step={1}
+              onKeyboardCommit={(n) =>
                 onChange({
                   ...content,
                   viewOptions: {
                     ...defaultViewOptions("marquee"),
                     ...marqueeOpts,
-                    speed: Number(event.target.value) as MarqueeOpts["speed"],
+                    speed: Math.min(3, Math.max(1, Math.round(n))) as MarqueeOpts["speed"],
                   } as MarqueeOpts,
                 })
               }
-            >
-              <option value={1}>Lenta</option>
-              <option value={2}>Normal</option>
-              <option value={3}>Rápida</option>
-            </select>
+              onScrubLive={(n) =>
+                onChange({
+                  ...content,
+                  viewOptions: {
+                    ...defaultViewOptions("marquee"),
+                    ...marqueeOpts,
+                    speed: Math.min(3, Math.max(1, Math.round(n))) as MarqueeOpts["speed"],
+                  } as MarqueeOpts,
+                })
+              }
+              onScrubEnd={() => {}}
+            />
           </Field>
           <label className="site-studio__checkbox-row">
             <input
@@ -661,6 +674,7 @@ function BlockContentEditor({
   graphStatus,
   connectedDataset,
   contentSourceLabel,
+  hideSource,
 }: {
   block: Block;
   previewLocale: string;
@@ -669,12 +683,13 @@ function BlockContentEditor({
   graphStatus?: SiteGraphConnectionStatus;
   connectedDataset?: Dataset | null;
   contentSourceLabel?: string | null;
+  hideSource?: boolean;
 }) {
   const { content } = block;
   if (block.type === "text" && isTextContent(content)) {
     return (
       <>
-        <BlockSourceEditor block={block} onPatchBlock={onPatchBlock} />
+        {!hideSource ? <BlockSourceEditor block={block} onPatchBlock={onPatchBlock} /> : null}
         <TextContentEditor content={content} previewLocale={previewLocale} onChange={onChange} />
       </>
     );
@@ -754,26 +769,33 @@ function SectionLayoutEditor({
         </select>
       </Field>
       <Field label="Agrupar hijos (columnas)">
-        <select
-          className="site-studio__field-input"
-          value={String(section.layout.split?.groupSize ?? 1)}
-          onChange={(event) =>
+        <SiteScrubNumberInput
+          value={section.layout.split?.groupSize ?? 1}
+          min={1}
+          max={4}
+          step={1}
+          onKeyboardCommit={(n) =>
             onChange({
               ...section.layout,
               split: {
                 pattern: section.layout.split?.pattern ?? "1",
                 rootPosition: section.layout.split?.rootPosition,
-                groupSize: Number(event.target.value),
+                groupSize: Math.min(4, Math.max(1, Math.round(n))),
               },
             })
           }
-        >
-          {[1, 2, 3, 4].map((size) => (
-            <option key={size} value={size}>
-              {size} bloque{size === 1 ? "" : "s"} por columna
-            </option>
-          ))}
-        </select>
+          onScrubLive={(n) =>
+            onChange({
+              ...section.layout,
+              split: {
+                pattern: section.layout.split?.pattern ?? "1",
+                rootPosition: section.layout.split?.rootPosition,
+                groupSize: Math.min(4, Math.max(1, Math.round(n))),
+              },
+            })
+          }
+          onScrubEnd={() => {}}
+        />
       </Field>
       <Field label="Título raíz">
         <select
@@ -798,6 +820,52 @@ function SectionLayoutEditor({
   );
 }
 
+function BlockMotionEditor({
+  motion,
+  onChange,
+}: {
+  motion: BlockMotion;
+  onChange: (motion: BlockMotion) => void;
+}) {
+  const isOverride = motion.mode === "override";
+
+  return (
+    <>
+      <QuickField label="Modo">
+        <MotionModeControl
+          value={motion.mode}
+          onChange={(mode) =>
+            onChange({
+              ...motion,
+              mode,
+              preset: mode === "override" ? motion.preset ?? "soft" : undefined,
+              trigger: mode === "override" ? motion.trigger ?? "appear" : undefined,
+            })
+          }
+        />
+      </QuickField>
+      {isOverride ? (
+        <>
+          <QuickField label="Preset">
+            <MotionPresetControl
+              value={motion.preset ?? "soft"}
+              onChange={(preset) => onChange({ ...motion, preset })}
+            />
+          </QuickField>
+          <QuickField label="Trigger">
+            <MotionTriggerControl
+              value={motion.trigger ?? "appear"}
+              onChange={(trigger) => onChange({ ...motion, trigger })}
+            />
+          </QuickField>
+        </>
+      ) : (
+        <p className="site-studio__inspector-hint">Intensidad global en panel Tema (Motion 0–2).</p>
+      )}
+    </>
+  );
+}
+
 function SectionMotionEditor({
   section,
   onChange,
@@ -805,59 +873,7 @@ function SectionMotionEditor({
   section: Block;
   onChange: (motion: BlockMotion) => void;
 }) {
-  const motion = section.motion;
-  const isOverride = motion.mode === "override";
-
-  return (
-    <>
-      <Field label="Modo">
-        <select
-          className="site-studio__field-input"
-          value={motion.mode}
-          onChange={(event) =>
-            onChange({
-              ...motion,
-              mode: event.target.value as BlockMotion["mode"],
-              preset: event.target.value === "override" ? motion.preset ?? "soft" : undefined,
-              trigger: event.target.value === "override" ? motion.trigger ?? "appear" : undefined,
-            })
-          }
-        >
-          <option value="inherit">Heredar tema</option>
-          <option value="override">Override de sección</option>
-        </select>
-      </Field>
-      {isOverride ? (
-        <>
-          <Field label="Preset">
-            <select
-              className="site-studio__field-input"
-              value={motion.preset ?? "soft"}
-              onChange={(event) => onChange({ ...motion, preset: event.target.value as BlockMotion["preset"] })}
-            >
-              <option value="soft">Soft</option>
-              <option value="expo">Expo</option>
-              <option value="bounce">Bounce</option>
-              <option value="linear">Linear</option>
-            </select>
-          </Field>
-          <Field label="Trigger">
-            <select
-              className="site-studio__field-input"
-              value={motion.trigger ?? "appear"}
-              onChange={(event) => onChange({ ...motion, trigger: event.target.value as BlockMotion["trigger"] })}
-            >
-              <option value="appear">Al aparecer</option>
-              <option value="scroll">Al scroll</option>
-              <option value="hover">Hover</option>
-            </select>
-          </Field>
-        </>
-      ) : (
-        <p className="site-studio__inspector-hint">Intensidad global en panel Tema (Motion 0–2).</p>
-      )}
-    </>
-  );
+  return <BlockMotionEditor motion={section.motion} onChange={onChange} />;
 }
 
 export function SitePageInspector({
@@ -876,6 +892,7 @@ export function SitePageInspector({
   onPatchLocales,
   onPreviewLocaleChange,
   onPatchLedger,
+  embedded,
 }: {
   page: SitePage;
   slug: string;
@@ -886,6 +903,7 @@ export function SitePageInspector({
   leadsOutput?: SiteLeadsOutput | null;
   onRefreshLeads?: () => void;
   refreshingLeads?: boolean;
+  embedded?: boolean;
   onPatchPage: (patch: Partial<SitePage>) => void;
   onPatchSlug: (slug: string) => void;
   onPatchPublish: (patch: Partial<PublishState>) => void;
@@ -909,8 +927,14 @@ export function SitePageInspector({
     ]);
   };
 
+  const Wrapper = embedded ? "div" : "aside";
+
   return (
-    <aside className="site-studio__inspector" data-foldder-studio-panel aria-label="Inspector de página">
+    <Wrapper
+      className={`site-studio__inspector${embedded ? " site-studio__inspector--embedded" : ""}`}
+      {...(embedded ? {} : { "data-foldder-studio-panel": true })}
+      aria-label="Inspector de página"
+    >
       <div className="site-studio__inspector-body">
         <div className="site-studio__inspector-panel">
           <p className="site-studio__micro-label">Página</p>
@@ -1109,7 +1133,7 @@ export function SitePageInspector({
           </button>
         </div>
       </div>
-    </aside>
+    </Wrapper>
   );
 }
 
@@ -1127,6 +1151,8 @@ export function SiteInspector({
   graphStatus,
   connectedDataset,
   contentSourceLabel,
+  embedded,
+  focus,
 }: {
   section: Block | null;
   selectedBlockId: string | null;
@@ -1141,6 +1167,8 @@ export function SiteInspector({
   graphStatus?: SiteGraphConnectionStatus;
   connectedDataset?: Dataset | null;
   contentSourceLabel?: string | null;
+  embedded?: boolean;
+  focus?: SiteAdvancedInspectorContext | null;
 }) {
   const blocks = useMemo(() => (section ? flattenSectionBlocks(section) : []), [section]);
   const activeBlock = useMemo(() => {
@@ -1148,112 +1176,182 @@ export function SiteInspector({
     return blocks.find((block) => block.id === selectedBlockId) ?? section;
   }, [blocks, section, selectedBlockId]);
 
-  return (
-    <aside className="site-studio__inspector" data-foldder-studio-panel aria-label="Inspector">
-      <div className="site-studio__inspector-tabs" role="tablist">
-        {TABS.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === entry.id}
-            className={`site-studio__inspector-tab${tab === entry.id ? " is-active" : ""}`}
-            onClick={() => onTabChange(entry.id)}
-          >
-            {entry.label}
-          </button>
-        ))}
+  const focused = focus?.mode === "focused";
+  const visibleTabs = focused && focus.tab ? [focus.tab] : TABS.map((entry) => entry.id);
+  const effectiveTab = focused && focus.tab ? focus.tab : tab;
+
+  const Wrapper = embedded ? "div" : "aside";
+
+  const patchMotionForActiveBlock = (motion: BlockMotion) => {
+    if (!section || !activeBlock) return;
+    if (activeBlock.id === section.id) {
+      onPatchSection(patchBlockMotion(section, motion));
+    } else {
+      onPatchSection(patchBlockMotionInSection(section, activeBlock.id, motion));
+    }
+  };
+
+  const renderContentPanel = () => {
+    if (!section || !activeBlock) return null;
+    const showSource = !focused || focus?.part === "source" || focus?.part === undefined;
+    const showBody = !focused || focus?.part === "body" || focus?.part === undefined;
+
+    if (focus?.part === "source") {
+      return (
+        <div className="site-studio__inspector-panel">
+          <BlockSourceEditor
+            block={activeBlock}
+            onPatchBlock={(nextBlock) =>
+              onPatchSection(updateBlockInSection(section, activeBlock.id, () => nextBlock))
+            }
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="site-studio__inspector-panel">
+        {blocks.length > 1 && !focused ? (
+          <div className="site-studio__block-picker" role="tablist" aria-label="Bloques en la sección">
+            {blocks.map((block, index) => (
+              <button
+                key={block.id}
+                type="button"
+                role="tab"
+                aria-selected={activeBlock.id === block.id}
+                className={`site-studio__block-chip${activeBlock.id === block.id ? " is-active" : ""}`}
+                onClick={() => onSelectBlock(block.id)}
+              >
+                {blockEditorLabel(block, index)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {onGenerateCopy && !focused ? (
+          <div className="site-studio__ai-copy">
+            <p className="site-studio__micro-label">Copy con IA</p>
+            <div className="site-studio__ai-copy-actions">
+              {(
+                [
+                  ["hero", "Hero"],
+                  ["faq", "FAQ"],
+                  ["pricing", "Pricing"],
+                  ["cta", "CTA"],
+                  ["rewrite", "Reescribir"],
+                ] as const
+              ).map(([action, label]) => (
+                <button
+                  key={action}
+                  type="button"
+                  className="site-studio__ai-copy-btn"
+                  disabled={generatingCopy || (action === "rewrite" && activeBlock.type !== "text")}
+                  onClick={() => onGenerateCopy(action)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {!brandReady ? (
+              <p className="site-studio__inspector-hint">Conecta BrandKit para copy más alineado con la marca.</p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {showSource && showBody ? (
+          <BlockContentEditor
+            block={activeBlock}
+            previewLocale={previewLocale}
+            graphStatus={graphStatus}
+            connectedDataset={connectedDataset}
+            contentSourceLabel={contentSourceLabel}
+            onChange={(content) => onPatchSection(patchBlockContent(section, activeBlock.id, content))}
+            onPatchBlock={(nextBlock) =>
+              onPatchSection(updateBlockInSection(section, activeBlock.id, () => nextBlock))
+            }
+          />
+        ) : showBody ? (
+          <BlockContentEditor
+            block={activeBlock}
+            previewLocale={previewLocale}
+            graphStatus={graphStatus}
+            connectedDataset={connectedDataset}
+            contentSourceLabel={contentSourceLabel}
+            hideSource
+            onChange={(content) => onPatchSection(patchBlockContent(section, activeBlock.id, content))}
+            onPatchBlock={(nextBlock) =>
+              onPatchSection(updateBlockInSection(section, activeBlock.id, () => nextBlock))
+            }
+          />
+        ) : null}
       </div>
+    );
+  };
+
+  return (
+    <Wrapper
+      className={`site-studio__inspector${embedded ? " site-studio__inspector--embedded" : ""}${focused ? " site-studio__inspector--focused" : ""}`}
+      {...(embedded ? {} : { "data-foldder-studio-panel": true })}
+      aria-label="Inspector"
+    >
+      {!focused ? (
+        <div className="site-studio__inspector-tabs" role="tablist">
+          {TABS.filter((entry) => visibleTabs.includes(entry.id)).map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              aria-selected={effectiveTab === entry.id}
+              className={`site-studio__inspector-tab${effectiveTab === entry.id ? " is-active" : ""}`}
+              onClick={() => onTabChange(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="site-studio__inspector-focus-label">
+          {effectiveTab === "content" ? "Contenido" : effectiveTab === "layout" ? "Disposición" : "Movimiento"}
+        </p>
+      )}
 
       {!section || !activeBlock ? (
         <p className="site-studio__empty-hint">Selecciona una sección para editar contenido, disposición y movimiento.</p>
       ) : (
         <div className="site-studio__inspector-body">
-          <p className="site-studio__micro-label site-studio__inspector-section-label">
-            {blockEditorLabel(activeBlock, blocks.findIndex((block) => block.id === activeBlock.id))}
-          </p>
-          {tab === "content" ? (
+          {!focused ? (
+            <p className="site-studio__micro-label site-studio__inspector-section-label">
+              {blockEditorLabel(activeBlock, blocks.findIndex((block) => block.id === activeBlock.id))}
+            </p>
+          ) : null}
+          {effectiveTab === "content" ? renderContentPanel() : null}
+
+          {effectiveTab === "layout" ? (
             <div className="site-studio__inspector-panel">
-              {blocks.length > 1 ? (
-                <div className="site-studio__block-picker" role="tablist" aria-label="Bloques en la sección">
-                  {blocks.map((block, index) => (
-                    <button
-                      key={block.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={activeBlock.id === block.id}
-                      className={`site-studio__block-chip${activeBlock.id === block.id ? " is-active" : ""}`}
-                      onClick={() => onSelectBlock(block.id)}
-                    >
-                      {blockEditorLabel(block, index)}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-
-              {onGenerateCopy ? (
-                <div className="site-studio__ai-copy">
-                  <p className="site-studio__micro-label">Copy con IA</p>
-                  <div className="site-studio__ai-copy-actions">
-                    {(
-                      [
-                        ["hero", "Hero"],
-                        ["faq", "FAQ"],
-                        ["pricing", "Pricing"],
-                        ["cta", "CTA"],
-                        ["rewrite", "Reescribir"],
-                      ] as const
-                    ).map(([action, label]) => (
-                      <button
-                        key={action}
-                        type="button"
-                        className="site-studio__ai-copy-btn"
-                        disabled={generatingCopy || (action === "rewrite" && activeBlock.type !== "text")}
-                        onClick={() => onGenerateCopy(action)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  {!brandReady ? (
-                    <p className="site-studio__inspector-hint">Conecta BrandKit para copy más alineado con la marca.</p>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <BlockContentEditor
-                block={activeBlock}
-                previewLocale={previewLocale}
-                graphStatus={graphStatus}
-                connectedDataset={connectedDataset}
-                contentSourceLabel={contentSourceLabel}
-                onChange={(content) => onPatchSection(patchBlockContent(section, activeBlock.id, content))}
-                onPatchBlock={(nextBlock) =>
-                  onPatchSection(updateBlockInSection(section, activeBlock.id, () => nextBlock))
-                }
-              />
+              {activeBlock.type === "collection" && focused ? (
+                <CollectionContentEditor
+                  content={activeBlock.content as CollectionContent}
+                  onChange={(content) => onPatchSection(patchBlockContent(section, activeBlock.id, content))}
+                  graphStatus={graphStatus}
+                  connectedDataset={connectedDataset}
+                  contentSourceLabel={contentSourceLabel}
+                />
+              ) : (
+                <SectionLayoutEditor
+                  section={section}
+                  onChange={(layout) => onPatchSection(patchBlockLayout(section, layout))}
+                />
+              )}
             </div>
           ) : null}
 
-          {tab === "layout" ? (
+          {effectiveTab === "motion" ? (
             <div className="site-studio__inspector-panel">
-              <SectionLayoutEditor
-                section={section}
-                onChange={(layout) => onPatchSection(patchBlockLayout(section, layout))}
-              />
-            </div>
-          ) : null}
-
-          {tab === "motion" ? (
-            <div className="site-studio__inspector-panel">
-              <SectionMotionEditor
-                section={section}
-                onChange={(motion) => onPatchSection(patchBlockMotion(section, motion))}
-              />
+              <BlockMotionEditor motion={activeBlock.motion} onChange={patchMotionForActiveBlock} />
             </div>
           ) : null}
         </div>
       )}
-    </aside>
+    </Wrapper>
   );
 }

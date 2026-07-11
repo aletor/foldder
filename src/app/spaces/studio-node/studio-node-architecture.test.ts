@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { FOLDDER_STUDIO_BODY_CLASS, FOLDDER_STUDIO_PORTAL_Z, getStudioNodeManifest, STUDIO_NODE_MANIFESTS } from "./studio-node-architecture";
+import {
+  FOLDDER_STUDIO_BODY_CLASS,
+  FOLDDER_STUDIO_PORTAL_Z,
+  __resetFoldderStudioOpenRegistryForTests,
+  getStudioNodeManifest,
+  isFoldderStudioNodeOpen,
+  STUDIO_NODE_MANIFESTS,
+} from "./studio-node-architecture";
 
 describe("Studio node architecture", () => {
   it("centralizes the shared studio body class and layer", () => {
@@ -21,5 +28,11 @@ describe("Studio node architecture", () => {
     expect(getStudioNodeManifest("brandKit")?.label).toBe("BrandKit");
     expect(getStudioNodeManifest("brain")).toBeUndefined();
     expect(getStudioNodeManifest("unknown")).toBeUndefined();
+  });
+
+  it("tracks open studio node ids across remounts", () => {
+    __resetFoldderStudioOpenRegistryForTests();
+    expect(isFoldderStudioNodeOpen("site-1")).toBe(false);
+    // Registry is updated by useStudioNodeController at runtime; smoke export only.
   });
 });

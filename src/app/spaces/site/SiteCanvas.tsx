@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
-import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, Trash2 } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SiteAdnContext } from "@/lib/site/site-adn";
+import { hydrateBlobUrlsInSiteHtml } from "@/lib/site/site-media-url";
 import {
   buildSiteSrcDoc,
   SITE_EDITOR_SECTION_SELECT_MESSAGE,
@@ -11,6 +11,10 @@ import {
 } from "@/lib/site/site-render";
 import { getActiveSitePage } from "@/lib/site/site-project";
 import type { SitePreviewMode, SiteProject } from "@/lib/site/site-types";
+import type { SitePreviewZoom } from "./site-editor-ui-types";
+
+const DESKTOP_WIDTH = 1080;
+const MOBILE_WIDTH = 390;
 
 export function SiteCanvas({
   project,
@@ -22,8 +26,8 @@ export function SiteCanvas({
   onSelectSection,
   onInlineTextEdit,
   onInlineButtonEdit,
-  selectedSectionLabel,
-  sectionActions,
+  editorMode = true,
+  previewZoom = "fit",
 }: {
   project: SiteProject;
   previewMode: SitePreviewMode;
@@ -34,36 +38,70 @@ export function SiteCanvas({
   onSelectSection?: (sectionId: string) => void;
   onInlineTextEdit?: (sectionId: string, blockId: string, value: string) => void;
   onInlineButtonEdit?: (sectionId: string, blockId: string, value: string) => void;
-  selectedSectionLabel?: string | null;
-  sectionActions?: {
-    onDuplicate?: () => void;
-    onRemove?: () => void;
-    onMoveUp?: () => void;
-    onMoveDown?: () => void;
-    onToggleNav?: () => void;
-    inNav?: boolean;
-    canMoveUp?: boolean;
-    canMoveDown?: boolean;
-  } | null;
+  editorMode?: boolean;
+  previewZoom?: SitePreviewZoom;
 }) {
   const activePage = getActiveSitePage(project);
-  const srcDoc = useMemo(
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [fitScale, setFitScale] = useState(1);
+  const baseWidth = previewMode === "mobile" ? MOBILE_WIDTH : DESKTOP_WIDTH;
+  const previewOrigin = typeof window !== "undefined" ? window.location.origin : undefined;
+
+  const rawSrcDoc = useMemo(
     () =>
       buildSiteSrcDoc(project, {
         locale: previewLocale ?? project.locales[0],
-        selectedSectionId,
+        selectedSectionId: editorMode ? selectedSectionId : null,
         sectionLabels,
         adn,
-        editorMode: true,
+        editorMode,
+        previewOrigin,
       }),
-    [adn, previewLocale, project, sectionLabels, selectedSectionId],
+    [adn, editorMode, previewLocale, previewOrigin, project, sectionLabels, selectedSectionId],
   );
+  const [srcDoc, setSrcDoc] = useState(rawSrcDoc);
+
+  useEffect(() => {
+    setSrcDoc(rawSrcDoc);
+    let cancelled = false;
+    void hydrateBlobUrlsInSiteHtml(rawSrcDoc).then((hydrated) => {
+      if (!cancelled) setSrcDoc(hydrated);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [rawSrcDoc]);
+
+  const recomputeFit = useCallback(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const available = el.clientWidth - 24;
+    setFitScale(Math.min(1, Math.max(0.2, available / baseWidth)));
+  }, [baseWidth]);
+
+  useEffect(() => {
+    recomputeFit();
+    const el = viewportRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(() => recomputeFit());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [recomputeFit, previewMode, previewZoom]);
+
+  const scale =
+    previewZoom === "fit"
+      ? fitScale
+      : previewZoom === "100"
+        ? 1
+        : previewZoom === "75"
+          ? 0.75
+          : 0.5;
 
   useEffect(() => {
     const selectSection = onSelectSection;
     const editText = onInlineTextEdit;
     const editButton = onInlineButtonEdit;
-    if (!selectSection && !editText && !editButton) return undefined;
+    if (!editorMode || (!selectSection && !editText && !editButton)) return undefined;
 
     function handleMessage(event: MessageEvent) {
       const payload = event.data as {
@@ -106,83 +144,44 @@ export function SiteCanvas({
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onInlineButtonEdit, onInlineTextEdit, onSelectSection]);
+  }, [editorMode, onInlineButtonEdit, onInlineTextEdit, onSelectSection]);
 
   const isEmpty = activePage.sections.length === 0;
 
   return (
-    <main className="site-studio__canvas-wrap" data-foldder-studio-canvas aria-label="Vista previa de página">
-      <div className={`site-studio__canvas-frame site-studio__canvas-frame--${previewMode}`}>
-        {isEmpty ? (
-          <div className="site-studio__canvas-empty">
-            <p className="site-studio__canvas-empty-title">Página vacía</p>
-            <p className="site-studio__canvas-empty-body">
-              Añade secciones desde el rail para ver el HTML semántico renderizado con el tema activo.
-            </p>
-          </div>
-        ) : (
-          <>
-            {selectedSectionId && sectionActions ? (
-              <div className="site-studio__canvas-action-bar" role="toolbar" aria-label="Acciones de sección">
-                <span className="site-studio__canvas-action-label">
-                  {selectedSectionLabel?.trim() || "Sección"}
-                </span>
-                <div className="site-studio__canvas-action-group">
-                  <button
-                    type="button"
-                    className="site-studio__canvas-action-btn"
-                    title="Subir sección"
-                    disabled={!sectionActions.canMoveUp}
-                    onClick={sectionActions.onMoveUp}
-                  >
-                    <ArrowUp size={14} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="site-studio__canvas-action-btn"
-                    title="Bajar sección"
-                    disabled={!sectionActions.canMoveDown}
-                    onClick={sectionActions.onMoveDown}
-                  >
-                    <ArrowDown size={14} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="site-studio__canvas-action-btn"
-                    title={sectionActions.inNav ? "Quitar del nav" : "Añadir al nav"}
-                    onClick={sectionActions.onToggleNav}
-                  >
-                    {sectionActions.inNav ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
-                  </button>
-                  <button
-                    type="button"
-                    className="site-studio__canvas-action-btn"
-                    title="Duplicar sección"
-                    onClick={sectionActions.onDuplicate}
-                  >
-                    <Copy size={14} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="site-studio__canvas-action-btn site-studio__canvas-action-btn--danger"
-                    title="Eliminar sección"
-                    onClick={sectionActions.onRemove}
-                  >
-                    <Trash2 size={14} aria-hidden />
-                  </button>
-                </div>
-              </div>
-            ) : null}
+    <main
+      className="site-editor-preview"
+      data-foldder-studio-canvas
+      ref={viewportRef}
+      aria-label="Vista previa de página"
+    >
+      {isEmpty ? (
+        <div className="site-editor-preview__empty">
+          <p className="site-editor-preview__empty-title">Página vacía</p>
+          <p className="site-editor-preview__empty-body">
+            Usa el rail izquierdo para añadir secciones y componer tu sitio.
+          </p>
+        </div>
+      ) : (
+        <div className="site-editor-preview__scroll">
+          <div
+            className={`site-editor-preview__frame site-editor-preview__frame--${previewMode}`}
+            style={{
+              width: baseWidth,
+              transform: `scale(${scale})`,
+              transformOrigin: "top center",
+            }}
+          >
             <iframe
-              className="site-studio__preview-iframe"
+              className="site-editor-preview__iframe"
               title="Vista previa del sitio"
               srcDoc={srcDoc}
-              sandbox="allow-scripts"
+              sandbox="allow-scripts allow-same-origin"
               loading="lazy"
             />
-          </>
-        )}
-      </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

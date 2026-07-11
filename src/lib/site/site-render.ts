@@ -2,6 +2,7 @@ import { applySiteAdnToProject, siteAdnGoogleFontsHref, type SiteAdnContext } fr
 import { sliceCollectionItems } from "./site-collection-overflow";
 import { resolveButtonLabel, resolveTextValue } from "./site-i18n";
 import { renderSiteLeadForm, SITE_LEADS_FORM_JS } from "./site-leads-form";
+import { resolveSiteMediaSrc } from "./site-media-url";
 import { getActiveSitePage, resolvePreviewLocale } from "./site-project";
 import { sitePagePathSlug, sitePublicPath } from "./site-publish-slug";
 import { ledgerOverridesStylesheet } from "./site-theme-ledger";
@@ -37,6 +38,8 @@ export type SiteRenderOptions = {
   adn?: SiteAdnContext | null;
   /** Inyecta script/CSS para seleccionar secciones desde el iframe del studio. */
   editorMode?: boolean;
+  /** Origen de la app — absolutiza /api/... en preview iframe (about:srcdoc). */
+  previewOrigin?: string;
   /** Sitio publicado: sin chrome de editor + JS runtime mínimo. */
   production?: boolean;
   /** Slug publicado — habilita nav entre páginas en modo production. */
@@ -51,9 +54,10 @@ const SITE_EDITOR_CSS = `
 .site-section[data-section-id] {
   cursor: pointer;
 }
-.site-section[data-section-id]:hover {
-  outline: 2px dashed color-mix(in srgb, var(--c-accent) 55%, transparent);
-  outline-offset: -2px;
+.site-section[data-section-id]:hover,
+.site-section[data-section-id].is-selected {
+  outline: 1px solid color-mix(in srgb, var(--c-accent) 45%, transparent);
+  outline-offset: -1px;
 }
 .site-text[data-editable-text="true"] {
   cursor: text;
@@ -74,6 +78,7 @@ const SITE_EDITOR_CSS = `
 type RenderContext = {
   locale: string;
   editorMode?: boolean;
+  previewOrigin?: string;
 };
 
 const SITE_EDITOR_SCRIPT = `
@@ -231,7 +236,18 @@ function collectAssetsFromBlock(block: Block, manifest: Set<string>): void {
 }
 
 function buildRenderContext(options: SiteRenderOptions, locale: string): RenderContext {
-  return { locale, editorMode: options.editorMode };
+  return {
+    locale,
+    editorMode: options.editorMode,
+    previewOrigin: options.previewOrigin,
+  };
+}
+
+function mediaSrcForRender(src: string | undefined, ctx: RenderContext): string {
+  if (!src?.trim()) return "";
+  return ctx.editorMode
+    ? resolveSiteMediaSrc(src, { previewOrigin: ctx.previewOrigin })
+    : resolveSiteMediaSrc(src);
 }
 
 function renderTextBlock(content: TextContent, editorMode: RenderContext): string {
@@ -262,20 +278,21 @@ function renderTextBlock(content: TextContent, editorMode: RenderContext): strin
   return `<${tag} class="${classes}"${editableAttr}>${escapeHtml(display)}</${tag}>`;
 }
 
-function renderMediaBlock(content: MediaContent, manifest: Set<string>): string {
+function renderMediaBlock(content: MediaContent, manifest: Set<string>, ctx: RenderContext): string {
   const caption = content.caption?.trim();
   const ratio = ratioClass(content.ratio);
   const fitClass = content.fit === "contain" ? " site-media__asset--contain" : "";
-  const src = content.src?.trim();
+  const src = mediaSrcForRender(content.src, ctx);
 
   let assetMarkup = "";
   if (content.mediaType === "image" && src) {
-    manifest.add(src);
+    manifest.add(content.src?.trim() || src);
     assetMarkup = `<img class="site-media__asset${fitClass}" src="${escapeHtml(src)}" alt="${escapeHtml(caption || "Imagen")}" loading="lazy" decoding="async" />`;
   } else if (content.mediaType === "video" && src) {
-    manifest.add(src);
-    const poster = content.video?.cover?.trim();
-    if (poster) manifest.add(poster);
+    manifest.add(content.src?.trim() || src);
+    const posterRaw = content.video?.cover?.trim();
+    const poster = posterRaw ? mediaSrcForRender(posterRaw, ctx) : "";
+    if (poster) manifest.add(posterRaw!);
     assetMarkup = `<video class="site-media__asset${fitClass}" src="${escapeHtml(src)}"${poster ? ` poster="${escapeHtml(poster)}"` : ""}${content.video?.loop ? " loop" : ""}${content.video?.autoplayMuted ? " autoplay muted playsinline" : " controls"}></video>`;
   } else if (content.mediaType === "embed" && src) {
     assetMarkup = `<iframe class="site-media__asset${fitClass}" src="${escapeHtml(src)}" title="${escapeHtml(caption || "Contenido incrustado")}" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`;
@@ -310,7 +327,7 @@ function renderBlock(block: Block, manifest: Set<string>, depth: number, editorM
       case "text":
         return renderTextBlock(block.content as TextContent, editorMode);
       case "media":
-        return renderMediaBlock(block.content as MediaContent, manifest);
+        return renderMediaBlock(block.content as MediaContent, manifest, editorMode);
       case "button":
         return renderButtonBlock(block.content as ButtonContent, editorMode);
       case "collection":
@@ -343,7 +360,7 @@ function renderCollectionItemHtml(
 ): string {
   const template = structuredClone(content.itemTemplate);
   if (template.type === "media" && item.src) {
-    (template.content as MediaContent).src = item.src;
+    (template.content as MediaContent).src = mediaSrcForRender(item.src, editorMode);
   }
   if (template.type === "text") {
     const text = template.content as TextContent;
@@ -643,6 +660,10 @@ export function buildSiteHtmlDocument(project: SiteProject, options: SiteRenderO
   const fontsHref = siteAdnGoogleFontsHref(options.adn);
   const editorCss = options.editorMode ? SITE_EDITOR_CSS : "";
   const editorScript = options.editorMode ? SITE_EDITOR_SCRIPT : "";
+  const baseTag =
+    options.editorMode && options.previewOrigin?.trim()
+      ? `<base href="${escapeHtml(options.previewOrigin.trim().replace(/\/$/, ""))}/" />`
+      : "";
   const ogImage = findFirstPublishedOgImage(page);
   const brandName = options.adn?.brandName?.trim() || title;
 
@@ -658,6 +679,7 @@ export function buildSiteHtmlDocument(project: SiteProject, options: SiteRenderO
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  ${baseTag}
   <title>${escapeHtml(title)}</title>
   ${description ? `<meta name="description" content="${escapeHtml(description)}" />` : ""}
   <meta property="og:title" content="${escapeHtml(title)}" />

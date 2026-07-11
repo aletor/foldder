@@ -15,6 +15,18 @@ export const FOLDDER_STUDIO_PORTAL_Z = 100090;
 
 const BODY_LOCK_KEY = "__foldderStudioBodyLocks";
 
+/** Nodos con studio abierto — sobrevive a remounts por `onlyRenderVisibleElements`. */
+const studioOpenNodeIds = new Set<string>();
+
+export function isFoldderStudioNodeOpen(nodeId: string): boolean {
+  return studioOpenNodeIds.has(nodeId);
+}
+
+/** Solo tests. */
+export function __resetFoldderStudioOpenRegistryForTests(): void {
+  studioOpenNodeIds.clear();
+}
+
 type WindowWithStudioLocks = Window & { [BODY_LOCK_KEY]?: number };
 
 function getStudioWindow(): WindowWithStudioLocks | null {
@@ -204,7 +216,7 @@ export function useStudioNodeController({
   onOpen,
   onClose,
 }: UseStudioNodeControllerOptions) {
-  const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const [isStudioOpen, setIsStudioOpen] = useState(() => studioOpenNodeIds.has(nodeId));
   const matchOpenRef = useRef(matchOpen);
   const matchCloseRef = useRef(matchClose);
   const onOpenRef = useRef(onOpen);
@@ -226,20 +238,26 @@ export function useStudioNodeController({
     [nodeId],
   );
 
+  useEffect(() => {
+    setIsStudioOpen(studioOpenNodeIds.has(nodeId));
+  }, [nodeId]);
+
   const openStudio = useCallback(
     (detail: StudioEventDetail = {}) => {
+      studioOpenNodeIds.add(nodeId);
       setIsStudioOpen(true);
       onOpenRef.current?.(detail);
     },
-    [],
+    [nodeId],
   );
 
   const closeStudio = useCallback(
     (options?: { detail?: StudioEventDetail }) => {
+      studioOpenNodeIds.delete(nodeId);
       setIsStudioOpen(false);
       onCloseRef.current?.(options?.detail ?? {});
     },
-    [],
+    [nodeId],
   );
 
   const openEventsKey = openEvents.join("\u0000");

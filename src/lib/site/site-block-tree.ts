@@ -50,6 +50,36 @@ export function patchBlockMotion(section: Block, motion: BlockMotion): Block {
   return { ...section, motion: { ...section.motion, ...motion } };
 }
 
+export function patchBlockMotionInSection(
+  section: Block,
+  blockId: string,
+  motion: Partial<BlockMotion>,
+): Block {
+  return updateBlockInSection(section, blockId, (block) => ({
+    ...block,
+    motion: { ...block.motion, ...motion },
+  }));
+}
+
+export function duplicateBlockInSection(
+  section: Block,
+  blockId: string,
+  newId: string,
+): { section: Block; newBlockId: string | null } {
+  if (section.id === blockId) {
+    return { section, newBlockId: null };
+  }
+  const children = section.children ?? [];
+  const index = children.findIndex((child) => child.id === blockId);
+  if (index < 0) return { section, newBlockId: null };
+  const source = children[index]!;
+  const clone = structuredClone(source);
+  clone.id = newId;
+  const nextChildren = [...children];
+  nextChildren.splice(index + 1, 0, clone);
+  return { section: { ...section, children: nextChildren }, newBlockId: clone.id };
+}
+
 const TEXT_ROLE_LABELS: Record<TextRole, string> = {
   h1: "Titular",
   h2: "Subtítulo",
