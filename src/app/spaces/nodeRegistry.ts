@@ -688,19 +688,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     type: 'site',
     label: 'Site',
     description:
-      'Compilador de marca a web: pila de bloques (texto, media, botón, collection) con tema global. Conecta BrandKit (ADN), Dataset, Populate o Designer; funciona completo sin edges.',
+      'Compilador de marca a web: páginas con bloques (texto, media, botón, collection), tema global y publish en /site/{slug}. Conecta BrandKit (ADN), Dataset, Populate o Designer (media_list).',
     inputs: [
       { id: 'adn', label: 'ADN', type: 'brain' as HandleType },
       { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
       { id: 'content', label: 'Contenido', type: 'json' as HandleType },
       { id: 'media', label: 'Media', type: 'image' as HandleType },
     ],
-    outputs: [],
+    outputs: [{ id: 'leads', label: 'Leads', type: 'json' as HandleType }],
     dataSchema: {
       label: 'string (título opcional)',
-      project: 'SiteProject { page, theme, publish, ledger }',
+      project: 'SiteProject { pages[], activePageId, theme, publish, ledger, autoGraphSync, sectionLibrary }',
       sectionLabels: 'Record<sectionId, string>',
-      status: 'empty | draft | published',
+      leadsOutput: 'SiteLeadsOutput (json) — capturas del formulario publicado',
+      status: 'empty | draft | published | stale',
     },
   },
 };
@@ -742,7 +743,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   brandKit:
     "label (título opcional); brandKit (BrandKitDocument en node.data); salida brand (tipo brain → Site adn, Designer, generadores); abre BrandKit Studio",
   site:
-    "label (título opcional); project (SiteProject: secciones Block[], theme, publish); entradas adn (BrandKit brand), dataset, content (Populate), media (Designer); abre Site Studio",
+    "label (título opcional); project (SiteProject: pages[], activePageId, theme, publish con publicUrl/stale/customDomain, ledger, sectionLibrary); entradas adn (BrandKit brand), dataset, content (Populate out/media_list o Designer media_list), media (imagen); salida leads (json); export ZIP + publish /site/{slug}; abre Site Studio",
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:

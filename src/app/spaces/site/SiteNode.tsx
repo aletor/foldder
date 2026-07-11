@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useMemo } from "react";
+import React, { memo, useCallback, useEffect, useMemo } from "react";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
 import { useReactFlow } from "@xyflow/react";
 import {
@@ -10,6 +10,8 @@ import {
   normalizeSiteNodeData,
 } from "@/lib/site/site-defaults";
 import { getActiveSitePage } from "@/lib/site/site-project";
+import { sitePublishSlug } from "@/lib/site/site-publish-slug";
+import type { SiteLeadsOutput } from "@/lib/site/site-leads";
 import type { SiteNodeData } from "@/lib/site/site-types";
 import {
   FoldderNodeContentDock,
@@ -37,6 +39,7 @@ const SITE_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { id: "dataset", label: "Dataset", side: "left", top: "42%", type: "target", dataType: "dataset" },
   { id: "content", label: "Contenido", side: "left", top: "62%", type: "target", dataType: "generic" },
   { id: "media", label: "Media", side: "left", top: "82%", type: "target", dataType: "image" },
+  { id: "leads", label: "Leads", side: "right", top: "50%", type: "source", dataType: "generic" },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,6 +55,7 @@ export const SiteNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
   const isEmpty = isSiteProjectEmpty(project);
   const sectionCount = getActiveSitePage(project).sections.length;
+  const pageCount = project.pages.length;
   const themeLabel = adn.ready || project.theme.base === "brandKit" ? adn.brandName || "Marca" : "Neutro";
 
   const nodeStatusLabel =
@@ -72,6 +76,7 @@ export const SiteNode = memo(({ id, data, selected }: NodeProps<any>) => {
             ...next,
             project: next.project ?? current.project,
             sectionLabels: next.sectionLabels ?? current.sectionLabels,
+            leadsOutput: next.leadsOutput ?? current.leadsOutput,
           };
           return {
             ...n,
@@ -90,6 +95,28 @@ export const SiteNode = memo(({ id, data, selected }: NodeProps<any>) => {
     nodeId: id,
     nodeType: "site",
   });
+
+  const leadsCount = nodeData.leadsOutput?.totalCount ?? 0;
+
+  useEffect(() => {
+    const publishStatus = project.publish.status;
+    if (publishStatus !== "published" && publishStatus !== "stale") return;
+    const slug = sitePublishSlug(project);
+    if (!slug) return;
+
+    let cancelled = false;
+    void fetch(`/api/spaces/site/leads?slug=${encodeURIComponent(slug)}&nodeId=${encodeURIComponent(id)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { output?: SiteLeadsOutput } | null) => {
+        if (cancelled || !payload?.output) return;
+        onDataChange({ leadsOutput: payload.output });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, onDataChange, project]);
 
   const baseFrame = getNodeGridFrameForType("site");
   const headerTitle = nodeData.label?.trim() || "Site";
@@ -150,11 +177,14 @@ export const SiteNode = memo(({ id, data, selected }: NodeProps<any>) => {
                 <div className="site-node-card-preview">
                   <p className="site-node-card-preview__count">{sectionCount}</p>
                   <p className="site-node-card-preview__label">
-                    sección{sectionCount === 1 ? "" : "es"}
+                    {pageCount > 1
+                      ? `${pageCount} pág. · ${sectionCount} secc.`
+                      : `sección${sectionCount === 1 ? "" : "es"}`}
                   </p>
                   <p className="site-node-card-preview__meta">
                     {adn.ready ? `Marca: ${themeLabel}` : `Tema ${themeLabel}`}
-                    {project.publish.status === "published" ? " · Publicado" : ""}
+                    {project.publish.status === "published" ? " · Publicado" : project.publish.status === "stale" ? " · Cambios" : ""}
+                    {leadsCount > 0 ? ` · ${leadsCount} lead${leadsCount === 1 ? "" : "s"}` : ""}
                   </p>
                 </div>
               )}
@@ -172,6 +202,9 @@ export const SiteNode = memo(({ id, data, selected }: NodeProps<any>) => {
                   <FoldderNodeContentMetaRow label="Secciones" value={String(sectionCount)} />
                   <FoldderNodeContentMetaRow label="Tema" value={adn.ready ? `Marca · ${themeLabel}` : themeLabel} />
                   <FoldderNodeContentMetaRow label="Estado" value={nodeStatusLabel} variant="status" />
+                  {leadsCount > 0 ? (
+                    <FoldderNodeContentMetaRow label="Leads" value={String(leadsCount)} />
+                  ) : null}
                 </FoldderNodeContentMeta>
               </FoldderNodeContentDockMain>
             </FoldderNodeContentDock>

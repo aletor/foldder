@@ -74,3 +74,4 @@ next-env.d.ts
 /public/fixtures/page-vision-pass/runs/
 /fixtures/brandkit/*.pdf
 /data/published-sites/
+/data/site-leads/

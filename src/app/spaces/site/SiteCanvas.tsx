@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
+import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, Trash2 } from "lucide-react";
 import type { SiteAdnContext } from "@/lib/site/site-adn";
 import {
   buildSiteSrcDoc,
   SITE_EDITOR_SECTION_SELECT_MESSAGE,
   SITE_EDITOR_TEXT_EDIT_MESSAGE,
+  SITE_EDITOR_BUTTON_EDIT_MESSAGE,
 } from "@/lib/site/site-render";
 import { getActiveSitePage } from "@/lib/site/site-project";
 import type { SitePreviewMode, SiteProject } from "@/lib/site/site-types";
@@ -19,6 +21,9 @@ export function SiteCanvas({
   adn,
   onSelectSection,
   onInlineTextEdit,
+  onInlineButtonEdit,
+  selectedSectionLabel,
+  sectionActions,
 }: {
   project: SiteProject;
   previewMode: SitePreviewMode;
@@ -28,6 +33,18 @@ export function SiteCanvas({
   adn?: SiteAdnContext | null;
   onSelectSection?: (sectionId: string) => void;
   onInlineTextEdit?: (sectionId: string, blockId: string, value: string) => void;
+  onInlineButtonEdit?: (sectionId: string, blockId: string, value: string) => void;
+  selectedSectionLabel?: string | null;
+  sectionActions?: {
+    onDuplicate?: () => void;
+    onRemove?: () => void;
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
+    onToggleNav?: () => void;
+    inNav?: boolean;
+    canMoveUp?: boolean;
+    canMoveDown?: boolean;
+  } | null;
 }) {
   const activePage = getActiveSitePage(project);
   const srcDoc = useMemo(
@@ -45,7 +62,8 @@ export function SiteCanvas({
   useEffect(() => {
     const selectSection = onSelectSection;
     const editText = onInlineTextEdit;
-    if (!selectSection && !editText) return undefined;
+    const editButton = onInlineButtonEdit;
+    if (!selectSection && !editText && !editButton) return undefined;
 
     function handleMessage(event: MessageEvent) {
       const payload = event.data as {
@@ -71,12 +89,24 @@ export function SiteCanvas({
           return;
         }
         onInlineTextEdit?.(payload.sectionId, payload.blockId, payload.value);
+        return;
+      }
+
+      if (payload.type === SITE_EDITOR_BUTTON_EDIT_MESSAGE) {
+        if (
+          typeof payload.sectionId !== "string" ||
+          typeof payload.blockId !== "string" ||
+          typeof payload.value !== "string"
+        ) {
+          return;
+        }
+        onInlineButtonEdit?.(payload.sectionId, payload.blockId, payload.value);
       }
     }
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [onInlineTextEdit, onSelectSection]);
+  }, [onInlineButtonEdit, onInlineTextEdit, onSelectSection]);
 
   const isEmpty = activePage.sections.length === 0;
 
@@ -91,13 +121,66 @@ export function SiteCanvas({
             </p>
           </div>
         ) : (
-          <iframe
-            className="site-studio__preview-iframe"
-            title="Vista previa del sitio"
-            srcDoc={srcDoc}
-            sandbox="allow-scripts"
-            loading="lazy"
-          />
+          <>
+            {selectedSectionId && sectionActions ? (
+              <div className="site-studio__canvas-action-bar" role="toolbar" aria-label="Acciones de sección">
+                <span className="site-studio__canvas-action-label">
+                  {selectedSectionLabel?.trim() || "Sección"}
+                </span>
+                <div className="site-studio__canvas-action-group">
+                  <button
+                    type="button"
+                    className="site-studio__canvas-action-btn"
+                    title="Subir sección"
+                    disabled={!sectionActions.canMoveUp}
+                    onClick={sectionActions.onMoveUp}
+                  >
+                    <ArrowUp size={14} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="site-studio__canvas-action-btn"
+                    title="Bajar sección"
+                    disabled={!sectionActions.canMoveDown}
+                    onClick={sectionActions.onMoveDown}
+                  >
+                    <ArrowDown size={14} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="site-studio__canvas-action-btn"
+                    title={sectionActions.inNav ? "Quitar del nav" : "Añadir al nav"}
+                    onClick={sectionActions.onToggleNav}
+                  >
+                    {sectionActions.inNav ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
+                  </button>
+                  <button
+                    type="button"
+                    className="site-studio__canvas-action-btn"
+                    title="Duplicar sección"
+                    onClick={sectionActions.onDuplicate}
+                  >
+                    <Copy size={14} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="site-studio__canvas-action-btn site-studio__canvas-action-btn--danger"
+                    title="Eliminar sección"
+                    onClick={sectionActions.onRemove}
+                  >
+                    <Trash2 size={14} aria-hidden />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <iframe
+              className="site-studio__preview-iframe"
+              title="Vista previa del sitio"
+              srcDoc={srcDoc}
+              sandbox="allow-scripts"
+              loading="lazy"
+            />
+          </>
         )}
       </div>
     </main>

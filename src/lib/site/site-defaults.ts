@@ -6,6 +6,7 @@ import type {
   SiteProject,
   ThemeState,
 } from "./site-types";
+import { DEFAULT_SITE_LEAD_FORM } from "./site-leads";
 import { createFallbackPage } from "./site-project";
 
 export function createSiteId(): string {
@@ -76,6 +77,7 @@ export function normalizeSiteProject(raw?: SiteProject | LegacySiteProject | nul
       title: page.seo?.title ?? "",
       description: page.seo?.description ?? "",
     },
+    leadsForm: page.leadsForm ?? DEFAULT_SITE_LEAD_FORM,
   }));
 
   return {
@@ -89,6 +91,7 @@ export function normalizeSiteProject(raw?: SiteProject | LegacySiteProject | nul
     autoGraphSync: raw.autoGraphSync ?? true,
     publish: { ...createEmptySiteProject().publish, ...raw.publish },
     ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
+    sectionLibrary: Array.isArray(raw.sectionLibrary) ? raw.sectionLibrary : [],
   };
 }
 
@@ -110,6 +113,7 @@ export function normalizeSiteNodeData(raw?: SiteNodeData | null): SiteNodeData {
     label: raw?.label,
     project,
     sectionLabels: raw?.sectionLabels ?? {},
+    leadsOutput: raw?.leadsOutput,
     status: raw?.status ?? computeSiteNodeStatus(project),
   };
 }

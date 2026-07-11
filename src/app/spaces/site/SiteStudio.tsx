@@ -12,15 +12,21 @@ import {
   reorderSiteSections,
 } from "@/lib/site/site-bindings";
 import { resolveSitePublishStatus } from "@/lib/site/site-publish-stale";
-import { sitePublishSlug } from "@/lib/site/site-publish";
+import { sitePublishSlug } from "@/lib/site/site-publish-slug";
 import {
   addSitePage,
+  cloneSectionFromLibrary,
   getActiveSitePage,
   removeSitePage,
   resolvePreviewLocale,
+  saveSectionToLibrary,
+  removeSectionLibraryEntry,
   setActiveSitePageId,
   updateActiveSitePage,
 } from "@/lib/site/site-project";
+import { applyGeneratedCopyToSection, type SiteGenerateCopyAction } from "@/lib/site/site-generate-copy";
+import { patchButtonLocaleLabel } from "@/lib/site/site-i18n";
+import type { SiteLeadsOutput } from "@/lib/site/site-leads";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import {
   computeSiteNodeStatus,
@@ -37,6 +43,7 @@ import type {
   SitePreviewMode,
   SiteProject,
   TextContent,
+  ButtonContent,
   ThemeOverride,
   ThemeState,
 } from "@/lib/site/site-types";
@@ -78,8 +85,8 @@ export function SiteStudio({
   );
 
   const graphApplyPending = useMemo(
-    () => graphBindingsPending(project, previewProject, graphStatus),
-    [graphStatus, previewProject, project],
+    () => graphBindingsPending(project, previewProject, graphStatus, graphBindings),
+    [graphBindings, graphStatus, previewProject, project],
   );
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(activePage.sections[0]?.id ?? null);
@@ -89,6 +96,8 @@ export function SiteStudio({
   const [previewMode, setPreviewMode] = useState<SitePreviewMode>("desktop");
   const [publishing, setPublishing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [generatingCopy, setGeneratingCopy] = useState(false);
+  const [refreshingLeads, setRefreshingLeads] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const autoSyncRef = useRef<string | null>(null);
 
@@ -105,7 +114,7 @@ export function SiteStudio({
   );
 
   const patchSiteData = useCallback(
-    (patch: { project?: Partial<SiteProject>; sectionLabels?: Record<string, string> }) => {
+    (patch: { project?: Partial<SiteProject>; sectionLabels?: Record<string, string>; leadsOutput?: SiteLeadsOutput }) => {
       const nextProject = normalizeSiteProject(
         patch.project ? { ...project, ...patch.project } : project,
       );
@@ -113,6 +122,7 @@ export function SiteStudio({
         ...data,
         project: nextProject,
         sectionLabels: patch.sectionLabels ?? data.sectionLabels ?? {},
+        leadsOutput: patch.leadsOutput ?? data.leadsOutput,
         status: computeSiteNodeStatus(nextProject),
       });
     },
@@ -339,6 +349,122 @@ export function SiteStudio({
     [activePage.sections, handlePatchSection],
   );
 
+  const handleInlineButtonEdit = useCallback(
+    (sectionId: string, blockId: string, value: string) => {
+      const section = activePage.sections.find((entry) => entry.id === sectionId);
+      if (!section) return;
+      const block = findBlockInSection(section, blockId);
+      if (!block || block.type !== "button") return;
+      handlePatchSection(
+        patchBlockContent(
+          section,
+          blockId,
+          patchButtonLocaleLabel(block.content as ButtonContent, previewLocale, value),
+        ),
+      );
+    },
+    [activePage.sections, handlePatchSection, previewLocale],
+  );
+
+  const handleGenerateCopy = useCallback(
+    async (action: SiteGenerateCopyAction) => {
+      if (!selectedSection) return;
+      setGeneratingCopy(true);
+      setPublishError(null);
+      try {
+        const activeBlock = findBlockInSection(selectedSection, selectedBlockId ?? selectedSection.id);
+        const currentText =
+          activeBlock?.type === "text" ? (activeBlock.content as TextContent).value : "";
+        const response = await fetch("/api/spaces/site/generate-copy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            locale: previewLocale,
+            currentText,
+            adn: adn.ready
+              ? {
+                  ready: true,
+                  brandKitNodeId: adn.brandKitNodeId,
+                  brandName: adn.brandName,
+                  oneLiner: adn.oneLiner,
+                  document: adn.document,
+                }
+              : null,
+          }),
+        });
+        const payload = (await response.json()) as { error?: string; result?: unknown };
+        if (!response.ok) throw new Error(payload.error || "No se pudo generar copy.");
+        if (!payload.result) throw new Error("Respuesta vacía del modelo.");
+        handlePatchSection(
+          applyGeneratedCopyToSection(
+            selectedSection,
+            payload.result as Parameters<typeof applyGeneratedCopyToSection>[1],
+            previewLocale,
+          ),
+        );
+      } catch (error) {
+        setPublishError(error instanceof Error ? error.message : "Error al generar copy");
+      } finally {
+        setGeneratingCopy(false);
+      }
+    },
+    [adn, handlePatchSection, previewLocale, selectedBlockId, selectedSection],
+  );
+
+  const refreshLeadsOutput = useCallback(async (slug: string) => {
+    setRefreshingLeads(true);
+    try {
+      const response = await fetch(
+        `/api/spaces/site/leads?slug=${encodeURIComponent(slug)}&nodeId=${encodeURIComponent(nodeId)}`,
+      );
+      if (!response.ok) return;
+      const payload = (await response.json()) as { output?: SiteLeadsOutput };
+      if (payload.output) {
+        onDataChange({ ...data, leadsOutput: payload.output });
+      }
+    } finally {
+      setRefreshingLeads(false);
+    }
+  }, [data, nodeId, onDataChange]);
+
+  const handleSaveSectionToLibrary = useCallback(
+    (sectionId: string) => {
+      const section = activePage.sections.find((entry) => entry.id === sectionId);
+      if (!section) return;
+      const label = sectionLabels[sectionId] ?? "Sección guardada";
+      patchProject(saveSectionToLibrary(project, section, label));
+    },
+    [activePage.sections, patchProject, project, sectionLabels],
+  );
+
+  const handleAddSectionFromLibrary = useCallback(
+    (entryId: string) => {
+      const clone = cloneSectionFromLibrary(project, entryId);
+      if (!clone) return;
+      const nextSections = [...activePage.sections, clone];
+      patchSiteData({
+        project: updateActiveSitePage(project, {
+          sections: nextSections,
+          nav: { ...activePage.nav, include: [...activePage.nav.include, clone.id] },
+        }),
+        sectionLabels: {
+          ...sectionLabels,
+          [clone.id]: (project.sectionLibrary ?? []).find((entry) => entry.id === entryId)?.label ?? "Sección",
+        },
+      });
+      handleSelectSection(clone.id);
+    },
+    [activePage.nav, activePage.sections, handleSelectSection, patchSiteData, project, sectionLabels],
+  );
+
+  const handleRemoveLibraryEntry = useCallback(
+    (entryId: string) => {
+      patchProject(removeSectionLibraryEntry(project, entryId));
+    },
+    [patchProject, project],
+  );
+
   const handlePatchPage = useCallback(
     (patch: Partial<SitePage>) => {
       patchActivePage(patch);
@@ -401,6 +527,8 @@ export function SiteStudio({
         slug?: string;
         publishedAt?: string;
         snapshotHash?: string;
+        customDomain?: string;
+        cdnHostname?: string;
       };
       if (!response.ok) {
         throw new Error(payload.error || "No se pudo publicar el sitio.");
@@ -416,15 +544,18 @@ export function SiteStudio({
             slug: payload.slug ?? slug,
             snapshotHash: payload.snapshotHash,
             publicUrl: payload.publicUrl,
+            customDomain: payload.customDomain ?? publishProject.publish.customDomain,
+            cdnHostname: payload.cdnHostname,
           },
         },
       });
+      void refreshLeadsOutput(payload.slug ?? slug);
     } catch (error) {
       setPublishError(error instanceof Error ? error.message : "Error al publicar");
     } finally {
       setPublishing(false);
     }
-  }, [adn, nodeId, patchSiteData, previewLocale, previewProject, project.id, sectionLabels]);
+  }, [adn, nodeId, patchSiteData, previewLocale, previewProject, project.id, refreshLeadsOutput, sectionLabels]);
 
   const handleExportZip = useCallback(async () => {
     setExporting(true);
@@ -567,6 +698,13 @@ export function SiteStudio({
     }
   }, [adn.fingerprint, adn.ready, patchProject, project.pages]);
 
+  useEffect(() => {
+    if (project.publish.status !== "published" && project.publish.status !== "stale") return;
+    const slug = sitePublishSlug(project);
+    if (!slug) return;
+    void refreshLeadsOutput(slug);
+  }, [project.publish.publishedAt, project.publish.status, project.slug, refreshLeadsOutput]);
+
   const title = nodeLabel?.trim() || "Site";
   const sectionCount = activePage.sections.length;
   const publishLabel =
@@ -576,6 +714,34 @@ export function SiteStudio({
         ? "Republicar"
         : "Publicar";
   const isStale = project.publish.status === "stale";
+
+  const selectedSectionIndex = useMemo(() => {
+    if (!selectedSectionId) return -1;
+    return activePage.sections.findIndex((section) => section.id === selectedSectionId);
+  }, [activePage.sections, selectedSectionId]);
+
+  const canvasSectionActions = useMemo(() => {
+    if (!selectedSectionId || selectedSectionIndex < 0) return null;
+    return {
+      onDuplicate: () => handleDuplicateSection(selectedSectionId),
+      onRemove: () => handleRemoveSection(selectedSectionId),
+      onMoveUp: () => handleMoveSection(selectedSectionId, "up"),
+      onMoveDown: () => handleMoveSection(selectedSectionId, "down"),
+      onToggleNav: () => handleToggleNav(selectedSectionId),
+      inNav: activePage.nav.include.includes(selectedSectionId),
+      canMoveUp: selectedSectionIndex > 0,
+      canMoveDown: selectedSectionIndex < activePage.sections.length - 1,
+    };
+  }, [
+    activePage.nav.include,
+    activePage.sections.length,
+    handleDuplicateSection,
+    handleMoveSection,
+    handleRemoveSection,
+    handleToggleNav,
+    selectedSectionId,
+    selectedSectionIndex,
+  ]);
 
   return (
     <div
@@ -635,6 +801,7 @@ export function SiteStudio({
           activePageId={project.activePageId}
           sections={activePage.sections}
           sectionLabels={sectionLabels}
+          sectionLibrary={project.sectionLibrary ?? []}
           navInclude={activePage.nav.include}
           selectedSectionId={selectedSectionId}
           pageSelected={inspectorScope === "page"}
@@ -650,6 +817,9 @@ export function SiteStudio({
           onRenameSection={handleRenameSection}
           onMoveSection={handleMoveSection}
           onReorderSections={handleReorderSections}
+          onSaveSectionToLibrary={handleSaveSectionToLibrary}
+          onAddSectionFromLibrary={handleAddSectionFromLibrary}
+          onRemoveLibraryEntry={handleRemoveLibraryEntry}
         />
         <SiteCanvas
           project={previewProject}
@@ -660,16 +830,24 @@ export function SiteStudio({
           adn={adn}
           onSelectSection={handleSelectSection}
           onInlineTextEdit={handleInlineTextEdit}
+          onInlineButtonEdit={handleInlineButtonEdit}
+          selectedSectionLabel={selectedSectionId ? sectionLabels[selectedSectionId] : null}
+          sectionActions={canvasSectionActions}
         />
         {inspectorScope === "page" ? (
           <SitePageInspector
             page={activePage}
             slug={project.slug}
+            publish={project.publish}
             locales={project.locales}
             previewLocale={previewLocale}
             ledger={project.ledger}
+            leadsOutput={data.leadsOutput}
+            refreshingLeads={refreshingLeads}
+            onRefreshLeads={() => void refreshLeadsOutput(sitePublishSlug(project))}
             onPatchPage={handlePatchPage}
             onPatchSlug={handlePatchSlug}
+            onPatchPublish={(patch) => patchProject({ publish: { ...project.publish, ...patch } })}
             onPatchLocales={(locales) =>
               patchProject({
                 locales: locales.length ? locales : ["es"],
@@ -687,8 +865,13 @@ export function SiteStudio({
             onPatchSection={handlePatchSection}
             tab={inspectorTab}
             onTabChange={setInspectorTab}
+            previewLocale={previewLocale}
+            brandReady={adn.ready}
+            generatingCopy={generatingCopy}
+            onGenerateCopy={(action) => void handleGenerateCopy(action)}
             graphStatus={graphStatus}
             connectedDataset={graphBindings.dataset}
+            contentSourceLabel={graphStatus.content.label}
           />
         )}
       </div>

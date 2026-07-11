@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createDemoBrandKitFixture } from "@/lib/brandkit/brand-kit-defaults";
 import { resolveSiteAdnFromBrandKit } from "./site-adn";
 import { createSiteId } from "./site-defaults";
-import { createDemoTextMediaSection } from "./site-presets";
+import { createDemoTextMediaSection, createFactorySection } from "./site-presets";
 import { buildSiteSrcDoc, renderSiteProject } from "./site-render";
 import { compileSiteTheme } from "./site-theme";
 import type { SiteProject } from "./site-types";
@@ -111,5 +111,32 @@ describe("site-render", () => {
     const output = renderSiteProject(project);
     expect(output.html).toContain('data-view="carousel"');
     expect(output.html).toContain("site-collection__carousel-track");
+  });
+
+  it("renders pricing preset in three columns with title above", () => {
+    const project = demoProject();
+    project.pages[0]!.sections = [createFactorySection("pricing")];
+    const output = renderSiteProject(project);
+    expect(output.html).toContain("site-split--1-1-1");
+    expect(output.html).toContain("site-cell--stack");
+    expect(output.html).toContain("Planes");
+  });
+
+  it("embeds lead form and runtime js in production mode", () => {
+    const project = demoProject();
+    project.pages[0]!.leadsForm = {
+      enabled: true,
+      title: "Contacto",
+      submitLabel: "Enviar",
+      fields: ["name", "email", "message"],
+    };
+    const output = renderSiteProject(project, {
+      production: true,
+      publishedSlug: "demo",
+      locale: "es",
+    });
+    expect(output.html).toContain("site-lead-form");
+    expect(output.html).toContain('data-site-slug="demo"');
+    expect(output.js).toContain("data-site-lead-form");
   });
 });

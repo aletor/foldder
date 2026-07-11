@@ -1,4 +1,39 @@
-/** JS mínimo embebido en sitios publicados (carousel + appear on scroll). */
+import { SITE_LEADS_FORM_JS } from "./site-leads-form";
+
+export { SITE_LEADS_FORM_JS };
+
+/** JS embebido: expandir colecciones con overflow truncate_more. */
+export const SITE_COLLECTION_OVERFLOW_JS = `
+document.querySelectorAll(".site-collection__more-btn").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var root = btn.closest(".site-collection");
+    var hidden = root && root.querySelector(".site-collection__overflow-items");
+    if (!root || !hidden) return;
+    var view = root.getAttribute("data-view");
+    if (view === "table") {
+      var tbody = root.querySelector(".site-collection__table tbody");
+      if (tbody) tbody.insertAdjacentHTML("beforeend", hidden.innerHTML);
+    } else if (view === "carousel") {
+      var track = root.querySelector(".site-collection__carousel-track");
+      if (track) track.insertAdjacentHTML("beforeend", hidden.innerHTML);
+    } else if (view === "marquee") {
+      var marquee = root.querySelector(".site-collection__marquee-track");
+      if (marquee) {
+        var chunk = hidden.innerHTML;
+        marquee.insertAdjacentHTML("beforeend", chunk + chunk);
+      }
+    } else {
+      var overflow = root.querySelector(".site-collection__overflow");
+      if (overflow) overflow.insertAdjacentHTML("beforebegin", hidden.innerHTML);
+    }
+    hidden.remove();
+    var wrap = btn.closest(".site-collection__overflow");
+    if (wrap) wrap.remove();
+  });
+});
+`.trim();
+
+/** JS mínimo embebido en sitios publicados (carousel + appear on scroll + overflow). */
 export const SITE_PUBLISH_RUNTIME_JS = `
 (function () {
   var carousels = document.querySelectorAll(".site-collection--carousel");
@@ -52,4 +87,9 @@ export const SITE_PUBLISH_RUNTIME_JS = `
     });
   }
 })();
+${SITE_COLLECTION_OVERFLOW_JS}
 `.trim();
+
+/** Runtime completo para HTML publicado (incluye captura de leads si hay formulario). */
+export const SITE_PUBLISH_FULL_RUNTIME_JS = `${SITE_PUBLISH_RUNTIME_JS}
+${SITE_LEADS_FORM_JS}`.trim();

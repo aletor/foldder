@@ -5,6 +5,8 @@ export const SITE_FACTORY_PRESETS: Array<{ id: SiteFactoryPresetId; label: strin
   { id: "hero", label: "Hero", description: "Titular, subtítulo y CTA principal" },
   { id: "manifesto", label: "Manifiesto", description: "Texto editorial con reveal" },
   { id: "gallery", label: "Galería", description: "Grid de imágenes duotono" },
+  { id: "faq", label: "FAQ", description: "Preguntas frecuentes en acordeón editorial" },
+  { id: "pricing", label: "Pricing", description: "Tres planes con CTA" },
   { id: "voice", label: "Voz", description: "Specimens tipográficos editoriales" },
   { id: "cta", label: "CTA / Contacto", description: "Llamada a la acción y contacto" },
   { id: "footer", label: "Footer", description: "Pie con clearspace de marca" },
@@ -15,6 +17,8 @@ const PRESET_DEFAULT_LABELS: Record<SiteFactoryPresetId, string> = {
   hero: "Hero",
   manifesto: "Manifiesto",
   gallery: "Galería",
+  faq: "FAQ",
+  pricing: "Pricing",
   voice: "Voz",
   cta: "Contacto",
   footer: "Footer",
@@ -129,6 +133,112 @@ export function createFactorySection(presetId: SiteFactoryPresetId): Block {
         },
         layout: { bleed: "contained" },
         motion: { mode: "inherit" },
+      };
+    case "faq":
+      return {
+        id: sectionId,
+        type: "text",
+        source: { kind: "manual" },
+        content: { role: "h2", value: "Preguntas frecuentes", maxWidth: "narrow" },
+        layout: { bleed: "contained", split: { pattern: "1" } },
+        motion: { mode: "inherit" },
+        children: [
+          createManualBlock("text", {
+            role: "h3",
+            value: "¿Qué incluye el servicio?",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "body",
+            value: "Describe aquí la respuesta en una o dos frases claras.",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "h3",
+            value: "¿Cómo empiezo?",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "body",
+            value: "Indica el primer paso para el usuario.",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "h3",
+            value: "¿Puedo cambiar el plan?",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "body",
+            value: "Aclara política de cambios o cancelación.",
+            maxWidth: "narrow",
+          }),
+        ],
+      };
+    case "pricing":
+      return {
+        id: sectionId,
+        type: "text",
+        source: { kind: "manual" },
+        content: { role: "h2", value: "Planes", align: "center", maxWidth: "narrow" },
+        layout: {
+          bleed: "contained",
+          split: { pattern: "1-1-1", groupSize: 3, rootPosition: "above" },
+        },
+        motion: { mode: "inherit" },
+        children: [
+          createManualBlock("text", {
+            role: "h3",
+            value: "Starter — 9 €/mes",
+            align: "center",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "body",
+            value: "Lo esencial para lanzar tu presencia online.",
+            align: "center",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("button", {
+            label: "Elegir Starter",
+            target: { kind: "url", value: "#" },
+            variant: "secondary",
+          }),
+          createManualBlock("text", {
+            role: "h3",
+            value: "Pro — 29 €/mes",
+            align: "center",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "body",
+            value: "Para equipos que publican con frecuencia.",
+            align: "center",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("button", {
+            label: "Elegir Pro",
+            target: { kind: "url", value: "#" },
+            variant: "primary",
+          }),
+          createManualBlock("text", {
+            role: "h3",
+            value: "Enterprise",
+            align: "center",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("text", {
+            role: "body",
+            value: "A medida · SLA y soporte dedicado.",
+            align: "center",
+            maxWidth: "narrow",
+          }),
+          createManualBlock("button", {
+            label: "Contactar ventas",
+            target: { kind: "mail", value: "ventas@marca.com" },
+            variant: "secondary",
+          }),
+        ],
       };
     case "voice":
       return {

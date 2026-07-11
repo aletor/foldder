@@ -1,4 +1,18 @@
-import type { SitePage, SiteProject } from "./site-types";
+import type { Block, SitePage, SiteProject, SiteSectionLibraryEntry } from "./site-types";
+
+function createLibraryEntryId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `site_lib_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function createSectionCloneId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `site_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
 
 /** Página activa del proyecto (multi-página). */
 export function getActiveSitePage(project: SiteProject): SitePage {
@@ -69,4 +83,36 @@ export function siteSectionCount(project: SiteProject): number {
 
 export function isSiteProjectEmpty(project: SiteProject): boolean {
   return siteSectionCount(project) === 0;
+}
+
+export function saveSectionToLibrary(
+  project: SiteProject,
+  section: Block,
+  label: string,
+): SiteProject {
+  const entry: SiteSectionLibraryEntry = {
+    id: createLibraryEntryId(),
+    label: label.trim() || "Sección guardada",
+    section: structuredClone(section),
+    savedAt: new Date().toISOString(),
+  };
+  return {
+    ...project,
+    sectionLibrary: [...(project.sectionLibrary ?? []), entry],
+  };
+}
+
+export function removeSectionLibraryEntry(project: SiteProject, entryId: string): SiteProject {
+  return {
+    ...project,
+    sectionLibrary: (project.sectionLibrary ?? []).filter((entry) => entry.id !== entryId),
+  };
+}
+
+export function cloneSectionFromLibrary(project: SiteProject, entryId: string): Block | null {
+  const entry = (project.sectionLibrary ?? []).find((row) => row.id === entryId);
+  if (!entry) return null;
+  const clone = structuredClone(entry.section);
+  clone.id = createSectionCloneId();
+  return clone;
 }

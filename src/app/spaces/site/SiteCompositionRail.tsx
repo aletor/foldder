@@ -1,10 +1,10 @@
 "use client";
 
 import React from "react";
-import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, FileText, GripVertical, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, EyeOff, FileText, GripVertical, Plus, Trash2 } from "lucide-react";
 import { SITE_FACTORY_PRESETS } from "@/lib/site/site-presets";
 import { siteSectionPreviewLine } from "@/lib/site/site-section-preview";
-import type { Block, SiteFactoryPresetId, SitePage } from "@/lib/site/site-types";
+import type { Block, SiteFactoryPresetId, SitePage, SiteSectionLibraryEntry } from "@/lib/site/site-types";
 
 export function SiteCompositionRail({
   pages,
@@ -26,11 +26,16 @@ export function SiteCompositionRail({
   onRenameSection,
   onMoveSection,
   onReorderSections,
+  sectionLibrary,
+  onSaveSectionToLibrary,
+  onAddSectionFromLibrary,
+  onRemoveLibraryEntry,
 }: {
   pages: SitePage[];
   activePageId: string;
   sections: Block[];
   sectionLabels: Record<string, string>;
+  sectionLibrary: SiteSectionLibraryEntry[];
   navInclude: string[];
   selectedSectionId: string | null;
   pageSelected: boolean;
@@ -46,8 +51,12 @@ export function SiteCompositionRail({
   onRenameSection: (id: string, label: string) => void;
   onMoveSection: (id: string, direction: "up" | "down") => void;
   onReorderSections: (dragId: string, dropId: string) => void;
+  onSaveSectionToLibrary: (sectionId: string) => void;
+  onAddSectionFromLibrary: (entryId: string) => void;
+  onRemoveLibraryEntry: (entryId: string) => void;
 }) {
   const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [dragSectionId, setDragSectionId] = React.useState<string | null>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
 
@@ -190,6 +199,14 @@ export function SiteCompositionRail({
                   </button>
                   <button
                     type="button"
+                    className="site-studio__icon-btn"
+                    title="Guardar en librería"
+                    onClick={() => onSaveSectionToLibrary(section.id)}
+                  >
+                    <Bookmark size={13} />
+                  </button>
+                  <button
+                    type="button"
                     className="site-studio__icon-btn site-studio__icon-btn--danger"
                     title="Eliminar"
                     onClick={() => onRemoveSection(section.id)}
@@ -238,6 +255,44 @@ export function SiteCompositionRail({
                 <span className="site-studio__preset-desc">{preset.description}</span>
               </button>
             ))}
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="site-studio__add-btn site-studio__add-btn--secondary"
+          onClick={() => setLibraryOpen((open) => !open)}
+          aria-expanded={libraryOpen}
+        >
+          Librería ({sectionLibrary.length})
+        </button>
+        {libraryOpen ? (
+          <div className="site-studio__library-picker" role="menu">
+            {sectionLibrary.length === 0 ? (
+              <p className="site-studio__empty-hint">Guarda secciones con el botón + en cada tarjeta.</p>
+            ) : (
+              sectionLibrary.map((entry) => (
+                <div key={entry.id} className="site-studio__library-row">
+                  <button
+                    type="button"
+                    className="site-studio__preset-option"
+                    onClick={() => {
+                      onAddSectionFromLibrary(entry.id);
+                      setLibraryOpen(false);
+                    }}
+                  >
+                    <span className="site-studio__preset-label">{entry.label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="site-studio__icon-btn site-studio__icon-btn--danger"
+                    title="Eliminar de librería"
+                    onClick={() => onRemoveLibraryEntry(entry.id)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         ) : null}
       </div>

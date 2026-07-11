@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { normalizeSiteProject } from "@/lib/site/site-defaults";
+import { foldderCdnHostname, validateCustomDomain } from "@/lib/site/site-domain";
 import { buildPublishedSiteBundle, type SiteAdnPublishPayload } from "@/lib/site/site-publish";
-import { isSiteSlugTaken, persistPublishedSite } from "@/lib/site/site-publish-store";
+import { isCustomDomainTaken, isSiteSlugTaken, persistPublishedSite } from "@/lib/site/site-publish-store";
 import { sitePublicUrl } from "@/lib/site/site-publish-slug";
 import type { SiteProject } from "@/lib/site/site-types";
 
@@ -47,9 +48,28 @@ export async function POST(req: Request) {
       );
     }
 
+    const customDomainRaw = project.publish.customDomain?.trim() ?? "";
+    let customDomain: string | undefined;
+    if (customDomainRaw) {
+      const domainValidation = validateCustomDomain(customDomainRaw);
+      if (!domainValidation.ok) {
+        return NextResponse.json({ error: domainValidation.error }, { status: 400 });
+      }
+      const domainTaken = await isCustomDomainTaken(
+        domainValidation.domain,
+        authState.user.email,
+        bundle.slug,
+      );
+      if (domainTaken) {
+        return NextResponse.json({ error: "Ese dominio ya está en uso." }, { status: 409 });
+      }
+      customDomain = domainValidation.domain;
+    }
+
     const publishedAt = new Date().toISOString();
     const origin = new URL(req.url).origin;
-    const publicUrl = sitePublicUrl(bundle.slug, origin);
+    const cdnHostname = foldderCdnHostname(bundle.slug);
+    const publicUrl = sitePublicUrl(bundle.slug, origin, { customDomain, cdnHostname });
 
     await persistPublishedSite({
       record: {
@@ -67,6 +87,8 @@ export async function POST(req: Request) {
           title: doc.title,
           file: doc.file,
         })),
+        customDomain,
+        cdnHostname,
       },
       documents: bundle.documents.map((doc) => ({
         pathSlug: doc.pathSlug,
@@ -82,6 +104,8 @@ export async function POST(req: Request) {
       publishedAt,
       snapshotHash: bundle.snapshotHash,
       pageCount: bundle.documents.length,
+      customDomain,
+      cdnHostname,
     });
   } catch (error) {
     console.error("[site/publish] failed:", error);

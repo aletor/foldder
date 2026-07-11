@@ -1,5 +1,7 @@
 /** Site node — data model (contract F1, spec §1). */
 
+import type { SiteLeadFormConfig, SiteLeadsOutput } from "./site-leads";
+
 export type BlockType = "text" | "media" | "button" | "collection";
 
 export type SourceKind = "manual" | "dataset" | "populate" | "designer";
@@ -9,6 +11,8 @@ export type TextRole = "h1" | "h2" | "h3" | "body" | "quote" | "caption";
 export type TextContent = {
   role: TextRole;
   value: string;
+  /** Traducciones por locale (fallback → value). */
+  localeValues?: Record<string, string>;
   maxWidth?: "narrow" | "normal" | "full";
   align?: "left" | "center" | "right";
 };
@@ -25,6 +29,7 @@ export type MediaContent = {
 
 export type ButtonContent = {
   label: string;
+  localeLabels?: Record<string, string>;
   target: { kind: "anchor" | "url" | "mail" | "payment_link"; value: string };
   variant: "primary" | "secondary";
 };
@@ -64,7 +69,13 @@ export type BlockContent = TextContent | MediaContent | ButtonContent | Collecti
 
 export type BlockLayout = {
   bleed?: "full" | "contained";
-  split?: { pattern: "1" | "1-1" | "2-1" | "1-2" | "1-1-1" | "bento-a" | "bento-b" };
+  split?: {
+    pattern: "1" | "1-1" | "2-1" | "1-2" | "1-1-1" | "bento-a" | "bento-b";
+    /** Agrupa hijos en columnas (ej. pricing 3×3). */
+    groupSize?: number;
+    /** Título de sección encima del split en lugar de primera celda. */
+    rootPosition?: "first-cell" | "above";
+  };
   cellSpan?: number;
 };
 
@@ -103,6 +114,15 @@ export type SitePage = {
   sections: Block[];
   nav: { enabled: boolean; include: string[] };
   seo: { title: string; description: string };
+  /** Formulario de leads embebido en la página publicada. */
+  leadsForm?: SiteLeadFormConfig;
+};
+
+export type SiteSectionLibraryEntry = {
+  id: string;
+  label: string;
+  section: Block;
+  savedAt: string;
 };
 
 export type ThemeBase = "brandKit" | "neutral";
@@ -136,6 +156,10 @@ export type PublishState = {
   snapshotHash?: string;
   /** URL pública servida por /site/{slug} */
   publicUrl?: string;
+  /** Dominio propio (CNAME → app). */
+  customDomain?: string;
+  /** Subdominio CDN `{slug}.foldder.com` */
+  cdnHostname?: string;
 };
 
 export type SiteProject = {
@@ -152,6 +176,8 @@ export type SiteProject = {
   autoGraphSync?: boolean;
   publish: PublishState;
   ledger: ThemeOverride[];
+  /** Secciones guardadas reutilizables. */
+  sectionLibrary?: SiteSectionLibraryEntry[];
 };
 
 export type SiteNodeStatus = "empty" | "draft" | "published";
@@ -162,12 +188,16 @@ export type SiteNodeData = {
   project?: SiteProject;
   /** Display name per section id (feeds auto-nav). */
   sectionLabels?: Record<string, string>;
+  /** Salida leads para el grafo (json). */
+  leadsOutput?: SiteLeadsOutput;
 };
 
 export type SiteFactoryPresetId =
   | "hero"
   | "manifesto"
   | "gallery"
+  | "faq"
+  | "pricing"
   | "voice"
   | "cta"
   | "footer"

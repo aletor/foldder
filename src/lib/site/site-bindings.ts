@@ -456,11 +456,25 @@ export function reorderSiteNavInclude(include: string[], sections: Block[]): str
   return sections.map((section) => section.id).filter((id) => includeSet.has(id));
 }
 
-export function canApplyGraphBindings(status: SiteGraphConnectionStatus): boolean {
+export function canApplyGraphBindings(
+  status: SiteGraphConnectionStatus,
+  sources?: SiteGraphBindingSources | null,
+): boolean {
+  const populateSlots = sources
+    ? resolvePopulateBindingSlotMaps(
+        sources.populateBindings,
+        sources.populateDataset,
+        sources.populateListId,
+      )
+    : { text: {}, images: {} };
+  const populateSlotCount =
+    Object.keys(populateSlots.text).length + Object.keys(populateSlots.images).length;
+
   return (
     (status.dataset.connected && status.dataset.rowCount > 0) ||
     (status.content.connected && status.content.itemCount > 0) ||
-    (status.media.connected && status.media.hasUrl)
+    (status.media.connected && status.media.hasUrl) ||
+    populateSlotCount > 0
   );
 }
 
@@ -468,8 +482,9 @@ export function graphBindingsPending(
   draft: SiteProject,
   preview: SiteProject,
   status: SiteGraphConnectionStatus,
+  sources?: SiteGraphBindingSources | null,
 ): boolean {
-  if (!canApplyGraphBindings(status)) return false;
+  if (!canApplyGraphBindings(status, sources)) return false;
   const draftSections = getActiveSitePage(draft).sections;
   const previewSections = getActiveSitePage(preview).sections;
   return JSON.stringify(draftSections) !== JSON.stringify(previewSections);

@@ -18,6 +18,10 @@ import {
 import { COLLECTION_VIEW_LABELS, defaultViewOptions, switchCollectionView } from "@/lib/site/site-collection-views";
 import { LEDGER_PATH_PRESETS } from "@/lib/site/site-theme-ledger";
 import { createSiteId } from "@/lib/site/site-defaults";
+import { resolveButtonLabel, patchTextLocaleValue, patchButtonLocaleLabel } from "@/lib/site/site-i18n";
+import { DEFAULT_SITE_LEAD_FORM, type SiteLeadsOutput } from "@/lib/site/site-leads";
+import { foldderCdnHostname } from "@/lib/site/site-domain";
+import type { SiteGenerateCopyAction } from "@/lib/site/site-generate-copy";
 import type {
   Block,
   BlockLayout,
@@ -31,6 +35,7 @@ import type {
   MediaContent,
   SiteInspectorTab,
   SitePage,
+  PublishState,
   TableOpts,
   TextContent,
   TextRole,
@@ -69,11 +74,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function TextContentEditor({
   content,
+  previewLocale,
   onChange,
 }: {
   content: TextContent;
+  previewLocale: string;
   onChange: (next: TextContent) => void;
 }) {
+  const displayValue =
+    previewLocale === "es" || !content.localeValues?.[previewLocale]
+      ? content.value
+      : content.localeValues[previewLocale] ?? content.value;
+
   return (
     <>
       <Field label="Rol tipográfico">
@@ -89,14 +101,19 @@ function TextContentEditor({
           ))}
         </select>
       </Field>
-      <Field label="Texto">
+      <Field label={`Texto (${previewLocale})`}>
         <textarea
           className="site-studio__field-textarea"
           rows={4}
-          value={content.value}
-          onChange={(event) => onChange({ ...content, value: event.target.value })}
+          value={displayValue}
+          onChange={(event) =>
+            onChange(patchTextLocaleValue(content, previewLocale, event.target.value))
+          }
         />
       </Field>
+      {previewLocale !== "es" && content.value.trim() ? (
+        <p className="site-studio__inspector-hint">Fallback (es): {content.value.slice(0, 80)}</p>
+      ) : null}
       <Field label="Alineación">
         <select
           className="site-studio__field-input"
@@ -189,18 +206,22 @@ function MediaContentEditor({
 
 function ButtonContentEditor({
   content,
+  previewLocale,
   onChange,
 }: {
   content: ButtonContent;
+  previewLocale: string;
   onChange: (next: ButtonContent) => void;
 }) {
+  const displayLabel = resolveButtonLabel(content, previewLocale);
+
   return (
     <>
-      <Field label="Etiqueta">
+      <Field label={`Etiqueta (${previewLocale})`}>
         <input
           className="site-studio__field-input"
-          value={content.label}
-          onChange={(event) => onChange({ ...content, label: event.target.value })}
+          value={displayLabel}
+          onChange={(event) => onChange(patchButtonLocaleLabel(content, previewLocale, event.target.value))}
         />
       </Field>
       <Field label="Destino">
@@ -251,18 +272,20 @@ function CollectionContentEditor({
   onChange,
   graphStatus,
   connectedDataset,
+  contentSourceLabel,
 }: {
   content: CollectionContent;
   onChange: (next: CollectionContent) => void;
   graphStatus?: SiteGraphConnectionStatus;
   connectedDataset?: Dataset | null;
+  contentSourceLabel?: string | null;
 }) {
   const gridOpts = content.view === "grid" ? (content.viewOptions as GridOpts) : null;
   const carouselOpts = content.view === "carousel" ? (content.viewOptions as CarouselOpts) : null;
   const tableOpts = content.view === "table" ? (content.viewOptions as TableOpts) : null;
   const marqueeOpts = content.view === "marquee" ? (content.viewOptions as MarqueeOpts) : null;
   const graphHint = graphStatus?.content.connected
-    ? `Populate conectado · ${graphStatus.content.itemCount} imgs en preview`
+    ? `${contentSourceLabel ?? "Contenido"} conectado · ${graphStatus.content.itemCount} imgs en preview`
     : graphStatus?.dataset.connected
       ? `Dataset conectado · ${graphStatus.dataset.rowCount} imgs en preview`
       : null;
@@ -381,6 +404,22 @@ function CollectionContentEditor({
               {COLLECTION_VIEW_LABELS[view]}
             </option>
           ))}
+        </select>
+      </Field>
+      <Field label="Overflow">
+        <select
+          className="site-studio__field-input"
+          value={content.overflow}
+          onChange={(event) =>
+            onChange({
+              ...content,
+              overflow: event.target.value as CollectionContent["overflow"],
+            })
+          }
+        >
+          <option value="grow">Mostrar todo</option>
+          <option value="paginate_static">Paginar (estático)</option>
+          <option value="truncate_more">Truncar + Ver más</option>
         </select>
       </Field>
       {content.view === "grid" ? (
@@ -616,23 +655,27 @@ function BlockSourceEditor({
 
 function BlockContentEditor({
   block,
+  previewLocale,
   onChange,
   onPatchBlock,
   graphStatus,
   connectedDataset,
+  contentSourceLabel,
 }: {
   block: Block;
+  previewLocale: string;
   onChange: (content: Block["content"]) => void;
   onPatchBlock: (block: Block) => void;
   graphStatus?: SiteGraphConnectionStatus;
   connectedDataset?: Dataset | null;
+  contentSourceLabel?: string | null;
 }) {
   const { content } = block;
   if (block.type === "text" && isTextContent(content)) {
     return (
       <>
         <BlockSourceEditor block={block} onPatchBlock={onPatchBlock} />
-        <TextContentEditor content={content} onChange={onChange} />
+        <TextContentEditor content={content} previewLocale={previewLocale} onChange={onChange} />
       </>
     );
   }
@@ -649,7 +692,7 @@ function BlockContentEditor({
     );
   }
   if (block.type === "button" && isButtonContent(content)) {
-    return <ButtonContentEditor content={content} onChange={onChange} />;
+    return <ButtonContentEditor content={content} previewLocale={previewLocale} onChange={onChange} />;
   }
   if (block.type === "collection" && isCollectionContent(content)) {
     return (
@@ -658,6 +701,7 @@ function BlockContentEditor({
         onChange={onChange}
         graphStatus={graphStatus}
         connectedDataset={connectedDataset}
+        contentSourceLabel={contentSourceLabel}
       />
     );
   }
@@ -696,6 +740,7 @@ function SectionLayoutEditor({
             onChange({
               ...section.layout,
               split: {
+                ...section.layout.split,
                 pattern: event.target.value as NonNullable<BlockLayout["split"]>["pattern"],
               },
             })
@@ -706,6 +751,47 @@ function SectionLayoutEditor({
               {option.label}
             </option>
           ))}
+        </select>
+      </Field>
+      <Field label="Agrupar hijos (columnas)">
+        <select
+          className="site-studio__field-input"
+          value={String(section.layout.split?.groupSize ?? 1)}
+          onChange={(event) =>
+            onChange({
+              ...section.layout,
+              split: {
+                pattern: section.layout.split?.pattern ?? "1",
+                rootPosition: section.layout.split?.rootPosition,
+                groupSize: Number(event.target.value),
+              },
+            })
+          }
+        >
+          {[1, 2, 3, 4].map((size) => (
+            <option key={size} value={size}>
+              {size} bloque{size === 1 ? "" : "s"} por columna
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Título raíz">
+        <select
+          className="site-studio__field-input"
+          value={section.layout.split?.rootPosition ?? "first-cell"}
+          onChange={(event) =>
+            onChange({
+              ...section.layout,
+              split: {
+                pattern: section.layout.split?.pattern ?? "1",
+                groupSize: section.layout.split?.groupSize,
+                rootPosition: event.target.value as NonNullable<BlockLayout["split"]>["rootPosition"],
+              },
+            })
+          }
+        >
+          <option value="first-cell">Primera celda</option>
+          <option value="above">Encima del split</option>
         </select>
       </Field>
     </>
@@ -777,26 +863,38 @@ function SectionMotionEditor({
 export function SitePageInspector({
   page,
   slug,
+  publish,
   locales,
   previewLocale,
   ledger,
+  leadsOutput,
+  onRefreshLeads,
+  refreshingLeads,
   onPatchPage,
   onPatchSlug,
+  onPatchPublish,
   onPatchLocales,
   onPreviewLocaleChange,
   onPatchLedger,
 }: {
   page: SitePage;
   slug: string;
+  publish: PublishState;
   locales: string[];
   previewLocale: string;
   ledger: ThemeOverride[];
+  leadsOutput?: SiteLeadsOutput | null;
+  onRefreshLeads?: () => void;
+  refreshingLeads?: boolean;
   onPatchPage: (patch: Partial<SitePage>) => void;
   onPatchSlug: (slug: string) => void;
+  onPatchPublish: (patch: Partial<PublishState>) => void;
   onPatchLocales: (locales: string[]) => void;
   onPreviewLocaleChange: (locale: string) => void;
   onPatchLedger: (ledger: ThemeOverride[]) => void;
 }) {
+  const leadsForm = page.leadsForm ?? DEFAULT_SITE_LEAD_FORM;
+  const cdnHostname = publish.cdnHostname ?? (slug.trim() ? foldderCdnHostname(slug) : "");
   const addLedgerEntry = () => {
     const firstSectionId = page.sections[0]?.id ?? "";
     onPatchLedger([
@@ -843,6 +941,71 @@ export function SitePageInspector({
               onChange={(event) => onPatchSlug(event.target.value)}
             />
           </Field>
+          <Field label="Dominio propio (CNAME)">
+            <input
+              className="site-studio__field-input"
+              value={publish.customDomain ?? ""}
+              placeholder="www.tumarca.com"
+              onChange={(event) => onPatchPublish({ customDomain: event.target.value.trim() || undefined })}
+            />
+          </Field>
+          {cdnHostname ? (
+            <p className="site-studio__inspector-hint">CDN: {cdnHostname}</p>
+          ) : null}
+          {publish.publicUrl ? (
+            <p className="site-studio__inspector-hint">Publicado: {publish.publicUrl}</p>
+          ) : null}
+          {(publish.status === "published" || publish.status === "stale") && onRefreshLeads ? (
+            <div className="site-studio__leads-summary">
+              <p className="site-studio__inspector-hint">
+                Leads capturados: {leadsOutput?.totalCount ?? 0}
+                {leadsOutput?.updatedAt ? ` · ${new Date(leadsOutput.updatedAt).toLocaleString()}` : ""}
+              </p>
+              <button
+                type="button"
+                className="site-studio__add-btn site-studio__add-btn--inline"
+                disabled={refreshingLeads}
+                onClick={onRefreshLeads}
+              >
+                {refreshingLeads ? "Actualizando…" : "Actualizar leads"}
+              </button>
+            </div>
+          ) : null}
+          <p className="site-studio__micro-label">Formulario de leads</p>
+          <label className="site-studio__checkbox-row">
+            <input
+              type="checkbox"
+              checked={leadsForm.enabled}
+              onChange={(event) =>
+                onPatchPage({
+                  leadsForm: { ...leadsForm, enabled: event.target.checked },
+                })
+              }
+            />
+            Mostrar formulario en la página publicada
+          </label>
+          {leadsForm.enabled ? (
+            <>
+              <Field label="Título del formulario">
+                <input
+                  className="site-studio__field-input"
+                  value={leadsForm.title ?? ""}
+                  onChange={(event) =>
+                    onPatchPage({ leadsForm: { ...leadsForm, title: event.target.value } })
+                  }
+                />
+              </Field>
+              <Field label="Botón enviar">
+                <input
+                  className="site-studio__field-input"
+                  value={leadsForm.submitLabel ?? ""}
+                  onChange={(event) =>
+                    onPatchPage({ leadsForm: { ...leadsForm, submitLabel: event.target.value } })
+                  }
+                />
+              </Field>
+            </>
+          ) : null}
           <label className="site-studio__checkbox-row">
             <input
               type="checkbox"
@@ -957,8 +1120,13 @@ export function SiteInspector({
   onPatchSection,
   tab,
   onTabChange,
+  previewLocale,
+  brandReady,
+  generatingCopy,
+  onGenerateCopy,
   graphStatus,
   connectedDataset,
+  contentSourceLabel,
 }: {
   section: Block | null;
   selectedBlockId: string | null;
@@ -966,8 +1134,13 @@ export function SiteInspector({
   onPatchSection: (nextSection: Block) => void;
   tab: SiteInspectorTab;
   onTabChange: (tab: SiteInspectorTab) => void;
+  previewLocale: string;
+  brandReady?: boolean;
+  generatingCopy?: boolean;
+  onGenerateCopy?: (action: SiteGenerateCopyAction) => void;
   graphStatus?: SiteGraphConnectionStatus;
   connectedDataset?: Dataset | null;
+  contentSourceLabel?: string | null;
 }) {
   const blocks = useMemo(() => (section ? flattenSectionBlocks(section) : []), [section]);
   const activeBlock = useMemo(() => {
@@ -1018,10 +1191,42 @@ export function SiteInspector({
                 </div>
               ) : null}
 
+              {onGenerateCopy ? (
+                <div className="site-studio__ai-copy">
+                  <p className="site-studio__micro-label">Copy con IA</p>
+                  <div className="site-studio__ai-copy-actions">
+                    {(
+                      [
+                        ["hero", "Hero"],
+                        ["faq", "FAQ"],
+                        ["pricing", "Pricing"],
+                        ["cta", "CTA"],
+                        ["rewrite", "Reescribir"],
+                      ] as const
+                    ).map(([action, label]) => (
+                      <button
+                        key={action}
+                        type="button"
+                        className="site-studio__ai-copy-btn"
+                        disabled={generatingCopy || (action === "rewrite" && activeBlock.type !== "text")}
+                        onClick={() => onGenerateCopy(action)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {!brandReady ? (
+                    <p className="site-studio__inspector-hint">Conecta BrandKit para copy más alineado con la marca.</p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <BlockContentEditor
                 block={activeBlock}
+                previewLocale={previewLocale}
                 graphStatus={graphStatus}
                 connectedDataset={connectedDataset}
+                contentSourceLabel={contentSourceLabel}
                 onChange={(content) => onPatchSection(patchBlockContent(section, activeBlock.id, content))}
                 onPatchBlock={(nextBlock) =>
                   onPatchSection(updateBlockInSection(section, activeBlock.id, () => nextBlock))

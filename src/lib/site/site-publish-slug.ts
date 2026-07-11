@@ -1,5 +1,6 @@
 import type { SitePage, SiteProject } from "./site-types";
 import { getActiveSitePage } from "./site-project";
+import { foldderCdnHostname, normalizeCustomDomain } from "./site-domain";
 
 export const RESERVED_SITE_SLUGS = new Set([
   "admin",
@@ -67,7 +68,19 @@ export function sitePublicPath(slug: string, pagePathSlug = "index"): string {
   return `/site/${slug}/${pagePathSlug}`;
 }
 
-export function sitePublicUrl(slug: string, origin?: string): string {
+export function sitePublicUrl(
+  slug: string,
+  origin?: string,
+  opts?: { customDomain?: string; cdnHostname?: string },
+): string {
+  const custom = opts?.customDomain?.trim();
+  if (custom) {
+    return `https://${normalizeCustomDomain(custom)}`;
+  }
+  const cdn = opts?.cdnHostname?.trim() || foldderCdnHostname(slug);
+  if (process.env.FOLDDER_SITE_PREFER_CDN === "true") {
+    return `https://${cdn}`;
+  }
   const base = (origin ?? process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
   const path = sitePublicPath(slug);
   return base ? `${base}${path}` : path;

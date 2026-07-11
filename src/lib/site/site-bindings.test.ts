@@ -180,8 +180,8 @@ describe("site-bindings", () => {
       mediaUrl: null,
       mediaConnected: false,
     });
-    expect(graphBindingsPending(project, preview, status)).toBe(true);
-    expect(graphBindingsPending(preview, preview, status)).toBe(false);
+    expect(graphBindingsPending(project, preview, status, null)).toBe(true);
+    expect(graphBindingsPending(preview, preview, status, null)).toBe(false);
   });
 
   it("reorderSiteSections moves drag target to drop index", () => {
