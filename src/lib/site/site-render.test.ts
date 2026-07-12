@@ -73,7 +73,9 @@ describe("site-render", () => {
 
   it("injects editor selection script in studio preview mode", () => {
     const srcDoc = buildSiteSrcDoc(demoProject(), { editorMode: true });
-    expect(srcDoc).toContain("foldder-site-section-select");
+    expect(srcDoc).toContain("foldder-site-block-select");
+    expect(srcDoc).toContain("foldder-site-sync-selection");
+    expect(srcDoc).toContain('data-selectable="block"');
     expect(srcDoc).toContain("data-section-id");
   });
 

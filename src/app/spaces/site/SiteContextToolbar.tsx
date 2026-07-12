@@ -16,7 +16,12 @@ import {
   SplitSquareHorizontal,
   Type,
 } from "lucide-react";
-import { findBlockInSection, patchBlockContent, patchBlockMotionInSection } from "@/lib/site/site-block-tree";
+import { patchBlockContent, patchBlockMotionInSection } from "@/lib/site/site-block-tree";
+import {
+  getSourceSummary,
+  resolveSiteSelection,
+  type SiteSelectionKind,
+} from "@/lib/site/site-selection";
 import { COLLECTION_VIEW_LABELS, switchCollectionView } from "@/lib/site/site-collection-views";
 import { resolveButtonLabel, patchButtonLocaleLabel } from "@/lib/site/site-i18n";
 import type {
@@ -50,11 +55,15 @@ function patchActiveBlockContent(section: Block, blockId: string, content: Block
 export function SiteContextToolbar({
   section,
   selectedBlockId,
-  sectionLabel,
+  selectionKind,
+  sectionLabels,
   previewLocale,
   activeQuickControl,
   onQuickControlChange,
   onOpenAdvancedInspector,
+  onSelectSection,
+  onSelectBlock,
+  onSelectParent,
   onDuplicateBlock,
   onDuplicateSection,
   onRemoveSection,
@@ -65,11 +74,15 @@ export function SiteContextToolbar({
 }: {
   section: Block | null;
   selectedBlockId: string | null;
-  sectionLabel?: string;
+  selectionKind: SiteSelectionKind;
+  sectionLabels: Record<string, string>;
   previewLocale: string;
   activeQuickControl: SiteQuickControl;
   onQuickControlChange: (control: SiteQuickControl) => void;
   onOpenAdvancedInspector: (context: SiteAdvancedInspectorContext) => void;
+  onSelectSection: (sectionId: string) => void;
+  onSelectBlock: (sectionId: string, blockId: string) => void;
+  onSelectParent: () => void;
   onDuplicateBlock?: () => void;
   onDuplicateSection?: () => void;
   onRemoveSection?: () => void;
@@ -96,24 +109,36 @@ export function SiteContextToolbar({
 
   if (!section) return null;
 
-  const blockId = selectedBlockId ?? section.id;
-  const activeBlock = findBlockInSection(section, blockId) ?? section;
-  const isSectionRoot = activeBlock.id === section.id;
+  const selection = resolveSiteSelection(
+    section,
+    {
+      sectionId: section.id,
+      blockId: selectionKind === "block" ? selectedBlockId : null,
+      kind: selectionKind === "page" ? "section" : selectionKind,
+    },
+    sectionLabels,
+  );
+  if (!selection) return null;
+
+  const activeBlock = selection.block;
+  const isSectionRoot = selection.kind === "section";
+  const profile = selection.capabilities.toolbarProfile;
 
   const anchorFor = (id: string) => btnRefs.current[id] ?? null;
 
   const patchContent = (content: Block["content"]) => {
-    if (!onPatchSection) return;
+    if (!onPatchSection || !activeBlock) return;
     onPatchSection(patchActiveBlockContent(section, activeBlock.id, content));
   };
 
   const patchMotion = (motion: Partial<Block["motion"]>) => {
     if (!onPatchSection) return;
-    onPatchSection(patchBlockMotionInSection(section, activeBlock.id, motion));
+    const targetId = activeBlock?.id ?? section.id;
+    onPatchSection(patchBlockMotionInSection(section, targetId, motion));
   };
 
   const handleDuplicate = () => {
-    if (isSectionRoot) onDuplicateSection?.();
+    if (profile === "section") onDuplicateSection?.();
     else onDuplicateBlock?.();
   };
 
@@ -140,15 +165,14 @@ export function SiteContextToolbar({
   };
 
   const moreItems = buildMoreMenuActions({
-    block: activeBlock,
+    block: activeBlock ?? section,
     isSectionRoot,
     hasLibrary: Boolean(onSaveSectionToLibrary),
   });
 
-  const labelText = sectionLabel ?? (isSectionRoot ? "Sección" : activeBlock.type);
-
   const renderMotionPopover = () => {
-    const motion = activeBlock.motion;
+    const motionTarget = activeBlock ?? section;
+    const motion = motionTarget.motion;
     const isOverride = motion.mode === "override";
     return (
       <SiteQuickPopover
@@ -200,11 +224,38 @@ export function SiteContextToolbar({
     );
   };
 
-  if (activeBlock.type === "text") {
+  const breadcrumb = (
+    <nav className="site-editor-context-toolbar__breadcrumb" aria-label="Selección">
+      {selection.breadcrumb.map((item, index) => (
+        <React.Fragment key={item.key}>
+          {index > 0 ? <span className="site-editor-context-toolbar__crumb-sep">/</span> : null}
+          <button
+            type="button"
+            className={`site-editor-context-toolbar__crumb${index === selection.breadcrumb.length - 1 ? " is-current" : ""}`}
+            onClick={() => {
+              if (item.kind === "section" && item.sectionId) onSelectSection(item.sectionId);
+              else if (item.kind === "block" && item.sectionId && item.blockId) {
+                onSelectBlock(item.sectionId, item.blockId);
+              }
+            }}
+          >
+            {item.label}
+          </button>
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+
+  const sourceHint =
+    selection.kind === "block" && activeBlock ? (
+      <span className="site-editor-context-toolbar__source">Fuente: {getSourceSummary(activeBlock)}</span>
+    ) : null;
+
+  if (profile === "text" && activeBlock?.type === "text") {
     const content = activeBlock.content as TextContent;
     return (
       <>
-        <ToolbarShell label={labelText}>
+        <ToolbarShell breadcrumb={breadcrumb} sourceHint={sourceHint}>
           <Btn ref={setBtnRef("type")} icon={<Type size={14} />} label="Tipo" active={activeQuickControl === "type"} onClick={() => toggleQuick("type")} />
           <Btn ref={setBtnRef("alignment")} icon={<AlignCenter size={14} />} label="Alineación" active={activeQuickControl === "alignment"} onClick={() => toggleQuick("alignment")} />
           <Btn ref={setBtnRef("width")} icon={<Maximize2 size={14} />} label="Ancho" active={activeQuickControl === "width"} onClick={() => toggleQuick("width")} />
@@ -238,11 +289,11 @@ export function SiteContextToolbar({
     );
   }
 
-  if (activeBlock.type === "media") {
+  if (profile === "media" && activeBlock?.type === "media") {
     const content = activeBlock.content as MediaContent;
     return (
       <>
-        <ToolbarShell label={labelText}>
+        <ToolbarShell breadcrumb={breadcrumb} sourceHint={sourceHint}>
           <Btn ref={setBtnRef("replace")} icon={<Image size={14} />} label="Reemplazar" active={activeQuickControl === "replace"} onClick={() => toggleQuick("replace")} />
           <Btn ref={setBtnRef("ratio")} icon={<Ratio size={14} />} label="Ratio" active={activeQuickControl === "ratio"} onClick={() => toggleQuick("ratio")} />
           <Btn ref={setBtnRef("fit")} icon={<Maximize2 size={14} />} label="Fit" active={activeQuickControl === "fit"} onClick={() => toggleQuick("fit")} />
@@ -286,12 +337,12 @@ export function SiteContextToolbar({
     );
   }
 
-  if (activeBlock.type === "button") {
+  if (profile === "button" && activeBlock?.type === "button") {
     const content = activeBlock.content as ButtonContent;
     const displayLabel = resolveButtonLabel(content, previewLocale);
     return (
       <>
-        <ToolbarShell label={labelText}>
+        <ToolbarShell breadcrumb={breadcrumb} sourceHint={sourceHint}>
           <Btn ref={setBtnRef("label")} icon={<Type size={14} />} label="Etiqueta" active={activeQuickControl === "label"} onClick={() => toggleQuick("label")} />
           <Btn ref={setBtnRef("variant")} icon={<Palette size={14} />} label="Variante" active={activeQuickControl === "variant"} onClick={() => toggleQuick("variant")} />
           <Btn ref={setBtnRef("target")} icon={<Link2 size={14} />} label="Destino" active={activeQuickControl === "target"} onClick={() => toggleQuick("target")} />
@@ -360,12 +411,12 @@ export function SiteContextToolbar({
     );
   }
 
-  if (activeBlock.type === "collection") {
+  if (profile === "collection" && activeBlock?.type === "collection") {
     const content = activeBlock.content as CollectionContent;
     const gridOpts = content.view === "grid" ? (content.viewOptions as GridOpts) : null;
     return (
       <>
-        <ToolbarShell label={labelText}>
+        <ToolbarShell breadcrumb={breadcrumb} sourceHint={sourceHint}>
           <Btn ref={setBtnRef("view")} icon={<LayoutGrid size={14} />} label="Vista" active={activeQuickControl === "view"} onClick={() => toggleQuick("view")} />
           {content.view === "grid" ? (
             <Btn ref={setBtnRef("density")} icon={<Rows3 size={14} />} label="Densidad" active={activeQuickControl === "density"} onClick={() => toggleQuick("density")} />
@@ -440,11 +491,11 @@ export function SiteContextToolbar({
     );
   }
 
-  if (isSectionRoot) {
+  if (profile === "section") {
     const splitPattern = section.layout.split?.pattern ?? "1";
     return (
       <>
-        <ToolbarShell label={labelText}>
+        <ToolbarShell breadcrumb={breadcrumb}>
           <Btn ref={setBtnRef("split")} icon={<SplitSquareHorizontal size={14} />} label="Split" active={activeQuickControl === "split"} onClick={() => toggleQuick("split")} />
           {onToggleBleed ? <Btn icon={<Maximize2 size={14} />} label="Bleed" onClick={onToggleBleed} /> : null}
           {onOpenStructure ? <Btn icon={<Rows3 size={14} />} label="Orden" onClick={onOpenStructure} /> : null}
@@ -495,7 +546,7 @@ export function SiteContextToolbar({
 
   return (
     <>
-      <ToolbarShell label={labelText}>
+      <ToolbarShell breadcrumb={breadcrumb} sourceHint={sourceHint}>
         <Btn ref={setBtnRef("motion")} icon={<Move size={14} />} label="Motion" active={activeQuickControl === "motion"} onClick={() => toggleQuick("motion")} />
         <Btn icon={<Copy size={14} />} label="Duplicar" onClick={handleDuplicate} />
         <Btn ref={setBtnRef("more")} icon={<MoreHorizontal size={14} />} label="Más" active={activeQuickControl === "more"} onClick={() => toggleQuick("more")} primary />
@@ -506,16 +557,20 @@ export function SiteContextToolbar({
   );
 }
 
-const ToolbarShell = React.forwardRef<HTMLDivElement, { label: string; children: React.ReactNode }>(
-  function ToolbarShell({ label, children }, ref) {
-    return (
-      <div ref={ref} className="site-editor-context-toolbar" role="toolbar" aria-label={`Acciones: ${label}`}>
-        <span className="site-editor-context-toolbar__label">{label}</span>
-        <div className="site-editor-context-toolbar__actions">{children}</div>
+const ToolbarShell = React.forwardRef<
+  HTMLDivElement,
+  { breadcrumb: React.ReactNode; sourceHint?: React.ReactNode; children: React.ReactNode }
+>(function ToolbarShell({ breadcrumb, sourceHint, children }, ref) {
+  return (
+    <div ref={ref} className="site-editor-context-toolbar" role="toolbar">
+      <div className="site-editor-context-toolbar__identity">
+        {breadcrumb}
+        {sourceHint}
       </div>
-    );
-  },
-);
+      <div className="site-editor-context-toolbar__actions">{children}</div>
+    </div>
+  );
+});
 
 const Btn = React.forwardRef<
   HTMLButtonElement,

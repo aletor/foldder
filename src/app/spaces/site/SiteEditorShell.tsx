@@ -27,6 +27,7 @@ import { SiteSourcesPopover } from "./SiteSourcesPopover";
 import { SiteStructurePanel, SiteStructureRail } from "./SiteStructurePanel";
 import { SiteThemePopover } from "./SiteThemePopover";
 import type { SiteOverlayPanel, SiteEditorChromeMode, SitePreviewZoom, SiteQuickControl, SiteAdvancedInspectorContext } from "./site-editor-ui-types";
+import { getAdjacentSelectableBlockId } from "@/lib/site/site-selection";
 
 export function SiteEditorShell({
   accent,
@@ -70,8 +71,11 @@ export function SiteEditorShell({
   onGenerateCopy,
   selectedSectionId,
   selectedBlockId,
+  selectionKind,
+  onCanvasSelect,
   onSelectSection,
   onSelectBlock,
+  onSelectParent,
   onSelectPageSettings,
   inspectorScope,
   onSetInspectorScope,
@@ -135,8 +139,11 @@ export function SiteEditorShell({
   onGenerateCopy?: (action: SiteGenerateCopyAction) => void;
   selectedSectionId: string | null;
   selectedBlockId: string | null;
+  selectionKind: import("@/lib/site/site-selection").SiteSelectionKind;
+  onCanvasSelect: (payload: { sectionId: string; blockId?: string; target: "section" | "block" }) => void;
   onSelectSection: (id: string) => void;
-  onSelectBlock: (id: string) => void;
+  onSelectBlock: (sectionId: string, blockId: string) => void;
+  onSelectParent: () => void;
   onSelectPageSettings: () => void;
   inspectorScope: "section" | "page";
   onSetInspectorScope: (scope: "section" | "page") => void;
@@ -254,9 +261,25 @@ export function SiteEditorShell({
           closeInspector();
           return;
         }
-        if (selectedSectionId) {
-          onSelectBlock(selectedSectionId);
+        if (selectionKind === "block" && selectedSectionId) {
+          onSelectSection(selectedSectionId);
+          return;
         }
+        if (selectionKind === "section" && selectedSectionId) {
+          onSelectParent();
+          return;
+        }
+        return;
+      }
+
+      if (!event.metaKey && !event.ctrlKey && event.key === "Tab" && selectedSection && selectionKind === "block" && selectedBlockId) {
+        event.preventDefault();
+        const nextId = getAdjacentSelectableBlockId(
+          selectedSection,
+          selectedBlockId,
+          event.shiftKey ? -1 : 1,
+        );
+        if (nextId) onSelectBlock(selectedSection.id, nextId);
         return;
       }
 
@@ -298,9 +321,14 @@ export function SiteEditorShell({
     inspectorOpen,
     onDuplicateSection,
     onSelectBlock,
+    onSelectParent,
+    onSelectSection,
     openInspector,
     overlayPanel,
+    selectedBlockId,
+    selectedSection,
     selectedSectionId,
+    selectionKind,
   ]);
 
   const showChrome = chromeMode === "editor";
@@ -321,9 +349,11 @@ export function SiteEditorShell({
           previewMode={previewMode}
           previewLocale={previewLocale}
           selectedSectionId={selectedSectionId}
+          selectedBlockId={selectedBlockId}
+          selectionKind={selectionKind}
           sectionLabels={sectionLabels}
           adn={adn}
-          onSelectSection={onSelectSection}
+          onCanvasSelect={onCanvasSelect}
           onInlineTextEdit={onInlineTextEdit}
           onInlineButtonEdit={onInlineButtonEdit}
           editorMode={showChrome}
@@ -368,11 +398,15 @@ export function SiteEditorShell({
             <SiteContextToolbar
               section={selectedSection}
               selectedBlockId={selectedBlockId}
-              sectionLabel={selectedSectionId ? sectionLabels[selectedSectionId] : undefined}
+              selectionKind={selectionKind}
+              sectionLabels={sectionLabels}
               previewLocale={previewLocale}
               activeQuickControl={activeQuickControl}
               onQuickControlChange={setActiveQuickControl}
               onOpenAdvancedInspector={openAdvancedInspector}
+              onSelectSection={onSelectSection}
+              onSelectBlock={onSelectBlock}
+              onSelectParent={onSelectParent}
               onDuplicateBlock={
                 selectedSectionId && selectedBlockId && onDuplicateBlock
                   ? () => onDuplicateBlock(selectedSectionId, selectedBlockId)
@@ -505,8 +539,11 @@ export function SiteEditorShell({
             onTogglePin={() => setInspectorPinned((v) => !v)}
             inspectorScope={inspectorScope}
             section={selectedSection}
-            selectedBlockId={selectedBlockId}
-            onSelectBlock={onSelectBlock}
+            selectedBlockId={selectionKind === "block" ? selectedBlockId : null}
+            selectionKind={selectionKind}
+            onSelectBlock={(blockId) => {
+              if (selectedSectionId) onSelectBlock(selectedSectionId, blockId);
+            }}
             onPatchSection={onPatchSection}
             tab={inspectorTab}
             onTabChange={onInspectorTabChange}
@@ -532,6 +569,7 @@ export function SiteEditorShell({
             onPreviewLocaleChange={onPreviewLocaleChange}
             onPatchLedger={onPatchLedger}
             focus={advancedInspectorContext}
+            selectionKind={selectionKind}
           />
         </div>
       ) : (

@@ -15,6 +15,7 @@ import type {
   ThemeOverride,
 } from "@/lib/site/site-types";
 import type { SiteAdvancedInspectorContext } from "./site-editor-ui-types";
+import type { SiteSelectionKind } from "@/lib/site/site-selection";
 
 export function SiteInspectorDrawer({
   open,
@@ -50,6 +51,7 @@ export function SiteInspectorDrawer({
   onPreviewLocaleChange,
   onPatchLedger,
   focus,
+  selectionKind,
 }: {
   open: boolean;
   pinned: boolean;
@@ -84,6 +86,7 @@ export function SiteInspectorDrawer({
   onPreviewLocaleChange: (locale: string) => void;
   onPatchLedger: (ledger: ThemeOverride[]) => void;
   focus?: SiteAdvancedInspectorContext | null;
+  selectionKind?: SiteSelectionKind;
 }) {
   if (!open) return null;
 
@@ -144,6 +147,7 @@ export function SiteInspectorDrawer({
               connectedDataset={connectedDataset}
               contentSourceLabel={contentSourceLabel}
               focus={focus}
+              selectionKind={selectionKind}
             />
           )}
         </div>

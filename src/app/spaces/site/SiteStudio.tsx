@@ -44,6 +44,7 @@ import type {
   ThemeOverride,
   ThemeState,
 } from "@/lib/site/site-types";
+import type { SiteSelectionKind } from "@/lib/site/site-selection";
 import { SiteEditorShell } from "./SiteEditorShell";
 import { useSiteAdnConnection } from "./use-site-adn";
 import { useSiteConnections } from "./use-site-connections";
@@ -86,6 +87,7 @@ export function SiteStudio({
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(activePage.sections[0]?.id ?? null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectionKind, setSelectionKind] = useState<SiteSelectionKind>("section");
   const [inspectorScope, setInspectorScope] = useState<"section" | "page">("section");
   const [inspectorTab, setInspectorTab] = useState<SiteInspectorTab>("content");
   const [publishing, setPublishing] = useState(false);
@@ -160,14 +162,42 @@ export function SiteStudio({
   const handleSelectSection = useCallback((sectionId: string) => {
     setInspectorScope("section");
     setSelectedSectionId(sectionId);
-    setSelectedBlockId(sectionId);
+    setSelectedBlockId(null);
+    setSelectionKind("section");
   }, []);
+
+  const handleSelectBlock = useCallback((sectionId: string, blockId: string) => {
+    setInspectorScope("section");
+    setSelectedSectionId(sectionId);
+    setSelectedBlockId(blockId);
+    setSelectionKind("block");
+  }, []);
+
+  const handleCanvasSelect = useCallback(
+    (payload: { sectionId: string; blockId?: string; target: "section" | "block" }) => {
+      if (payload.target === "section") {
+        handleSelectSection(payload.sectionId);
+        return;
+      }
+      if (payload.blockId) handleSelectBlock(payload.sectionId, payload.blockId);
+    },
+    [handleSelectBlock, handleSelectSection],
+  );
 
   const handleSelectPageSettings = useCallback(() => {
     setInspectorScope("page");
     setSelectedSectionId(null);
     setSelectedBlockId(null);
+    setSelectionKind("page");
   }, []);
+
+  const handleSelectParent = useCallback(() => {
+    if (selectionKind === "block" && selectedSectionId) {
+      handleSelectSection(selectedSectionId);
+      return;
+    }
+    handleSelectPageSettings();
+  }, [handleSelectPageSettings, handleSelectSection, selectedSectionId, selectionKind]);
 
   const handleSelectSitePage = useCallback(
     (pageId: string) => {
@@ -175,7 +205,8 @@ export function SiteStudio({
       const page = project.pages.find((entry) => entry.id === pageId);
       const firstSectionId = page?.sections[0]?.id ?? null;
       setSelectedSectionId(firstSectionId);
-      setSelectedBlockId(firstSectionId);
+      setSelectedBlockId(null);
+      setSelectionKind(firstSectionId ? "section" : "page");
       setInspectorScope(firstSectionId ? "section" : "page");
     },
     [patchProject, project],
@@ -264,6 +295,7 @@ export function SiteStudio({
       });
       setSelectedSectionId(sectionId);
       setSelectedBlockId(newBlockId);
+      setSelectionKind("block");
     },
     [activePage.sections, handleDuplicateSection, patchSiteData, project],
   );
@@ -286,7 +318,8 @@ export function SiteStudio({
       if (selectedSectionId === sectionId) {
         const nextId = nextSections[0]?.id ?? null;
         setSelectedSectionId(nextId);
-        setSelectedBlockId(nextId);
+        setSelectedBlockId(null);
+        setSelectionKind(nextId ? "section" : "page");
         if (!nextId) setInspectorScope("page");
       }
     },
@@ -376,7 +409,9 @@ export function SiteStudio({
       setGeneratingCopy(true);
       setPublishError(null);
       try {
-        const activeBlock = findBlockInSection(selectedSection, selectedBlockId ?? selectedSection.id);
+        const blockId =
+          selectionKind === "block" && selectedBlockId ? selectedBlockId : selectedSection.id;
+        const activeBlock = findBlockInSection(selectedSection, blockId);
         const currentText =
           activeBlock?.type === "text" ? (activeBlock.content as TextContent).value : "";
         const response = await fetch("/api/spaces/site/generate-copy", {
@@ -767,8 +802,11 @@ export function SiteStudio({
       onGenerateCopy={(action) => void handleGenerateCopy(action)}
       selectedSectionId={selectedSectionId}
       selectedBlockId={selectedBlockId}
+      selectionKind={selectionKind}
+      onCanvasSelect={handleCanvasSelect}
       onSelectSection={handleSelectSection}
-      onSelectBlock={setSelectedBlockId}
+      onSelectBlock={handleSelectBlock}
+      onSelectParent={handleSelectParent}
       onSelectPageSettings={handleSelectPageSettings}
       inspectorScope={inspectorScope}
       onSetInspectorScope={setInspectorScope}

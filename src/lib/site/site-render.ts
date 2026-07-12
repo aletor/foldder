@@ -21,6 +21,7 @@ import type {
   TextContent,
 } from "./site-types";
 import { siteThemeStylesheet } from "./site-theme";
+import { getBlockHoverLabel } from "./site-selection";
 
 export type SiteRenderOutput = {
   html: string;
@@ -34,6 +35,9 @@ export type SiteRenderOptions = {
   /** Renderiza una página concreta (multi-página). */
   pageId?: string;
   selectedSectionId?: string | null;
+  selectedBlockId?: string | null;
+  /** section = contorno de sección; block = bloque concreto (puede coincidir id con sección). */
+  selectionKind?: "section" | "block" | null;
   sectionLabels?: Record<string, string>;
   adn?: SiteAdnContext | null;
   /** Inyecta script/CSS para seleccionar secciones desde el iframe del studio. */
@@ -47,31 +51,108 @@ export type SiteRenderOptions = {
 };
 
 export const SITE_EDITOR_SECTION_SELECT_MESSAGE = "foldder-site-section-select" as const;
+export const SITE_EDITOR_BLOCK_SELECT_MESSAGE = "foldder-site-block-select" as const;
+export const SITE_EDITOR_SYNC_SELECTION_MESSAGE = "foldder-site-sync-selection" as const;
 export const SITE_EDITOR_TEXT_EDIT_MESSAGE = "foldder-site-text-edit" as const;
 export const SITE_EDITOR_BUTTON_EDIT_MESSAGE = "foldder-site-button-edit" as const;
 
 const SITE_EDITOR_CSS = `
+html, body {
+  overflow-anchor: none;
+}
 .site-section[data-section-id] {
+  position: relative;
+  cursor: default;
+}
+.site-section[data-section-id].is-section-selected {
+  outline: 1px solid color-mix(in srgb, var(--c-accent) 50%, transparent);
+  outline-offset: -1px;
+}
+.site-section[data-section-id].is-section-selected::before {
+  content: attr(data-section-label);
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 3;
+  font: 600 10px/1.2 system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--c-accent) 85%, #fff);
+  background: color-mix(in srgb, var(--c-bg) 88%, transparent);
+  padding: 2px 6px;
+  pointer-events: none;
+}
+.site-selectable-block {
+  position: relative;
+}
+.site-selectable-block[data-selectable="block"] {
   cursor: pointer;
 }
-.site-section[data-section-id]:hover,
-.site-section[data-section-id].is-selected {
-  outline: 1px solid color-mix(in srgb, var(--c-accent) 45%, transparent);
-  outline-offset: -1px;
+.site-selectable-block.is-block-hovered:not(.is-block-selected) {
+  outline: 1px dashed color-mix(in srgb, var(--c-accent) 35%, transparent);
+  outline-offset: 2px;
+}
+.site-selectable-block.is-block-hovered:not(.is-block-selected)::after {
+  content: attr(data-block-label);
+  position: absolute;
+  top: -18px;
+  left: 0;
+  z-index: 4;
+  font: 600 10px/1.2 system-ui, sans-serif;
+  color: color-mix(in srgb, var(--c-accent) 90%, #fff);
+  background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+  padding: 1px 5px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.site-selectable-block.is-block-selected {
+  outline: 2px solid color-mix(in srgb, var(--c-accent) 65%, transparent);
+  outline-offset: 2px;
+}
+.site-selectable-block.is-block-selected::after {
+  content: attr(data-block-label);
+  position: absolute;
+  top: -18px;
+  left: 0;
+  z-index: 4;
+  font: 600 10px/1.2 system-ui, sans-serif;
+  color: #fff;
+  background: color-mix(in srgb, var(--c-accent) 78%, #000);
+  padding: 2px 6px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.site-section__hotspots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.site-section__hotspot {
+  position: absolute;
+  font: 600 10px/1.2 system-ui, sans-serif;
+  color: color-mix(in srgb, var(--c-accent) 80%, #fff);
+  background: color-mix(in srgb, var(--c-bg) 90%, transparent);
+  padding: 2px 6px;
+  border: 1px dashed color-mix(in srgb, var(--c-accent) 30%, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.site-section.is-section-selected .site-section__hotspots,
+.site-section.is-section-selected:hover .site-section__hotspot {
+  opacity: 1;
 }
 .site-text[data-editable-text="true"] {
   cursor: text;
-}
-.site-text[data-editable-text="true"]:hover {
-  outline: 1px dashed color-mix(in srgb, var(--c-accent) 40%, transparent);
-  outline-offset: 2px;
 }
 .site-text[data-editable-text="true"]:focus {
   outline: 2px solid color-mix(in srgb, var(--c-accent) 70%, transparent);
   outline-offset: 2px;
 }
 .site-btn[data-editable-button="true"] {
-  cursor: text;
+  cursor: pointer;
+}
+.site-media[data-selectable="block"] {
+  cursor: pointer;
 }
 `;
 
@@ -82,78 +163,125 @@ type RenderContext = {
 };
 
 const SITE_EDITOR_SCRIPT = `
-document.addEventListener("click", (event) => {
-  const editableText = event.target.closest("[data-editable-text]");
-  const editableButton = event.target.closest("[data-editable-button]");
-  if (editableText || editableButton) return;
-  const section = event.target.closest("[data-section-id]");
-  if (!section) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const sectionId = section.getAttribute("data-section-id");
-  if (!sectionId) return;
-  parent.postMessage({ type: "${SITE_EDITOR_SECTION_SELECT_MESSAGE}", sectionId }, "*");
-}, true);
+(function () {
+  let hoveredBlockId = null;
 
-document.addEventListener("dblclick", (event) => {
-  const textEl = event.target.closest("[data-editable-text]");
-  if (!textEl || textEl.getAttribute("contenteditable") === "true") return;
-  event.preventDefault();
-  event.stopPropagation();
-  textEl.setAttribute("contenteditable", "true");
-  textEl.focus();
-  const range = document.createRange();
-  range.selectNodeContents(textEl);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}, true);
+  function post(type, detail) {
+    parent.postMessage(Object.assign({ type }, detail), "*");
+  }
 
-document.addEventListener("focusout", (event) => {
-  const textEl = event.target.closest("[data-editable-text][contenteditable=true]");
-  if (!textEl) return;
-  textEl.removeAttribute("contenteditable");
-  const blockId = textEl.closest("[data-block-id]")?.getAttribute("data-block-id");
-  const sectionId = textEl.closest("[data-section-id]")?.getAttribute("data-section-id");
-  const value = (textEl.textContent ?? "").trim();
-  if (!blockId || !sectionId) return;
-  parent.postMessage({
-    type: "${SITE_EDITOR_TEXT_EDIT_MESSAGE}",
-    sectionId,
-    blockId,
-    value,
-  }, "*");
-}, true);
+  function clearHover() {
+    document.querySelectorAll(".is-block-hovered").forEach((el) => el.classList.remove("is-block-hovered"));
+    hoveredBlockId = null;
+  }
 
-document.addEventListener("dblclick", (event) => {
-  const btn = event.target.closest("[data-editable-button]");
-  if (!btn || btn.getAttribute("contenteditable") === "true") return;
-  event.preventDefault();
-  event.stopPropagation();
-  btn.setAttribute("contenteditable", "true");
-  btn.focus();
-  const range = document.createRange();
-  range.selectNodeContents(btn);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}, true);
+  document.addEventListener("mousemove", (event) => {
+    const blockEl = event.target.closest('[data-selectable="block"]');
+    const blockId = blockEl?.getAttribute("data-block-id") ?? null;
+    if (blockId === hoveredBlockId) return;
+    clearHover();
+    if (blockEl && blockId) {
+      blockEl.classList.add("is-block-hovered");
+      hoveredBlockId = blockId;
+    }
+  }, true);
 
-document.addEventListener("focusout", (event) => {
-  const btn = event.target.closest("[data-editable-button][contenteditable=true]");
-  if (!btn) return;
-  btn.removeAttribute("contenteditable");
-  const blockId = btn.closest("[data-block-id]")?.getAttribute("data-block-id");
-  const sectionId = btn.closest("[data-section-id]")?.getAttribute("data-section-id");
-  const value = (btn.textContent ?? "").trim();
-  if (!blockId || !sectionId) return;
-  parent.postMessage({
-    type: "${SITE_EDITOR_BUTTON_EDIT_MESSAGE}",
-    sectionId,
-    blockId,
-    value,
-  }, "*");
-}, true);
+  document.addEventListener("mouseleave", () => clearHover(), true);
+
+  document.addEventListener("click", (event) => {
+    const blockEl = event.target.closest('[data-selectable="block"]');
+    const section = event.target.closest("[data-section-id]");
+    if (!section) return;
+    const sectionId = section.getAttribute("data-section-id");
+    if (!sectionId) return;
+
+    if (blockEl) {
+      event.preventDefault();
+      event.stopPropagation();
+      const blockId = blockEl.getAttribute("data-block-id");
+      if (!blockId) return;
+      post("${SITE_EDITOR_BLOCK_SELECT_MESSAGE}", { sectionId, blockId, target: "block" });
+      return;
+    }
+
+    if (section.contains(event.target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      post("${SITE_EDITOR_BLOCK_SELECT_MESSAGE}", { sectionId, target: "section" });
+    }
+  }, true);
+
+  document.addEventListener("dblclick", (event) => {
+    const textEl = event.target.closest("[data-editable-text]");
+    if (!textEl || textEl.getAttribute("contenteditable") === "true") return;
+    event.preventDefault();
+    event.stopPropagation();
+    textEl.setAttribute("contenteditable", "true");
+    textEl.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(textEl);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, true);
+
+  document.addEventListener("focusout", (event) => {
+    const textEl = event.target.closest("[data-editable-text][contenteditable=true]");
+    if (!textEl) return;
+    textEl.removeAttribute("contenteditable");
+    const blockId = textEl.closest('[data-selectable="block"]')?.getAttribute("data-block-id");
+    const sectionId = textEl.closest("[data-section-id]")?.getAttribute("data-section-id");
+    const value = (textEl.textContent ?? "").trim();
+    if (!blockId || !sectionId) return;
+    post("${SITE_EDITOR_TEXT_EDIT_MESSAGE}", { sectionId, blockId, value });
+  }, true);
+
+  document.addEventListener("dblclick", (event) => {
+    const btn = event.target.closest("[data-editable-button]");
+    if (!btn || btn.getAttribute("contenteditable") === "true") return;
+    event.preventDefault();
+    event.stopPropagation();
+    btn.setAttribute("contenteditable", "true");
+    btn.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(btn);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, true);
+
+  document.addEventListener("focusout", (event) => {
+    const btn = event.target.closest("[data-editable-button][contenteditable=true]");
+    if (!btn) return;
+    btn.removeAttribute("contenteditable");
+    const blockId = btn.closest('[data-selectable="block"]')?.getAttribute("data-block-id");
+    const sectionId = btn.closest("[data-section-id]")?.getAttribute("data-section-id");
+    const value = (btn.textContent ?? "").trim();
+    if (!blockId || !sectionId) return;
+    post("${SITE_EDITOR_BUTTON_EDIT_MESSAGE}", { sectionId, blockId, value });
+  }, true);
+
+  function applySelection(payload) {
+    document.querySelectorAll(".is-section-selected").forEach((el) => el.classList.remove("is-section-selected"));
+    document.querySelectorAll(".is-block-selected").forEach((el) => el.classList.remove("is-block-selected"));
+    if (!payload || !payload.sectionId) return;
+    if (payload.selectionKind === "section") {
+      const section = document.querySelector('[data-section-id="' + payload.sectionId + '"]');
+      section?.classList.add("is-section-selected");
+      return;
+    }
+    if (payload.selectionKind === "block" && payload.blockId) {
+      const block = document.querySelector('[data-selectable="block"][data-block-id="' + payload.blockId + '"]');
+      block?.classList.add("is-block-selected");
+    }
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.type === "${SITE_EDITOR_SYNC_SELECTION_MESSAGE}") {
+      applySelection(event.data);
+    }
+  });
+})();
 `;
 
 function columnCountForPattern(pattern: string): number {
@@ -318,10 +446,15 @@ function renderButtonBlock(content: ButtonContent, editorMode: RenderContext): s
   return `<a class="site-btn ${variant}" href="${href}"${editableAttr}>${escapeHtml(label || (editorMode.editorMode ? "Botón" : "Acción"))}</a>`;
 }
 
-function renderBlock(block: Block, manifest: Set<string>, depth: number, editorMode: RenderContext): string {
+function renderBlock(
+  block: Block,
+  manifest: Set<string>,
+  depth: number,
+  editorMode: RenderContext,
+  paint?: { section: Block; options: SiteRenderOptions },
+): string {
   if (depth > MAX_BLOCK_DEPTH) return "";
 
-  const blockIdAttr = ` data-block-id="${escapeHtml(block.id)}"`;
   const inner = (() => {
     switch (block.type) {
       case "text":
@@ -331,17 +464,36 @@ function renderBlock(block: Block, manifest: Set<string>, depth: number, editorM
       case "button":
         return renderButtonBlock(block.content as ButtonContent, editorMode);
       case "collection":
-        return renderCollectionBlock(block.content as CollectionContent, manifest, depth, editorMode);
+        return renderCollectionBlock(block.content as CollectionContent, manifest, depth, editorMode, paint);
       default:
         return "";
     }
   })();
 
   if (!inner) return "";
-  if (block.type === "text" || block.type === "button") {
-    return `<div class="site-block"${blockIdAttr}>${inner}</div>`;
+
+  const useEditorPaint = Boolean(editorMode.editorMode && paint);
+  if (!useEditorPaint) {
+    if (block.type === "text" || block.type === "button") {
+      return `<div class="site-block">${inner}</div>`;
+    }
+    return inner;
   }
-  return inner.replace(/^(\<[a-z]+)/, `$1${blockIdAttr}`);
+
+  const { section, options } = paint!;
+  const sectionLabels = options.sectionLabels ?? {};
+  const hoverLabel = escapeHtml(getBlockHoverLabel(block, section, sectionLabels));
+  const isBlockSelected =
+    options.selectionKind === "block" &&
+    options.selectedSectionId === section.id &&
+    options.selectedBlockId === block.id;
+  const selectedClass = isBlockSelected ? " is-block-selected" : "";
+
+  if (block.type === "text" || block.type === "button" || block.type === "media") {
+    return `<div class="site-selectable-block site-selectable-block--${block.type}${selectedClass}" data-selectable="block" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.type)}" data-block-label="${hoverLabel}">${inner}</div>`;
+  }
+
+  return `<div class="site-selectable-block site-selectable-block--${block.type}${selectedClass}" data-selectable="block" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.type)}" data-block-label="${hoverLabel}">${inner}</div>`;
 }
 
 function sectionMotionClasses(section: Block): string {
@@ -404,6 +556,7 @@ function renderCollectionBlock(
   manifest: Set<string>,
   depth: number,
   editorMode: RenderContext,
+  _paint?: { section: Block; options: SiteRenderOptions },
 ): string {
   if (depth >= MAX_BLOCK_DEPTH) return "";
 
@@ -492,10 +645,11 @@ function renderGroupedChildCells(
   groupSize: number,
   manifest: Set<string>,
   ctx: RenderContext,
+  paint?: { section: Block; options: SiteRenderOptions },
 ): string {
   if (groupSize <= 1) {
     return children
-      .map((child) => `<div class="site-cell">${renderBlock(child, manifest, 2, ctx)}</div>`)
+      .map((child) => `<div class="site-cell">${renderBlock(child, manifest, 2, ctx, paint)}</div>`)
       .join("");
   }
 
@@ -507,12 +661,24 @@ function renderGroupedChildCells(
   return columns
     .map((group) => {
       const inner = group
-        .map((child) => renderBlock(child, manifest, 2, ctx))
+        .map((child) => renderBlock(child, manifest, 2, ctx, paint))
         .filter(Boolean)
         .join("");
       return `<div class="site-cell site-cell--stack">${inner}</div>`;
     })
     .join("");
+}
+
+function renderSectionHotspots(section: Block, sectionLabels: Record<string, string>): string {
+  const children = section.children ?? [];
+  if (!children.length) return "";
+  const chips = children
+    .map((block) => {
+      const label = escapeHtml(getBlockHoverLabel(block, section, sectionLabels));
+      return `<span class="site-section__hotspot">${label}</span>`;
+    })
+    .join("");
+  return `<div class="site-section__hotspots" aria-hidden="true">${chips}</div>`;
 }
 
 function renderSection(
@@ -526,12 +692,18 @@ function renderSection(
   const pattern = section.layout.split?.pattern ?? "1";
   const groupSize = section.layout.split?.groupSize ?? 1;
   const rootPosition = section.layout.split?.rootPosition ?? "first-cell";
-  const selected = options.selectedSectionId === section.id ? " is-selected" : "";
+  const sectionLabels = options.sectionLabels ?? {};
+  const sectionLabel = sectionLabels[section.id]?.trim() || "Sección";
+  const isSectionSelected =
+    options.selectionKind === "section" && options.selectedSectionId === section.id;
+  const sectionSelectedClass = isSectionSelected ? " is-section-selected" : "";
   const anchor = sectionAnchorId(section.id);
+  const paint = options.editorMode ? { section, options } : undefined;
 
-  const rootHtml = renderBlock(section, manifest, 1, ctx);
+  const rootHtml = renderBlock(section, manifest, 1, ctx, paint);
   const children = section.children ?? [];
-  const childHtml = renderGroupedChildCells(children, groupSize, manifest, ctx);
+  const childHtml = renderGroupedChildCells(children, groupSize, manifest, ctx, paint);
+  const hotspots = options.editorMode && isSectionSelected ? renderSectionHotspots(section, sectionLabels) : "";
 
   const splitInner =
     rootPosition === "above"
@@ -544,7 +716,8 @@ function renderSection(
   const stackCenter =
     section.type === "text" && (section.content as TextContent).align === "center" ? " site-stack--center" : "";
 
-  return `<section id="${anchor}" class="site-section site-section--${bleed}${selected}${sectionMotionClasses(section)}" data-section-id="${escapeHtml(section.id)}" data-block-id="${escapeHtml(section.id)}" aria-label="Sección">
+  return `<section id="${anchor}" class="site-section site-section--${bleed}${sectionSelectedClass}${sectionMotionClasses(section)}" data-section-id="${escapeHtml(section.id)}" data-section-label="${escapeHtml(`Sección · ${sectionLabel}`)}" aria-label="Sección">
+  ${hotspots}
   <div class="site-section__inner">
     <div class="site-stack${stackCenter}">
       ${aboveRoot}

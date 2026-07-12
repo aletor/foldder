@@ -23,6 +23,7 @@ import { createSiteId } from "@/lib/site/site-defaults";
 import { resolveButtonLabel, patchTextLocaleValue, patchButtonLocaleLabel } from "@/lib/site/site-i18n";
 import { DEFAULT_SITE_LEAD_FORM, type SiteLeadsOutput } from "@/lib/site/site-leads";
 import { foldderCdnHostname } from "@/lib/site/site-domain";
+import type { SiteSelectionKind } from "@/lib/site/site-selection";
 import type { SiteGenerateCopyAction } from "@/lib/site/site-generate-copy";
 import type { SiteAdvancedInspectorContext } from "./site-editor-ui-types";
 import {
@@ -1153,10 +1154,12 @@ export function SiteInspector({
   contentSourceLabel,
   embedded,
   focus,
+  selectionKind = "block",
 }: {
   section: Block | null;
   selectedBlockId: string | null;
   onSelectBlock: (blockId: string) => void;
+  selectionKind?: SiteSelectionKind;
   onPatchSection: (nextSection: Block) => void;
   tab: SiteInspectorTab;
   onTabChange: (tab: SiteInspectorTab) => void;
@@ -1172,9 +1175,11 @@ export function SiteInspector({
 }) {
   const blocks = useMemo(() => (section ? flattenSectionBlocks(section) : []), [section]);
   const activeBlock = useMemo(() => {
-    if (!section || !selectedBlockId) return section;
+    if (!section) return null;
+    if (selectionKind === "section") return section;
+    if (!selectedBlockId) return section;
     return blocks.find((block) => block.id === selectedBlockId) ?? section;
-  }, [blocks, section, selectedBlockId]);
+  }, [blocks, section, selectedBlockId, selectionKind]);
 
   const focused = focus?.mode === "focused";
   const visibleTabs = focused && focus.tab ? [focus.tab] : TABS.map((entry) => entry.id);
