@@ -8,13 +8,13 @@ import {
   parseRegionKey,
   regionKey,
   regionRect,
-  resolvePillPlacement,
+  resolveSizingBarPlacement,
   resolveSharedTrackSpec,
   toggleRegionSelection,
   unionRegions,
   type RegionRef,
 } from "./grid-cells";
-import { GridSizingPill } from "./GridSizingPill";
+import { GridSelectionSizingBar } from "./GridSizingPill";
 import {
   isFluidViewport,
   VIEWPORT_ORDER,
@@ -25,9 +25,11 @@ import {
   applyRootGridUpdate,
   cloneGridStateDeep,
   createNestedGridInRegion,
+  deleteGridAtScope,
   detectScopedEdge,
   hitTestScopedRegion,
   hitTestScopedSegment,
+  isFullGridSelection,
   listAllRenderSegments,
   listRegionsForScope,
   resolveEditContext,
@@ -40,6 +42,7 @@ import {
 import {
   addHorizontalLine,
   addVerticalLine,
+  axisHasFixedPx,
   createInitialGrid,
   deleteSegment,
   moveHorizontalLine,
@@ -287,6 +290,19 @@ export function GridEditor() {
 
   const isDesktop = isFluidViewport(viewport);
   const deviceSize = VIEWPORT_PRESETS[viewport];
+  const viewportSize = isDesktop ? fluidSize : deviceSize;
+  const colFluid = grid ? !axisHasFixedPx(grid.colSpecs) : true;
+  const rowFluid = grid ? !axisHasFixedPx(grid.rowSpecs) : true;
+  const canvasWidth = grid?.width ?? viewportSize.width;
+  const canvasHeight = grid?.height ?? viewportSize.height;
+  const canvasStyle = grid
+    ? {
+        width: colFluid ? "100%" : canvasWidth,
+        height: rowFluid ? "100%" : canvasHeight,
+        ...(colFluid ? {} : { minWidth: viewportSize.width }),
+        ...(rowFluid ? {} : { minHeight: viewportSize.height }),
+      }
+    : undefined;
 
   const syncLayout = useCallback(() => {
     const shell = shellRef.current;
@@ -384,35 +400,57 @@ export function GridEditor() {
         return;
       }
 
-      if ((event.key === "Delete" || event.key === "Backspace") && selectedSegment && grid) {
-        event.preventDefault();
-        setGrid(
-          cloneGridStateDeep(
-            selectedSegment.scope
-              ? updateNestedGrid(grid, selectedSegment.scope, (scoped) =>
-                  deleteSegment(scoped, selectedSegment.ref),
-                )
-              : applyRootGridUpdate(grid, (scoped) => deleteSegment(scoped, selectedSegment.ref)),
-          ),
-        );
-        setSelectedSegment(null);
+      if ((event.key === "Delete" || event.key === "Backspace") && grid) {
+        if (selectedSegment) {
+          event.preventDefault();
+          setGrid(
+            cloneGridStateDeep(
+              selectedSegment.scope
+                ? updateNestedGrid(grid, selectedSegment.scope, (scoped) =>
+                    deleteSegment(scoped, selectedSegment.ref),
+                  )
+                : applyRootGridUpdate(grid, (scoped) => deleteSegment(scoped, selectedSegment.ref)),
+            ),
+          );
+          setSelectedSegment(null);
+          return;
+        }
+
+        if (
+          selectedRegions.length > 0 &&
+          isFullGridSelection(grid, activeScope, selectedRegions)
+        ) {
+          event.preventDefault();
+          if (activeScope) {
+            setGrid(cloneGridStateDeep(deleteGridAtScope(grid, activeScope)!));
+            setActiveScope(null);
+          } else {
+            setGrid(null);
+          }
+          setSelectedRegions([]);
+          lastLineClickRef.current = null;
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [grid, selectedSegment]);
+  }, [grid, selectedSegment, selectedRegions, activeScope]);
 
   const fallbackSize = isDesktop ? fluidSize : deviceSize;
 
   const localPoint = useCallback(
     (clientX: number, clientY: number) => {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      if (!rect) return null;
+      const canvas = canvasRef.current;
+      const wrap = canvas?.parentElement;
+      const rect = canvas?.getBoundingClientRect();
+      if (!rect || !canvas) return null;
       const logicW = grid?.width ?? fallbackSize.width;
       const logicH = grid?.height ?? fallbackSize.height;
+      const scaleX = logicW > 0 ? rect.width / logicW : 1;
+      const scaleY = logicH > 0 ? rect.height / logicH : 1;
       return {
-        x: ((clientX - rect.left) / rect.width) * logicW,
-        y: ((clientY - rect.top) / rect.height) * logicH,
+        x: (clientX - rect.left) / scaleX + (wrap?.scrollLeft ?? 0) / scaleX,
+        y: (clientY - rect.top) / scaleY + (wrap?.scrollTop ?? 0) / scaleY,
       };
     },
     [grid, fallbackSize],
@@ -422,7 +460,7 @@ export function GridEditor() {
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!grid || drag) return;
-    if ((event.target as HTMLElement).closest(".site-lab-grid__pill")) return;
+    if ((event.target as HTMLElement).closest(".site-lab-grid__sizing-bar, .site-lab-grid__pill-field")) return;
 
     const point = localPoint(event.clientX, event.clientY);
     if (!point) return;
@@ -678,7 +716,7 @@ export function GridEditor() {
   const segments = grid ? listAllRenderSegments(grid) : [];
   const bbox =
     grid && selectedRegions.length > 0 ? selectionBBoxDisplay(grid, activeScope, selectedRegions) : null;
-  const pillPlacement = bbox && grid ? resolvePillPlacement(bbox, grid.width, grid.height) : null;
+  const sizingBarPlacement = bbox && grid ? resolveSizingBarPlacement(bbox, grid.width, grid.height) : null;
 
   const editGrid = grid && activeScope && grid.nested?.[activeScope] ? grid.nested[activeScope] : grid;
 
@@ -696,7 +734,9 @@ export function GridEditor() {
     if (!grid || !bbox) return;
     setGrid(
       cloneGridStateDeep(
-        updateNestedGrid(grid, activeScope, (scoped) => updateColSpecs(scoped, bbox.cols, spec)),
+        updateNestedGrid(grid, activeScope, (scoped) =>
+          updateColSpecs(scoped, bbox.cols, spec, viewportSize),
+        ),
       ),
     );
   };
@@ -705,7 +745,9 @@ export function GridEditor() {
     if (!grid || !bbox) return;
     setGrid(
       cloneGridStateDeep(
-        updateNestedGrid(grid, activeScope, (scoped) => updateRowSpecs(scoped, bbox.rows, spec)),
+        updateNestedGrid(grid, activeScope, (scoped) =>
+          updateRowSpecs(scoped, bbox.rows, spec, viewportSize),
+        ),
       ),
     );
   };
@@ -764,6 +806,7 @@ export function GridEditor() {
       <div
         ref={canvasRef}
         className={`site-lab-grid__canvas site-lab-grid__canvas--${viewport}${grid ? " has-grid" : ""}${hoverClass}${dragClass}${drag ? " is-dragging" : ""}${isDesktop ? " site-lab-grid__canvas--fluid" : ""}`}
+        style={canvasStyle}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -786,10 +829,15 @@ export function GridEditor() {
         })}
       </div>
 
-      {bbox && pillPlacement ? (
+      {bbox && sizingBarPlacement ? (
         <div className="site-lab-grid__overlay">
-          <GridSizingPill label="Alto" spec={rowSpec} onChange={updateRowSpec} style={pillPlacement.alto} />
-          <GridSizingPill label="Ancho" spec={colSpec} onChange={updateColumnSpec} style={pillPlacement.ancho} />
+          <GridSelectionSizingBar
+            colSpec={colSpec}
+            rowSpec={rowSpec}
+            onColChange={updateColumnSpec}
+            onRowChange={updateRowSpec}
+            style={sizingBarPlacement}
+          />
         </div>
       ) : null}
     </div>
@@ -828,7 +876,7 @@ export function GridEditor() {
             <div
               ref={canvasRef}
               className={`site-lab-grid__canvas site-lab-grid__canvas--${viewport}${grid ? " has-grid" : ""}${hoverClass}${dragClass}${drag ? " is-dragging" : ""}`}
-              style={{ width: deviceSize.width, height: deviceSize.height }}
+              style={canvasStyle ?? { width: deviceSize.width, height: deviceSize.height }}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
@@ -851,10 +899,15 @@ export function GridEditor() {
         })}
             </div>
 
-            {bbox && pillPlacement ? (
+            {bbox && sizingBarPlacement ? (
               <div className="site-lab-grid__overlay">
-                <GridSizingPill label="Alto" spec={rowSpec} onChange={updateRowSpec} style={pillPlacement.alto} />
-                <GridSizingPill label="Ancho" spec={colSpec} onChange={updateColumnSpec} style={pillPlacement.ancho} />
+                <GridSelectionSizingBar
+                  colSpec={colSpec}
+                  rowSpec={rowSpec}
+                  onColChange={updateColumnSpec}
+                  onRowChange={updateRowSpec}
+                  style={sizingBarPlacement}
+                />
               </div>
             ) : null}
           </div>

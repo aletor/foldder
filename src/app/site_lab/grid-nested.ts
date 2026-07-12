@@ -198,6 +198,28 @@ export function listRegionsForScope(root: GridState, scope: GridScope): RegionRe
   return listRegions(scoped);
 }
 
+export function isFullGridSelection(
+  root: GridState,
+  scope: GridScope,
+  selectedRegions: RegionRef[],
+): boolean {
+  const all = listRegionsForScope(root, scope);
+  if (all.length === 0 || selectedRegions.length !== all.length) return false;
+  const selectedKeys = new Set(selectedRegions.map(regionKey));
+  return all.every((region) => selectedKeys.has(regionKey(region)));
+}
+
+export function deleteGridAtScope(root: GridState, scope: GridScope): GridState | null {
+  if (!scope) return null;
+  if (!root.nested?.[scope]) return root;
+  const nested = { ...root.nested };
+  delete nested[scope];
+  return {
+    ...root,
+    nested: Object.keys(nested).length > 0 ? nested : undefined,
+  };
+}
+
 export function applyRootGridUpdate(
   root: GridState,
   updater: (grid: GridState) => GridState,

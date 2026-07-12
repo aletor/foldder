@@ -78,11 +78,38 @@ export function layoutTracksFromSpecs(total: number, specs: TrackSpec[]): number
   return tracks;
 }
 
-export function applyGridLayout(state: GridState): GridState {
+export function axisHasFixedPx(specs: TrackSpec[]): boolean {
+  return specs.some((spec) => spec.mode === "px");
+}
+
+export function resolveContentAxis(viewport: number, specs: TrackSpec[]): number {
+  const viewportMin = Math.max(40, Math.round(viewport));
+  if (!axisHasFixedPx(specs)) return viewportMin;
+
+  const minSize = MIN_GAP;
+  let fixedPx = 0;
+  let frCount = 0;
+  for (const spec of specs) {
+    if (spec.mode === "px") fixedPx += Math.max(minSize, Math.round(spec.value));
+    else frCount += 1;
+  }
+  return Math.max(viewportMin, fixedPx + frCount * minSize);
+}
+
+export function applyGridLayout(
+  state: GridState,
+  viewport?: { width: number; height: number },
+): GridState {
+  const viewportW = viewport?.width ?? state.width;
+  const viewportH = viewport?.height ?? state.height;
+  const width = resolveContentAxis(viewportW, state.colSpecs);
+  const height = resolveContentAxis(viewportH, state.rowSpecs);
   return {
     ...state,
-    xTracks: layoutTracksFromSpecs(state.width, state.colSpecs),
-    yTracks: layoutTracksFromSpecs(state.height, state.rowSpecs),
+    width,
+    height,
+    xTracks: layoutTracksFromSpecs(width, state.colSpecs),
+    yTracks: layoutTracksFromSpecs(height, state.rowSpecs),
   };
 }
 
@@ -107,30 +134,40 @@ function splitTrackSpec(spec: TrackSpec, ratio: number): [TrackSpec, TrackSpec] 
   ];
 }
 
-export function updateColSpecs(state: GridState, cols: number[], spec: TrackSpec): GridState {
+export function updateColSpecs(
+  state: GridState,
+  cols: number[],
+  spec: TrackSpec,
+  viewport?: { width: number; height: number },
+): GridState {
   const colSpecs = [...state.colSpecs];
   for (const col of cols) {
     if (col >= 0 && col < colSpecs.length) colSpecs[col] = { ...spec };
   }
-  return applyGridLayout({ ...state, colSpecs });
+  return applyGridLayout({ ...state, colSpecs }, viewport);
 }
 
-export function updateRowSpecs(state: GridState, rows: number[], spec: TrackSpec): GridState {
+export function updateRowSpecs(
+  state: GridState,
+  rows: number[],
+  spec: TrackSpec,
+  viewport?: { width: number; height: number },
+): GridState {
   const rowSpecs = [...state.rowSpecs];
   for (const row of rows) {
     if (row >= 0 && row < rowSpecs.length) rowSpecs[row] = { ...spec };
   }
-  return applyGridLayout({ ...state, rowSpecs });
+  return applyGridLayout({ ...state, rowSpecs }, viewport);
 }
 
 export function syncSpecsAfterVerticalMove(state: GridState, trackIndex: number): GridState {
   const colSpecs = [...state.colSpecs];
   const left = trackIndex - 1;
   const right = trackIndex;
-  if (left >= 0 && left < colSpecs.length) {
+  if (left >= 0 && left < colSpecs.length && colSpecs[left]?.mode === "px") {
     colSpecs[left] = { mode: "px", value: state.xTracks[trackIndex]! - state.xTracks[left]! };
   }
-  if (right >= 0 && right < colSpecs.length) {
+  if (right >= 0 && right < colSpecs.length && colSpecs[right]?.mode === "px") {
     colSpecs[right] = { mode: "px", value: state.xTracks[trackIndex + 1]! - state.xTracks[trackIndex]! };
   }
   return { ...state, colSpecs };
@@ -140,10 +177,10 @@ export function syncSpecsAfterHorizontalMove(state: GridState, trackIndex: numbe
   const rowSpecs = [...state.rowSpecs];
   const top = trackIndex - 1;
   const bottom = trackIndex;
-  if (top >= 0 && top < rowSpecs.length) {
+  if (top >= 0 && top < rowSpecs.length && rowSpecs[top]?.mode === "px") {
     rowSpecs[top] = { mode: "px", value: state.yTracks[trackIndex]! - state.yTracks[top]! };
   }
-  if (bottom >= 0 && bottom < rowSpecs.length) {
+  if (bottom >= 0 && bottom < rowSpecs.length && rowSpecs[bottom]?.mode === "px") {
     rowSpecs[bottom] = { mode: "px", value: state.yTracks[trackIndex + 1]! - state.yTracks[trackIndex]! };
   }
   return { ...state, rowSpecs };
@@ -171,22 +208,25 @@ export function segmentRefToKey(ref: GridSegmentRef) {
 export function createInitialGrid(width: number, height: number): GridState {
   const w = Math.max(40, Math.round(width));
   const h = Math.max(40, Math.round(height));
-  return applyGridLayout({
-    width: w,
-    height: h,
-    xTracks: [0, w],
-    yTracks: [0, h],
-    hEdges: new Set([hKey(0, 0), hKey(1, 0)]),
-    vEdges: new Set([vKey(0, 0), vKey(1, 0)]),
-    colSpecs: [defaultTrackSpec()],
-    rowSpecs: [defaultTrackSpec()],
-  });
+  return applyGridLayout(
+    {
+      width: w,
+      height: h,
+      xTracks: [0, w],
+      yTracks: [0, h],
+      hEdges: new Set([hKey(0, 0), hKey(1, 0)]),
+      vEdges: new Set([vKey(0, 0), vKey(1, 0)]),
+      colSpecs: [defaultTrackSpec()],
+      rowSpecs: [defaultTrackSpec()],
+    },
+    { width: w, height: h },
+  );
 }
 
-export function resizeGrid(state: GridState, width: number, height: number): GridState {
-  const w = Math.max(40, Math.round(width));
-  const h = Math.max(40, Math.round(height));
-  const next = applyGridLayout({ ...state, width: w, height: h });
+export function resizeGrid(state: GridState, viewportWidth: number, viewportHeight: number): GridState {
+  const w = Math.max(40, Math.round(viewportWidth));
+  const h = Math.max(40, Math.round(viewportHeight));
+  const next = applyGridLayout(state, { width: w, height: h });
   if (!next.nested) return next;
   const nested: Record<string, GridState> = {};
   for (const [key, child] of Object.entries(next.nested)) {
@@ -262,8 +302,6 @@ export function addVerticalLine(state: GridState, x: number): GridState {
       : 0.5;
   const baseSpec = state.colSpecs[splitIndex] ?? defaultTrackSpec();
   const [leftSpec, rightSpec] = splitTrackSpec(baseSpec, splitRatio);
-  void leftSpec;
-  void rightSpec;
   const colSpecs = [
     ...state.colSpecs.slice(0, splitIndex),
     leftSpec,
@@ -271,8 +309,6 @@ export function addVerticalLine(state: GridState, x: number): GridState {
     ...state.colSpecs.slice(splitIndex + 1),
   ];
   const newXTracks = [...state.xTracks.slice(0, insertIdx), clamped, ...state.xTracks.slice(insertIdx)];
-  colSpecs[splitIndex] = { mode: "px", value: clamped - newXTracks[splitIndex]! };
-  colSpecs[splitIndex + 1] = { mode: "px", value: newXTracks[splitIndex + 2]! - clamped };
   const oldXLen = state.xTracks.length;
 
   let hEdges = shiftHorizontalEdges(state.hEdges, insertIdx, oldXLen, state.yTracks.length);
@@ -303,8 +339,6 @@ export function addHorizontalLine(state: GridState, y: number): GridState {
       : 0.5;
   const baseSpec = state.rowSpecs[splitIndex] ?? defaultTrackSpec();
   const [topSpec, bottomSpec] = splitTrackSpec(baseSpec, splitRatio);
-  void topSpec;
-  void bottomSpec;
   const rowSpecs = [
     ...state.rowSpecs.slice(0, splitIndex),
     topSpec,
@@ -312,8 +346,6 @@ export function addHorizontalLine(state: GridState, y: number): GridState {
     ...state.rowSpecs.slice(splitIndex + 1),
   ];
   const newYTracks = [...state.yTracks.slice(0, insertIdx), clamped, ...state.yTracks.slice(insertIdx)];
-  rowSpecs[splitIndex] = { mode: "px", value: clamped - newYTracks[splitIndex]! };
-  rowSpecs[splitIndex + 1] = { mode: "px", value: newYTracks[splitIndex + 2]! - clamped };
   const oldYLen = state.yTracks.length;
 
   let vEdges = shiftVerticalEdgesForHorizontalInsert(state.vEdges, insertIdx, oldYLen, state.xTracks.length);

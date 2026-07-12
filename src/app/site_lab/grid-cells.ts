@@ -288,38 +288,28 @@ export function unionRegions(regions: RegionRef[]): RegionRef | null {
   return { minCol, maxCol, minRow, maxRow };
 }
 
+export function resolveSizingBarPlacement(
+  bbox: { x: number; y: number; width: number; height: number },
+  gridWidth: number,
+  gridHeight: number,
+) {
+  const inset = 6;
+  const centerX = bbox.x + bbox.width / 2;
+  const bottomY = bbox.y + bbox.height - inset;
+  return {
+    left: `${(centerX / gridWidth) * 100}%`,
+    top: `${(bottomY / gridHeight) * 100}%`,
+    transform: "translate(-50%, -100%)",
+    maxWidth: `calc(${(bbox.width / gridWidth) * 100}% - ${inset * 2}px)`,
+  };
+}
+
+/** @deprecated Use resolveSizingBarPlacement */
 export function resolvePillPlacement(
   bbox: { x: number; y: number; width: number; height: number },
   gridWidth: number,
   gridHeight: number,
 ) {
-  const pad = 12;
-  const pillBlock = 44;
-  const placeAltoOnLeft = bbox.x + bbox.width + pad + pillBlock > gridWidth;
-  const placeAnchoAbove = bbox.y + bbox.height + pad + pillBlock > gridHeight;
-
-  return {
-    alto: placeAltoOnLeft
-      ? {
-          left: `${((bbox.x) / gridWidth) * 100}%`,
-          top: `${((bbox.y + bbox.height / 2) / gridHeight) * 100}%`,
-          transform: "translate(calc(-100% - 12px), -50%)",
-        }
-      : {
-          left: `${((bbox.x + bbox.width) / gridWidth) * 100}%`,
-          top: `${((bbox.y + bbox.height / 2) / gridHeight) * 100}%`,
-          transform: "translate(12px, -50%)",
-        },
-    ancho: placeAnchoAbove
-      ? {
-          left: `${((bbox.x + bbox.width / 2) / gridWidth) * 100}%`,
-          top: `${((bbox.y) / gridHeight) * 100}%`,
-          transform: "translate(-50%, calc(-100% - 12px))",
-        }
-      : {
-          left: `${((bbox.x + bbox.width / 2) / gridWidth) * 100}%`,
-          top: `${((bbox.y + bbox.height) / gridHeight) * 100}%`,
-          transform: "translate(-50%, 12px)",
-        },
-  };
+  const bar = resolveSizingBarPlacement(bbox, gridWidth, gridHeight);
+  return { alto: bar, ancho: bar };
 }

@@ -90,4 +90,35 @@ describe("grid-segments", () => {
     grid = resizeGrid(grid, 500, 300);
     expect(grid.xTracks).toEqual([0, 180, 500]);
   });
+
+  it("grows content beyond the viewport when px tracks exceed it", () => {
+    let grid = createInitialGrid(400, 300);
+    grid = addVerticalLine(grid, 200);
+    grid = updateColSpecs(
+      grid,
+      [0, 1],
+      { mode: "px", value: 300 },
+      { width: 400, height: 300 },
+    );
+    expect(grid.width).toBe(600);
+    expect(grid.xTracks).toEqual([0, 300, 600]);
+  });
+
+  it("keeps fr row specs when splitting with a horizontal line", () => {
+    const grid = addHorizontalLine(createInitialGrid(400, 300), 150);
+    expect(grid.rowSpecs).toEqual([
+      { mode: "fr", value: 1 },
+      { mode: "fr", value: 1 },
+    ]);
+  });
+
+  it("relayouts fr-only rows to match the viewport on resize", () => {
+    let grid = addHorizontalLine(createInitialGrid(400, 300), 150);
+    grid = resizeGrid(grid, 400, 500);
+    expect(grid.height).toBe(500);
+    expect(grid.yTracks).toEqual([0, 250, 500]);
+    grid = resizeGrid(grid, 400, 220);
+    expect(grid.height).toBe(220);
+    expect(grid.yTracks).toEqual([0, 110, 220]);
+  });
 });
