@@ -19,7 +19,7 @@ export function BrandKitIconButton({
   return (
     <button
       type="button"
-      className={`brandKit-icon-btn ${className}`.trim()}
+      className={`brandKit-foldder-btn brandKit-foldder-btn--white brandKit-foldder-btn--compact brandKit-foldder-btn--icon-only ${className}`.trim()}
       aria-label={label}
       title={label}
       disabled={disabled}

@@ -15,6 +15,8 @@ import { persistBrandKitSourcePdf, persistBrandKitSourceRaster } from "../ingest
 import { uploadBrandKitIngestFile } from "../ingest/upload-brand-kit-file";
 import { estimateGeminiUsd } from "@/lib/pricing-config";
 import { runBrandKitDocumentProbe } from "./document-probe";
+import { selectPdfPagesForExtendedImageProbe } from "./document-probe-image-scan";
+import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES } from "../brand-kit-gallery-brief";
 import type {
   BrandKitDocumentProbeLogo,
   BrandKitDocumentProbeOtherImage,
@@ -287,6 +289,41 @@ async function resolveProbePageJpeg(input: {
   return single;
 }
 
+async function uploadFullPageHarvest(input: {
+  jpegBase64: string;
+  userEmail: string;
+  fileName: string;
+  page: number;
+  index: number;
+}): Promise<GalleryValue["harvested"][number] | null> {
+  const pageBuffer = Buffer.from(input.jpegBase64, "base64");
+  const png = await sharp(pageBuffer)
+    .resize({
+      width: GALLERY_CROP_MAX_EDGE,
+      height: GALLERY_CROP_MAX_EDGE,
+      fit: "inside",
+      withoutEnlargement: false,
+    })
+    .png()
+    .toBuffer();
+
+  const uploaded = await uploadBrandKitIngestFile({
+    userEmail: input.userEmail,
+    filename: `${input.fileName.replace(/\.[^.]+$/, "").slice(0, 28)}-probe-page-${input.page}.png`,
+    mime: "image/png",
+    buffer: png,
+  });
+
+  return {
+    assetId: uploaded.url,
+    previewUrl: uploaded.url,
+    included: true,
+    provenance: fileProvenance(uploaded.fileId, `pág. ${input.page} · vista completa`),
+    rankScore: 0.72 - input.index * 0.03,
+    rankSignals: [`pág. ${input.page}`, "fallback página"],
+  };
+}
+
 async function buildGalleryItemsFromProbe(input: {
   probe: BrandKitDocumentProbeResult;
   buffer: Buffer;
@@ -300,24 +337,74 @@ async function buildGalleryItemsFromProbe(input: {
 
   for (let index = 0; index < topImages.length; index += 1) {
     const image = topImages[index]!;
-    const jpeg = await resolveProbePageJpeg({
-      probe: input.probe,
-      buffer: input.buffer,
-      page: image.page,
-      isPdf: input.isPdf,
-      cache: jpegCache,
-    });
-    if (!jpeg) continue;
-    const item = await uploadGalleryCrop({
-      jpegBase64: jpeg,
-      bbox: image,
-      userEmail: input.userEmail,
-      fileName: input.fileName,
-      description: image.description,
-      page: image.page,
-      index,
-    });
-    if (item) items.push(item);
+    try {
+      const jpeg = await resolveProbePageJpeg({
+        probe: input.probe,
+        buffer: input.buffer,
+        page: image.page,
+        isPdf: input.isPdf,
+        cache: jpegCache,
+      });
+      if (!jpeg) continue;
+      const item = await uploadGalleryCrop({
+        jpegBase64: jpeg,
+        bbox: image,
+        userEmail: input.userEmail,
+        fileName: input.fileName,
+        description: image.description,
+        page: image.page,
+        index,
+      });
+      if (item) items.push(item);
+    } catch (error) {
+      console.error("[brandKit/document-probe/gallery_crop]", {
+        fileName: input.fileName,
+        page: image.page,
+        index,
+        error,
+      });
+    }
+  }
+
+  if (items.length < GALLERY_BRIEF_MIN_INCLUDED_IMAGES && input.isPdf && input.userEmail) {
+    const totalPages = input.probe.pdfTotalPages ?? 1;
+    const fallbackPages = await selectPdfPagesForExtendedImageProbe(input.buffer, totalPages);
+    const seenPages = new Set(items.map((item) => item.rankSignals?.[0]).filter(Boolean));
+    let fallbackIndex = items.length;
+
+    for (const page of fallbackPages) {
+      if (items.length >= GALLERY_BRIEF_MIN_INCLUDED_IMAGES) break;
+      const pageLabel = `pág. ${page}`;
+      if (seenPages.has(pageLabel)) continue;
+      try {
+        const jpeg = await resolveProbePageJpeg({
+          probe: input.probe,
+          buffer: input.buffer,
+          page,
+          isPdf: true,
+          cache: jpegCache,
+        });
+        if (!jpeg) continue;
+        const item = await uploadFullPageHarvest({
+          jpegBase64: jpeg,
+          userEmail: input.userEmail,
+          fileName: input.fileName,
+          page,
+          index: fallbackIndex,
+        });
+        if (item) {
+          items.push(item);
+          seenPages.add(pageLabel);
+          fallbackIndex += 1;
+        }
+      } catch (error) {
+        console.error("[brandKit/document-probe/gallery_page_fallback]", {
+          fileName: input.fileName,
+          page,
+          error,
+        });
+      }
+    }
   }
 
   return items;

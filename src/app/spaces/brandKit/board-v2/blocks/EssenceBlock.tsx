@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import type { EssenceValue, SlotAction, SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import { DnaBlock } from "../DnaBlock";
-import { BrandKitIconButton } from "../BrandKitIconButton";
+import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
 import { BrandKitRichText } from "../BrandKitRichText";
 import { BrandKitTextEditPanel } from "../BrandKitTextEditPanel";
 import { BrandKitCapsuleList } from "../BrandKitCapsuleList";
@@ -59,7 +59,9 @@ export function EssenceBlock({
 
   const canEdit = Boolean(essence?.summary && slot.status === "resolved" && !slot.locked);
   const editButton = canEdit ? (
-    <BrandKitIconButton icon={Pencil} label={brandKitLocaleEs.edit} onClick={() => setEditing(true)} />
+    <BrandKitFoldderButton variant="white" compact icon={Pencil} onClick={() => setEditing(true)}>
+      {brandKitLocaleEs.edit}
+    </BrandKitFoldderButton>
   ) : null;
 
   const beginEditFromDraft = () => {

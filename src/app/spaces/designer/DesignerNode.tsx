@@ -50,6 +50,7 @@ import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import { useDesignerConnectedDataset } from "./use-designer-connected-dataset";
+import { useDesignerBrandKitConnection } from "./use-designer-brandkit-connection";
 import {
   applyDatasetToAllPages,
   collectDatasetLoopListId,
@@ -157,14 +158,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     nodeId: id,
     nodeType: "designer",
   });
-  const brainNodeId = useStore(
-    useCallback(
-      (state: ReactFlowState<Node, Edge>) =>
-        state.edges.find((edge) => edge.target === id && edge.targetHandle === "brain")?.source ?? null,
-      [id],
-    ),
-  );
-  const brainConnected = !!brainNodeId;
+  const { brainConnected, brandKitPaletteColors } = useDesignerBrandKitConnection(id);
   const { datasetConnected, connectedDataset, datasetLoading } = useDesignerConnectedDataset(id);
   const effectiveDataset = connectedDataset;
   const currentNodeFrameSnapshot = useStore(
@@ -731,6 +725,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             initialPageThumbnails={nodeData.pageThumbnails ?? {}}
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
+            brandKitPaletteColors={brandKitPaletteColors}
             datasetConnected={datasetConnected}
             designerConnectedDataset={effectiveDataset}
             designerConnectedDatasetLoading={datasetLoading}
@@ -761,6 +756,7 @@ function DesignerStudioLazy(props: {
   initialPageThumbnails?: Record<string, string>;
   designerCanvasInstanceKey: string;
   brainConnected?: boolean;
+  brandKitPaletteColors?: string[];
   datasetConnected?: boolean;
   designerConnectedDataset?: import("@/app/spaces/dataset/dataset-types").Dataset | null;
   designerConnectedDatasetLoading?: boolean;

@@ -1,25 +1,19 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import type { GalleryValue, BrandKitDocument, SlotAction, SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
-import { galleryItemSourceUrl } from "@/lib/brandkit/brand-kit-gallery-media";
-import { buildGalleryToneExplanation } from "@/lib/brandkit/brand-kit-gallery-tone";
 import {
-  formatBrandKitGalleryCostHint,
-  BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT,
-} from "@/lib/brandkit/brand-kit-gallery-cost";
-import {
-  categoryMeta,
-  GALLERY_CATEGORY_ORDER,
-  groupGeneratedByCategory,
-} from "@/lib/brandkit/brand-kit-gallery-plan";
+  computeGalleryBriefSourceKey,
+  galleryBriefsAreFresh,
+  resolveGalleryCategoryBriefing,
+} from "@/lib/brandkit/brand-kit-gallery-brief";
+import { formatBrandKitGalleryCategoryCostHint } from "@/lib/brandkit/brand-kit-gallery-cost";
+import { GALLERY_CATEGORY_ORDER, groupGeneratedByCategory, type GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import type { BrandKitGalleryGenerateProgress } from "../../brand-kit-api";
 import { DnaBlock } from "../DnaBlock";
 import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
 import { BrandKitClickableImage } from "../BrandKitClickableImage";
-import { BrandKitVisualRankMeta } from "../BrandKitVisualRankMeta";
-import { BrandKitSupplementalPanel } from "../BrandKitSupplementalPanel";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { BrandKitBlockSkeleton } from "../BrandKitBlockSkeleton";
 import {
@@ -28,30 +22,28 @@ import {
   type BrandKitBlockMotionProps,
 } from "../brand-kit-block-motion";
 
-type GalleryTab = "harvested" | "generated";
-
 export function GalleryBlock({
   slot,
   slotId,
   doc,
   onAction,
-  onGenerateGallery,
-  onRecalibrateGallery,
-  isGeneratingGallery = false,
+  onGenerateGalleryCategory,
+  onAnalyzeGalleryBriefs,
+  generatingGalleryCategory = null,
+  isAnalyzingGalleryBriefs = false,
   galleryProgress = null,
-  focusGeneratedTab,
   gallerySuccessMessage,
   activeSlotId,
   motion,
-  brandReady = false,
 }: {
   slot: SlotState<unknown>;
   slotId: SlotId;
   doc: BrandKitDocument;
   onAction: (slotId: SlotId, action: SlotAction) => void;
-  onGenerateGallery?: () => void;
-  onRecalibrateGallery?: () => void;
-  isGeneratingGallery?: boolean;
+  onGenerateGalleryCategory?: (category: GalleryGenerateCategory) => void;
+  onAnalyzeGalleryBriefs?: () => void;
+  generatingGalleryCategory?: GalleryGenerateCategory | null;
+  isAnalyzingGalleryBriefs?: boolean;
   galleryProgress?: BrandKitGalleryGenerateProgress | null;
   focusGeneratedTab?: number;
   gallerySuccessMessage?: string | null;
@@ -59,109 +51,27 @@ export function GalleryBlock({
   brandReady?: boolean;
 } & BrandKitBlockMotionProps) {
   const gallery = slot.value as GalleryValue | undefined;
-  const harvested = gallery?.harvested ?? [];
-  const rankedHarvested = useMemo(
-    () => [...harvested].sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0)),
-    [harvested],
-  );
   const generated = gallery?.generated ?? [];
-  const [harvestedOnlyIncluded, setHarvestedOnlyIncluded] = useState(false);
-  const [tab, setTab] = useState<GalleryTab>("generated");
-  const [harvestedView, setHarvestedView] = useState<"original" | "duotone">(() =>
-    brandReady ? "duotone" : "original",
-  );
-  const tabTouchedRef = React.useRef(false);
+  const grouped = useMemo(() => groupGeneratedByCategory(generated), [generated]);
+  const categoryCostHint = formatBrandKitGalleryCategoryCostHint("es");
+  const briefSourceKey = useMemo(() => computeGalleryBriefSourceKey(doc), [doc]);
+  const briefsFresh = galleryBriefsAreFresh(gallery, briefSourceKey);
+  const showBriefStaleBanner = Boolean(gallery?.categoryBriefs?.length) && !briefsFresh;
 
-  useEffect(() => {
-    if (!brandReady) setHarvestedView("original");
-  }, [brandReady]);
-
-  useEffect(() => {
-    if (focusGeneratedTab && focusGeneratedTab > 0) {
-      setTab("generated");
-      tabTouchedRef.current = true;
-    }
-  }, [focusGeneratedTab]);
-
-  useEffect(() => {
-    if (tabTouchedRef.current) return;
-    if (generated.length > 0) setTab("generated");
-    else if (harvested.length > 0) setTab("harvested");
-  }, [generated.length, harvested.length]);
-
-  const selectTab = (next: GalleryTab) => {
-    tabTouchedRef.current = true;
-    setTab(next);
+  const setVerdict = (item: GalleryValue["generated"][number], verdict: "up" | "down") => {
+    if (!gallery) return;
+    onAction(slotId, {
+      action: "set",
+      value: {
+        ...gallery,
+        generated: gallery.generated.map((entry) =>
+          entry.assetId === item.assetId ? { ...entry, verdict } : entry,
+        ),
+      },
+    });
   };
 
-  const toneExplanation = useMemo(() => {
-    if (gallery?.styleToneExplanation?.trim()) return gallery.styleToneExplanation;
-    if (galleryProgress?.toneExplanation?.trim()) return galleryProgress.toneExplanation;
-    return buildGalleryToneExplanation(doc, doc.compiled?.stylePrompt);
-  }, [gallery?.styleToneExplanation, galleryProgress?.toneExplanation, doc]);
-
-  const grouped = useMemo(() => groupGeneratedByCategory(generated), [generated]);
-  const displayedHarvested = useMemo(
-    () => (harvestedOnlyIncluded ? rankedHarvested.filter((item) => item.included) : rankedHarvested),
-    [harvestedOnlyIncluded, rankedHarvested],
-  );
-  const includedCount = useMemo(() => harvested.filter((item) => item.included).length, [harvested]);
-  const galleryCostHint = formatBrandKitGalleryCostHint("es");
-  const duotoneActive = brandReady && harvestedView === "duotone";
-
-  const viewToggle = (
-    <div className="brandKit-gallery-view-toggle" role="group" aria-label="Vista de galería cosechada">
-      <button
-        type="button"
-        className={`brandKit-gallery-view-toggle__btn${harvestedView === "original" ? " is-active" : ""}`}
-        onClick={() => setHarvestedView("original")}
-      >
-        Original
-      </button>
-      <button
-        type="button"
-        className={`brandKit-gallery-view-toggle__btn${harvestedView === "duotone" ? " is-active" : ""}`}
-        onClick={() => setHarvestedView("duotone")}
-        disabled={!brandReady}
-      >
-        Duotono
-      </button>
-    </div>
-  );
-
-  const generateButton = onGenerateGallery ? (
-    <div className="brandKit-v2-gallery-generate">
-      <BrandKitFoldderButton icon={Sparkles} onClick={onGenerateGallery} disabled={isGeneratingGallery}>
-        {isGeneratingGallery ? brandKitLocaleEs.generatingGallery : brandKitLocaleEs.generateGallery}
-      </BrandKitFoldderButton>
-      {galleryCostHint && !isGeneratingGallery ? (
-        <p className="brandKit-v2-muted brandKit-v2-gallery-cost-hint">{galleryCostHint}</p>
-      ) : null}
-    </div>
-  ) : null;
-
-  const recalibrateButton =
-    generated.length && onRecalibrateGallery ? (
-      <div className="brandKit-v2-recalibrate-wrap">
-        <BrandKitFoldderButton icon={RefreshCw} variant="muted" onClick={onRecalibrateGallery} disabled={isGeneratingGallery}>
-          {brandKitLocaleEs.recalibrate}
-        </BrandKitFoldderButton>
-        <p className="brandKit-v2-muted brandKit-v2-recalibrate-hint">{brandKitLocaleEs.recalibrateHint}</p>
-      </div>
-    ) : null;
-
-  const progressPct =
-    galleryProgress && galleryProgress.total > 0
-      ? Math.round((galleryProgress.index / galleryProgress.total) * 100)
-      : 0;
-
   let body: React.ReactNode;
-  let primaryAction: React.ReactNode = (
-    <>
-      {generateButton}
-      {recalibrateButton}
-    </>
-  );
 
   if (shouldShowAnalyzingSkeleton(motion)) {
     body = <BrandKitBlockSkeleton variant="gallery" />;
@@ -172,205 +82,146 @@ export function GalleryBlock({
       <div className="brandKit-v2-gallery brandKit-v2-gallery--bento">
         {gallerySuccessMessage ? <p className="brandKit-v2-gallery-success">{gallerySuccessMessage}</p> : null}
 
-        {isGeneratingGallery && galleryProgress ? (
-          <div className="brandKit-v2-gallery-loading" role="status" aria-live="polite">
-            <div className="brandKit-v2-gallery-loading__bar">
-              <div className="brandKit-v2-gallery-loading__fill" style={{ width: `${progressPct}%` }} />
-            </div>
-            <p className="brandKit-v2-gallery-loading__message">{galleryProgress.message}</p>
-            <p className="brandKit-v2-muted brandKit-v2-gallery-loading__meta">
-              {galleryProgress.index}/{galleryProgress.total || BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT}
-              {galleryProgress.categoryLabel ? ` · ${galleryProgress.categoryLabel}` : ""}
-            </p>
+        {showBriefStaleBanner ? (
+          <div className="brandKit-v2-gallery-brief-banner">
+            <p className="brandKit-v2-gallery-brief-banner__text">{brandKitLocaleEs.galleryBriefStale}</p>
+            {onAnalyzeGalleryBriefs ? (
+              <BrandKitFoldderButton
+                variant="white"
+                compact
+                icon={RefreshCw}
+                onClick={onAnalyzeGalleryBriefs}
+                disabled={isAnalyzingGalleryBriefs}
+              >
+                {isAnalyzingGalleryBriefs
+                  ? brandKitLocaleEs.analyzingGalleryBriefs
+                  : brandKitLocaleEs.analyzeGalleryBriefs}
+              </BrandKitFoldderButton>
+            ) : null}
           </div>
         ) : null}
 
-        <div className="brandKit-v2-tabs brandKit-v2-tabs--compact" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "generated"}
-            className={`brandKit-v2-tab${tab === "generated" ? " is-active" : ""}`}
-            onClick={() => selectTab("generated")}
-          >
-            {brandKitLocaleEs.generated}
-            {generated.length ? <span className="brandKit-v2-tab__count">{generated.length}</span> : null}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "harvested"}
-            className={`brandKit-v2-tab${tab === "harvested" ? " is-active" : ""}`}
-            onClick={() => selectTab("harvested")}
-          >
-            {brandKitLocaleEs.harvested}
-            {harvested.length ? <span className="brandKit-v2-tab__count">{harvested.length}</span> : null}
-          </button>
-        </div>
+        {isAnalyzingGalleryBriefs ? (
+          <p className="brandKit-v2-muted brandKit-v2-gallery-brief-status" role="status" aria-live="polite">
+            {brandKitLocaleEs.analyzingGalleryBriefs}
+          </p>
+        ) : null}
 
-        {tab === "generated" ? (
-          <div className="brandKit-v2-generated-panel">
-            <div className="brandKit-v2-gallery-tone">
-              <p className="brandKit-v2-gallery-tone__label">{brandKitLocaleEs.galleryToneLabel}</p>
-              <p className="brandKit-v2-gallery-tone__text">{toneExplanation}</p>
-            </div>
+        <div className="brandKit-v2-generated-panel">
+          <div className="brandKit-v2-generated-matrix">
+            {GALLERY_CATEGORY_ORDER.map((category) => {
+              const briefing = resolveGalleryCategoryBriefing(doc, category);
+              const items = grouped[category];
+              const slots = [items[0], items[1]];
+              const isGeneratingThis = generatingGalleryCategory === category;
+              const hasImages = items.length > 0;
+              const progressForCard = galleryProgress?.category === category ? galleryProgress : null;
+              const progressPct =
+                progressForCard && progressForCard.total > 0
+                  ? Math.round((progressForCard.index / progressForCard.total) * 100)
+                  : 0;
+              const canGenerate = briefsFresh || !briefing.needsAnalysis;
 
-            {generated.length || isGeneratingGallery ? (
-              <div className="brandKit-v2-generated-matrix">
-                {GALLERY_CATEGORY_ORDER.map((category) => {
-                  const meta = categoryMeta(category);
-                  const items = grouped[category];
-                  const slots = [items[0], items[1]];
-                  return (
-                    <section key={category} className="brandKit-v2-generated-category">
-                      <header className="brandKit-v2-generated-category__head">
-                        <span className="brandKit-v2-generated-category__label">{meta.label}</span>
-                        <span className="brandKit-v2-generated-category__hint">{meta.hint}</span>
-                      </header>
-                      <div className="brandKit-v2-generated-category__imgs">
-                        {slots.map((item, slotIndex) => {
-                          const globalSlotIndex = GALLERY_CATEGORY_ORDER.indexOf(category) * 2 + slotIndex;
-                          const showLoading =
-                            isGeneratingGallery && !item && globalSlotIndex === generated.length;
-                          return (
-                            <div key={`${category}-${slotIndex}`} className="brandKit-v2-generated-slot">
-                              {item?.previewUrl ? (
-                                <div className="brandKit-v2-gallery-generated">
-                                  <BrandKitClickableImage src={item.previewUrl} fit="cover" eager />
-                                  <div className="brandKit-v2-gallery-verdicts">
-                                    <button
-                                      type="button"
-                                      className={`brandKit-v2-btn brandKit-v2-btn--ghost${item.verdict === "up" ? " is-active" : ""}`}
-                                      aria-label={brandKitLocaleEs.galleryVerdictUp}
-                                      onClick={() => {
-                                        if (!gallery) return;
-                                        onAction(slotId, {
-                                          action: "set",
-                                          value: {
-                                            ...gallery,
-                                            generated: gallery.generated.map((entry) =>
-                                              entry.assetId === item.assetId
-                                                ? { ...entry, verdict: "up" as const }
-                                                : entry,
-                                            ),
-                                          },
-                                        });
-                                      }}
-                                    >
-                                      <span aria-hidden>✓</span>
-                                      <span className="brandKit-v2-gallery-verdict-label">{brandKitLocaleEs.galleryVerdictUp}</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`brandKit-v2-btn brandKit-v2-btn--ghost${item.verdict === "down" ? " is-active" : ""}`}
-                                      aria-label={brandKitLocaleEs.galleryVerdictDown}
-                                      onClick={() => {
-                                        if (!gallery) return;
-                                        onAction(slotId, {
-                                          action: "set",
-                                          value: {
-                                            ...gallery,
-                                            generated: gallery.generated.map((entry) =>
-                                              entry.assetId === item.assetId
-                                                ? { ...entry, verdict: "down" as const }
-                                                : entry,
-                                            ),
-                                          },
-                                        });
-                                      }}
-                                    >
-                                      <span aria-hidden>✗</span>
-                                      <span className="brandKit-v2-gallery-verdict-label">{brandKitLocaleEs.galleryVerdictDown}</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : showLoading ? (
-                                <div className="brandKit-v2-generated-slot__loading" aria-hidden />
-                              ) : (
-                                <div className="brandKit-v2-generated-slot__empty" aria-hidden />
-                              )}
+              return (
+                <article key={category} className="brandKit-v2-generated-category">
+                  <div className="brandKit-v2-generated-category__imgs">
+                    {slots.map((item, slotIndex) => {
+                      const showLoading = isGeneratingThis && !item;
+                      return (
+                        <div key={`${category}-${slotIndex}`} className="brandKit-v2-generated-slot">
+                          {item?.previewUrl ? (
+                            <div className="brandKit-v2-gallery-generated">
+                              <BrandKitClickableImage src={item.previewUrl} fit="cover" eager />
+                              <div className="brandKit-v2-gallery-verdicts">
+                                <button
+                                  type="button"
+                                  className={`brandKit-v2-gallery-verdict${item.verdict === "up" ? " is-active" : ""}`}
+                                  aria-label={brandKitLocaleEs.galleryVerdictUp}
+                                  onClick={() => setVerdict(item, "up")}
+                                >
+                                  <span aria-hidden>✓</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`brandKit-v2-gallery-verdict${item.verdict === "down" ? " is-active" : ""}`}
+                                  aria-label={brandKitLocaleEs.galleryVerdictDown}
+                                  onClick={() => setVerdict(item, "down")}
+                                >
+                                  <span aria-hidden>✗</span>
+                                </button>
+                              </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="brandKit-v2-generated-empty">
-                <p className="brandKit-v2-muted">{brandKitLocaleEs.galleryGeneratedEmpty}</p>
-                {harvested.length ? (
-                  <p className="brandKit-v2-muted brandKit-v2-gallery-harvested-hint">
-                    {brandKitLocaleEs.galleryHarvestedHint(harvested.length)}
-                  </p>
-                ) : null}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="brandKit-v2-harvested-strip">
-            {harvested.length > 0 ? (
-              <label className="brandKit-v2-harvested-filter">
-                <input
-                  type="checkbox"
-                  checked={harvestedOnlyIncluded}
-                  onChange={(event) => setHarvestedOnlyIncluded(event.target.checked)}
-                />
-                <span>
-                  {brandKitLocaleEs.galleryHarvestedOnlyIncluded}
-                  {includedCount > 0 ? ` (${includedCount})` : ""}
-                </span>
-              </label>
-            ) : null}
-            {displayedHarvested.length ? (
-              displayedHarvested.map((item, index) => {
-                const previewSrc = galleryItemSourceUrl(item);
-                return (
-                <div
-                  key={item.assetId}
-                  className={`brandKit-v2-gallery-item-wrap${item.included ? "" : " is-excluded"}`}
-                  style={{ ["--brand-kit-stagger-i" as string]: index }}
-                >
-                  {previewSrc ? (
-                    <div
-                      className={`brandKit-v2-gallery-thumb${duotoneActive ? " brandKit-v2-gallery-thumb--duotone" : ""}`}
-                    >
-                      <BrandKitClickableImage src={previewSrc} fit="cover" eager />
+                          ) : showLoading ? (
+                            <div className="brandKit-v2-generated-slot__loading" aria-hidden />
+                          ) : (
+                            <div className="brandKit-v2-generated-slot__empty" aria-hidden />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <footer className="brandKit-v2-generated-category__foot">
+                    <div className="brandKit-v2-generated-category__copy">
+                      <p className="brandKit-v2-generated-category__label">{briefing.label}</p>
+                      <p className="brandKit-v2-generated-category__hint">{briefing.description}</p>
+                      {briefing.confidence && briefing.evidenceCount ? (
+                        <p className="brandKit-v2-generated-category__meta">
+                          {brandKitLocaleEs.galleryBriefConfidence(briefing.confidence, briefing.evidenceCount)}
+                        </p>
+                      ) : null}
                     </div>
-                  ) : null}
-                  <BrandKitVisualRankMeta score={item.rankScore} rankSignals={item.rankSignals} />
-                  <button
-                    type="button"
-                    className="brandKit-v2-gallery-item-toggle"
-                    onClick={() => {
-                      if (!gallery) return;
-                      onAction(slotId, {
-                        action: "set",
-                        value: {
-                          ...gallery,
-                          harvested: gallery.harvested.map((entry) =>
-                            entry.assetId === item.assetId ? { ...entry, included: !entry.included } : entry,
-                          ),
-                        } satisfies GalleryValue,
-                      });
-                    }}
-                  >
-                    {item.included ? "Incluida" : "Excluida"}
-                  </button>
-                </div>
-                );
-              })
-            ) : (
-              <p className="brandKit-v2-muted">
-                {harvestedOnlyIncluded && harvested.length > 0
-                  ? "Ninguna imagen marcada como incluida."
-                  : "Sin imágenes cosechadas."}
-              </p>
-            )}
-            <BrandKitSupplementalPanel slot={slot} />
+                    <div className="brandKit-v2-generated-category__action">
+                      {briefing.needsAnalysis && onAnalyzeGalleryBriefs && !briefsFresh ? (
+                        <BrandKitFoldderButton
+                          variant="white"
+                          compact
+                          icon={RefreshCw}
+                          onClick={onAnalyzeGalleryBriefs}
+                          disabled={isAnalyzingGalleryBriefs || Boolean(generatingGalleryCategory)}
+                        >
+                          {isAnalyzingGalleryBriefs
+                            ? brandKitLocaleEs.analyzingGalleryBriefs
+                            : brandKitLocaleEs.analyzeGalleryBriefs}
+                        </BrandKitFoldderButton>
+                      ) : onGenerateGalleryCategory ? (
+                        <BrandKitFoldderButton
+                          variant="white"
+                          compact
+                          icon={Sparkles}
+                          onClick={() => onGenerateGalleryCategory(category)}
+                          disabled={Boolean(generatingGalleryCategory) || isAnalyzingGalleryBriefs || !canGenerate}
+                          aria-busy={isGeneratingThis}
+                        >
+                          {isGeneratingThis
+                            ? brandKitLocaleEs.generatingGalleryCategory(briefing.label)
+                            : hasImages
+                              ? brandKitLocaleEs.regenerateGalleryCategory
+                              : brandKitLocaleEs.generateGalleryCategory}
+                        </BrandKitFoldderButton>
+                      ) : null}
+                      {!isGeneratingThis && canGenerate ? (
+                        <p className="brandKit-v2-generated-category__cost">{categoryCostHint}</p>
+                      ) : progressForCard ? (
+                        <div className="brandKit-v2-generated-category__progress" role="status" aria-live="polite">
+                          <div className="brandKit-v2-generated-category__progress-bar">
+                            <div
+                              className="brandKit-v2-generated-category__progress-fill"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                          <p className="brandKit-v2-generated-category__progress-meta">
+                            {progressForCard.index}/{progressForCard.total}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </footer>
+                </article>
+              );
+            })}
           </div>
-        )}
+        </div>
       </div>
     );
   }
@@ -381,9 +232,7 @@ export function GalleryBlock({
       slot={slot}
       onAction={onAction}
       className="brandKit-v2-block--gallery brandKit-v2-block--bento-gallery"
-      primaryAction={primaryAction}
       activeSlotId={activeSlotId}
-      headExtra={viewToggle}
     >
       {body}
     </DnaBlock>

@@ -1,11 +1,15 @@
-import { randomUUID } from "node:crypto";
 import { compileBrandKit } from "./compile-brand-kit";
 import { buildGalleryToneExplanation } from "./brand-kit-gallery-tone";
 import {
   GALLERY_GENERATE_PLAN,
   BRAND_KIT_GALLERY_IMAGE_COUNT,
+  GALLERY_CATEGORY_SLOT_COUNT,
+  slotsForCategory,
+  type GalleryGenerateCategory,
   type GalleryGeneratedItem,
 } from "./brand-kit-gallery-plan";
+import { promptHintForGalleryCategory } from "./brand-kit-gallery-brief";
+import { buildGalleryImagePrompt } from "./brand-kit-gallery-category-guidance";
 import { BRAND_KIT_GALLERY_PER_IMAGE_USD } from "./brand-kit-gallery-cost";
 import type { GalleryValue, BrandKitDocument } from "./brand-kit-types";
 import { geminiImageGenerate } from "@/lib/gemini-image-generate";
@@ -40,10 +44,30 @@ export type BrandKitGalleryStreamEvent =
     }
   | { type: "error"; message: string };
 
+export type BrandKitGalleryGenerateOptions = {
+  category?: GalleryGenerateCategory;
+};
+
+function resolveGeneratePlan(category?: GalleryGenerateCategory) {
+  if (category) return slotsForCategory(category);
+  return GALLERY_GENERATE_PLAN;
+}
+
+function mergeGeneratedForCategory(
+  existing: GalleryGeneratedItem[],
+  category: GalleryGenerateCategory | undefined,
+  incoming: GalleryGeneratedItem[],
+): GalleryGeneratedItem[] {
+  if (!category) return [...existing, ...incoming];
+  const kept = existing.filter((item) => (item.category ?? "general") !== category);
+  return [...kept, ...incoming];
+}
+
 export async function* runBrandKitGalleryGenerate(input: {
   brandKit: BrandKitDocument;
   stylePromptVersion: number;
   userEmail: string;
+  category?: GalleryGenerateCategory;
 }): AsyncGenerator<BrandKitGalleryStreamEvent> {
   const gallerySlot = input.brandKit.slots.gallery;
   const gallery = gallerySlot?.value as GalleryValue | undefined;
@@ -73,24 +97,28 @@ export async function* runBrandKitGalleryGenerate(input: {
   const toneExplanation = buildGalleryToneExplanation(docForPrompt, stylePrompt);
   yield { type: "tone", explanation: toneExplanation, stylePrompt };
 
+  const plan = resolveGeneratePlan(input.category);
+  const total = plan.length;
   const generated: GalleryGeneratedItem[] = [];
   let lastError: string | undefined;
 
-  for (let index = 0; index < GALLERY_GENERATE_PLAN.length; index += 1) {
-    const slot = GALLERY_GENERATE_PLAN[index];
+  for (let index = 0; index < plan.length; index += 1) {
+    const slot = plan[index];
     yield {
       type: "progress",
       index: index + 1,
-      total: BRAND_KIT_GALLERY_IMAGE_COUNT,
+      total,
       category: slot.category,
       categoryLabel: slot.categoryLabel,
-      message: `Generando ${slot.categoryLabel} (${index + 1}/${BRAND_KIT_GALLERY_IMAGE_COUNT})…`,
+      message: `Generando ${slot.categoryLabel} (${index + 1}/${total})…`,
     };
 
     try {
+      const promptSuffix = promptHintForGalleryCategory(gallery, slot.category, slot.promptSuffix);
+      const prompt = buildGalleryImagePrompt(slot.category, stylePrompt, promptSuffix, docForPrompt);
       const result = await geminiImageGenerate(
         {
-          prompt: `${stylePrompt} ${slot.promptSuffix}`,
+          prompt,
           model: "flash25",
           aspect_ratio: "1:1",
           resolution: "1k",
@@ -122,18 +150,24 @@ export async function* runBrandKitGalleryGenerate(input: {
     return;
   }
 
+  const priorGenerated = gallery?.generated ?? [];
+  const nextGenerated = mergeGeneratedForCategory(priorGenerated, input.category, generated);
+
   const nextGallery: GalleryValue = {
+    ...(gallery ?? { harvested: [], generated: [], stylePromptVersion: 0 }),
     harvested: gallery?.harvested ?? [],
-    generated: [...(gallery?.generated ?? []), ...generated],
+    generated: nextGenerated,
     stylePromptVersion: input.stylePromptVersion,
     styleToneExplanation: toneExplanation,
   };
+
+  const expectedTotal = input.category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT;
 
   yield {
     type: "done",
     gallery: nextGallery,
     addedCount: generated.length,
-    partial: generated.length < BRAND_KIT_GALLERY_IMAGE_COUNT,
+    partial: generated.length < expectedTotal,
     stylePrompt,
   };
 }

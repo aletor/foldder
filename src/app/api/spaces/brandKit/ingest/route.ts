@@ -209,7 +209,19 @@ export async function POST(req: NextRequest) {
     const auth = await requireSpacesAuthUser(req);
     if (!auth.ok) return auth.response;
 
-    const formData = await req.formData();
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.includes("FormData")
+          ? "El archivo supera el límite de subida del servidor (máx. ~32MB por petición)."
+          : error instanceof Error
+            ? error.message
+            : "No se pudo leer el formulario de subida";
+      return Response.json({ error: message }, { status: 413 });
+    }
+
     const paidOpts = parseBrandKitIngestPaidOpts(formData);
     const urlRaw = formData.get("url");
 

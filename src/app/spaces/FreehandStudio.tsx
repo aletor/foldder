@@ -549,6 +549,7 @@ import type { BrainDesignerVarietyInput, BrainVarietyMode, VariationFingerprint 
 import { fingerprintFromChoice } from "@/lib/brain/brain-visual-variety";
 import type { TelemetryImageSource } from "@/lib/brain/brain-models";
 import { trackDesignerImageImported, trackDesignerImageUsed } from "./designer/designer-image-telemetry";
+import { useDesignerBrandKitConnection } from "./designer/use-designer-brandkit-connection";
 import {
   clampRectToBounds,
   commitGenerativeFillRect,
@@ -1110,6 +1111,10 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
   studioCapabilities?: Partial<FreehandStudioCapabilities>;
   /** Activa sugerencias basadas en Brain cuando el nodo actual está conectado al handle `brain`. */
   brainConnected?: boolean;
+  /** Colores de paleta del nodo BrandKit conectado (handle `brain` / `brand`). */
+  brandKitPaletteColors?: string[];
+  /** Id del nodo Designer en React Flow (distinto del `nodeId` interno del studio). */
+  designerFlowNodeId?: string;
 }
 
 export type { FreehandStudioCapabilities };
@@ -8993,6 +8998,8 @@ export function FreehandStudioCanvas({
   designerCanvasFormatLabel = null,
   designerBrainTelemetry,
   brainConnected = false,
+  brandKitPaletteColors = [],
+  designerFlowNodeId = null,
   designerConnectedDataset = null,
   designerConnectedDatasetLoading = false,
   designerActivePageDatasetRowIndex = 0,
@@ -9009,6 +9016,14 @@ export function FreehandStudioCanvas({
   photoRoomStudioEmbedRef.current = !!photoRoomStudioEmbed;
   const projectAssetsCtx = useProjectAssetsCanvas();
   const projectScopeId = projectAssetsCtx?.projectScopeId || "__local__";
+  const liveBrandKitConnection = useDesignerBrandKitConnection(
+    designerFlowNodeId ?? (designerMode ? nodeId : null),
+  );
+  const effectiveBrainConnected = brainConnected || liveBrandKitConnection.brainConnected;
+  const effectiveBrandKitPaletteColors =
+    liveBrandKitConnection.paletteColors.length > 0
+      ? liveBrandKitConnection.paletteColors
+      : brandKitPaletteColors;
   const brainAssets = useMemo(
     () => normalizeProjectAssets(projectAssetsCtx?.assetsMetadata),
     [projectAssetsCtx?.assetsMetadata],
@@ -12620,14 +12635,20 @@ export function FreehandStudioCanvas({
       if (!n) return;
       if (!out.includes(n)) out.push(n);
     };
-    push(brainAssets.brand.colorPrimary);
-    push(brainAssets.brand.colorSecondary);
-    push(brainAssets.brand.colorAccent);
-    for (const h of brainAssets.strategy.visualReferenceAnalysis?.aggregated?.dominantPalette ?? []) {
-      push(h);
+    if (effectiveBrandKitPaletteColors.length > 0) {
+      for (const color of effectiveBrandKitPaletteColors) push(color);
+      return out.slice(0, 12);
+    }
+    if (effectiveBrainConnected) {
+      push(brainAssets.brand.colorPrimary);
+      push(brainAssets.brand.colorSecondary);
+      push(brainAssets.brand.colorAccent);
+      for (const h of brainAssets.strategy.visualReferenceAnalysis?.aggregated?.dominantPalette ?? []) {
+        push(h);
+      }
     }
     return out.slice(0, 12);
-  }, [brainAssets]);
+  }, [brainAssets, effectiveBrainConnected, effectiveBrandKitPaletteColors]);
 
   const foldderLibraryView = useMemo<Array<ProjectMediaItem & { originalUrl: string }>>(
     () =>
@@ -24728,7 +24749,7 @@ export function FreehandStudioCanvas({
           leftToolbarEyeAbortRef={leftToolbarEyeAbortRef}
           setLeftToolbarEyeBusy={setLeftToolbarEyeBusy}
           leftToolbarEyeBusy={leftToolbarEyeBusy}
-          brainConnected={brainConnected}
+          brainConnected={effectiveBrainConnected}
           brainPaletteColors={brainPaletteColors}
           documentColorStats={documentColorStats}
           savedPaletteColors={savedPaletteColors}
@@ -28064,7 +28085,7 @@ export function FreehandStudioCanvas({
                     accentRangeClass={flushRangeAccentClass}
                     accentFocusClass={flushFocusClass}
                     inUse={documentColorStats}
-                    brainColors={brainConnected ? brainPaletteColors : []}
+                    brainColors={brainPaletteColors}
                     savedColors={savedPaletteColors}
                     onSavedColorsChange={setSavedPaletteColors}
                     onApplyHex={applyPaletteHex}

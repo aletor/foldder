@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { renderHtmlToPdfBuffer } from "@/lib/brandkit/style-guide-pdf-chromium";
 import { normalizeGenome, type Genome } from "@/lib/brandkit/model/trait";
+import type { BrandKitDocument } from "@/lib/brandkit/brand-kit-types";
 import {
   brandKitStyleGuideFilename,
   renderBrandKitStyleGuide,
@@ -18,6 +19,7 @@ export const maxDuration = 60;
 
 type Body = {
   genome?: Genome;
+  document?: BrandKitDocument;
   exportMode?: BrandKitStyleGuideExportMode;
   projectName?: string;
   generatedAt?: string;
@@ -57,6 +59,7 @@ export async function POST(req: NextRequest) {
       projectName: body.projectName,
       generatedAt: body.generatedAt,
       forPdf: true,
+      sourceDocument: body.document,
     });
     const pdf = await renderHtmlToPdfBuffer({ html: doc.html, marginMm: 0 });
 

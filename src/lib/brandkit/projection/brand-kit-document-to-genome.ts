@@ -38,6 +38,20 @@ import type {
 import { fontFamilySignature, textSignature } from "../model/signature";
 import { computeCompleteness } from "./completeness";
 import { enrichTypographySpecimen } from "../specimen/typography-specimen";
+import {
+  categoryMeta,
+  GALLERY_CATEGORY_ORDER,
+  type GalleryGenerateCategory,
+} from "../brand-kit-gallery-plan";
+import type { ImageCategory } from "../model/trait-ids";
+
+const GALLERY_CATEGORY_TO_IMAGE: Record<GalleryGenerateCategory, ImageCategory> = {
+  people_mood: "people",
+  places: "environments",
+  objects: "objects",
+  textures: "textures",
+  general: "general",
+};
 
 function slot<T>(doc: BrandKitDocument, id: SlotId): SlotState<T> | undefined {
   return doc.slots[id] as SlotState<T> | undefined;
@@ -53,8 +67,15 @@ function mapSources(doc: BrandKitDocument): TraitSourceRef[] {
   }));
 }
 
-function mapLogoValue(value: SlotLogoValue): LogoValue {
-  const imageUrl = value.previewUrl?.trim() || value.assetId;
+function mapLogoValue(value: SlotLogoValue, variant: LogoValue["variant"] = "positive"): LogoValue {
+  const negativo = value.variants?.find((v) => v.kind === "negativo");
+  const source =
+    variant === "negative"
+      ? negativo ?? value
+      : value;
+  const preview = "previewUrl" in source ? source.previewUrl : undefined;
+  const assetId = "assetId" in source ? source.assetId : value.assetId;
+  const imageUrl = preview?.trim() || assetId;
   const assetOrigin =
     value.format === "svg"
       ? "vector_native"
@@ -63,12 +84,71 @@ function mapLogoValue(value: SlotLogoValue): LogoValue {
         : "xobject_native";
   return {
     imageUrl,
-    variant: "positive",
+    variant,
     assetOrigin,
     sourcePageNumber: value.sourcePageNumber,
     sourceBbox: value.sourceBbox,
-    label: value.variants?.[0]?.kind,
+    label: variant === "negative" ? "negativo" : value.variants?.[0]?.kind,
   };
+}
+
+function upsertLogoTraits(genome: Genome, logo: SlotState<SlotLogoValue> | undefined): Genome {
+  if (!logo || (logo.status === "empty" && logo.candidates.length === 0)) {
+    return genome;
+  }
+  if (!logo.value) {
+    return upsertSingleTrait(genome, "logo.primary", logo, (v) => mapLogoValue(v), (v) =>
+      textSignature(v.previewUrl ?? v.assetId),
+    );
+  }
+
+  const userSignal =
+    logo.provenance?.type === "user_input"
+      ? [signal("user-supplied", { detail: logo.provenance.detail })]
+      : [signal("brand-manual", { detail: logo.provenance?.detail ?? "brand-kit-v2" })];
+
+  let trait = createTrait<LogoValue>("logo.primary");
+  const positive = mapLogoValue(logo.value, "positive");
+  const positiveCandidate = {
+    ...createCandidate({
+      value: positive,
+      signals: userSignal,
+      signature: textSignature(`${positive.imageUrl}:positive`),
+    }),
+    derived:
+      logo.value.format === "svg"
+        ? { vectorUrl: logo.value.previewUrl ?? logo.value.assetId }
+        : undefined,
+  };
+  trait = addCandidate(trait, positiveCandidate);
+  if (logo.locked) trait = crown(trait, positiveCandidate.id);
+
+  if (logo.value.variants?.some((v) => v.kind === "negativo")) {
+    const negative = mapLogoValue(logo.value, "negative");
+    trait = addCandidate(
+      trait,
+      createCandidate({
+        value: negative,
+        signals: [signal("brand-manual", { detail: "logo-negativo" })],
+        signature: textSignature(`${negative.imageUrl}:negative`),
+      }),
+    );
+  }
+
+  logo.candidates.forEach((alt, index) => {
+    if (!alt.value) return;
+    trait = addCandidate(
+      trait,
+      createCandidate({
+        value: mapLogoValue(alt.value),
+        signals: [signal("single-appearance", { detail: alt.provenance.detail })],
+        signature: `${textSignature(alt.value.previewUrl ?? alt.value.assetId)}_alt_${index}`,
+      }),
+    );
+  });
+
+  if (trait.candidates.length === 0) return genome;
+  return upsertTrait(genome, trait);
 }
 
 function mapTypographyFamily(
@@ -233,22 +313,49 @@ function upsertVisualTraits(
 ): Genome {
   let next = genome;
   const locked = Boolean(visualWorld?.locked || gallery?.locked);
+  const briefByCategory = new Map(
+    (gallery?.value?.categoryBriefs ?? []).map((brief) => [brief.category, brief.description.trim()]),
+  );
 
-  const harvested =
-    gallery?.value?.harvested?.filter((item) => item.included !== false && (item.previewUrl || item.assetId)) ?? [];
-  if (harvested.length) {
-    const traitId = imageTraitId("general");
+  const generated =
+    gallery?.value?.generated?.filter(
+      (item) => item.verdict !== "down" && (item.previewUrl?.trim() || item.assetId),
+    ) ?? [];
+
+  const grouped = new Map<ImageCategory, typeof generated>();
+  for (const item of generated) {
+    const galleryCategory = (item.category ?? "general") as GalleryGenerateCategory;
+    const imageCategory = GALLERY_CATEGORY_TO_IMAGE[galleryCategory] ?? "general";
+    const bucket = grouped.get(imageCategory) ?? [];
+    bucket.push(item);
+    grouped.set(imageCategory, bucket);
+  }
+
+  for (const galleryCategory of GALLERY_CATEGORY_ORDER) {
+    const imageCategory = GALLERY_CATEGORY_TO_IMAGE[galleryCategory];
+    const items = grouped.get(imageCategory);
+    if (!items?.length) continue;
+
+    const traitId = imageTraitId(imageCategory);
     let trait = createTrait<ImageDnaValue>(traitId);
-    harvested.slice(0, 8).forEach((item, index) => {
-      const url = item.previewUrl ?? item.assetId;
-      const candidate = createCandidate({
-        value: {
-          axes: { sujeto: "referencia visual", tratamiento: item.provenance.detail || "cosecha web" },
-          referenceImageUrl: url,
-        },
-        signals: [signal("visual-brand", { detail: item.provenance.detail })],
-        signature: textSignature(url),
-      });
+    const brief = briefByCategory.get(galleryCategory) ?? categoryMeta(galleryCategory).hint;
+
+    items.forEach((item, index) => {
+      const url = item.previewUrl?.trim() || item.assetId;
+      const label = item.categoryLabel ?? categoryMeta(galleryCategory).label;
+      const axes: ImageDnaValue["axes"] = {
+        sujeto: label,
+        tratamiento: brief || visualWorld?.value?.summary?.trim() || "generada",
+        paleta: visualWorld?.value?.moodTags?.slice(0, 3).join(", "),
+      };
+      const candidate = {
+        ...createCandidate({
+          value: { axes, referenceImageUrl: url },
+          signals: [signal("visual-brand", { detail: `gallery-generated:${galleryCategory}` })],
+          signature: textSignature(url),
+        }),
+        derived: { generatedImageUrl: url },
+      };
       trait = addCandidate(trait, candidate);
       if (locked && index === 0) trait = crown(trait, candidate.id);
     });
@@ -256,11 +363,12 @@ function upsertVisualTraits(
   }
 
   const mood = visualWorld?.value?.moodTags?.filter(Boolean) ?? [];
-  if (mood.length) {
+  const visualSummary = visualWorld?.value?.summary?.trim();
+  if ((mood.length || visualSummary) && !grouped.has("environments")) {
     const traitId = imageTraitId("environments");
     let trait = createTrait<ImageDnaValue>(traitId);
     const axes: ImageDnaValue["axes"] = {
-      sujeto: visualWorld?.value?.summary?.trim() || "entornos de marca",
+      sujeto: visualSummary || "entornos de marca",
       tratamiento: mood.slice(0, 3).join(", "),
       paleta: visualWorld?.value?.visualTraits?.slice(0, 2).join(", "),
     };
@@ -282,10 +390,7 @@ export function brandKitDocumentToGenome(doc: BrandKitDocument): Genome {
   const sources = mapSources(doc);
   let genome: Genome = { ...emptyGenome(), sources, updatedAt: doc.updatedAt };
 
-  const logoSlot = slot<SlotLogoValue>(doc, "logo");
-  genome = upsertSingleTrait(genome, "logo.primary", logoSlot, mapLogoValue, (v) =>
-    textSignature(v.previewUrl ?? v.assetId),
-  );
+  genome = upsertLogoTraits(genome, slot<SlotLogoValue>(doc, "logo"));
 
   const typoSlot = slot<SlotTypographyValue>(doc, "typography");
   if (typoSlot?.value?.families?.length) {

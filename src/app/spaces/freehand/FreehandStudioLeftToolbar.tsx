@@ -777,7 +777,7 @@ export function FreehandStudioLeftToolbar(p: FreehandStudioLeftToolbarProps) {
 
               <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">BrandKit</div>
               <div className="flex flex-wrap gap-1">
-                {!brainConnected || brainPaletteColors.length === 0 ? (
+                {brainPaletteColors.length === 0 ? (
                   <p className="text-[9px] text-zinc-600">Sin colores de BrandKit conectados.</p>
                 ) : (
                   brainPaletteColors.map((hex) => (

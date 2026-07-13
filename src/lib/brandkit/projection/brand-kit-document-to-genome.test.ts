@@ -85,4 +85,50 @@ describe("brandKitDocumentToGenome", () => {
     expect(view.voice.tone.items.length).toBeGreaterThan(0);
     expect(view.voice.claimsForbidden.items.length).toBeGreaterThan(0);
   });
+
+  it("proyecta imágenes generadas de galería, no cosecha", () => {
+    const doc = createEmptyBrandKit();
+    doc.slots.gallery = {
+      ...doc.slots.gallery,
+      status: "resolved",
+      locked: true,
+      value: {
+        harvested: [
+          {
+            assetId: "harvest-1",
+            previewUrl: "https://example.com/harvest.jpg",
+            included: true,
+            provenance: { type: "site_repetition", detail: "web" },
+          },
+        ],
+        generated: [
+          {
+            assetId: "gen-1",
+            previewUrl: "https://example.com/generated.jpg",
+            promptVersion: 1,
+            category: "textures",
+          },
+        ],
+        stylePromptVersion: 1,
+        categoryBriefs: [
+          {
+            category: "textures",
+            description: "Macro de superficie rugosa.",
+            promptHint: "macro texture",
+            confidence: "high",
+            evidenceCount: 4,
+          },
+        ],
+      },
+      updatedAt: doc.updatedAt,
+    };
+
+    const genome = brandKitDocumentToGenome(doc);
+    const textures = getTrait(genome, "image.textures");
+    expect(textures?.candidates.some((c) => c.derived?.generatedImageUrl?.includes("generated"))).toBe(true);
+    expect(textures?.candidates.some((c) => c.value.referenceImageUrl?.includes("harvest"))).toBe(false);
+
+    const general = getTrait(genome, "image.general");
+    expect(general?.candidates ?? []).toHaveLength(0);
+  });
 });

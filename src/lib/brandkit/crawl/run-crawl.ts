@@ -24,6 +24,7 @@ import { selectEvidenceCandidates } from "../brand-kit-evidence-candidates";
 import { buildEssenceHeadlineCandidates, buildEssenceHeadlineAlternatives, buildResolvedEssenceFromIngest, canResolveEssence } from "../brand-kit-essence-headline";
 import { galleryItemSourceUrl } from "../brand-kit-gallery-media";
 import { buildGalleryContextForLlm, filterHarvestedGallery, galleryRefIds, galleryUsefulCount } from "../brand-kit-gallery-filter";
+import { mergeBatchBriefsIntoGallery } from "../brand-kit-gallery-brief";
 import { buildVisualWorldFromGallery } from "../brand-kit-visual-synthesis";
 import {
   extractOnelinerCandidatesFromPages,
@@ -430,7 +431,7 @@ export async function* runBrandKitCrawl(
     });
   }
 
-  const galleryValue: GalleryValue = { harvested, generated: [], stylePromptVersion: 0 };
+  let galleryValue: GalleryValue = { harvested, generated: [], stylePromptVersion: 0 };
   const galleryContext = buildGalleryContextForLlm(galleryValue);
 
   synthesisInput = {
@@ -614,7 +615,7 @@ export async function* runBrandKitCrawl(
       substep: "essence",
       detail: "Esencia, voz y mundo visual…",
     };
-    const batch = await synthesizeBrandKitBatch(synthesisInput);
+    const batch = await synthesizeBrandKitBatch(synthesisInput, { gallery: galleryValue });
 
     const essenceHeadline =
       extractedOneliner && !onelinerIsWeak ? extractedOneliner.value.text : batch.essence?.headline;
@@ -913,6 +914,27 @@ export async function* runBrandKitCrawl(
       } else {
         yield { type: "slot_update", slotId: "visualWorld", patch: slotPatch({ status: "needs_user", confidence: 0 }) };
       }
+    }
+
+    if (batch.categoryBriefs?.length) {
+      galleryValue = mergeBatchBriefsIntoGallery(galleryValue, batch.categoryBriefs, {
+        brandName,
+        visualSummary: batch.visualWorld?.summary,
+        moodTags: batch.visualWorld?.moodTags,
+      });
+    }
+
+    if (galleryValue.harvested.length > 0) {
+      yield {
+        type: "slot_update",
+        slotId: "gallery",
+        patch: slotPatch({
+          status: "resolved",
+          value: galleryValue,
+          confidence: galleryValue.categoryBriefs?.length ? 0.78 : 0.72,
+          provenance: batchProv,
+        }),
+      };
     }
   }
 

@@ -280,6 +280,8 @@ export function PaletteBlock({
   } else if (slot.status === "needs_user") {
     primaryAction = (
       <BrandKitFoldderButton
+        variant="white"
+        compact
         icon={Droplet}
         onClick={() =>
           onAction(slotId, { action: "set", value: { colors: [{ hex: "#6B4C9A", role: "primary" }] } satisfies PaletteValue })

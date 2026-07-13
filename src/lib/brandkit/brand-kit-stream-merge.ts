@@ -88,6 +88,9 @@ function mergeGalleryValues(current: GalleryValue, incoming: GalleryValue): Gall
     generated: current.generated?.length ? current.generated : incoming.generated,
     stylePromptVersion: current.stylePromptVersion ?? incoming.stylePromptVersion ?? 0,
     styleToneExplanation: current.styleToneExplanation ?? incoming.styleToneExplanation,
+    categoryBriefs: incoming.categoryBriefs?.length ? incoming.categoryBriefs : current.categoryBriefs,
+    categoryBriefsSourceKey: incoming.categoryBriefsSourceKey ?? current.categoryBriefsSourceKey,
+    categoryBriefsAnalyzedAt: incoming.categoryBriefsAnalyzedAt ?? current.categoryBriefsAnalyzedAt,
   };
 }
 
@@ -241,6 +244,21 @@ export function mergeSlotStreamPatch(
       return finishMerge(
         slotId,
         applyReconcileResultToSlot(slotId, current, result, nextPatch, options?.sources ?? []),
+        options?.sources ?? [],
+      );
+    }
+
+    if (slotId === "gallery") {
+      return finishMerge(
+        slotId,
+        {
+          ...current,
+          ...nextPatch,
+          status: "resolved",
+          value: nextPatch.value,
+          id: slotId,
+          updatedAt: nextPatch.updatedAt ?? new Date().toISOString(),
+        },
         options?.sources ?? [],
       );
     }

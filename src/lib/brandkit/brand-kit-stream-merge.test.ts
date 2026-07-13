@@ -248,6 +248,67 @@ describe("mergeSlotStreamPatch", () => {
     expect(merged?.needsReviewReason).toContain("elige el logo");
   });
 
+  it("merges gallery harvested and preserves category briefs from incoming patch", () => {
+    const current = {
+      ...createEmptyBrandKit().slots.gallery,
+      status: "resolved" as const,
+      value: {
+        harvested: [
+          {
+            assetId: "/api/spaces/s3-file?key=img-1",
+            previewUrl: "/api/spaces/s3-file?key=img-1",
+            included: true,
+            provenance: { type: "file_upload", detail: "probe 1" },
+          },
+        ],
+        generated: [],
+        stylePromptVersion: 0,
+      },
+      confidence: 0.72,
+    };
+    const merged = mergeSlotStreamPatch(
+      "gallery",
+      current,
+      {
+        status: "resolved",
+        value: {
+          harvested: [
+            {
+              assetId: "/api/spaces/s3-file?key=img-1",
+              previewUrl: "/api/spaces/s3-file?key=img-1",
+              included: true,
+              provenance: { type: "file_upload", detail: "probe 1" },
+            },
+          ],
+          generated: [],
+          stylePromptVersion: 0,
+          categoryBriefs: [
+            {
+              category: "people_mood",
+              description: "Retratos editoriales con luz cálida.",
+              promptHint: "editorial portraits",
+              confidence: "high",
+              evidenceCount: 3,
+            },
+          ],
+          categoryBriefsSourceKey: "abc123",
+          categoryBriefsAnalyzedAt: "2026-07-13T10:00:00.000Z",
+        },
+        confidence: 0.76,
+      },
+      { respectLocks: true },
+    );
+
+    const gallery = merged?.value as {
+      harvested: Array<{ assetId: string }>;
+      categoryBriefs?: Array<{ description: string }>;
+      categoryBriefsSourceKey?: string;
+    };
+    expect(gallery?.harvested).toHaveLength(1);
+    expect(gallery?.categoryBriefs?.[0]?.description).toContain("Retratos editoriales");
+    expect(gallery?.categoryBriefsSourceKey).toBe("abc123");
+  });
+
   it("returns null for locked slots", () => {
     const current = {
       ...createEmptyBrandKit().slots.logo,

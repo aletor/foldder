@@ -43,7 +43,7 @@ describe("enrichBrandKitDocument", () => {
     doc.slots.essence = {
       ...doc.slots.essence,
       status: "resolved",
-      locked: true,
+      locked: false,
       value: {
         summary: "Propuesta de respaldo a partir del manifiesto.",
         beliefs: [{ label: "Hacemos cine" }, { label: "Narrativa" }],

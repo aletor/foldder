@@ -45,15 +45,16 @@ describe("renderBrandKitStyleGuide — modos de export", () => {
     const genome = BRAND_KIT_FIXTURES.proposed();
     const operativo = await renderBrandKitStyleGuide(genome, { exportMode: "operativo" });
     const cliente = await renderBrandKitStyleGuide(genome, { exportMode: "cliente" });
-    expect(operativo.html).toMatch(/badge badge-proposed/);
-    expect(cliente.html).not.toMatch(/badge badge-proposed/);
+    expect(operativo.html).toMatch(/class="sg-badge"/);
+    expect(cliente.html).not.toMatch(/class="sg-badge"/);
   });
 
-  it("modo operativo incluye capítulos de voz y paleta", async () => {
+  it("modo operativo incluye capítulos mosaic de voz y paleta", async () => {
     const doc = await renderBrandKitStyleGuide(crownedGenome(), { exportMode: "operativo", projectName: "Test" });
-    expect(doc.html).toContain("paleta");
-    expect(doc.html).toContain("Claims prohibidos");
+    expect(doc.html).toContain("sg-palette-card");
+    expect(doc.html).toContain("Evitar");
     expect(doc.html).toContain("Test");
+    expect(doc.html).toContain("sg-bands");
   });
 
   it("modo cliente incluye rasgos coronados completos", async () => {
@@ -62,7 +63,7 @@ describe("renderBrandKitStyleGuide — modos de export", () => {
     expect(doc.html).toContain("Hacemos que pase");
     expect(doc.html).toContain("#FFBD1B");
     expect(doc.html).toContain("Montserrat");
-    expect(doc.html).toContain("personas");
-    expect(doc.html).not.toContain("badge badge-proposed");
+    expect(doc.html).toContain("sg-gallery-grid");
+    expect(doc.html).not.toContain('class="sg-badge"');
   });
 });

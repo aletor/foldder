@@ -4,10 +4,9 @@ import React, { useCallback, useMemo } from "react";
 import type { EssenceValue, BrandKitDocument, SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
 import { BRAND_KIT_SLOT_IDS } from "@/lib/brandkit/brand-kit-types";
 import type { BrandKitGalleryGenerateProgress } from "../brand-kit-api";
-import { getSlotAttention, summarizeBrandKitBoard } from "@/lib/brandkit/brand-kit-board-status";
+import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { getSlotAttention } from "@/lib/brandkit/brand-kit-board-status";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
-import { BrandKitBoardHeader } from "./BrandKitBoardHeader";
-import { BrandKitBoardStatusBar } from "./BrandKitBoardStatusBar";
 import { BrandKitImageLightboxProvider } from "./BrandKitImageLightbox";
 import { BrandKitEvidencePopoverProvider } from "./BrandKitEvidencePopoverContext";
 import { BrandKitReviewPrompt } from "./BrandKitReviewPrompt";
@@ -49,20 +48,19 @@ type BrandKitBoardV2Props = {
   onAction: (slotId: SlotId, action: SlotAction) => void;
   onLogoUpload?: (file: File) => void | Promise<void>;
   isAnalyzing?: boolean;
-  isGeneratingGallery?: boolean;
+  generatingGalleryCategory?: GalleryGenerateCategory | null;
   galleryProgress?: BrandKitGalleryGenerateProgress | null;
-  onGenerateGallery?: () => void;
-  onRecalibrateGallery?: () => void;
+  onGenerateGalleryCategory?: (category: GalleryGenerateCategory) => void;
+  onAnalyzeGalleryBriefs?: () => void;
+  isAnalyzingGalleryBriefs?: boolean;
   focusGeneratedTab?: number;
   gallerySuccessMessage?: string | null;
-  onBrandNameChange?: (name: string) => void;
   onExportTokens?: () => void;
   onExportCompiled?: () => void;
   canExport?: boolean;
   hideExportActions?: boolean;
   activeSlotId?: SlotId;
   presentationMode?: boolean;
-  onPresentationModeChange?: (enabled: boolean) => void;
   reviewMode?: boolean;
   onReviewModeChange?: (enabled: boolean) => void;
   onReviewComplete?: (stats: BrandKitReviewModeStats) => void;
@@ -73,20 +71,19 @@ export function BrandKitBoardV2({
   onAction,
   onLogoUpload,
   isAnalyzing = false,
-  isGeneratingGallery = false,
+  generatingGalleryCategory = null,
   galleryProgress = null,
-  onGenerateGallery,
-  onRecalibrateGallery,
+  onGenerateGalleryCategory,
+  onAnalyzeGalleryBriefs,
+  isAnalyzingGalleryBriefs = false,
   focusGeneratedTab,
   gallerySuccessMessage,
-  onBrandNameChange,
   onExportTokens,
   onExportCompiled,
   canExport = false,
   hideExportActions = false,
   activeSlotId,
   presentationMode = false,
-  onPresentationModeChange,
   reviewMode = false,
   onReviewModeChange,
   onReviewComplete,
@@ -94,7 +91,6 @@ export function BrandKitBoardV2({
   const slots = doc.slots;
   const { motionBySlot, onTileEnterEnd } = useBrandKitBoardSlotMotion(slots, isAnalyzing);
   const brandTheme = useBrandKitTheme(doc);
-  const boardSummary = useMemo(() => summarizeBrandKitBoard(doc), [doc]);
 
   const handleReviewComplete = useCallback(
     (stats: BrandKitReviewModeStats) => {
@@ -161,23 +157,14 @@ export function BrandKitBoardV2({
             data-brand-polarity={brandTheme.polarity}
             style={brandTheme.ready ? (brandTheme.vars as React.CSSProperties) : undefined}
           >
-            <BrandKitBoardHeader
-              doc={doc}
-              onBrandNameChange={onBrandNameChange}
-              presentationMode={presentationMode}
-              onPresentationModeChange={onPresentationModeChange}
-              needsYou={boardSummary.needsYou}
-              onStartReview={() => onReviewModeChange?.(true)}
-            />
-            <BrandKitBoardStatusBar doc={doc} />
-
             {/*
              * MAPA FINAL — bandas horizontales (12 col, gap 8px, altura = contenido)
              * A  cover        12 × auto
              * B  logo          7 × auto  |  essence       5 × auto
              * C  palette      12 × auto
              * D  typography    7 × auto  |  voice          5 × auto
-             * E  visual        5 × auto  |  gallery        7 × auto  (visual align-self:start)
+             * E  visual       12 × auto
+             * F  gallery      12 × auto
              * 08 banda-08: hermana posterior al mosaico (fuera del grid)
              */}
             <div className="brandKit-v2-mosaic-bands">
@@ -320,8 +307,7 @@ export function BrandKitBoardV2({
                   slotId="visualWorld"
                   mosaicKey="visual"
                   surface="accent"
-                  colSpan={5}
-                  alignSelf="start"
+                  colSpan={12}
                   ghostVacant
                   slot={slots.visualWorld}
                   motion={motionBySlot.visualWorld}
@@ -338,12 +324,14 @@ export function BrandKitBoardV2({
                     motion={motionBySlot.visualWorld}
                   />
                 </BrandKitMosaicCell>
+              </div>
 
+              <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--f">
                 <BrandKitMosaicCell
                   slotId="gallery"
                   mosaicKey="gallery"
                   surface="page"
-                  colSpan={7}
+                  colSpan={12}
                   slot={slots.gallery}
                   motion={motionBySlot.gallery}
                   onTileEnterEnd={onTileEnterEnd}
@@ -355,9 +343,10 @@ export function BrandKitBoardV2({
                     slot={slots.gallery}
                     doc={doc}
                     onAction={onAction}
-                    onGenerateGallery={onGenerateGallery}
-                    onRecalibrateGallery={onRecalibrateGallery}
-                    isGeneratingGallery={isGeneratingGallery}
+                    onGenerateGalleryCategory={onGenerateGalleryCategory}
+                    onAnalyzeGalleryBriefs={onAnalyzeGalleryBriefs}
+                    isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
+                    generatingGalleryCategory={generatingGalleryCategory}
                     galleryProgress={galleryProgress}
                     focusGeneratedTab={focusGeneratedTab}
                     gallerySuccessMessage={gallerySuccessMessage}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import type { GalleryValue, BrandKitDocument, SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
 import { externalGalleryMediaUrls } from "@/lib/brandkit/brand-kit-gallery-media";
@@ -15,6 +15,7 @@ import {
   isBrandKitEmpty,
 } from "@/lib/brandkit/brand-kit-defaults";
 import {
+  analyzeBrandKitGalleryBriefs,
   applyBrandKitCompile,
   applyBrandKitStreamEvent,
   applySourceAuthoritative,
@@ -45,7 +46,14 @@ import {
   createBrandKitToast,
   type BrandKitToast,
 } from "@/lib/brandkit/brand-kit-studio-feedback";
-import { BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
+import { BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
+import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import {
+  computeGalleryBriefSourceKey,
+  galleryBriefsAreFresh,
+  GALLERY_BRIEF_MIN_INCLUDED_IMAGES,
+} from "@/lib/brandkit/brand-kit-gallery-brief";
+import { galleryIncludedCount } from "@/lib/brandkit/brand-kit-gallery-filter";
 import "./brand-kit.css";
 import "./brand-kit-board-theme.css";
 import "./board-v2/brand-kit-board-motion.css";
@@ -74,7 +82,8 @@ function downloadJson(filename: string, payload: unknown) {
 
 export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, onClose }: BrandKitStudioProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isGeneratingGallery, setIsGeneratingGallery] = useState(false);
+  const [generatingGalleryCategory, setGeneratingGalleryCategory] = useState<GalleryGenerateCategory | null>(null);
+  const [isAnalyzingGalleryBriefs, setIsAnalyzingGalleryBriefs] = useState(false);
   const [crawlError, setCrawlError] = useState<string | null>(null);
   const [gallerySuccess, setGallerySuccess] = useState<string | null>(null);
   const [galleryProgress, setGalleryProgress] = useState<BrandKitGalleryGenerateProgress | null>(null);
@@ -84,6 +93,7 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const brandKitRef = useRef(brandKit);
   const galleryHydrateKeyRef = useRef("");
+  const galleryBriefAttemptKeyRef = useRef<string | null>(null);
   const lastCrawlJobRef = useRef<{ url: string; enableLlm: boolean } | null>(null);
   const [lastCrawlJob, setLastCrawlJob] = useState<{ url: string; enableLlm: boolean } | null>(null);
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
@@ -285,81 +295,135 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     [runStreamJob],
   );
 
-  const handleGenerateGallery = useCallback(async () => {
-    setIsGeneratingGallery(true);
+  const handleGenerateGalleryCategory = useCallback(async (category: GalleryGenerateCategory) => {
+    setGeneratingGalleryCategory(category);
     setCrawlError(null);
     setGallerySuccess(null);
     setGalleryProgress(null);
     const snapshot = brandKitRef.current;
-    const gallery = snapshot.slots.gallery?.value as import("@/lib/brandkit/brand-kit-types").GalleryValue | undefined;
+    const gallery = snapshot.slots.gallery?.value as GalleryValue | undefined;
     const version = gallery?.stylePromptVersion ?? 0;
-    const priorGenerated = gallery?.generated?.length ?? 0;
+    const priorCount = gallery?.generated?.length ?? 0;
     let workingGallery = gallery;
 
-    const result = await streamBrandKitGallery(snapshot, version, (event) => {
-      if (event.type === "tone") {
-        setGalleryProgress({
-          index: 0,
-          total: BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT,
-          categoryLabel: "",
-          message: brandKitLocaleEs.generatingGallery,
-          toneExplanation: event.explanation,
-          completedItems: [],
-        });
-        if (workingGallery) {
-          workingGallery = { ...workingGallery, styleToneExplanation: event.explanation };
-          persistBrandKit(
-            applySlotAction(brandKitRef.current, "gallery", { action: "set", value: workingGallery }),
-          );
+    const result = await streamBrandKitGallery(
+      snapshot,
+      version,
+      (event) => {
+        if (event.type === "tone") {
+          setGalleryProgress({
+            index: 0,
+            total: BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT,
+            category,
+            categoryLabel: "",
+            message: brandKitLocaleEs.generatingGallery,
+            toneExplanation: event.explanation,
+            completedItems: [],
+          });
+          if (workingGallery) {
+            workingGallery = { ...workingGallery, styleToneExplanation: event.explanation };
+            persistBrandKit(
+              applySlotAction(brandKitRef.current, "gallery", { action: "set", value: workingGallery }),
+            );
+          }
         }
-      }
-      if (event.type === "progress") {
-        setGalleryProgress((prev) => ({
-          index: event.index,
-          total: event.total,
-          categoryLabel: event.categoryLabel,
-          message: event.message,
-          toneExplanation: prev?.toneExplanation,
-          completedItems: prev?.completedItems ?? [],
-        }));
-      }
-      if (event.type === "image_done" && workingGallery) {
-        const nextItems = [...(workingGallery.generated ?? []), event.item];
-        workingGallery = { ...workingGallery, generated: nextItems };
-        setGalleryProgress((prev) =>
-          prev
-            ? {
-                ...prev,
-                index: event.index,
-                completedItems: nextItems.slice(-event.index),
-              }
-            : null,
-        );
-        persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: workingGallery }));
-      }
-    });
+        if (event.type === "progress") {
+          setGalleryProgress((prev) => ({
+            index: event.index,
+            total: event.total,
+            category,
+            categoryLabel: event.categoryLabel,
+            message: event.message,
+            toneExplanation: prev?.toneExplanation,
+            completedItems: prev?.completedItems ?? [],
+          }));
+        }
+        if (event.type === "image_done" && workingGallery) {
+          const withoutCategory = (workingGallery.generated ?? []).filter(
+            (entry) => (entry.category ?? "general") !== category,
+          );
+          const nextItems = [...withoutCategory, event.item];
+          workingGallery = { ...workingGallery, generated: nextItems };
+          setGalleryProgress((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  index: event.index,
+                  completedItems: nextItems.filter((entry) => (entry.category ?? "general") === category),
+                }
+              : null,
+          );
+          persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: workingGallery }));
+        }
+      },
+      { category },
+    );
 
-    setIsGeneratingGallery(false);
+    setGeneratingGalleryCategory(null);
     setGalleryProgress(null);
     if (!result.ok) {
       setCrawlError(result.message);
       return;
     }
-    const added = result.addedCount ?? result.gallery.generated.length - priorGenerated;
+    const added = result.addedCount ?? Math.max(0, result.gallery.generated.length - priorCount);
     persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: result.gallery }));
     setFocusGeneratedTab((value) => value + 1);
-    setGallerySuccess(added > 0 ? brandKitLocaleEs.galleryGeneratedCount(added) : brandKitLocaleEs.galleryGeneratedSuccess);
+    setGallerySuccess(
+      added > 0 ? brandKitLocaleEs.galleryGeneratedCount(added) : brandKitLocaleEs.galleryGeneratedSuccess,
+    );
     window.setTimeout(() => setGallerySuccess(null), 8000);
   }, [persistBrandKit]);
 
-  const handleRecalibrateGallery = useCallback(() => {
-    const gallery = brandKit.slots.gallery?.value as import("@/lib/brandkit/brand-kit-types").GalleryValue | undefined;
-    if (!gallery) return;
-    handleAction("gallery", {
-      action: "set",
-      value: { ...gallery, stylePromptVersion: (gallery.stylePromptVersion ?? 0) + 1 },
+  const handleAnalyzeGalleryBriefs = useCallback(async () => {
+    setIsAnalyzingGalleryBriefs(true);
+    setCrawlError(null);
+    const snapshot = brandKitRef.current;
+    const result = await analyzeBrandKitGalleryBriefs(snapshot);
+    setIsAnalyzingGalleryBriefs(false);
+    if (!result.ok) {
+      galleryBriefAttemptKeyRef.current = null;
+      setCrawlError(result.message);
+      return;
+    }
+    persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: result.gallery }));
+    galleryBriefAttemptKeyRef.current = computeGalleryBriefSourceKey({
+      ...brandKitRef.current,
+      slots: {
+        ...brandKitRef.current.slots,
+        gallery: {
+          ...brandKitRef.current.slots.gallery,
+          value: result.gallery,
+        },
+      },
     });
-  }, [brandKit, handleAction]);
+  }, [persistBrandKit]);
+
+  const galleryBriefSourceKey = useMemo(() => computeGalleryBriefSourceKey(brandKit), [brandKit]);
+
+  useEffect(() => {
+    galleryBriefAttemptKeyRef.current = null;
+  }, [galleryBriefSourceKey]);
+
+  useEffect(() => {
+    const gallery = brandKit.slots.gallery?.value as GalleryValue | undefined;
+    const visualWorld = brandKit.slots.visualWorld?.value as import("@/lib/brandkit/brand-kit-types").VisualWorldValue | undefined;
+    if (!gallery || !visualWorld?.summary?.trim()) return;
+    if (galleryIncludedCount(gallery) < GALLERY_BRIEF_MIN_INCLUDED_IMAGES) return;
+    if (!gallery.categoryBriefs?.length) return;
+    if (galleryBriefsAreFresh(gallery, galleryBriefSourceKey)) return;
+    if (isAnalyzingGalleryBriefs || generatingGalleryCategory || isAnalyzing) return;
+    if (galleryBriefAttemptKeyRef.current === galleryBriefSourceKey) return;
+
+    galleryBriefAttemptKeyRef.current = galleryBriefSourceKey;
+    void handleAnalyzeGalleryBriefs();
+  }, [
+    brandKit,
+    galleryBriefSourceKey,
+    generatingGalleryCategory,
+    handleAnalyzeGalleryBriefs,
+    isAnalyzing,
+    isAnalyzingGalleryBriefs,
+  ]);
 
   const handleExportTokens = useCallback(() => {
     void applyBrandKitCompile(brandKit).then((compiledDoc) => {
@@ -447,6 +511,9 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
           onSetAuthoritativeSource={handleSetAuthoritativeSource}
           onStartReview={() => setReviewMode(true)}
           reviewMode={reviewMode}
+          presentationMode={presentationMode}
+          onPresentationModeChange={setPresentationMode}
+          onBrandNameChange={handleBrandNameChange}
         />
 
         <main className="brandKit-studio-split__main brandKit-studio__board-shell">
@@ -456,20 +523,22 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
               onAction={handleAction}
               onLogoUpload={handleLogoUpload}
               isAnalyzing={isAnalyzing}
-              isGeneratingGallery={isGeneratingGallery}
+              generatingGalleryCategory={generatingGalleryCategory}
               focusGeneratedTab={focusGeneratedTab}
               gallerySuccessMessage={gallerySuccess}
               galleryProgress={galleryProgress}
-              onGenerateGallery={() => void handleGenerateGallery()}
-              onRecalibrateGallery={handleRecalibrateGallery}
-              onBrandNameChange={handleBrandNameChange}
+              onGenerateGalleryCategory={(category) => void handleGenerateGalleryCategory(category)}
+              onAnalyzeGalleryBriefs={() => {
+                galleryBriefAttemptKeyRef.current = null;
+                void handleAnalyzeGalleryBriefs();
+              }}
+              isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
               onExportTokens={handleExportTokens}
               onExportCompiled={handleExportCompiled}
               canExport={canExport}
               hideExportActions
               activeSlotId={crawlProgress?.activeSlot}
               presentationMode={presentationMode}
-              onPresentationModeChange={setPresentationMode}
               reviewMode={reviewMode}
               onReviewModeChange={setReviewMode}
               onReviewComplete={handleReviewComplete}

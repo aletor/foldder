@@ -9,9 +9,9 @@ import { BrandKitSidebarEntry } from "./BrandKitSidebarEntry";
 import { BrandKitSidebarStepper } from "./BrandKitSidebarStepper";
 import {
   BrandKitSidebarConflictBanner,
-  BrandKitSidebarReady,
   BrandKitSidebarReview,
 } from "./BrandKitSidebarReview";
+import { BrandKitSidebarOverview } from "./BrandKitSidebarOverview";
 import { BrandKitSidebarSources } from "./BrandKitSidebarSources";
 import { resolveBrandKitSidebarPhase } from "@/lib/brandkit/studio/sidebar-phase";
 import {
@@ -40,6 +40,9 @@ export type BrandKitSidebarPanelProps = {
   onSetAuthoritativeSource?: (sourceRef: string, authoritative: boolean) => void;
   onStartReview?: () => void;
   reviewMode?: boolean;
+  presentationMode?: boolean;
+  onPresentationModeChange?: (enabled: boolean) => void;
+  onBrandNameChange?: (name: string) => void;
 };
 
 export function BrandKitSidebarPanel({
@@ -61,6 +64,9 @@ export function BrandKitSidebarPanel({
   onSetAuthoritativeSource,
   onStartReview,
   reviewMode = false,
+  presentationMode = false,
+  onPresentationModeChange,
+  onBrandNameChange,
 }: BrandKitSidebarPanelProps) {
   const [exportMode, setExportMode] = useState<BrandKitStyleGuideExportMode>("operativo");
   const [exportOpen, setExportOpen] = useState(false);
@@ -76,6 +82,16 @@ export function BrandKitSidebarPanel({
   return (
     <aside className={`brandKit-studio-split__sidebar brandKit-sidebar-phase--${phase}`} aria-label="Entrada de material">
       <div className="brandKit-studio-split__sidebar-scroll">
+        <BrandKitSidebarOverview
+          doc={doc}
+          isAnalyzing={isAnalyzing}
+          presentationMode={presentationMode}
+          onPresentationModeChange={onPresentationModeChange}
+          onBrandNameChange={onBrandNameChange}
+          onStartReview={onStartReview}
+          reviewMode={reviewMode}
+        />
+
         {phase === "ingesting" && crawlProgress ? (
           <BrandKitSidebarStepper progress={crawlProgress} />
         ) : null}
@@ -96,8 +112,6 @@ export function BrandKitSidebarPanel({
             <BrandKitSidebarReview doc={doc} onStartReview={onStartReview} reviewMode={reviewMode} />
           </>
         ) : null}
-
-        {phase === "ready" ? <BrandKitSidebarReady doc={doc} /> : null}
 
         {phase !== "ingesting" && hasSources ? (
           <BrandKitSidebarSources doc={doc} onSetAuthoritativeSource={onSetAuthoritativeSource} />

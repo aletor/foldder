@@ -2,6 +2,7 @@ import type { BrandKitCrawlProgressState } from "@/app/spaces/brandKit/BrandKitC
 import type { BrandKitDocument } from "../brand-kit-types";
 import { brandKitBoardActionItems, summarizeBrandKitBoard } from "../brand-kit-board-status";
 import { countPendingBrandKitConflicts } from "../brand-kit-reconcile";
+import { isFirstBrandKitMaterial } from "../brand-kit-first-material";
 
 export type BrandKitSidebarPhase = "empty" | "ingesting" | "review" | "ready";
 
@@ -138,7 +139,10 @@ export function resolveBrandKitSidebarPhase(
   if (options.isAnalyzing) return "ingesting";
   const summary = summarizeBrandKitBoard(doc);
   if (summary.sources === 0) return "empty";
-  if (summary.needsYou > 0 || countPendingBrandKitConflicts(doc.slots) > 0) return "review";
+  const conflicts = countPendingBrandKitConflicts(doc.slots);
+  const needsReview =
+    conflicts > 0 || (!isFirstBrandKitMaterial(doc) && summary.needsYou > 0);
+  if (needsReview) return "review";
   return "ready";
 }
 

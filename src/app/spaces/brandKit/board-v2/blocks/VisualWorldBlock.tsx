@@ -1,11 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { GalleryValue, SlotAction, SlotId, SlotState, VisualWorldValue } from "@/lib/brandkit/brand-kit-types";
-import { galleryUsefulCount } from "@/lib/brandkit/brand-kit-gallery-filter";
+import { galleryItemSourceUrl } from "@/lib/brandkit/brand-kit-gallery-media";
+import { galleryIncludedCount } from "@/lib/brandkit/brand-kit-gallery-filter";
+import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES } from "@/lib/brandkit/brand-kit-gallery-brief";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import { DnaBlock } from "../DnaBlock";
-import { BrandKitIconButton } from "../BrandKitIconButton";
+import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
+import { BrandKitClickableImage } from "../BrandKitClickableImage";
 import { BrandKitRichText } from "../BrandKitRichText";
 import { BrandKitTextEditPanel } from "../BrandKitTextEditPanel";
 import { BrandKitCapsuleList } from "../BrandKitCapsuleList";
@@ -29,6 +32,43 @@ function linesToList(text: string): string[] {
     .filter(Boolean);
 }
 
+function VisualHarvestStrip({
+  gallery,
+  onExclude,
+}: {
+  gallery: GalleryValue | undefined;
+  onExclude: (assetId: string) => void;
+}) {
+  const items = useMemo(
+    () =>
+      [...(gallery?.harvested ?? [])]
+        .filter((item) => item.included !== false)
+        .sort((a, b) => (b.rankScore ?? 0) - (a.rankScore ?? 0)),
+    [gallery?.harvested],
+  );
+
+  if (!items.length) return null;
+
+  return (
+    <aside className="brandKit-v2-visual-harvest" aria-label="Imágenes extraídas">
+      {items.map((item) => {
+        const previewSrc = galleryItemSourceUrl(item);
+        if (!previewSrc) return null;
+        return (
+          <div key={item.assetId} className="brandKit-v2-visual-harvest__item">
+            <div className="brandKit-v2-visual-harvest__thumb">
+              <BrandKitClickableImage src={previewSrc} fit="cover" eager />
+            </div>
+            <BrandKitFoldderButton variant="white" compact onClick={() => onExclude(item.assetId)}>
+              {brandKitLocaleEs.excludeHarvestImage}
+            </BrandKitFoldderButton>
+          </div>
+        );
+      })}
+    </aside>
+  );
+}
+
 export function VisualWorldBlock({
   slot,
   slotId,
@@ -45,13 +85,28 @@ export function VisualWorldBlock({
 } & BrandKitBlockMotionProps) {
   const visualWorld = slot.value as VisualWorldValue | undefined;
   const galleryValue = gallery?.value as GalleryValue | undefined;
-  const usefulCount = galleryUsefulCount(galleryValue);
   const [editing, setEditing] = useState(false);
+
+  const excludeHarvestImage = (assetId: string) => {
+    if (!galleryValue) return;
+    onAction("gallery", {
+      action: "set",
+      value: {
+        ...galleryValue,
+        harvested: galleryValue.harvested.map((entry) =>
+          entry.assetId === assetId ? { ...entry, included: false } : entry,
+        ),
+      } satisfies GalleryValue,
+    });
+  };
+
   let body: React.ReactNode;
 
   const canEdit = Boolean(visualWorld?.summary && slot.status === "resolved" && !slot.locked);
   const editButton = canEdit ? (
-    <BrandKitIconButton icon={Pencil} label={brandKitLocaleEs.edit} onClick={() => setEditing(true)} />
+    <BrandKitFoldderButton variant="white" compact icon={Pencil} onClick={() => setEditing(true)}>
+      {brandKitLocaleEs.edit}
+    </BrandKitFoldderButton>
   ) : null;
 
   const beginEditFromDraft = () => {
@@ -116,24 +171,34 @@ export function VisualWorldBlock({
     );
   } else if (slot.status === "resolved" && slot.needsReviewReason && visualWorld?.summary) {
     body = (
-      <BrandKitSlotReviewCard
-        slotId={slotId}
-        candidate={{
-          value: visualWorld,
-          score: slot.confidence,
-          provenance: slot.provenance ?? { type: "llm_synthesis", detail: "revisión" },
-        }}
-        reviewReason={slot.needsReviewReason}
-        onAction={onAction}
-        onEdit={beginEditFromDraft}
-        confirmMode="lock"
-      />
+      <div className="brandKit-v2-visual-layout">
+        <div className="brandKit-v2-visual-layout__copy">
+          <BrandKitSlotReviewCard
+            slotId={slotId}
+            candidate={{
+              value: visualWorld,
+              score: slot.confidence,
+              provenance: slot.provenance ?? { type: "llm_synthesis", detail: "revisión" },
+            }}
+            reviewReason={slot.needsReviewReason}
+            onAction={onAction}
+            onEdit={beginEditFromDraft}
+            confirmMode="lock"
+          />
+        </div>
+        <VisualHarvestStrip gallery={galleryValue} onExclude={excludeHarvestImage} />
+      </div>
     );
   } else if (!visualWorld?.summary) {
     body = (
-      <p className="brandKit-v2-muted">
-        {usefulCount >= 6 ? brandKitLocaleEs.noVisualWorldSynthesis : brandKitLocaleEs.noVisualWorld}
-      </p>
+      <div className="brandKit-v2-visual-layout">
+        <p className="brandKit-v2-muted brandKit-v2-visual-layout__copy">
+          {galleryIncludedCount(galleryValue) >= GALLERY_BRIEF_MIN_INCLUDED_IMAGES
+            ? brandKitLocaleEs.noVisualWorldSynthesis
+            : brandKitLocaleEs.noVisualWorld}
+        </p>
+        <VisualHarvestStrip gallery={galleryValue} onExclude={excludeHarvestImage} />
+      </div>
     );
   } else {
     const moodChips = visualWorld.moodTags?.slice(0, 4).map((tag) => (
@@ -143,56 +208,52 @@ export function VisualWorldBlock({
     ));
 
     body = (
-      <SemanticDetailPanels
-        summary={<BrandKitRichText text={visualWorld.summary} className="brandKit-v2-prose" as="p" />}
-        chips={
-          visualWorld.moodTags?.length ? (
-            <BrandKitEvidenceTrigger
-              id={`visual-mood-${slotId}`}
-              slot={slot}
-              slotId={slotId}
-              onAction={onAction}
-              onCorrect={() => setEditing(true)}
-            >
-              <>{moodChips}</>
-            </BrandKitEvidenceTrigger>
-          ) : null
-        }
-        panels={[
-          {
-            id: "traits",
-            label: brandKitLocaleEs.visualTerritory,
-            count: visualWorld.visualTraits?.length,
-            content: visualWorld.visualTraits?.length ? (
-              <BrandKitCapsuleList items={visualWorld.visualTraits} />
-            ) : null,
-          },
-          {
-            id: "limits",
-            label: brandKitLocaleEs.limits,
-            count: visualWorld.limits?.length,
-            content: visualWorld.limits?.length ? <BrandKitCapsuleList items={visualWorld.limits} /> : null,
-          },
-          {
-            id: "evidence",
-            label: brandKitLocaleEs.evidence,
-            count: visualWorld.evidence?.length,
-            content: (
-              <EvidenceList quotes={visualWorld.evidence?.map((item) => item.quote) ?? []} hideLabel />
-            ),
-          },
-        ]}
-        footer={
-          <>
-            {usefulCount > 0 ? (
-              <p className="brandKit-v2-muted">
-                {brandKitLocaleEs.fedByGallery} {usefulCount} {brandKitLocaleEs.images}
-              </p>
-            ) : null}
-            <BrandKitSupplementalPanel slot={slot} />
-          </>
-        }
-      />
+      <div className="brandKit-v2-visual-layout">
+        <div className="brandKit-v2-visual-layout__copy">
+          <SemanticDetailPanels
+            summary={<BrandKitRichText text={visualWorld.summary} className="brandKit-v2-prose" as="p" />}
+            chips={
+              visualWorld.moodTags?.length ? (
+                <BrandKitEvidenceTrigger
+                  id={`visual-mood-${slotId}`}
+                  slot={slot}
+                  slotId={slotId}
+                  onAction={onAction}
+                  onCorrect={() => setEditing(true)}
+                >
+                  <>{moodChips}</>
+                </BrandKitEvidenceTrigger>
+              ) : null
+            }
+            panels={[
+              {
+                id: "traits",
+                label: brandKitLocaleEs.visualTerritory,
+                count: visualWorld.visualTraits?.length,
+                content: visualWorld.visualTraits?.length ? (
+                  <BrandKitCapsuleList items={visualWorld.visualTraits} />
+                ) : null,
+              },
+              {
+                id: "limits",
+                label: brandKitLocaleEs.limits,
+                count: visualWorld.limits?.length,
+                content: visualWorld.limits?.length ? <BrandKitCapsuleList items={visualWorld.limits} /> : null,
+              },
+              {
+                id: "evidence",
+                label: brandKitLocaleEs.evidence,
+                count: visualWorld.evidence?.length,
+                content: (
+                  <EvidenceList quotes={visualWorld.evidence?.map((item) => item.quote) ?? []} hideLabel />
+                ),
+              },
+            ]}
+            footer={<BrandKitSupplementalPanel slot={slot} />}
+          />
+        </div>
+        <VisualHarvestStrip gallery={galleryValue} onExclude={excludeHarvestImage} />
+      </div>
     );
   }
 

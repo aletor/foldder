@@ -16,6 +16,10 @@ export function clearLiveStudioNodeData(nodeId: string) {
   liveStudioNodeData.delete(nodeId);
 }
 
+export function getLiveStudioNodePatch(nodeId: string): LiveStudioNodeData | undefined {
+  return liveStudioNodeData.get(nodeId);
+}
+
 export function mergeLiveStudioNodeDataIntoNodes<T extends Node>(nodes: T[]): T[] {
   if (liveStudioNodeData.size === 0) return nodes;
   let changed = false;

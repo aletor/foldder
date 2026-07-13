@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["sharp", "pdfjs-dist", "@hyzyla/pdfium"],
+  experimental: {
+    // BrandKit ingest acepta PDFs de catálogo (~16MB+). El default de Next es 10MB y trunca multipart → FormData inválido.
+    proxyClientMaxBodySize: "32mb",
+  },
   turbopack: {},
   async redirects() {
     return [{ source: "/home_v2", destination: "/", permanent: true }];

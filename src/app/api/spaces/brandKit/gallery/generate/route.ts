@@ -10,6 +10,8 @@ import {
   IMAGE_MODEL,
   runBrandKitGalleryGenerate,
 } from "@/lib/brandkit/run-gallery-generate";
+import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { GALLERY_CATEGORY_SLOT_COUNT } from "@/lib/brandkit/brand-kit-gallery-plan";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import {
   releaseApiWalletChargeOnError,
@@ -29,8 +31,15 @@ function parseBrandKitSnapshot(body: unknown): BrandKitDocument | null {
   return brandKit;
 }
 
-function estimateGalleryGenerateReserveUsd(): number {
-  return Math.round(estimateBrandKitGalleryGenerateCostUsd() * 1_000_000) / 1_000_000;
+function parseGalleryCategory(body: unknown): GalleryGenerateCategory | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const category = (body as { category?: string }).category;
+  const allowed = new Set(["people_mood", "places", "objects", "textures", "general"]);
+  return category && allowed.has(category) ? (category as GalleryGenerateCategory) : undefined;
+}
+
+function estimateGalleryGenerateReserveUsd(imageCount: number): number {
+  return Math.round(estimateBrandKitGalleryGenerateCostUsd(imageCount) * 1_000_000) / 1_000_000;
 }
 
 export async function POST(req: NextRequest) {
@@ -56,14 +65,17 @@ export async function POST(req: NextRequest) {
         ? body.stylePromptVersion
         : (gallery?.stylePromptVersion ?? 0);
 
+    const category = parseGalleryCategory(body);
+    const imageCount = category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT;
+
     walletCharge = await reserveApiWalletCharge({
       req,
       userEmail: authState.user.email,
       serviceId: "gemini-nano",
       provider: "gemini",
       route: "/api/spaces/brandKit/gallery/generate",
-      maxCostMicros: reserveUsdToMicros(estimateGalleryGenerateReserveUsd(), { multiplier: 1.5 }),
-      metadata: { count: BRAND_KIT_GALLERY_IMAGE_COUNT, model: IMAGE_MODEL },
+      maxCostMicros: reserveUsdToMicros(estimateGalleryGenerateReserveUsd(imageCount), { multiplier: 1.5 }),
+      metadata: { count: imageCount, model: IMAGE_MODEL, category: category ?? "all" },
     });
 
     const acceptStream = req.headers.get("accept")?.includes("application/x-ndjson");
@@ -82,6 +94,7 @@ export async function POST(req: NextRequest) {
               brandKit,
               stylePromptVersion,
               userEmail: authState.user.email,
+              category,
             })) {
               send(event);
               if (event.type === "image_done") generatedCount += 1;
@@ -137,6 +150,7 @@ export async function POST(req: NextRequest) {
       brandKit,
       stylePromptVersion,
       userEmail: authState.user.email,
+      category,
     })) {
       if (event.type === "image_done") addedCount += 1;
       if (event.type === "error") {
@@ -176,7 +190,7 @@ export async function POST(req: NextRequest) {
       gallery: lastGallery,
       stylePrompt,
       addedCount,
-      partial: addedCount < BRAND_KIT_GALLERY_IMAGE_COUNT,
+      partial: addedCount < imageCount,
     });
   } catch (error) {
     if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);

@@ -61,6 +61,139 @@
   }
 }
 
+/* ── Sidebar overview (estado ADN) ── */
+.brandKit-sidebar-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brandKit-sidebar-overview__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.brandKit-sidebar-overview__brand {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.brandKit-sidebar-overview__brand--static {
+  cursor: default;
+}
+
+.brandKit-sidebar-overview__brand:focus {
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.brandKit-sidebar-overview__adn {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.brandKit-sidebar-overview__line {
+  margin: 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.brandKit-sidebar-overview__line--live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.brandKit-sidebar-overview__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.brandKit-sidebar-overview__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(20, 20, 20, 0.06);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+button.brandKit-sidebar-overview__tag {
+  cursor: pointer;
+}
+
+button.brandKit-sidebar-overview__tag:hover {
+  background: rgba(20, 20, 20, 0.1);
+}
+
+.brandKit-sidebar-overview__tag--locked {
+  background: rgba(154, 92, 46, 0.1);
+  color: #7a4a24;
+}
+
+.brandKit-sidebar-overview__tag--warn {
+  background: rgba(154, 92, 46, 0.12);
+  color: #9a5c2e;
+}
+
+.brandKit-sidebar-overview__tag--accent {
+  background: rgba(255, 189, 27, 0.22);
+  color: #5c4500;
+}
+
+.brandKit-sidebar-overview__ready {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(72, 160, 120, 0.12);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #2d6b4f;
+}
+
+.brandKit-sidebar-overview__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 300;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.brandKit-sidebar-overview__toggle input {
+  margin: 0;
+  accent-color: var(--primary);
+}
+
 .brandKit-studio-split__sidebar-footer {
   flex-shrink: 0;
   border-top: 1px solid var(--border);

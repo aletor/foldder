@@ -9,8 +9,10 @@ import {
   normalizeQuoteText,
   penalizeBareGenericDescriptors,
 } from "./brand-kit-evidence";
-import { galleryUsefulCount } from "./brand-kit-gallery-filter";
+import { galleryIncludedCount } from "./brand-kit-gallery-filter";
+import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES } from "./brand-kit-gallery-brief";
 import { buildVisualWorldFromGallery } from "./brand-kit-visual-synthesis";
+import { isFirstBrandKitMaterial, sootheFirstMaterialSlots } from "./brand-kit-first-material";
 
 const REVIEW_REASON = "La síntesis necesita revisión";
 
@@ -56,9 +58,11 @@ function collectVoiceIssues(voice: VoiceValue, corpus: string): string[] {
 }
 
 function collectVisualIssues(visual: VisualWorldValue, gallery?: GalleryValue): string[] {
-  const useful = galleryUsefulCount(gallery);
+  const useful = galleryIncludedCount(gallery);
   const issues: string[] = [];
-  if (useful < 6) issues.push("galería insuficiente para mundo visual");
+  if (useful < GALLERY_BRIEF_MIN_INCLUDED_IMAGES) {
+    issues.push("galería insuficiente para mundo visual");
+  }
   const summary = normalizeQuoteText(visual.summary ?? "");
   if (!summary || summary.length < 24) issues.push("summary vacío");
   if (!visual.visualTraits?.length && !visual.moodTags?.length) issues.push("sin rasgos visuales");
@@ -151,6 +155,7 @@ function assessEssenceQuality(
   essence: EssenceValue,
   corpus: string,
   brandName?: string,
+  firstMaterial?: boolean,
 ): QualityResult<EssenceValue> {
   const issues = collectEssenceIssues(essence, corpus);
   if (!issues.length) return { action: "accept" };
@@ -159,12 +164,15 @@ function assessEssenceQuality(
   const remaining = collectEssenceIssues(repaired, corpus);
   if (!remaining.length) return { action: "repair", reasons: issues, value: repaired, confidence: 0.68 };
   if (hasUsefulEssence(repaired)) {
+    if (firstMaterial) {
+      return { action: "repair", reasons: remaining, value: repaired, confidence: 0.62 };
+    }
     return { action: "review", reasons: remaining, value: repaired, confidence: 0.62 };
   }
   return { action: "needs_user", reasons: remaining };
 }
 
-function assessVoiceQuality(voice: VoiceValue, corpus: string): QualityResult<VoiceValue> {
+function assessVoiceQuality(voice: VoiceValue, corpus: string, firstMaterial?: boolean): QualityResult<VoiceValue> {
   const issues = collectVoiceIssues(voice, corpus);
   if (!issues.length) return { action: "accept" };
 
@@ -172,6 +180,9 @@ function assessVoiceQuality(voice: VoiceValue, corpus: string): QualityResult<Vo
   const remaining = collectVoiceIssues(repaired, corpus);
   if (!remaining.length) return { action: "repair", reasons: issues, value: repaired, confidence: 0.7 };
   if (hasUsefulVoice(repaired)) {
+    if (firstMaterial) {
+      return { action: "repair", reasons: remaining, value: repaired, confidence: 0.65 };
+    }
     return { action: "review", reasons: remaining, value: repaired, confidence: 0.65 };
   }
   return { action: "needs_user", reasons: remaining };
@@ -181,9 +192,10 @@ function assessVisualQuality(
   visual: VisualWorldValue,
   gallery?: GalleryValue,
   brandName?: string,
+  firstMaterial?: boolean,
 ): QualityResult<VisualWorldValue> {
-  const useful = galleryUsefulCount(gallery);
-  if (useful < 6) {
+  const useful = galleryIncludedCount(gallery);
+  if (useful < GALLERY_BRIEF_MIN_INCLUDED_IMAGES) {
     const fallback = gallery ? buildVisualWorldFromGallery(gallery, brandName) : null;
     if (fallback) {
       return { action: "repair", reasons: ["sin síntesis visual IA"], value: fallback, confidence: 0.66 };
@@ -198,6 +210,9 @@ function assessVisualQuality(
   const remaining = collectVisualIssues(repaired, gallery);
   if (!remaining.length) return { action: "repair", reasons: issues, value: repaired, confidence: 0.68 };
   if (hasUsefulVisual(repaired)) {
+    if (firstMaterial) {
+      return { action: "repair", reasons: remaining, value: repaired, confidence: 0.64 };
+    }
     return { action: "review", reasons: remaining, value: repaired, confidence: 0.64 };
   }
   return { action: "needs_user", reasons: remaining };
@@ -275,6 +290,7 @@ function processSemanticSlot(
   corpus: string,
   gallery: GalleryValue | undefined,
   brandName?: string,
+  firstMaterial?: boolean,
 ): SlotState<unknown> {
   if (slot.status !== "resolved" || !slot.value) return slot;
   if (slot.locked) return slot;
@@ -282,20 +298,23 @@ function processSemanticSlot(
   if (slotId === "essence") {
     return finalizeSemanticCandidateSlot(
       slotId,
-      applyQualityResult(slot, assessEssenceQuality(slot.value as EssenceValue, corpus, brandName)),
+      applyQualityResult(
+        slot,
+        assessEssenceQuality(slot.value as EssenceValue, corpus, brandName, firstMaterial),
+      ),
     );
   }
   if (slotId === "voice") {
     return finalizeSemanticCandidateSlot(
       slotId,
-      applyQualityResult(slot, assessVoiceQuality(slot.value as VoiceValue, corpus)),
+      applyQualityResult(slot, assessVoiceQuality(slot.value as VoiceValue, corpus, firstMaterial)),
     );
   }
   return finalizeSemanticCandidateSlot(
     slotId,
     applyQualityResult(
       slot,
-      assessVisualQuality(slot.value as VisualWorldValue, gallery, brandName),
+      assessVisualQuality(slot.value as VisualWorldValue, gallery, brandName, firstMaterial),
     ),
   );
 }
@@ -320,13 +339,14 @@ export function validateBrandKitContentQuality(
   const corpus = options?.corpus ?? buildCorpusForQualityCheck(doc, options?.copyUnits);
   const gallery = doc.slots.gallery?.value as GalleryValue | undefined;
   const brandName = doc.brandName?.value;
+  const firstMaterial = isFirstBrandKitMaterial(doc);
   const slots = { ...doc.slots };
 
   for (const slotId of ["essence", "voice", "visualWorld"] as const) {
-    slots[slotId] = processSemanticSlot(slotId, slots[slotId], corpus, gallery, brandName);
+    slots[slotId] = processSemanticSlot(slotId, slots[slotId], corpus, gallery, brandName, firstMaterial);
   }
 
-  return { ...doc, slots, updatedAt: new Date().toISOString() };
+  return sootheFirstMaterialSlots({ ...doc, slots, updatedAt: new Date().toISOString() });
 }
 
 export { REVIEW_REASON };

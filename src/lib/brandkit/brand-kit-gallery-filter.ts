@@ -17,9 +17,12 @@ function looksLikeLogoAsset(url: string, alt = ""): boolean {
 }
 
 function looksBroken(url: string): boolean {
-  const lower = url.toLowerCase();
+  const trimmed = url.trim();
+  const lower = trimmed.toLowerCase();
+  if (!trimmed) return true;
+  if (trimmed.startsWith("/api/spaces/s3-file") || trimmed.startsWith("/")) return false;
+  if (!trimmed.startsWith("http")) return true;
   return (
-    !url.startsWith("http") ||
     /data:image\/gif;base64,r0lgod/.test(lower) ||
     /placeholder|spacer|1x1|blank\.(gif|png)/.test(lower)
   );

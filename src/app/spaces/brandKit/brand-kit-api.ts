@@ -194,6 +194,7 @@ export async function streamBrandKitIngest(
 export type BrandKitGalleryGenerateProgress = {
   index: number;
   total: number;
+  category: import("@/lib/brandkit/brand-kit-gallery-plan").GalleryGenerateCategory | null;
   categoryLabel: string;
   message: string;
   toneExplanation?: string;
@@ -204,13 +205,14 @@ export async function streamBrandKitGallery(
   brandKit: BrandKitDocument,
   stylePromptVersion: number | undefined,
   onEvent: (event: import("@/lib/brandkit/run-gallery-generate").BrandKitGalleryStreamEvent) => void,
+  options?: { category?: import("@/lib/brandkit/brand-kit-gallery-plan").GalleryGenerateCategory },
 ): Promise<
   | { ok: true; gallery: import("@/lib/brandkit/brand-kit-types").GalleryValue; addedCount: number }
   | { ok: false; message: string }
 > {
   const res = await fetchPostWithWalletPreflight(
     "/api/spaces/brandKit/gallery/generate",
-    { brandKit, stylePromptVersion },
+    { brandKit, stylePromptVersion, category: options?.category },
     { headers: { Accept: "application/x-ndjson" } },
   );
   await notifyWalletFromApiResponse(res);
@@ -245,6 +247,17 @@ export async function streamBrandKitGallery(
 
   if (!lastGallery) return { ok: false, message: "Sin galería generada" };
   return { ok: true, gallery: lastGallery, addedCount };
+}
+
+export async function analyzeBrandKitGalleryBriefs(
+  brandKit: BrandKitDocument,
+): Promise<{ ok: true; gallery: GalleryValue } | { ok: false; message: string }> {
+  const res = await fetchPostWithWalletPreflight("/api/spaces/brandKit/gallery/analyze-briefs", { brandKit });
+  await notifyWalletFromApiResponse(res);
+  if (!res.ok) return { ok: false, message: await parseApiError(res) };
+  const body = (await res.json()) as { gallery?: GalleryValue };
+  if (!body.gallery) return { ok: false, message: "Sin briefs de galería" };
+  return { ok: true, gallery: body.gallery };
 }
 
 /** Punto de partida para añadir una fuente sin borrar el ADN existente. */

@@ -9,6 +9,7 @@ import { selectEvidenceCandidates } from "../brand-kit-evidence-candidates";
 import type { EssenceValue } from "../brand-kit-types";
 import { buildLogoSlotPatch } from "../brand-kit-logo-policy";
 import { buildGalleryContextForLlm, galleryRefIds } from "../brand-kit-gallery-filter";
+import { mergeBatchBriefsIntoGallery } from "../brand-kit-gallery-brief";
 import { buildVisualWorldFromGallery } from "../brand-kit-visual-synthesis";
 import { buildPaletteValue, buildTypographyValue, rankLogoCandidates } from "../crawl/scoring";
 import type { BrandKitStreamEvent } from "../crawl/types";
@@ -434,7 +435,7 @@ export async function* runBrandKitIngest(
     };
   }
 
-  const galleryValue: GalleryValue = {
+  let galleryValue: GalleryValue = {
     harvested: galleryItems,
     generated: [],
     stylePromptVersion: 0,
@@ -489,7 +490,10 @@ export async function* runBrandKitIngest(
       substep: "essence",
       detail: "Esencia, voz y mundo visual…",
     };
-    const batch = await synthesizeBrandKitBatch(synthesisInput, { allowSlotRetries: false });
+    const batch = await synthesizeBrandKitBatch(synthesisInput, {
+      allowSlotRetries: false,
+      gallery: galleryValue,
+    });
 
     const essenceValue = batch.essence
       ? {
@@ -614,6 +618,27 @@ export async function* runBrandKitIngest(
           patch: slotPatch({ status: "needs_user", confidence: 0 }),
         };
       }
+    }
+
+    if (batch.categoryBriefs?.length) {
+      galleryValue = mergeBatchBriefsIntoGallery(galleryValue, batch.categoryBriefs, {
+        brandName,
+        visualSummary: batch.visualWorld?.summary,
+        moodTags: batch.visualWorld?.moodTags,
+      });
+    }
+
+    if (galleryValue.harvested.length > 0) {
+      yield {
+        type: "slot_update",
+        slotId: "gallery",
+        patch: slotPatch({
+          status: "resolved",
+          value: galleryValue,
+          confidence: galleryValue.categoryBriefs?.length ? 0.76 : 0.72,
+          provenance: galleryItems[0]?.provenance ?? ingestProv,
+        }),
+      };
     }
 
     yield {

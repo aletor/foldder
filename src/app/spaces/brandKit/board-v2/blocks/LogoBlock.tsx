@@ -13,7 +13,7 @@ import { BrandKitClickableImage } from "../BrandKitClickableImage";
 import { BrandKitLogoRankMeta } from "../BrandKitVisualRankMeta";
 import { BrandKitSupplementalPanel } from "../BrandKitSupplementalPanel";
 import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
-import { BrandKitIconButton } from "../BrandKitIconButton";
+import { BrandKitLogoAdjustPortal } from "../BrandKitLogoAdjustPortal";
 import { BrandKitLogoBboxEditor } from "../BrandKitLogoBboxEditor";
 import { BrandKitLogoPlinthToggle } from "../BrandKitLogoPlinthToggle";
 import { BrandKitLogoDetectionEmpty } from "../BrandKitLogoDetectionEmpty";
@@ -52,12 +52,15 @@ function LogoUploadControl({
 
   return (
     <>
-      <BrandKitIconButton
+      <BrandKitFoldderButton
+        variant="white"
+        compact
         icon={Upload}
-        label={brandKitLocaleEs.uploadLogoShort}
         disabled={disabled}
         onClick={() => fileRef.current?.click()}
-      />
+      >
+        {brandKitLocaleEs.uploadLogoShort}
+      </BrandKitFoldderButton>
       <input
         ref={fileRef}
         type="file"
@@ -123,14 +126,17 @@ export function LogoBlock({
 
   const adjustControl =
     canAdjustLogo(logo) && !slot.locked ? (
-      <BrandKitIconButton
+      <BrandKitFoldderButton
+        variant="white"
+        compact
         icon={Crop}
-        label={brandKitLocaleEs.adjustLogoArea}
         onClick={() => {
           setAdjustCandidateIndex(null);
           setAdjustOpen(true);
         }}
-      />
+      >
+        {brandKitLocaleEs.adjustLogoArea}
+      </BrandKitFoldderButton>
     ) : null;
   const uploadControl = <LogoUploadControl onUploadLogo={onUploadLogo} disabled={slot.locked} />;
   const plinthToggle = logo?.previewUrl ? (
@@ -273,7 +279,7 @@ export function LogoBlock({
       {body}
       {showClearance && logo?.previewUrl ? <BrandKitLogoClearanceZone previewUrl={logo.previewUrl} /> : null}
       {adjustOpen && editingLogo ? (
-        <div className="brandKit-v2-logo-adjust-overlay">
+        <BrandKitLogoAdjustPortal>
           <BrandKitLogoBboxEditor
             logo={editingLogo}
             onClose={() => {
@@ -291,7 +297,7 @@ export function LogoBlock({
               setAdjustCandidateIndex(null);
             }}
           />
-        </div>
+        </BrandKitLogoAdjustPortal>
       ) : null}
     </DnaBlock>
   );

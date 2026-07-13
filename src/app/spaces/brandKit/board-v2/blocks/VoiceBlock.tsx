@@ -6,7 +6,6 @@ import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import { DnaBlock } from "../DnaBlock";
 import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
 import { BrandKitRichText } from "../BrandKitRichText";
-import { BrandKitIconButton } from "../BrandKitIconButton";
 import { BrandKitTextEditPanel } from "../BrandKitTextEditPanel";
 import { BrandKitCapsuleList } from "../BrandKitCapsuleList";
 import { BrandKitSemanticCandidates } from "../BrandKitSemanticCandidates";
@@ -49,7 +48,9 @@ export function VoiceBlock({
 
   const canEdit = Boolean(voice?.summary && slot.status === "resolved" && !slot.locked);
   const editButton = canEdit ? (
-    <BrandKitIconButton icon={Pencil} label={brandKitLocaleEs.edit} onClick={() => setEditing(true)} />
+    <BrandKitFoldderButton variant="white" compact icon={Pencil} onClick={() => setEditing(true)}>
+      {brandKitLocaleEs.edit}
+    </BrandKitFoldderButton>
   ) : null;
 
   const beginEditFromDraft = () => {
@@ -133,6 +134,8 @@ export function VoiceBlock({
     );
     primaryAction = (
       <BrandKitFoldderButton
+        variant="white"
+        compact
         icon={Save}
         onClick={() => {
           const trimmed = draft.trim();

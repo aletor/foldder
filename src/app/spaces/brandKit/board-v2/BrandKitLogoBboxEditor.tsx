@@ -335,16 +335,18 @@ export function BrandKitLogoBboxEditor({
                 <span className="brandKit-v2-muted">…</span>
               )}
             </div>
-            <BrandKitFoldderButton variant="muted" disabled={busy || loading} onClick={trimToContent}>
+            <BrandKitFoldderButton variant="white" disabled={busy || loading} onClick={trimToContent}>
               {brandKitLocaleEs.logoTrimToContent}
             </BrandKitFoldderButton>
           </aside>
         </div>
       ) : null}
 
-      <BrandKitFoldderButton icon={Check} disabled={busy || loading || !page} onClick={() => void save()}>
-        {brandKitLocaleEs.confirmLogo}
-      </BrandKitFoldderButton>
+      <div className="brandKit-v2-logo-adjust__footer">
+        <BrandKitFoldderButton icon={Check} disabled={busy || loading || !page} onClick={() => void save()}>
+          {brandKitLocaleEs.confirmLogo}
+        </BrandKitFoldderButton>
+      </div>
     </div>
   );
 }

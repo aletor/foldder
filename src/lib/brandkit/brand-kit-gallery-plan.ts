@@ -1,6 +1,7 @@
 import type { GalleryValue } from "./brand-kit-types";
 
 export const BRAND_KIT_GALLERY_IMAGE_COUNT = 10;
+export const GALLERY_CATEGORY_SLOT_COUNT = 2;
 
 export type GalleryGenerateCategory =
   | "people_mood"
@@ -33,17 +34,17 @@ export const GALLERY_GENERATE_PLAN: GalleryGenerateSlot[] = [
   },
   {
     category: "places",
-    categoryLabel: "Lugares",
-    categoryHint: "Espacios, arquitectura o entornos que encajan con la marca.",
+    categoryLabel: "Entorno",
+    categoryHint: "Localización vacía: arquitectura, paisaje o interior sin personas.",
     promptSuffix:
-      "Brand-aligned place or environment. Interior or exterior with narrative atmosphere. No text, no logos.",
+      "Empty architectural interior or landscape location. Space, light, and materials only. No people, no silhouettes, no business scenes, no holograms, no UI. No text, no logos.",
   },
   {
     category: "places",
-    categoryLabel: "Lugares",
-    categoryHint: "Segundo entorno — contraste o complemento del anterior.",
+    categoryLabel: "Entorno",
+    categoryHint: "Segundo entorno vacío — otra escala o luz.",
     promptSuffix:
-      "Alternative location scene with same visual world. Architectural or landscape detail with mood. No text, no logos.",
+      "Alternative empty environment: urban exterior, natural landscape, or unoccupied interior with brand mood. Absolutely no humans in frame. No text, no logos.",
   },
   {
     category: "objects",
@@ -62,16 +63,16 @@ export const GALLERY_GENERATE_PLAN: GalleryGenerateSlot[] = [
   {
     category: "textures",
     categoryLabel: "Texturas",
-    categoryHint: "Superficies, materiales y tacto visual.",
+    categoryHint: "Macro de superficie material: rugosidad, brillo y grano.",
     promptSuffix:
-      "Abstract texture or material surface matching brand color and contrast. Macro detail. No text, no logos.",
+      "Macro full-frame photograph of a single material surface. Extreme close-up showing roughness, micro-grain, matte or glossy finish. No people, no objects, no rooms, no UI, no holograms. No text, no logos.",
   },
   {
     category: "textures",
     categoryLabel: "Texturas",
-    categoryHint: "Segunda textura — ritmo y contraste.",
+    categoryHint: "Segunda superficie — otro material o acabado.",
     promptSuffix:
-      "Alternative texture study: grain, fabric, light on surface. Editorial, not decorative. No text, no logos.",
+      "Alternative macro texture: fabric weave, brushed metal, stone grain, plaster, or leather at extreme close-up. Tactile surface detail only. No scenes, no people, no technology graphics. No text, no logos.",
   },
   {
     category: "general",
@@ -121,5 +122,22 @@ export function categoryMeta(category: GalleryGenerateCategory): { label: string
   return {
     label: slot?.categoryLabel ?? category,
     hint: slot?.categoryHint ?? "",
+  };
+}
+
+export function slotsForCategory(category: GalleryGenerateCategory): GalleryGenerateSlot[] {
+  return GALLERY_GENERATE_PLAN.filter((entry) => entry.category === category);
+}
+
+export function buildCategoryBriefing(
+  category: GalleryGenerateCategory,
+  toneExplanation?: string,
+): { label: string; hint: string; tone?: string } {
+  const meta = categoryMeta(category);
+  const tone = toneExplanation?.trim();
+  return {
+    label: meta.label,
+    hint: meta.hint,
+    tone: tone || undefined,
   };
 }

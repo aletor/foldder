@@ -157,6 +157,14 @@ export interface VisualWorldValue {
   galleryRefs: string[];
 }
 
+export interface GalleryCategoryBrief {
+  category: "people_mood" | "places" | "objects" | "textures" | "general";
+  description: string;
+  promptHint: string;
+  confidence: "high" | "medium" | "low";
+  evidenceCount: number;
+}
+
 export interface GalleryValue {
   harvested: {
     assetId: string;
@@ -176,6 +184,9 @@ export interface GalleryValue {
   }[];
   stylePromptVersion: number;
   styleToneExplanation?: string;
+  categoryBriefs?: GalleryCategoryBrief[];
+  categoryBriefsSourceKey?: string;
+  categoryBriefsAnalyzedAt?: string;
   archivedHarvest?: GalleryValue["harvested"];
 }
 

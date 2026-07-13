@@ -71,6 +71,18 @@
   color: var(--brand-cta-ink);
 }
 
+/* Barra de acciones del mosaico: cromo Foldder fijo, sin theming de marca */
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-action-bar__inner .brandKit-foldder-btn,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-action-bar__inner .brandKit-foldder-btn--muted,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-action-bar__inner .brandKit-foldder-btn--ghost,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-action-bar__inner .brandKit-foldder-btn--white {
+  background: #ffffff !important;
+  color: #1a1a1a !important;
+  border: 1px solid rgba(0, 0, 0, 0.14) !important;
+  border-radius: 0 !important;
+  font-weight: 400 !important;
+}
+
 .brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-foldder-btn--muted {
   background: color-mix(in srgb, var(--brand-ink) 8%, transparent);
   color: var(--brand-ink);

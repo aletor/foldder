@@ -1,7 +1,9 @@
 import type { GalleryValue, BrandKitDocument, LogoValue, SlotState, VoiceValue, VisualWorldValue, EssenceValue } from "./brand-kit-types";
 import { galleryItemSourceUrl } from "./brand-kit-gallery-media";
-import { galleryUsefulCount, normalizeGalleryInclusions } from "./brand-kit-gallery-filter";
+import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES, syncGalleryBriefSourceKey } from "./brand-kit-gallery-brief";
+import { galleryIncludedCount, galleryUsefulCount, normalizeGalleryInclusions } from "./brand-kit-gallery-filter";
 import { buildVisualWorldFromGallery } from "./brand-kit-visual-synthesis";
+import { isFirstBrandKitMaterial, sootheFirstMaterialSlots } from "./brand-kit-first-material";
 import { groupLogoCandidatesForDisplay } from "./brand-kit-logo-policy";
 import { rankHarvestedGalleryItems, rankLogoCandidatesMultiSource } from "./brand-kit-visual-rank";
 
@@ -16,7 +18,7 @@ function now(): string {
   return new Date().toISOString();
 }
 
-function autoResolveSingleCandidate<T>(slot: SlotState<T>): SlotState<T> {
+function autoResolveSingleCandidate<T>(slot: SlotState<T>, firstMaterial: boolean): SlotState<T> {
   if (slot.status !== "candidates" || slot.candidates.length !== 1) return slot;
   const candidate = slot.candidates[0];
   return {
@@ -25,7 +27,7 @@ function autoResolveSingleCandidate<T>(slot: SlotState<T>): SlotState<T> {
     value: candidate.value,
     provenance: candidate.provenance ?? slot.provenance,
     confidence: Math.max(candidate.score, slot.confidence, 0.62),
-    needsReviewReason: slot.needsReviewReason ?? "La síntesis necesita revisión",
+    needsReviewReason: firstMaterial ? undefined : slot.needsReviewReason ?? "La síntesis necesita revisión",
     updatedAt: now(),
   };
 }
@@ -81,18 +83,28 @@ function normalizeGalleryHarvestedPreviewUrls(
 export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument {
   const slots = { ...doc.slots };
   const brandName = doc.brandName?.value;
+  const firstMaterial = isFirstBrandKitMaterial(doc);
 
   const gallerySlot = slots.gallery;
   if (gallerySlot?.value) {
     const normalizedGallery = normalizeGalleryInclusions(gallerySlot.value as GalleryValue);
-    slots.gallery = {
-      ...gallerySlot,
-      value: {
+    const visual = slots.visualWorld?.value as VisualWorldValue | undefined;
+    const syncedGallery = syncGalleryBriefSourceKey(
+      {
         ...normalizedGallery,
         harvested: rankHarvestedGalleryItems(
           normalizeGalleryHarvestedPreviewUrls(normalizedGallery.harvested),
         ),
       },
+      {
+        brandName,
+        visualSummary: visual?.summary,
+        moodTags: visual?.moodTags,
+      },
+    );
+    slots.gallery = {
+      ...gallerySlot,
+      value: syncedGallery,
       updatedAt: now(),
     };
   }
@@ -107,7 +119,7 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
       essence = { ...essence, value: improved, updatedAt: now() };
     }
   } else if (!essence.locked) {
-    essence = autoResolveSingleCandidate(essence as SlotState<EssenceValue>);
+    essence = autoResolveSingleCandidate(essence as SlotState<EssenceValue>, firstMaterial);
     if (essence.status === "resolved" && essence.value) {
       essence = {
         ...essence,
@@ -120,7 +132,7 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
 
   let voice = slots.voice as SlotState<VoiceValue>;
   if (!voice.locked) {
-    voice = autoResolveSingleCandidate(voice);
+    voice = autoResolveSingleCandidate(voice, firstMaterial);
   }
   if (voice.status === "resolved" && voice.value && !voice.locked) {
     const improvedVoice = improveVoiceValue(voice.value as VoiceValue);
@@ -135,7 +147,7 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
     visualSlot.status === "resolved" &&
     Boolean((visualSlot.value as VisualWorldValue | undefined)?.summary?.trim());
 
-  if (!hasVisualSummary && gallery && usefulImages >= 6 && !visualSlot.locked) {
+  if (!hasVisualSummary && gallery && usefulImages >= GALLERY_BRIEF_MIN_INCLUDED_IMAGES && !visualSlot.locked) {
     const synthesized = buildVisualWorldFromGallery(gallery, brandName);
     if (synthesized) {
       slots.visualWorld = {
@@ -147,7 +159,8 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
           type: "llm_synthesis",
           detail: `síntesis visual desde ${usefulImages} imágenes`,
         },
-        needsReviewReason: visualSlot.status === "needs_user" ? "La síntesis necesita revisión" : undefined,
+        needsReviewReason:
+          !firstMaterial && visualSlot.status === "needs_user" ? "La síntesis necesita revisión" : undefined,
         updatedAt: now(),
       };
     }
@@ -169,5 +182,5 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
     };
   }
 
-  return { ...doc, slots, updatedAt: now() };
+  return sootheFirstMaterialSlots({ ...doc, slots, updatedAt: now() });
 }

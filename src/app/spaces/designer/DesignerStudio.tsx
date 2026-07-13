@@ -136,6 +136,7 @@ interface DesignerStudioProps {
   autoImageOptimization?: boolean;
   onAutoImageOptimizationChange?: (enabled: boolean) => void;
   brainConnected?: boolean;
+  brandKitPaletteColors?: string[];
   datasetConnected?: boolean;
   designerConnectedDataset?: import("@/app/spaces/dataset/dataset-types").Dataset | null;
   designerConnectedDatasetLoading?: boolean;
@@ -170,6 +171,7 @@ export default function DesignerStudio({
   autoImageOptimization = true,
   onAutoImageOptimizationChange,
   brainConnected = false,
+  brandKitPaletteColors = [],
   datasetConnected = false,
   designerConnectedDataset = null,
   designerConnectedDatasetLoading = false,
@@ -2396,6 +2398,8 @@ export default function DesignerStudio({
         onUpdateObjects={handleUpdateObjects}
         onUpdateLayoutGuides={handleUpdateLayoutGuides}
         brainConnected={brainConnected}
+        brandKitPaletteColors={brandKitPaletteColors}
+        designerFlowNodeId={designerCanvasInstanceKey}
         studioCanvasPanel={
           <StudioCanvasSideControls
             width={liveCanvas.width}

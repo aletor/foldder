@@ -9,7 +9,7 @@ export const brandKitLocaleEs = {
   logo: "Logo",
   gallery: "Galería",
   harvested: "Cosecha",
-  generated: "Generadas",
+  generated: "Imagen generada",
   pendingQueue: "Pendiente de ti",
   confirm: "Confirmar",
   confirmLogo: "Confirmar logo",
@@ -31,14 +31,27 @@ export const brandKitLocaleEs = {
   vectorizingLogo: "vectorizando…",
   downloadingPdf: "descargando…",
   generateGallery: "Generar set de estilo (10 imgs)",
+  generateGalleryCategory: "Generar",
+  regenerateGalleryCategory: "Regenerar",
+  analyzeGalleryBriefs: "Analizar briefs",
+  analyzingGalleryBriefs: "Analizando imágenes…",
+  galleryBriefStale: "La cosecha cambió — vuelve a analizar para actualizar las descripciones.",
+  galleryBriefConfidence: (level: "high" | "medium" | "low", count: number) =>
+    level === "high"
+      ? `Basado en ${count} imágenes analizadas`
+      : level === "medium"
+        ? `Estimación moderada (${count} imágenes)`
+        : `Poca evidencia en la cosecha (${count} imágenes)`,
   generatingGallery: "Generando imágenes de estilo…",
+  generatingGalleryCategory: (label: string) => `Generando ${label}…`,
   generatingGalleryProgress: (current: number, total: number, category: string) =>
     `Generando ${current}/${total}${category ? ` · ${category}` : ""}…`,
-  galleryToneLabel: "Tono de imagen",
-  galleryGeneratedSuccess: "Set de estilo listo — pestaña Generadas",
+  galleryToneLabel: "Mundo visual",
+  galleryGeneratedSuccess: "Imágenes listas — revisa y marca con ✓ las que encajan",
   galleryGeneratedCount: (count: number) =>
-    `${count} imagen${count === 1 ? "" : "es"} de estilo listas — revisa por categoría`,
-  galleryGeneratedEmpty: "Pulsa «Generar set de estilo» para crear 10 referencias (personas, lugares, objetos, texturas y general).",
+    `${count} imagen${count === 1 ? "" : "es"} listas — marca con ✓ las que encajan`,
+  galleryGeneratedIntro:
+    "Cada tarjeta genera 2 referencias de su categoría. El estilo aprende de las imágenes que confirmes con ✓.",
   galleryHarvestedHint: (count: number) =>
     `${count} imagen${count === 1 ? "" : "es"} del análisis en la pestaña Cosecha.`,
   galleryHarvestedOnlyIncluded: "solo incluidas",
@@ -74,6 +87,7 @@ export const brandKitLocaleEs = {
   detail: "Detalle",
   avoid: "Evitar",
   fedByGallery: "Se alimenta de",
+  excludeHarvestImage: "Eliminar",
   images: "imágenes",
   expandQuote: "Ver más",
   collapseQuote: "Ver menos",

@@ -13,6 +13,30 @@ describe("resolveBrandKitSidebarPhase", () => {
     doc.sources.push({ kind: "file", ref: "a.pdf", ts: "2026-01-01" });
     expect(resolveBrandKitSidebarPhase(doc, { isAnalyzing: true })).toBe("ingesting");
   });
+
+  it("ready en primer material aunque haya candidatos benignos", () => {
+    const doc = createEmptyBrandKit();
+    doc.sources.push({ kind: "file", ref: "catalogo26.pdf", ts: "2026-01-01" });
+    doc.slots.voice = {
+      ...doc.slots.voice,
+      status: "candidates",
+      candidates: [
+        {
+          value: {
+            summary: "Voz editorial",
+            descriptors: ["editorial"],
+            rules: ["Corto.", "Claro."],
+            avoid: [],
+            evidence: [],
+          },
+          score: 0.7,
+          provenance: { type: "llm_synthesis", detail: "batch" },
+        },
+      ],
+      confidence: 0.55,
+    };
+    expect(resolveBrandKitSidebarPhase(doc, { isAnalyzing: false })).toBe("ready");
+  });
 });
 
 describe("buildSidebarIngestSteps", () => {

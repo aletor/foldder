@@ -51,17 +51,32 @@ export function DnaBlock({
       <>
         {slot.status === "resolved" ? (
           slot.locked ? (
-            <BrandKitFoldderButton variant="muted" icon={Unlock} onClick={() => onAction(slotId, { action: "unlock" })}>
+            <BrandKitFoldderButton
+              variant="white"
+              compact
+              icon={Unlock}
+              onClick={() => onAction(slotId, { action: "unlock" })}
+            >
               {brandKitLocaleEs.unlock}
             </BrandKitFoldderButton>
           ) : (
-            <BrandKitFoldderButton icon={Lock} onClick={() => onAction(slotId, { action: "lock" })}>
+            <BrandKitFoldderButton
+              variant="white"
+              compact
+              icon={Lock}
+              onClick={() => onAction(slotId, { action: "lock" })}
+            >
               {confirmLabel}
             </BrandKitFoldderButton>
           )
         ) : null}
         {slot.history.length > 0 ? (
-          <BrandKitFoldderButton variant="muted" icon={RotateCcw} onClick={() => onAction(slotId, { action: "revert" })}>
+          <BrandKitFoldderButton
+            variant="white"
+            compact
+            icon={RotateCcw}
+            onClick={() => onAction(slotId, { action: "revert" })}
+          >
             {brandKitLocaleEs.revert}
           </BrandKitFoldderButton>
         ) : null}
@@ -72,13 +87,12 @@ export function DnaBlock({
   const mosaicActions = useMemo(
     () => (
       <>
-        {secondaryActions}
-        {headExtra}
         {primaryAction}
+        {secondaryActions}
         {slotToolbar}
       </>
     ),
-    [headExtra, primaryAction, secondaryActions, slotToolbar],
+    [primaryAction, secondaryActions, slotToolbar],
   );
 
   useEffect(() => {

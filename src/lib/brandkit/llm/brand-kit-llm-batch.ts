@@ -2,12 +2,27 @@ import { GoogleGenAI } from "@google/genai";
 import { parseJsonObjectFromVisionModelText } from "@/lib/brain/brain-vision-json-from-text";
 import { recordApiUsage } from "@/lib/api-usage";
 import { estimateGeminiUsd } from "@/lib/pricing-config";
-import type { EssenceValue, VisualWorldValue, VoiceValue } from "../brand-kit-types";
+import type { EssenceValue, GalleryValue, VisualWorldValue, VoiceValue } from "../brand-kit-types";
 import {
   formatEvidenceCandidatesForLlm,
   type EvidenceCandidate,
 } from "../brand-kit-evidence-candidates";
 import type { BrandKitSynthesisInput } from "./brand-kit-llm-synthesis";
+import {
+  GALLERY_BRIEF_MIN_INCLUDED_IMAGES,
+  harvestFrameLabel,
+  includedHarvestForBriefAnalysis,
+} from "../brand-kit-gallery-brief";
+import {
+  buildGalleryBriefVisionFrames,
+  type GalleryBriefVisionFrame,
+} from "../brand-kit-gallery-brief-frames";
+import { galleryCategoryBriefRulesBlock } from "../brand-kit-gallery-category-guidance";
+import {
+  GALLERY_CATEGORY_BRIEFS_JSON_SHAPE,
+  parseGalleryCategoryBriefsFromBatch,
+} from "../brand-kit-gallery-brief-batch";
+import type { GalleryCategoryBrief } from "../brand-kit-types";
 import {
   mergeBatchValidation,
   validateBatchResponse,
@@ -21,8 +36,8 @@ export { batchLlmProvenance, buildBatchSlotPatch } from "./brand-kit-batch-slot-
 
 const BRAND_KIT_LLM_MODEL = process.env.BRAND_KIT_LLM_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
 
-const BATCH_SYSTEM = [
-  "Eres un analista de ADN de marca. Devuelves SOLO JSON con claves essence, voice y visualWorld.",
+const BATCH_SYSTEM_BASE = [
+  "Eres un analista de ADN de marca. Devuelves SOLO JSON.",
   "Tu tarea no es copiar frases de la web. Tu tarea es interpretar la marca.",
   "Las frases del corpus solo son evidencia. No las uses como resumen principal.",
   "No copies citas manualmente. Cuando necesites evidencia, referencia evidenceIds de la lista.",
@@ -36,9 +51,21 @@ const BATCH_SYSTEM = [
   "voice.descriptors: 2-5 chips concretos; voice.rules: instrucciones accionables (mínimo 2).",
   "visualWorld.visualTraits: territorio visual positivo; visualWorld.limits: qué evitar.",
   BRAND_KIT_RICH_TEXT_PROMPT,
-].join("\n");
+];
 
-const BATCH_JSON_SHAPE = `{
+const BATCH_SYSTEM_GALLERY_BRIEFS = [
+  "galleryCategoryBriefs: exactamente 5 entradas (people_mood, places, objects, textures, general).",
+  "Mezcla voz, tono, colores del contexto y lo que ves en las imágenes cosechadas.",
+  "Reglas por categoría:",
+  galleryCategoryBriefRulesBlock(),
+  "description: español CONCRETO (materiales, colores nombrados, rugosidad, brillo, grano, luz). Prohibido «evoca la marca» sin especificar.",
+  "promptHint: instrucción visual en inglés para generador de imágenes, concreta y fotográfica. Sin texto ni logos.",
+  "Para textures: promptHint debe pedir macro full-frame surface photograph, nunca escenas con personas ni UI.",
+  "Para places: promptHint debe pedir empty location/architecture/landscape, nunca personas ni escenas corporativas.",
+  "confidence: high si hay evidencia clara en imágenes; medium si inferido; low si casi sin evidencia.",
+];
+
+const BATCH_JSON_SHAPE_BASE = `{
   "essence": {
     "summary": "",
     "headline": "",
@@ -64,10 +91,17 @@ const BATCH_JSON_SHAPE = `{
   }
 }`;
 
+function buildBatchJsonShape(includeGalleryBriefs: boolean): string {
+  if (!includeGalleryBriefs) return BATCH_JSON_SHAPE_BASE;
+  const trimmed = BATCH_JSON_SHAPE_BASE.trimEnd();
+  return `${trimmed.slice(0, -2)},\n  ${GALLERY_CATEGORY_BRIEFS_JSON_SHAPE}\n}`;
+}
+
 export type BrandKitBatchSlotResult = {
   essence: EssenceValue | null;
   voice: VoiceValue | null;
   visualWorld: VisualWorldValue | null;
+  categoryBriefs: GalleryCategoryBrief[] | null;
   degraded: BatchSlotKey[];
 };
 
@@ -126,7 +160,7 @@ function formatProbeContextForLlm(context: BrandKitSynthesisInput["probeContext"
   return lines.join("\n");
 }
 
-function buildBatchUserPrompt(input: BrandKitSynthesisInput): string {
+function buildBatchUserPrompt(input: BrandKitSynthesisInput, includeGalleryBriefs: boolean): string {
   const parts = [`Marca: ${input.brandName ?? "desconocida"}`];
   const probeBlock = formatProbeContextForLlm(input.probeContext);
   if (probeBlock) {
@@ -142,7 +176,12 @@ function buildBatchUserPrompt(input: BrandKitSynthesisInput): string {
   if (input.galleryContext) {
     parts.push("Referencias visuales cosechadas (URLs y contexto):", input.galleryContext);
   }
-  parts.push(`JSON: ${BATCH_JSON_SHAPE}`);
+  if (includeGalleryBriefs) {
+    parts.push(
+      "Define galleryCategoryBriefs para generar imágenes de estilo por categoría. Basa las descripciones en las imágenes adjuntas (si hay) y en el contexto de marca.",
+    );
+  }
+  parts.push(`JSON: ${buildBatchJsonShape(includeGalleryBriefs)}`);
   return parts.join("\n\n");
 }
 
@@ -150,20 +189,35 @@ async function callBatchJson(
   input: BrandKitSynthesisInput,
   userPrompt: string,
   operation: string,
+  options?: { visionFrames?: GalleryBriefVisionFrame[]; includeGalleryBriefs?: boolean },
 ): Promise<unknown | null> {
   const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)?.trim();
   const minCorpus = input.probeContext || input.evidenceCandidates?.length ? 24 : 50;
   if (!apiKey || input.corpus.trim().length < minCorpus) return null;
 
   const ai = new GoogleGenAI({ apiKey });
+  const visionFrames = options?.visionFrames ?? [];
+  const systemInstruction = [
+    ...BATCH_SYSTEM_BASE,
+    ...(options?.includeGalleryBriefs ? BATCH_SYSTEM_GALLERY_BRIEFS : []),
+  ].join("\n");
+
+  const userParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+    { text: userPrompt },
+  ];
+  for (const frame of visionFrames) {
+    userParts.push({ text: frame.label });
+    userParts.push({ inlineData: { mimeType: "image/jpeg", data: frame.jpegBase64 } });
+  }
+
   try {
     const result = await ai.models.generateContent({
       model: BRAND_KIT_LLM_MODEL,
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      contents: [{ role: "user", parts: userParts }],
       config: {
-        systemInstruction: BATCH_SYSTEM,
+        systemInstruction,
         responseMimeType: "application/json",
-        temperature: 0.2,
+        temperature: visionFrames.length ? 0.1 : 0.2,
       },
     });
     await reportGeminiUsage(input, operation, result.usageMetadata);
@@ -189,7 +243,7 @@ async function retryBatchKey(
     input,
     [
       `Reintento SOLO la clave "${key}".`,
-      buildBatchUserPrompt(input),
+      buildBatchUserPrompt(input, false),
       `JSON con una sola clave: { "${key}": ${schemaHint} }`,
     ].join("\n\n"),
     `batch_retry_${key}`,
@@ -203,6 +257,8 @@ async function retryBatchKey(
 export type BrandKitBatchOptions = {
   /** Reintentos por slot fallido (crawl). Ingest file usa false para cap ≤3 LLM. */
   allowSlotRetries?: boolean;
+  /** Galería cosechada: si hay imágenes suficientes, el batch incluye visión + galleryCategoryBriefs. */
+  gallery?: GalleryValue;
 };
 
 export async function synthesizeBrandKitBatch(
@@ -210,17 +266,35 @@ export async function synthesizeBrandKitBatch(
   options?: BrandKitBatchOptions,
 ): Promise<BrandKitBatchSlotResult> {
   const degraded: BatchSlotKey[] = [];
-  const empty = { essence: null, voice: null, visualWorld: null, degraded };
+  const empty = { essence: null, voice: null, visualWorld: null, categoryBriefs: null, degraded };
   const evidenceCandidates = input.evidenceCandidates ?? [];
   const allowSlotRetries = options?.allowSlotRetries !== false;
 
-  const raw = await callBatchJson(input, buildBatchUserPrompt(input), "batch");
+  const gallery = options?.gallery;
+  const includedCount = gallery?.harvested?.filter((item) => item.included !== false).length ?? 0;
+  const includeGalleryBriefs = includedCount >= GALLERY_BRIEF_MIN_INCLUDED_IMAGES;
+
+  let visionFrames: GalleryBriefVisionFrame[] = [];
+  if (includeGalleryBriefs && gallery) {
+    const harvestItems = includedHarvestForBriefAnalysis(gallery);
+    visionFrames = await buildGalleryBriefVisionFrames(harvestItems, harvestFrameLabel);
+  }
+
+  const raw = await callBatchJson(
+    input,
+    buildBatchUserPrompt(input, includeGalleryBriefs),
+    visionFrames.length ? "batch_vision" : "batch",
+    { visionFrames, includeGalleryBriefs },
+  );
   if (!raw) return empty;
 
   const initial = validateBatchResponse(raw, input.corpus, evidenceCandidates);
   let essenceResult = initial.essence;
   let voiceResult = initial.voice;
   let visualWorldResult = initial.visualWorld;
+  const categoryBriefs = includeGalleryBriefs
+    ? parseGalleryCategoryBriefsFromBatch(raw, visionFrames.length || includedCount)
+    : null;
 
   if (allowSlotRetries) {
     const keys: BatchSlotKey[] = ["essence", "voice", "visualWorld"];
@@ -250,6 +324,7 @@ export async function synthesizeBrandKitBatch(
     essence: essenceResult.ok ? essenceResult.value : null,
     voice: voiceResult.ok ? voiceResult.value : null,
     visualWorld: visualWorldResult.ok ? visualWorldResult.value : null,
+    categoryBriefs,
     degraded,
   };
 }

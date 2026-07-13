@@ -102,6 +102,7 @@ export async function downloadBrandKitDocumentStyleGuidePdf(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         genome,
+        document: doc,
         exportMode: options.exportMode ?? "operativo",
         projectName,
         allowRasterLogoBypass: options.allowRasterLogoBypass === true,
@@ -109,7 +110,7 @@ export async function downloadBrandKitDocumentStyleGuidePdf(
     });
 
     if (response.status === 503) {
-      await downloadBrandKitStyleGuideHtml(genome, projectName, options.exportMode);
+      await downloadBrandKitStyleGuideHtml(genome, projectName, options.exportMode, doc);
       return { ok: true, usedHtmlFallback: true };
     }
 

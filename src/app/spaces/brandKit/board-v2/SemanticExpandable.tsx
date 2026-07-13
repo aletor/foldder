@@ -24,7 +24,8 @@ function MosaicDetailAction({
   const mosaicBoard = useBrandKitMosaicBoard();
   return (
     <BrandKitFoldderButton
-      variant="muted"
+      variant="white"
+      compact
       onClick={() => mosaicBoard?.openDetailSheet({ title, content })}
     >
       Detalle

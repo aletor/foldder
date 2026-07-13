@@ -366,10 +366,28 @@ export function estimateWalletCostForRoute(
     };
   }
 
-  if (route === "/api/spaces/brandKit/gallery/generate") {
-    const estimated = roundedUsd(BRAND_KIT_GALLERY_PER_IMAGE_USD * BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT);
+  if (route === "/api/spaces/brandKit/gallery/analyze-briefs") {
+    const model = "gemini-2.5-flash";
+    const estimated = roundedUsd(estimateGeminiUsd(model, 9000, 1800));
     return {
-      label: "BrandKit · generar galería",
+      label: "BrandKit · analizar briefs de galería",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.5),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/spaces/brandKit/gallery/generate") {
+    const category =
+      body && typeof body === "object" && typeof (body as { category?: string }).category === "string"
+        ? (body as { category?: string }).category
+        : undefined;
+    const imageCount = category ? 2 : BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT;
+    const estimated = roundedUsd(BRAND_KIT_GALLERY_PER_IMAGE_USD * imageCount);
+    return {
+      label: category ? "BrandKit · generar categoría" : "BrandKit · generar galería",
       route,
       category: "image",
       estimatedCostMicros: usdToMicros(estimated),
