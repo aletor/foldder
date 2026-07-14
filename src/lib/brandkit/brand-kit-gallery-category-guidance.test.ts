@@ -59,19 +59,66 @@ describe("buildGalleryImagePrompt", () => {
     }
   });
 
-  it("uses brief hint as primary places scene", () => {
+  it("uses location-first places scene and omits product coherence hint", () => {
+    const docWithProduct = {
+      ...doc,
+      slots: {
+        ...doc.slots,
+        essence: {
+          status: "resolved",
+          value: {
+            summary: "Calzado deportivo de alto rendimiento",
+            beliefs: [],
+            evidence: [],
+            brandContext: "Running shoes and performance sportswear",
+            purpose: "Equip athletes for competition",
+          },
+        },
+      },
+    } as import("./brand-kit-types").BrandKitDocument;
+
     const prompt = buildGalleryImagePrompt(
       "places",
       stylePrompt,
-      "Empty airport terminal at dawn, wide shot.",
-      doc,
+      "Packed concert hall from rear, stage lights, crowd as ambient mass, wide establishing shot.",
+      docWithProduct,
     );
     expect(prompt).toContain("Scene to photograph:");
-    expect(prompt).toContain("Empty airport terminal");
-    expect(prompt).toContain("no people");
+    expect(prompt).toContain("Packed concert hall");
+    expect(prompt).toContain("Location-first establishing shot");
+    expect(prompt).toContain("Crowds, ambient objects");
+    expect(prompt.toLowerCase()).not.toContain("product context");
+    expect(prompt.toLowerCase()).not.toContain("brand offering");
     for (const term of FORBIDDEN_HARDCODED) {
       expect(prompt.toLowerCase()).not.toContain(term);
     }
+  });
+
+  it("still injects product coherence for objects category", () => {
+    const docWithProduct = {
+      ...doc,
+      slots: {
+        ...doc.slots,
+        essence: {
+          status: "resolved",
+          value: {
+            summary: "Calzado deportivo",
+            beliefs: [],
+            evidence: [],
+            brandContext: "Running shoes",
+            purpose: "Performance footwear",
+          },
+        },
+      },
+    } as import("./brand-kit-types").BrandKitDocument;
+
+    const prompt = buildGalleryImagePrompt(
+      "objects",
+      stylePrompt,
+      "Hero running shoe on track",
+      docWithProduct,
+    );
+    expect(prompt.toLowerCase()).toContain("product context");
   });
 
   it("uses brief hint as primary textures scene", () => {

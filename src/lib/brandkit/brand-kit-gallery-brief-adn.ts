@@ -164,10 +164,10 @@ export function promptHintsFromAdn(
         const trait = pick(traits, index, "architectural atmosphere");
         const moodTag = pick(moods, index, mood);
         const frames = [
-          `Empty interior for ${brand}, ${trait}, ${moodTag} light, ${colors || "brand colors"}, no people.`,
-          `Uninhabited urban exterior for ${brand}, ${trait}, ${moodTag} atmosphere, wide shot, no crowds.`,
-          `Vacant landscape or horizon for ${brand}, ${moodTag} tones, ${trait}, no humans in frame.`,
-          `Empty niche space for ${brand}, material and light focus, ${trait}, ${moodTag} mood, no people.`,
+          `Location plate for ${brand}: ${trait}, ${moodTag} light, ${colors || "brand colors"} — the place is the subject, not a product hero shot.`,
+          `Wide establishing shot for ${brand}: ${trait}, ${moodTag} atmosphere, ambient crowds or street life allowed, no portrait focal subject.`,
+          `Lived-in environment for ${brand}: ${moodTag} tones, ${trait}, ambient objects and signage native to the place.`,
+          `Alternative location for ${brand}: material and spatial focus, ${trait}, ${moodTag} mood — no packaging or hero product.`,
         ];
         return frames[index] ?? frames[0];
       });

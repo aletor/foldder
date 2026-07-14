@@ -6,13 +6,13 @@ import {
   gallerySceneLead,
   resolveBrandImageStyle,
 } from "./brand-kit-visual-style";
+import { brandPlacesWorldHint, PLACES_BRIEF_LLM_RULE } from "./brand-kit-gallery-places-guidance";
 
 /** Reglas para que el LLM escriba briefs alineados con cada categoría de galería (4 variantes distintas por categoría). */
 export const GALLERY_CATEGORY_BRIEF_LLM_RULES: Record<GalleryGenerateCategory, string> = {
   people_mood:
     "Personas y mood: 4 variantes con emoción, luz, postura y encuadre distintos según el ADN. No repitas el mismo retrato ni la misma escena humana.",
-  places:
-    "Entornos: 4 localizaciones vacías distintas (arquitectura, interior, paisaje, urbano…). Sin personas. Cada variant debe ser un espacio diferente.",
+  places: PLACES_BRIEF_LLM_RULE,
   objects:
     "Objetos: 4 still life distintos coherentes con el producto y utilidad de la marca. Cada variant = objeto o composición diferente; respeta categoría de producto y uso real.",
   textures:
@@ -98,9 +98,12 @@ export function buildGalleryImagePrompt(
   const sceneLead = gallerySceneLead(hint, medium);
   const { core, finish } = galleryCategoryPromptCores(category, visual);
 
+  const coherenceHint =
+    category === "places" ? brandPlacesWorldHint(doc) : brandCoherenceHint(doc);
+
   return assembleGalleryImagePrompt([
     sceneLead,
-    brandCoherenceHint(doc),
+    coherenceHint,
     visualStyleHint(doc),
     core,
     brandPaletteHint(doc),

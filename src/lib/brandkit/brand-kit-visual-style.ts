@@ -1,5 +1,6 @@
 import type { VisualWorldValue } from "./brand-kit-types";
 import type { GalleryGenerateCategory } from "./brand-kit-gallery-plan";
+import { PLACES_LOCATION_FIRST_CORE } from "./brand-kit-gallery-places-guidance";
 
 export const BRAND_IMAGE_MEDIA = [
   "photography",
@@ -213,13 +214,8 @@ function photographyCores(category: GalleryGenerateCategory): CategoryCores {
       };
     case "places":
       return {
-        core: [
-          "Architectural environment photograph with no people in frame.",
-          "Empty interior, landscape, or urban location — space, light, materials, and atmosphere only.",
-          "No humans, no silhouettes, no hands, no crowds, no portraits.",
-          "No holograms, no UI screens, no stock corporate tech scenes, no text, no logos.",
-        ].join(" "),
-        finish: "Photorealistic empty location, wide or medium shot, cinematic natural or architectural light.",
+        core: PLACES_LOCATION_FIRST_CORE,
+        finish: "Photorealistic location plate, wide or medium establishing shot, cinematic natural or architectural light.",
       };
     case "people_mood":
       return {
@@ -266,12 +262,8 @@ function illustrationCores(category: GalleryGenerateCategory): CategoryCores {
       };
     case "places":
       return {
-        core: [
-          "Architectural environment illustration with no people.",
-          "Empty interior, landscape, or urban location — space, light, and materials only.",
-          "No humans, no crowds, no portraits, no text, no logos.",
-        ].join(" "),
-        finish: "Illustrated empty location with deliberate perspective and light.",
+        core: PLACES_LOCATION_FIRST_CORE,
+        finish: "Illustrated location plate with deliberate perspective, light, and spatial depth.",
       };
     case "people_mood":
       return {
@@ -306,19 +298,16 @@ function illustrationCores(category: GalleryGenerateCategory): CategoryCores {
 }
 
 function collageCores(category: GalleryGenerateCategory): CategoryCores {
-  const noPeople =
-    category === "places" || category === "textures"
-      ? "No people, no portraits, no crowds."
-      : "";
+  const noPeople = category === "textures" ? "No people, no portraits, no crowds." : "";
   return {
     core: [
       "Editorial collage composition with cut-paper, texture layers, and mixed media.",
       category === "textures"
         ? "Macro material collage filling the frame — surface and grain only."
         : category === "places"
-          ? "Empty architectural or landscape collage — space and atmosphere only."
+          ? PLACES_LOCATION_FIRST_CORE
           : "Cohesive collage layout faithful to the brief scene.",
-      "No UI screens, no holograms, no readable text, no logos.",
+      category === "places" ? "" : "No UI screens, no holograms, no readable text, no logos.",
       noPeople,
     ]
       .filter(Boolean)
@@ -334,10 +323,12 @@ function render3dCores(category: GalleryGenerateCategory): CategoryCores {
       category === "textures"
         ? "Macro material surface render filling the frame."
         : category === "places"
-          ? "Empty architectural or landscape 3D environment, no people."
+          ? PLACES_LOCATION_FIRST_CORE
           : "Faithful to the brief subject and composition.",
-      "No UI screens, no holograms, no readable text, no logos.",
-    ].join(" "),
+      category === "places" ? "" : "No UI screens, no holograms, no readable text, no logos.",
+    ]
+      .filter(Boolean)
+      .join(" "),
     finish: "High-quality 3D render with coherent materials and soft studio or cinematic light.",
   };
 }
@@ -348,8 +339,10 @@ function graphicDesignCores(category: GalleryGenerateCategory): CategoryCores {
       "Graphic design-led brand composition with deliberate shapes and layout.",
       category === "textures"
         ? "Abstract material pattern or texture as graphic motif."
-        : "Clear focal hierarchy faithful to the brief.",
-      "No readable text, no logos, no UI mockups.",
+        : category === "places"
+          ? PLACES_LOCATION_FIRST_CORE
+          : "Clear focal hierarchy faithful to the brief.",
+      category === "places" ? "" : "No readable text, no logos, no UI mockups.",
     ].join(" "),
     finish: "Bold graphic design composition with flat or semi-flat color fields.",
   };

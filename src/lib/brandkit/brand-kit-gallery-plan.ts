@@ -26,10 +26,10 @@ const CATEGORY_FALLBACK_SUFFIXES: Record<GalleryGenerateCategory, string[]> = {
     "Human interaction or gesture scene with mood and light coherent with brand identity. No text, no logos.",
   ],
   places: [
-    "Empty architectural interior or landscape location. Space, light, and materials only. No people, no silhouettes, no holograms, no UI. No text, no logos.",
-    "Alternative empty urban exterior or natural landscape with brand mood. Absolutely no humans in frame. No text, no logos.",
-    "Uninhabited corridor, foyer, or architectural detail with volume and material focus. No people. No text, no logos.",
-    "Wide uninhabited environment at a different scale or time of day. No crowds, no portraits. No text, no logos.",
+    "Location-first establishing shot: interior, landscape, or urban place as subject. Ambient crowds, objects, or signage allowed. No hero product or portrait focal subject. No text overlays, no logos.",
+    "Packed venue or streetscape from wide angle — the place and atmosphere define the frame, not a single person or product.",
+    "Workshop, garage, or lived-in space with ambient tools and clutter belonging to the location. No brand product hero shot.",
+    "Architectural or natural environment at another scale or time of day — spatial mood is the subject. No product still life.",
   ],
   objects: [
     "Still life object study aligned with brand palette and lighting. Product or symbolic object. No text, no logos.",
@@ -64,7 +64,7 @@ export function categoryMeta(category: GalleryGenerateCategory): { label: string
     case "people_mood":
       return { label: "Personas & mood", hint: "Rostros, emoción, actitud y luz sobre personas." };
     case "places":
-      return { label: "Entorno", hint: "Localización vacía: arquitectura, paisaje o interior sin personas." };
+      return { label: "Entorno", hint: "Localización como sujeto: el lugar manda; multitudes, objetos y textos ambientales son válidos." };
     case "objects":
       return { label: "Objetos", hint: "Objetos simbólicos o de producto con tratamiento editorial." };
     case "textures":

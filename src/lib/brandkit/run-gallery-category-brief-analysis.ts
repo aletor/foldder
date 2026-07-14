@@ -16,6 +16,7 @@ import {
   buildGalleryBriefBrandContext,
   hasGalleryAdnContext,
 } from "./brand-kit-gallery-brief-adn";
+import { PLACES_BRIEF_PROMPT_HINT_RULE } from "./brand-kit-gallery-places-guidance";
 import { galleryCategoryBriefRulesBlock } from "./brand-kit-gallery-category-guidance";
 import { buildGalleryBriefVisionFrames } from "./brand-kit-gallery-brief-frames";
 import {
@@ -78,7 +79,7 @@ const SYSTEM = [
   "Prohibido lenguaje genérico: no uses «evoca la marca», «coherente con la identidad», «tratamiento editorial» sin especificar qué se ve.",
   "Si no hay evidencia clara en las imágenes para una categoría, dilo con precisión y pon confidence low.",
   "textures.variant.promptHint: macro full-frame material surface faithful to imageMedium; never people, UI, holograms, or stock tech scenes.",
-  "places.variant.promptHint: empty architectural or landscape location faithful to imageMedium; never people, crowds, business scenes, holograms, or UI.",
+  PLACES_BRIEF_PROMPT_HINT_RULE,
 ].join("\n");
 
 const TEXT_SYSTEM = [
@@ -94,7 +95,7 @@ const TEXT_SYSTEM = [
   "Prohibido lenguaje genérico: no uses «evoca la marca», «coherente con la identidad», «tratamiento editorial» sin especificar qué se ve.",
   "Usa esencia, voz, mundo visual y paleta como evidencia textual; confidence medium salvo que el ADN sea muy explícito (high) o muy vago (low).",
   "textures.variant.promptHint: macro full-frame material surface faithful to imageMedium; never people, UI, holograms, or stock tech scenes.",
-  "places.variant.promptHint: empty architectural or landscape location faithful to imageMedium; never people, crowds, business scenes, holograms, or UI.",
+  PLACES_BRIEF_PROMPT_HINT_RULE,
 ].join("\n");
 
 function extractJsonText(response: unknown): string {

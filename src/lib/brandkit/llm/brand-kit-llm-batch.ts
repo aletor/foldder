@@ -70,7 +70,7 @@ const BATCH_SYSTEM_GALLERY_BRIEFS = [
   "Para people_mood: variantes concretas del ADN — quién aparece, emoción, luz, encuadre. No asumas familias ni parques temáticos salvo que el ADN lo indique.",
   "Para objects: variantes con objetos concretos del ADN (producto, props, materiales, iluminación still life). Prohibido personajes con copyright o marcas registradas.",
   "Para textures: cada variant debe pedir macro full-frame surface photograph distinta (material diferente).",
-  "Para places: cada variant debe pedir empty location/architecture/landscape distinta, nunca personas.",
+  "Para places: cada variant debe pedir location-first establishing shot distinto; el lugar es el sujeto. Multitudes, objetos y textos ambientales permitidos; nunca producto principal, packaging ni retrato protagonista.",
   "confidence: high si hay evidencia clara en imágenes; medium si inferido; low si casi sin evidencia.",
 ];
 
