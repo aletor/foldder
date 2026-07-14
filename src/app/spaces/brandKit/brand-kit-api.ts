@@ -205,14 +205,17 @@ export async function streamBrandKitGallery(
   brandKit: BrandKitDocument,
   stylePromptVersion: number | undefined,
   onEvent: (event: import("@/lib/brandkit/run-gallery-generate").BrandKitGalleryStreamEvent) => void,
-  options?: { category?: import("@/lib/brandkit/brand-kit-gallery-plan").GalleryGenerateCategory },
+  options?: {
+    category?: import("@/lib/brandkit/brand-kit-gallery-plan").GalleryGenerateCategory;
+    variantIndex?: number;
+  },
 ): Promise<
   | { ok: true; gallery: import("@/lib/brandkit/brand-kit-types").GalleryValue; addedCount: number }
   | { ok: false; message: string }
 > {
   const res = await fetchPostWithWalletPreflight(
     "/api/spaces/brandKit/gallery/generate",
-    { brandKit, stylePromptVersion, category: options?.category },
+    { brandKit, stylePromptVersion, category: options?.category, variantIndex: options?.variantIndex },
     { headers: { Accept: "application/x-ndjson" } },
   );
   await notifyWalletFromApiResponse(res);

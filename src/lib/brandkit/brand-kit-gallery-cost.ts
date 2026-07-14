@@ -44,12 +44,21 @@ export function estimateBrandKitGalleryReserveUsd(
   return Math.round(reserveMicros) / 1_000_000;
 }
 
-export function estimateBrandKitGalleryWalletCost(category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory) {
-  const imageCount = category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT;
-  const estimatedUsd = estimateGalleryGenerateCostUsd(imageCount, category);
-  const reserveUsd = estimateBrandKitGalleryReserveUsd(imageCount, category);
+export function estimateBrandKitGalleryWalletCost(
+  category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory,
+  imageCount?: number,
+) {
+  const count =
+    imageCount ??
+    (category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT);
+  const estimatedUsd = estimateGalleryGenerateCostUsd(count, category);
+  const reserveUsd = estimateBrandKitGalleryReserveUsd(count, category);
   return {
-    label: category ? "BrandKit · generar categoría" : "BrandKit · generar galería",
+    label: category
+      ? count === 1
+        ? "BrandKit · regenerar imagen"
+        : "BrandKit · generar categoría"
+      : "BrandKit · generar galería",
     route: GALLERY_GENERATE_ROUTE,
     category: "image" as const,
     estimatedCostMicros: Math.ceil(estimatedUsd * 1_000_000),
@@ -58,7 +67,7 @@ export function estimateBrandKitGalleryWalletCost(category?: import("./brand-kit
     perImageUsd: category
       ? estimateGalleryImageUnitUsd(category)
       : BRAND_KIT_GALLERY_PER_IMAGE_USD,
-    imageCount,
+    imageCount: count,
   };
 }
 

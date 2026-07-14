@@ -4,7 +4,7 @@ import React, { useCallback, useMemo } from "react";
 import type { EssenceValue, BrandKitDocument, SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
 import { BRAND_KIT_SLOT_IDS } from "@/lib/brandkit/brand-kit-types";
 import type { BrandKitGalleryGenerateProgress } from "../brand-kit-api";
-import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import type { GalleryGenerateCategory, GalleryGenerateScope } from "@/lib/brandkit/brand-kit-gallery-plan";
 import { getSlotAttention } from "@/lib/brandkit/brand-kit-board-status";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import { BrandKitImageLightboxProvider } from "./BrandKitImageLightbox";
@@ -47,9 +47,11 @@ type BrandKitBoardV2Props = {
   onAction: (slotId: SlotId, action: SlotAction) => void;
   onLogoUpload?: (file: File) => void | Promise<void>;
   isAnalyzing?: boolean;
-  generatingGalleryCategory?: GalleryGenerateCategory | null;
+  generatingGallery?: GalleryGenerateScope | null;
   galleryProgress?: BrandKitGalleryGenerateProgress | null;
   onGenerateGalleryCategory?: (category: GalleryGenerateCategory) => void;
+  onGenerateGallerySlot?: (category: GalleryGenerateCategory, variantIndex: number) => void;
+  onGenerateAllGallery?: () => void;
   onAnalyzeGalleryBriefs?: () => void;
   isAnalyzingGalleryBriefs?: boolean;
   focusGeneratedTab?: number;
@@ -70,9 +72,11 @@ export function BrandKitBoardV2({
   onAction,
   onLogoUpload,
   isAnalyzing = false,
-  generatingGalleryCategory = null,
+  generatingGallery = null,
   galleryProgress = null,
   onGenerateGalleryCategory,
+  onGenerateGallerySlot,
+  onGenerateAllGallery,
   onAnalyzeGalleryBriefs,
   isAnalyzingGalleryBriefs = false,
   focusGeneratedTab,
@@ -318,9 +322,11 @@ export function BrandKitBoardV2({
                     doc={doc}
                     onAction={onAction}
                     onGenerateGalleryCategory={onGenerateGalleryCategory}
+                    onGenerateGallerySlot={onGenerateGallerySlot}
+                    onGenerateAllGallery={onGenerateAllGallery}
                     onAnalyzeGalleryBriefs={onAnalyzeGalleryBriefs}
                     isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
-                    generatingGalleryCategory={generatingGalleryCategory}
+                    generatingGallery={generatingGallery}
                     galleryProgress={galleryProgress}
                     focusGeneratedTab={focusGeneratedTab}
                     gallerySuccessMessage={gallerySuccessMessage}

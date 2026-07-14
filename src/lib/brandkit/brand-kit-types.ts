@@ -191,6 +191,7 @@ export interface GalleryValue {
     promptVersion: number;
     category?: "people_mood" | "places" | "objects" | "textures" | "general";
     categoryLabel?: string;
+    variantIndex?: number;
   }[];
   stylePromptVersion: number;
   styleToneExplanation?: string;

@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import { parseGalleryCategoryBriefsFromBatch } from "./brand-kit-gallery-brief-batch";
 
 describe("parseGalleryCategoryBriefsFromBatch", () => {
-  it("parses and orders all five categories", () => {
+  it("parses and orders all four categories", () => {
     const raw = {
       galleryCategoryBriefs: [
         { category: "textures", description: "Lino crudo y sombras suaves", promptHint: "raw linen texture soft shadow", confidence: "high" },
         { category: "people_mood", description: "Retratos cercanos con luz natural", promptHint: "close portraits natural light", confidence: "medium" },
-        { category: "general", description: "Escena editorial de marca", promptHint: "editorial brand scene", confidence: "low" },
         { category: "objects", description: "Detalle de producto en mesa", promptHint: "product detail on table", confidence: "high" },
         { category: "places", description: "Interior minimal con madera", promptHint: "minimal interior wood", confidence: "medium" },
       ],
@@ -20,7 +19,6 @@ describe("parseGalleryCategoryBriefsFromBatch", () => {
       "places",
       "objects",
       "textures",
-      "general",
     ]);
     expect(parsed![0].evidenceCount).toBe(6);
     expect(parsed![2].promptHint).toContain("product detail");

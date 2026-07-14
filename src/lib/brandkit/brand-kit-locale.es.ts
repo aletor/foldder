@@ -33,6 +33,9 @@ export const brandKitLocaleEs = {
   generateGallery: "Generar set de estilo (10 imgs)",
   generateGalleryCategory: "Generar",
   regenerateGalleryCategory: "Regenerar",
+  generateGalleryBlock: "Generar en bloque",
+  generateAllGalleryImages: "Generar todas las imágenes",
+  regenerateGalleryImage: "Regenerar imagen",
   analyzeGalleryBriefs: "Analizar briefs",
   analyzingGalleryBriefs: "Analizando imágenes…",
   galleryBriefStale: "La cosecha cambió — vuelve a analizar para actualizar las descripciones.",
@@ -47,7 +50,7 @@ export const brandKitLocaleEs = {
   generatingGalleryProgress: (current: number, total: number, category: string) =>
     `Generando ${current}/${total}${category ? ` · ${category}` : ""}…`,
   galleryToneLabel: "Mundo visual",
-  galleryGeneratedSuccess: "Imágenes listas — revisa y marca con ✓ las que encajan",
+  galleryGeneratedSuccess: "Imágenes listas — ya forman parte del ADN visual",
   galleryGeneratedCount: (count: number) =>
     `${count} imagen${count === 1 ? "" : "es"} listas — marca con ✓ las que encajan`,
   galleryGeneratedIntro:

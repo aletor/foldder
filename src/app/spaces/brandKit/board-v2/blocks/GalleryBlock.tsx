@@ -7,8 +7,15 @@ import {
   galleryBriefsAreFresh,
   resolveGalleryCategoryBriefing,
 } from "@/lib/brandkit/brand-kit-gallery-brief";
-import { formatBrandKitGalleryCategoryCostHint } from "@/lib/brandkit/brand-kit-gallery-cost";
-import { GALLERY_CATEGORY_ORDER, GALLERY_CATEGORY_SLOT_COUNT, groupGeneratedByCategory, type GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { formatBrandKitGalleryCategoryCostHint, formatBrandKitGalleryCostHint } from "@/lib/brandkit/brand-kit-gallery-cost";
+import {
+  GALLERY_CATEGORY_ORDER,
+  galleryGenerateScopeMatchesCategory,
+  galleryGenerateScopeMatchesSlot,
+  gallerySlotsForCategory,
+  type GalleryGenerateCategory,
+  type GalleryGenerateScope,
+} from "@/lib/brandkit/brand-kit-gallery-plan";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import type { BrandKitGalleryGenerateProgress } from "../../brand-kit-api";
 import { DnaBlock } from "../DnaBlock";
@@ -28,8 +35,10 @@ export function GalleryBlock({
   doc,
   onAction,
   onGenerateGalleryCategory,
+  onGenerateGallerySlot,
+  onGenerateAllGallery,
   onAnalyzeGalleryBriefs,
-  generatingGalleryCategory = null,
+  generatingGallery = null,
   isAnalyzingGalleryBriefs = false,
   galleryProgress = null,
   gallerySuccessMessage,
@@ -41,8 +50,10 @@ export function GalleryBlock({
   doc: BrandKitDocument;
   onAction: (slotId: SlotId, action: SlotAction) => void;
   onGenerateGalleryCategory?: (category: GalleryGenerateCategory) => void;
+  onGenerateGallerySlot?: (category: GalleryGenerateCategory, variantIndex: number) => void;
+  onGenerateAllGallery?: () => void;
   onAnalyzeGalleryBriefs?: () => void;
-  generatingGalleryCategory?: GalleryGenerateCategory | null;
+  generatingGallery?: GalleryGenerateScope | null;
   isAnalyzingGalleryBriefs?: boolean;
   galleryProgress?: BrandKitGalleryGenerateProgress | null;
   focusGeneratedTab?: number;
@@ -52,11 +63,21 @@ export function GalleryBlock({
 } & BrandKitBlockMotionProps) {
   const gallery = slot.value as GalleryValue | undefined;
   const generated = gallery?.generated ?? [];
-  const grouped = useMemo(() => groupGeneratedByCategory(generated), [generated]);
   const categoryCostHint = formatBrandKitGalleryCategoryCostHint("es");
+  const allGalleryCostHint = formatBrandKitGalleryCostHint("es");
   const briefSourceKey = useMemo(() => computeGalleryBriefSourceKey(doc), [doc]);
   const briefsFresh = galleryBriefsAreFresh(gallery, briefSourceKey);
   const showBriefStaleBanner = Boolean(gallery?.categoryBriefs?.length) && !briefsFresh;
+  const isGeneratingAnything = generatingGallery != null;
+  const isGeneratingAll = generatingGallery?.scope === "all";
+  const canGenerateAll = useMemo(
+    () =>
+      GALLERY_CATEGORY_ORDER.every((category) => {
+        const briefing = resolveGalleryCategoryBriefing(doc, category);
+        return briefsFresh || !briefing.needsAnalysis;
+      }),
+    [briefsFresh, doc],
+  );
 
   let body: React.ReactNode;
 
@@ -78,7 +99,7 @@ export function GalleryBlock({
                 compact
                 icon={RefreshCw}
                 onClick={onAnalyzeGalleryBriefs}
-                disabled={isAnalyzingGalleryBriefs}
+                disabled={isAnalyzingGalleryBriefs || isGeneratingAnything}
               >
                 {isAnalyzingGalleryBriefs
                   ? brandKitLocaleEs.analyzingGalleryBriefs
@@ -98,30 +119,50 @@ export function GalleryBlock({
           <div className="brandKit-v2-generated-matrix">
             {GALLERY_CATEGORY_ORDER.map((category) => {
               const briefing = resolveGalleryCategoryBriefing(doc, category);
-              const items = grouped[category];
-              const slots = Array.from({ length: GALLERY_CATEGORY_SLOT_COUNT }, (_, index) => items[index]);
-              const isGeneratingThis = generatingGalleryCategory === category;
-              const hasImages = items.length > 0;
+              const items = generated.filter((item) => (item.category ?? "general") === category);
+              const slots = gallerySlotsForCategory(items);
+              const isGeneratingCategory = galleryGenerateScopeMatchesCategory(generatingGallery, category);
+              const isGeneratingThis =
+                generatingGallery?.scope === "category" && generatingGallery.category === category;
               const progressForCard = galleryProgress?.category === category ? galleryProgress : null;
               const progressPct =
                 progressForCard && progressForCard.total > 0
                   ? Math.round((progressForCard.index / progressForCard.total) * 100)
                   : 0;
               const canGenerate = briefsFresh || !briefing.needsAnalysis;
-              const generateLabel = hasImages
-                ? brandKitLocaleEs.regenerateGalleryCategory
-                : brandKitLocaleEs.generateGalleryCategory;
 
               return (
                 <article key={category} className="brandKit-v2-generated-category">
                   <div className="brandKit-v2-generated-category__imgs brandKit-v2-generated-category__imgs--grid-2x2">
                     {slots.map((item, slotIndex) => {
-                      const showLoading = isGeneratingThis && !item;
+                      const isGeneratingSlot = galleryGenerateScopeMatchesSlot(
+                        generatingGallery,
+                        category,
+                        slotIndex,
+                      );
+                      const showLoading =
+                        isGeneratingSlot ||
+                        ((isGeneratingThis || (isGeneratingAll && galleryProgress?.category === category)) &&
+                          !item);
                       return (
                         <div key={`${category}-${slotIndex}`} className="brandKit-v2-generated-slot">
                           {item?.previewUrl ? (
                             <div className="brandKit-v2-gallery-generated">
                               <BrandKitClickableImage src={item.previewUrl} fit="cover" eager />
+                              {onGenerateGallerySlot ? (
+                                <BrandKitFoldderButton
+                                  variant="dock"
+                                  iconOnly
+                                  round
+                                  icon={RefreshCw}
+                                  className={`brandKit-v2-gallery-generated__regen${isGeneratingSlot ? " is-spinning" : ""}`}
+                                  onClick={() => onGenerateGallerySlot(category, slotIndex)}
+                                  disabled={isGeneratingAnything || isAnalyzingGalleryBriefs || !canGenerate}
+                                  aria-busy={isGeneratingSlot}
+                                  aria-label={brandKitLocaleEs.regenerateGalleryImage}
+                                  title={brandKitLocaleEs.regenerateGalleryImage}
+                                />
+                              ) : null}
                             </div>
                           ) : showLoading ? (
                             <div className="brandKit-v2-generated-slot__loading" aria-hidden />
@@ -151,7 +192,7 @@ export function GalleryBlock({
                             compact
                             icon={RefreshCw}
                             onClick={onAnalyzeGalleryBriefs}
-                            disabled={isAnalyzingGalleryBriefs || Boolean(generatingGalleryCategory)}
+                            disabled={isAnalyzingGalleryBriefs || isGeneratingAnything}
                           >
                             {isAnalyzingGalleryBriefs
                               ? brandKitLocaleEs.analyzingGalleryBriefs
@@ -160,19 +201,20 @@ export function GalleryBlock({
                         ) : onGenerateGalleryCategory ? (
                           <BrandKitFoldderButton
                             variant="dock"
-                            iconOnly
-                            round
+                            compact
                             icon={RefreshCw}
                             className={isGeneratingThis ? "is-spinning" : ""}
                             onClick={() => onGenerateGalleryCategory(category)}
-                            disabled={Boolean(generatingGalleryCategory) || isAnalyzingGalleryBriefs || !canGenerate}
+                            disabled={isGeneratingAnything || isAnalyzingGalleryBriefs || !canGenerate}
                             aria-busy={isGeneratingThis}
-                            aria-label={generateLabel}
-                            title={generateLabel}
-                          />
+                          >
+                            {isGeneratingThis
+                              ? brandKitLocaleEs.generatingGalleryCategory(briefing.label)
+                              : brandKitLocaleEs.generateGalleryBlock}
+                          </BrandKitFoldderButton>
                         ) : null}
                       </div>
-                      {!isGeneratingThis && canGenerate ? (
+                      {!isGeneratingCategory && canGenerate ? (
                         <p className="brandKit-v2-generated-category__cost">{categoryCostHint}</p>
                       ) : progressForCard ? (
                         <div className="brandKit-v2-generated-category__progress" role="status" aria-live="polite">
@@ -193,6 +235,29 @@ export function GalleryBlock({
               );
             })}
           </div>
+
+          {onGenerateAllGallery ? (
+            <footer className="brandKit-v2-gallery-global-action">
+              <BrandKitFoldderButton
+                variant="dock"
+                compact
+                icon={RefreshCw}
+                className={isGeneratingAll ? "is-spinning" : ""}
+                onClick={onGenerateAllGallery}
+                disabled={isGeneratingAnything || isAnalyzingGalleryBriefs || !canGenerateAll}
+                aria-busy={isGeneratingAll}
+              >
+                {isGeneratingAll ? brandKitLocaleEs.generatingGallery : brandKitLocaleEs.generateAllGalleryImages}
+              </BrandKitFoldderButton>
+              {!isGeneratingAll && canGenerateAll ? (
+                <p className="brandKit-v2-gallery-global-action__cost">{allGalleryCostHint}</p>
+              ) : isGeneratingAll && galleryProgress ? (
+                <p className="brandKit-v2-gallery-global-action__meta" role="status" aria-live="polite">
+                  {galleryProgress.index}/{galleryProgress.total}
+                </p>
+              ) : null}
+            </footer>
+          ) : null}
         </div>
       </div>
     );

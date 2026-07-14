@@ -383,7 +383,13 @@ export function estimateWalletCostForRoute(
       body && typeof body === "object" && typeof (body as { category?: string }).category === "string"
         ? (body as { category?: import("@/lib/brandkit/brand-kit-gallery-plan").GalleryGenerateCategory }).category
         : undefined;
-    const wallet = estimateBrandKitGalleryWalletCost(category);
+    const variantIndex =
+      body && typeof body === "object" && typeof (body as { variantIndex?: number }).variantIndex === "number"
+        ? (body as { variantIndex?: number }).variantIndex
+        : undefined;
+    const imageCount =
+      variantIndex != null ? 1 : category ? 4 : undefined;
+    const wallet = estimateBrandKitGalleryWalletCost(category, imageCount);
     return {
       label: wallet.label,
       route,

@@ -38,6 +38,20 @@ function parseGalleryCategory(body: unknown): GalleryGenerateCategory | undefine
   return category && allowed.has(category) ? (category as GalleryGenerateCategory) : undefined;
 }
 
+function parseGalleryVariantIndex(body: unknown): number | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const variantIndex = (body as { variantIndex?: unknown }).variantIndex;
+  if (typeof variantIndex !== "number" || !Number.isInteger(variantIndex)) return undefined;
+  if (variantIndex < 0 || variantIndex >= GALLERY_CATEGORY_SLOT_COUNT) return undefined;
+  return variantIndex;
+}
+
+function resolveGalleryImageCount(category?: GalleryGenerateCategory, variantIndex?: number): number {
+  if (variantIndex != null) return 1;
+  if (category) return GALLERY_CATEGORY_SLOT_COUNT;
+  return BRAND_KIT_GALLERY_IMAGE_COUNT;
+}
+
 function estimateGalleryGenerateReserveUsd(imageCount: number): number {
   return Math.round(estimateBrandKitGalleryGenerateCostUsd(imageCount) * 1_000_000) / 1_000_000;
 }
@@ -66,7 +80,11 @@ export async function POST(req: NextRequest) {
         : (gallery?.stylePromptVersion ?? 0);
 
     const category = parseGalleryCategory(body);
-    const imageCount = category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT;
+    const variantIndex = parseGalleryVariantIndex(body);
+    if (variantIndex != null && !category) {
+      return Response.json({ error: "category required when variantIndex is set" }, { status: 400 });
+    }
+    const imageCount = resolveGalleryImageCount(category, variantIndex);
 
     walletCharge = await reserveApiWalletCharge({
       req,
@@ -95,6 +113,7 @@ export async function POST(req: NextRequest) {
               stylePromptVersion,
               userEmail: authState.user.email,
               category,
+              variantIndex,
             })) {
               send(event);
               if (event.type === "image_done") generatedCount += 1;

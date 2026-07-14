@@ -1509,7 +1509,7 @@
 
 .brandKit-studio--v2 .brandKit-v2-generated-matrix {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1658,6 +1658,37 @@
   background: #fff;
   color: #000;
   font-weight: 600;
+}
+
+.brandKit-studio--v2 .brandKit-v2-gallery-generated__regen {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  opacity: 0.92;
+}
+
+.brandKit-studio--v2 .brandKit-v2-gallery-generated:hover .brandKit-v2-gallery-generated__regen,
+.brandKit-studio--v2 .brandKit-v2-gallery-generated:focus-within .brandKit-v2-gallery-generated__regen {
+  opacity: 1;
+}
+
+.brandKit-studio--v2 .brandKit-v2-gallery-global-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--brandKit-v2-divider);
+}
+
+.brandKit-studio--v2 .brandKit-v2-gallery-global-action__cost,
+.brandKit-studio--v2 .brandKit-v2-gallery-global-action__meta {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--brandKit-v2-muted);
 }
 
 .brandKit-studio--v2 .brandKit-v2-generated-category__head {

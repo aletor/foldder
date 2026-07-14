@@ -3,7 +3,10 @@ import { buildGalleryToneExplanation } from "./brand-kit-gallery-tone";
 import {
   GALLERY_GENERATE_PLAN,
   BRAND_KIT_GALLERY_IMAGE_COUNT,
+  GALLERY_CATEGORY_ORDER,
   GALLERY_CATEGORY_SLOT_COUNT,
+  mergeSingleGallerySlot,
+  slotForCategoryVariant,
   slotsForCategory,
   type GalleryGenerateCategory,
   type GalleryGeneratedItem,
@@ -57,9 +60,14 @@ export type BrandKitGalleryStreamEvent =
 
 export type BrandKitGalleryGenerateOptions = {
   category?: GalleryGenerateCategory;
+  variantIndex?: number;
 };
 
-function resolveGeneratePlan(category?: GalleryGenerateCategory) {
+function resolveGeneratePlan(category?: GalleryGenerateCategory, variantIndex?: number) {
+  if (category != null && variantIndex != null) {
+    const slot = slotForCategoryVariant(category, variantIndex);
+    return slot ? [slot] : [];
+  }
   if (category) return slotsForCategory(category);
   return GALLERY_GENERATE_PLAN;
 }
@@ -68,10 +76,37 @@ function mergeGeneratedForCategory(
   existing: GalleryGeneratedItem[],
   category: GalleryGenerateCategory | undefined,
   incoming: GalleryGeneratedItem[],
+  variantIndex?: number,
 ): GalleryGeneratedItem[] {
-  if (!category) return [...existing, ...incoming];
+  if (category != null && variantIndex != null) {
+    const item = incoming[0];
+    if (!item) return existing;
+    return mergeSingleGallerySlot(existing, category, variantIndex, item);
+  }
+  if (!category) {
+    const kept = existing.filter((item) => {
+      const itemCategory = item.category ?? "general";
+      return itemCategory === "general" || !GALLERY_CATEGORY_ORDER.includes(itemCategory);
+    });
+    return [
+      ...kept,
+      ...incoming.map((item) => ({
+        ...item,
+        variantIndex: item.variantIndex,
+        verdict: item.verdict ?? "up",
+      })),
+    ];
+  }
   const kept = existing.filter((item) => (item.category ?? "general") !== category);
-  return [...kept, ...incoming];
+  return [
+    ...kept,
+    ...incoming.map((item, index) => ({
+      ...item,
+      category,
+      variantIndex: item.variantIndex ?? index,
+      verdict: item.verdict ?? "up",
+    })),
+  ];
 }
 
 function mapGalleryGenerateError(error: unknown): string {
@@ -86,6 +121,7 @@ export async function* runBrandKitGalleryGenerate(input: {
   stylePromptVersion: number;
   userEmail: string;
   category?: GalleryGenerateCategory;
+  variantIndex?: number;
 }): AsyncGenerator<BrandKitGalleryStreamEvent> {
   const gallerySlot = input.brandKit.slots.gallery;
   const gallery = gallerySlot?.value as GalleryValue | undefined;
@@ -115,8 +151,12 @@ export async function* runBrandKitGalleryGenerate(input: {
   const toneExplanation = buildGalleryToneExplanation(docForPrompt, stylePrompt);
   yield { type: "tone", explanation: toneExplanation, stylePrompt };
 
-  const plan = resolveGeneratePlan(input.category);
+  const plan = resolveGeneratePlan(input.category, input.variantIndex);
   const total = plan.length;
+  if (!total) {
+    yield { type: "error", message: "No se encontró la variante de galería solicitada." };
+    return;
+  }
   const generated: GalleryGeneratedItem[] = [];
   let lastError: string | undefined;
 
@@ -174,6 +214,7 @@ export async function* runBrandKitGalleryGenerate(input: {
         promptVersion: input.stylePromptVersion,
         category: slot.category,
         categoryLabel: slot.categoryLabel,
+        variantIndex: slot.variantIndex,
         verdict: "up",
       };
       generated.push(item);
@@ -190,7 +231,12 @@ export async function* runBrandKitGalleryGenerate(input: {
   }
 
   const priorGenerated = gallery?.generated ?? [];
-  const nextGenerated = mergeGeneratedForCategory(priorGenerated, input.category, generated);
+  const nextGenerated = mergeGeneratedForCategory(
+    priorGenerated,
+    input.category,
+    generated,
+    input.variantIndex,
+  );
 
   const nextGallery: GalleryValue = {
     ...(gallery ?? { harvested: [], generated: [], stylePromptVersion: 0 }),
@@ -200,7 +246,12 @@ export async function* runBrandKitGalleryGenerate(input: {
     styleToneExplanation: toneExplanation,
   };
 
-  const expectedTotal = input.category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT;
+  const expectedTotal =
+    input.variantIndex != null
+      ? 1
+      : input.category
+        ? GALLERY_CATEGORY_SLOT_COUNT
+        : BRAND_KIT_GALLERY_IMAGE_COUNT;
 
   yield {
     type: "done",
@@ -225,10 +276,9 @@ export function galleryGenerateActualCostUsd(
   const standardUnit =
     (estimateGalleryImageUnitUsd("places") +
       estimateGalleryImageUnitUsd("objects") +
-      estimateGalleryImageUnitUsd("textures") +
-      estimateGalleryImageUnitUsd("general")) /
-    4;
-  return Math.max(premiumUnit * Math.min(count, 8) + standardUnit * Math.max(0, count - 8), 0.01);
+      estimateGalleryImageUnitUsd("textures")) /
+    3;
+  return Math.max(premiumUnit * Math.min(count, 4) + standardUnit * Math.max(0, count - 4), 0.01);
 }
 
 export { IMAGE_MODEL, BRAND_KIT_GALLERY_IMAGE_COUNT };

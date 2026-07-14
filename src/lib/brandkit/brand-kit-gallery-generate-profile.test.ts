@@ -60,9 +60,9 @@ describe("brand-kit-gallery-generate-profile", () => {
     ]);
   });
 
-  it("estimates full gallery with 8 premium and 12 standard images", () => {
-    const total = estimateGalleryGenerateCostUsd(20);
-    expect(total).toBeGreaterThan(0.7);
-    expect(total).toBeLessThan(0.8);
+  it("estimates full gallery with 4 premium and 12 standard images", () => {
+    const total = estimateGalleryGenerateCostUsd(16);
+    expect(total).toBeGreaterThan(0.45);
+    expect(total).toBeLessThan(0.55);
   });
 });

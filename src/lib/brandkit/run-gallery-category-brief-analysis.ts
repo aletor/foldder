@@ -34,7 +34,7 @@ import type {
 const BRIEF_MODEL = process.env.BRAND_KIT_LLM_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
 const ANALYZE_ROUTE = "/api/spaces/brandKit/gallery/analyze-briefs";
 
-const CATEGORY_ENUM = ["people_mood", "places", "objects", "textures", "general"] as const;
+const CATEGORY_ENUM = ["people_mood", "places", "objects", "textures"] as const;
 
 const RESPONSE_SCHEMA = {
   type: Type.OBJECT,

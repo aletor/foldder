@@ -46,7 +46,7 @@ export function estimateGalleryGenerateCostUsd(
     return Math.round(estimateGalleryImageUnitUsd(category) * imageCount * 1_000_000) / 1_000_000;
   }
   const perCategory = 4;
-  const premium = estimateGalleryImageUnitUsd("people_mood") * perCategory * 2;
+  const premium = estimateGalleryImageUnitUsd("people_mood") * perCategory;
   const standard =
     estimateGalleryImageUnitUsd("places") * perCategory +
     estimateGalleryImageUnitUsd("objects") * perCategory +

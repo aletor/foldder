@@ -13,19 +13,16 @@ describe("brandKit gallery cost", () => {
   const flash25 = estimateGeminiImageGenerationUsd("flash25", "1k");
 
   it("uses mixed flash31 + flash25 pricing for full gallery", () => {
-    const expectedTotal = Math.round((flash31 * 8 + flash25 * 12) * 1_000_000) / 1_000_000;
-    expect(BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT).toBe(20);
+    const expectedTotal = Math.round((flash31 * 4 + flash25 * 12) * 1_000_000) / 1_000_000;
+    expect(BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT).toBe(16);
     expect(estimateBrandKitGalleryGenerateCostUsd()).toBe(expectedTotal);
     expect(BRAND_KIT_GALLERY_PER_IMAGE_USD).toBe(
       Math.round((expectedTotal / BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT) * 1_000_000) / 1_000_000,
     );
   });
 
-  it("charges premium per-category for people_mood and general", () => {
+  it("charges premium per-category for people_mood", () => {
     expect(estimateBrandKitGalleryCategoryCostUsd("people_mood")).toBe(
-      Math.round(flash31 * 4 * 1_000_000) / 1_000_000,
-    );
-    expect(estimateBrandKitGalleryCategoryCostUsd("general")).toBe(
       Math.round(flash31 * 4 * 1_000_000) / 1_000_000,
     );
     expect(estimateBrandKitGalleryCategoryCostUsd("objects")).toBe(

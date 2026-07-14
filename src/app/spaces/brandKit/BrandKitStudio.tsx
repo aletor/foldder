@@ -46,8 +46,9 @@ import {
   createBrandKitToast,
   type BrandKitToast,
 } from "@/lib/brandkit/brand-kit-studio-feedback";
-import { BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
-import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT, BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT as BRAND_KIT_GALLERY_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
+import type { GalleryGenerateCategory, GalleryGenerateScope } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { mergeSingleGallerySlot } from "@/lib/brandkit/brand-kit-gallery-plan";
 import { PanelLeft, PanelLeftClose } from "lucide-react";
 import "./brand-kit.css";
 import "./brand-kit-board-theme.css";
@@ -77,7 +78,7 @@ function downloadJson(filename: string, payload: unknown) {
 
 export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, onClose }: BrandKitStudioProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [generatingGalleryCategory, setGeneratingGalleryCategory] = useState<GalleryGenerateCategory | null>(null);
+  const [generatingGallery, setGeneratingGallery] = useState<GalleryGenerateScope | null>(null);
   const [isAnalyzingGalleryBriefs, setIsAnalyzingGalleryBriefs] = useState(false);
   const [crawlError, setCrawlError] = useState<string | null>(null);
   const [gallerySuccess, setGallerySuccess] = useState<string | null>(null);
@@ -290,8 +291,8 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     [runStreamJob],
   );
 
-  const handleGenerateGalleryCategory = useCallback(async (category: GalleryGenerateCategory) => {
-    setGeneratingGalleryCategory(category);
+  const runGalleryGenerate = useCallback(async (scope: GalleryGenerateScope) => {
+    setGeneratingGallery(scope);
     setCrawlError(null);
     setGallerySuccess(null);
     setGalleryProgress(null);
@@ -300,6 +301,9 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     const version = gallery?.stylePromptVersion ?? 0;
     const priorCount = gallery?.generated?.length ?? 0;
     let workingGallery = gallery;
+    const category = scope.scope === "all" ? undefined : scope.category;
+    const variantIndex = scope.scope === "slot" ? scope.variantIndex : undefined;
+    const progressCategory = scope.scope === "all" ? null : scope.category;
 
     const result = await streamBrandKitGallery(
       snapshot,
@@ -308,8 +312,8 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
         if (event.type === "tone") {
           setGalleryProgress({
             index: 0,
-            total: BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT,
-            category,
+            total: variantIndex != null ? 1 : category ? BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT,
+            category: progressCategory,
             categoryLabel: "",
             message: brandKitLocaleEs.generatingGallery,
             toneExplanation: event.explanation,
@@ -326,7 +330,7 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
           setGalleryProgress((prev) => ({
             index: event.index,
             total: event.total,
-            category,
+            category: (event.category as GalleryGenerateCategory | undefined) ?? progressCategory ?? null,
             categoryLabel: event.categoryLabel,
             message: event.message,
             toneExplanation: prev?.toneExplanation,
@@ -334,27 +338,41 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
           }));
         }
         if (event.type === "image_done" && workingGallery) {
-          const withoutCategory = (workingGallery.generated ?? []).filter(
-            (entry) => (entry.category ?? "general") !== category,
-          );
-          const nextItems = [...withoutCategory, event.item];
-          workingGallery = { ...workingGallery, generated: nextItems };
+          const item = event.item;
+          const itemCategory = (item.category ?? category) as GalleryGenerateCategory | undefined;
+          let nextGenerated = workingGallery.generated ?? [];
+          if (itemCategory) {
+            if (scope.scope === "slot" && variantIndex != null) {
+              nextGenerated = mergeSingleGallerySlot(nextGenerated, itemCategory, variantIndex, item);
+            } else if (scope.scope === "category") {
+              const withoutCategory = nextGenerated.filter(
+                (entry) => (entry.category ?? "general") !== itemCategory,
+              );
+              nextGenerated = [...withoutCategory, item];
+            } else {
+              const slotIndex = item.variantIndex ?? 0;
+              nextGenerated = mergeSingleGallerySlot(nextGenerated, itemCategory, slotIndex, item);
+            }
+          }
+          workingGallery = { ...workingGallery, generated: nextGenerated };
           setGalleryProgress((prev) =>
             prev
               ? {
                   ...prev,
                   index: event.index,
-                  completedItems: nextItems.filter((entry) => (entry.category ?? "general") === category),
+                  completedItems: itemCategory
+                    ? nextGenerated.filter((entry) => (entry.category ?? "general") === itemCategory)
+                    : nextGenerated,
                 }
               : null,
           );
           persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: workingGallery }));
         }
       },
-      { category },
+      { category, variantIndex },
     );
 
-    setGeneratingGalleryCategory(null);
+    setGeneratingGallery(null);
     setGalleryProgress(null);
     if (!result.ok) {
       setCrawlError(result.message);
@@ -368,6 +386,22 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     );
     window.setTimeout(() => setGallerySuccess(null), 8000);
   }, [persistBrandKit]);
+
+  const handleGenerateGalleryCategory = useCallback(
+    (category: GalleryGenerateCategory) => void runGalleryGenerate({ scope: "category", category }),
+    [runGalleryGenerate],
+  );
+
+  const handleGenerateGallerySlot = useCallback(
+    (category: GalleryGenerateCategory, variantIndex: number) =>
+      void runGalleryGenerate({ scope: "slot", category, variantIndex }),
+    [runGalleryGenerate],
+  );
+
+  const handleGenerateAllGallery = useCallback(
+    () => void runGalleryGenerate({ scope: "all" }),
+    [runGalleryGenerate],
+  );
 
   const handleAnalyzeGalleryBriefs = useCallback(async () => {
     setIsAnalyzingGalleryBriefs(true);
@@ -492,11 +526,13 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
               onAction={handleAction}
               onLogoUpload={handleLogoUpload}
               isAnalyzing={isAnalyzing}
-              generatingGalleryCategory={generatingGalleryCategory}
+              generatingGallery={generatingGallery}
               focusGeneratedTab={focusGeneratedTab}
               gallerySuccessMessage={gallerySuccess}
               galleryProgress={galleryProgress}
               onGenerateGalleryCategory={(category) => void handleGenerateGalleryCategory(category)}
+              onGenerateGallerySlot={handleGenerateGallerySlot}
+              onGenerateAllGallery={handleGenerateAllGallery}
               onAnalyzeGalleryBriefs={() => void handleAnalyzeGalleryBriefs()}
               isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
               onExportTokens={handleExportTokens}

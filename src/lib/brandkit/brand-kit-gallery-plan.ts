@@ -1,7 +1,7 @@
 import type { GalleryValue } from "./brand-kit-types";
 
 export const GALLERY_CATEGORY_SLOT_COUNT = 4;
-export const BRAND_KIT_GALLERY_IMAGE_COUNT = 5 * GALLERY_CATEGORY_SLOT_COUNT;
+export const BRAND_KIT_GALLERY_IMAGE_COUNT = 4 * GALLERY_CATEGORY_SLOT_COUNT;
 
 export type GalleryGenerateCategory =
   | "people_mood"
@@ -56,7 +56,6 @@ export const GALLERY_CATEGORY_ORDER: GalleryGenerateCategory[] = [
   "places",
   "objects",
   "textures",
-  "general",
 ];
 
 export function categoryMeta(category: GalleryGenerateCategory): { label: string; hint: string } {
@@ -107,8 +106,81 @@ export function groupGeneratedByCategory(
   return grouped;
 }
 
+export function mergeSingleGallerySlot(
+  existing: GalleryGeneratedItem[],
+  category: GalleryGenerateCategory,
+  variantIndex: number,
+  incoming: GalleryGeneratedItem,
+): GalleryGeneratedItem[] {
+  const categoryItems = existing.filter((item) => (item.category ?? "general") === category);
+  const other = existing.filter((item) => (item.category ?? "general") !== category);
+  const slots = gallerySlotsForCategory(categoryItems);
+  slots[variantIndex] = { ...incoming, category, variantIndex, verdict: incoming.verdict ?? "up" };
+  return [...other, ...slots.filter((slot): slot is GalleryGeneratedItem => Boolean(slot))];
+}
+
 export function slotsForCategory(category: GalleryGenerateCategory): GalleryGenerateSlot[] {
   return GALLERY_GENERATE_PLAN.filter((entry) => entry.category === category);
+}
+
+export function slotForCategoryVariant(
+  category: GalleryGenerateCategory,
+  variantIndex: number,
+): GalleryGenerateSlot | undefined {
+  return slotsForCategory(category).find((entry) => entry.variantIndex === variantIndex);
+}
+
+export function gallerySlotsForCategory(
+  items: GalleryGeneratedItem[],
+): (GalleryGeneratedItem | undefined)[] {
+  const slots: (GalleryGeneratedItem | undefined)[] = Array(GALLERY_CATEGORY_SLOT_COUNT).fill(undefined);
+  const legacy: GalleryGeneratedItem[] = [];
+  for (const item of items) {
+    if (
+      typeof item.variantIndex === "number" &&
+      item.variantIndex >= 0 &&
+      item.variantIndex < GALLERY_CATEGORY_SLOT_COUNT
+    ) {
+      slots[item.variantIndex] = item;
+    } else {
+      legacy.push(item);
+    }
+  }
+  let cursor = 0;
+  for (let index = 0; index < GALLERY_CATEGORY_SLOT_COUNT; index += 1) {
+    if (!slots[index] && legacy[cursor]) {
+      slots[index] = legacy[cursor];
+      cursor += 1;
+    }
+  }
+  return slots;
+}
+
+export type GalleryGenerateScope =
+  | { scope: "all" }
+  | { scope: "category"; category: GalleryGenerateCategory }
+  | { scope: "slot"; category: GalleryGenerateCategory; variantIndex: number };
+
+export function galleryGenerateScopeMatchesCategory(
+  target: GalleryGenerateScope | null,
+  category: GalleryGenerateCategory,
+): boolean {
+  if (!target) return false;
+  if (target.scope === "all") return true;
+  return target.category === category;
+}
+
+export function galleryGenerateScopeMatchesSlot(
+  target: GalleryGenerateScope | null,
+  category: GalleryGenerateCategory,
+  variantIndex: number,
+): boolean {
+  if (!target) return false;
+  if (target.scope === "slot") {
+    return target.category === category && target.variantIndex === variantIndex;
+  }
+  if (target.scope === "category") return target.category === category;
+  return target.scope === "all";
 }
 
 export function buildCategoryBriefing(

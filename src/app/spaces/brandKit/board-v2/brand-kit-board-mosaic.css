@@ -1065,7 +1065,7 @@
 
 .brandKit-mosaic-cell--gallery .brandKit-v2-generated-matrix {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--mosaic-gap);
   padding: 0;
   overflow: hidden;
