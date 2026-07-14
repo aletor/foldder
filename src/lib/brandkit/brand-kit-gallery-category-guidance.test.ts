@@ -50,13 +50,24 @@ describe("buildGalleryImagePrompt", () => {
   it("uses brief hint as primary people_mood scene without theme-park defaults", () => {
     const briefHint =
       "Athlete mid-stride on urban track at golden hour, sweat and determination, tight editorial crop, dramatic side light.";
-    const prompt = buildGalleryImagePrompt("people_mood", stylePrompt, briefHint, doc);
+    const prompt = buildGalleryImagePrompt("people_mood", stylePrompt, briefHint, doc, 0);
     expect(prompt).toContain("Scene to photograph:");
     expect(prompt).toContain("Athlete mid-stride");
     expect(prompt).toContain("Cinematográfico");
+    expect(prompt).toContain("late 30s");
+    expect(prompt).toContain("Different individual in each image");
     for (const term of FORBIDDEN_HARDCODED) {
       expect(prompt.toLowerCase()).not.toContain(term);
     }
+  });
+
+  it("varies people_mood casting by variant index", () => {
+    const hint = "Editorial portrait with warm side light.";
+    const v0 = buildGalleryImagePrompt("people_mood", stylePrompt, hint, doc, 0);
+    const v1 = buildGalleryImagePrompt("people_mood", stylePrompt, hint, doc, 1);
+    expect(v0).toContain("late 30s");
+    expect(v1).toContain("mid-20s");
+    expect(v0).not.toEqual(v1);
   });
 
   it("uses location-first places scene with sparse default and omits product coherence hint", () => {

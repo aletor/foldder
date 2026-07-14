@@ -10,7 +10,13 @@ import {
 } from "./brand-kit-gallery-plan";
 import { promptHintForGalleryCategory } from "./brand-kit-gallery-brief";
 import { buildGalleryImagePrompt } from "./brand-kit-gallery-category-guidance";
-import { BRAND_KIT_GALLERY_PER_IMAGE_USD } from "./brand-kit-gallery-cost";
+import {
+  estimateGalleryImageUnitUsd,
+  estimateGalleryGenerateCostUsd,
+  galleryCategoryGenerateProfile,
+  galleryStyleReferenceUrls,
+  GALLERY_REFERENCE_STYLE_LEAD,
+} from "./brand-kit-gallery-generate-profile";
 import type { GalleryValue, BrandKitDocument } from "./brand-kit-types";
 import { geminiImageGenerate } from "@/lib/gemini-image-generate";
 
@@ -101,9 +107,11 @@ export async function* runBrandKitGalleryGenerate(input: {
   const total = plan.length;
   const generated: GalleryGeneratedItem[] = [];
   let lastError: string | undefined;
+  const styleRefs = galleryStyleReferenceUrls(gallery, 2);
 
   for (let index = 0; index < plan.length; index += 1) {
     const slot = plan[index];
+    const profile = galleryCategoryGenerateProfile(slot.category);
     yield {
       type: "progress",
       index: index + 1,
@@ -121,13 +129,23 @@ export async function* runBrandKitGalleryGenerate(input: {
         docForPrompt,
         slot.variantIndex,
       );
-      const prompt = buildGalleryImagePrompt(slot.category, stylePrompt, promptSuffix, docForPrompt);
+      let prompt = buildGalleryImagePrompt(
+        slot.category,
+        stylePrompt,
+        promptSuffix,
+        docForPrompt,
+        slot.variantIndex,
+      );
+      if (styleRefs.length) {
+        prompt = `${GALLERY_REFERENCE_STYLE_LEAD} ${prompt}`;
+      }
       const result = await geminiImageGenerate(
         {
           prompt,
-          model: "flash25",
-          aspect_ratio: "1:1",
-          resolution: "1k",
+          images: styleRefs.length ? styleRefs : undefined,
+          model: profile.model,
+          aspect_ratio: profile.aspect_ratio,
+          resolution: profile.resolution,
         },
         undefined,
         {
@@ -178,8 +196,24 @@ export async function* runBrandKitGalleryGenerate(input: {
   };
 }
 
-export function galleryGenerateActualCostUsd(count: number): number {
-  return Math.max(BRAND_KIT_GALLERY_PER_IMAGE_USD * count, 0.01);
+export function galleryGenerateActualCostUsd(
+  count: number,
+  category?: GalleryGenerateCategory,
+): number {
+  if (category) {
+    return Math.max(estimateGalleryImageUnitUsd(category) * count, 0.01);
+  }
+  if (count >= BRAND_KIT_GALLERY_IMAGE_COUNT) {
+    return Math.max(estimateGalleryGenerateCostUsd(BRAND_KIT_GALLERY_IMAGE_COUNT), 0.01);
+  }
+  const premiumUnit = estimateGalleryImageUnitUsd("people_mood");
+  const standardUnit =
+    (estimateGalleryImageUnitUsd("places") +
+      estimateGalleryImageUnitUsd("objects") +
+      estimateGalleryImageUnitUsd("textures") +
+      estimateGalleryImageUnitUsd("general")) /
+    4;
+  return Math.max(premiumUnit * Math.min(count, 8) + standardUnit * Math.max(0, count - 8), 0.01);
 }
 
 export { IMAGE_MODEL, BRAND_KIT_GALLERY_IMAGE_COUNT };

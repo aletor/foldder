@@ -7,11 +7,15 @@ import {
   resolveBrandImageStyle,
 } from "./brand-kit-visual-style";
 import { brandPlacesWorldHint, PLACES_BRIEF_LLM_RULE } from "./brand-kit-gallery-places-guidance";
+import {
+  PEOPLE_BRIEF_LLM_RULE,
+  PEOPLE_MOOD_ANTI_REPEAT_CORE,
+  peopleMoodCastDirective,
+} from "./brand-kit-gallery-people-guidance";
 
 /** Reglas para que el LLM escriba briefs alineados con cada categoría de galería (4 variantes distintas por categoría). */
 export const GALLERY_CATEGORY_BRIEF_LLM_RULES: Record<GalleryGenerateCategory, string> = {
-  people_mood:
-    "Personas y mood: 4 variantes con emoción, luz, postura y encuadre distintos según el ADN. No repitas el mismo retrato ni la misma escena humana.",
+  people_mood: PEOPLE_BRIEF_LLM_RULE,
   places: PLACES_BRIEF_LLM_RULE,
   objects:
     "Objetos: 4 still life distintos coherentes con el producto y utilidad de la marca. Cada variant = objeto o composición diferente; respeta categoría de producto y uso real.",
@@ -86,12 +90,20 @@ function assembleGalleryImagePrompt(parts: string[]): string {
   return sanitizeGalleryImagePrompt(parts.filter(Boolean).join(" "));
 }
 
+function brandStyleCondensed(stylePrompt: string): string {
+  const trimmed = stylePrompt.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= 280) return `Brand style: ${trimmed}`;
+  return `Brand style: ${trimmed.slice(0, 280).trim()}…`;
+}
+
 /** Prompt final para el generador de imágenes; el brief (`hint`) define la escena en todas las categorías. */
 export function buildGalleryImagePrompt(
   category: GalleryGenerateCategory,
   stylePrompt: string,
   hint: string,
   doc?: BrandKitDocument,
+  variantIndex = 0,
 ): string {
   const visual = doc ? slotValue<VisualWorldValue>(doc, "visualWorld") : undefined;
   const { medium } = resolveBrandImageStyle(visual);
@@ -101,11 +113,18 @@ export function buildGalleryImagePrompt(
   const coherenceHint =
     category === "places" ? brandPlacesWorldHint(doc) : brandCoherenceHint(doc);
 
+  const peopleCast =
+    category === "people_mood" ? peopleMoodCastDirective(variantIndex) : "";
+  const peopleAntiRepeat = category === "people_mood" ? PEOPLE_MOOD_ANTI_REPEAT_CORE : "";
+
   return assembleGalleryImagePrompt([
     sceneLead,
+    brandStyleCondensed(stylePrompt),
+    peopleCast,
     coherenceHint,
     visualStyleHint(doc),
     core,
+    peopleAntiRepeat,
     brandPaletteHint(doc),
     visualMoodHint(doc),
     finish,

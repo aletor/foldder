@@ -4,10 +4,10 @@ import { GALLERY_CATEGORY_SLOT_COUNT } from "./brand-kit-gallery-plan";
 
 const VARIANT_ANGLE_SUFFIXES: Record<GalleryGenerateCategory, string[]> = {
   people_mood: [
-    "Tight editorial portrait, expressive face, cinematic side light.",
-    "Candid mid-distance moment, natural body language and atmosphere.",
-    "Environmental portrait with context in soft focus behind subject.",
-    "Interaction or gesture scene with authentic emotional tone.",
+    "Tight editorial portrait, woman late 30s, distinct features, cinematic side light.",
+    "Candid moment, man mid-20s, different ethnicity and wardrobe from other variants.",
+    "Medium-distance figure, face turned or soft focus, different silhouette.",
+    "Hands or over-shoulder detail, no identifiable repeated face.",
   ],
   places: [
     "Uninhabited interior or architectural volume with light and material focus.",

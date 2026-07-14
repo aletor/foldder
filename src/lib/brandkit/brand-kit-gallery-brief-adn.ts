@@ -9,6 +9,7 @@ import {
   resolveBrandImageStyle,
 } from "./brand-kit-visual-style";
 import { placesAdnSuggestsPopulatedVenue } from "./brand-kit-gallery-places-guidance";
+import { peopleMoodCastDirective } from "./brand-kit-gallery-people-guidance";
 
 export type GalleryBriefSourceParts = {
   brandName?: string;
@@ -171,11 +172,12 @@ export function promptHintsFromAdn(
       return Array.from({ length: GALLERY_CATEGORY_SLOT_COUNT }, (_, index) => {
         const trait = pick(traits, index, "authentic human presence");
         const moodTag = pick(moods, index, mood);
+        const cast = peopleMoodCastDirective(index);
         const frames = [
-          `${mediumWord} portrait for ${brand}, ${trait}, ${moodTag} mood, ${colors || "brand palette"}, ${voice || "editorial"} tone.`,
-          `Candid human moment for ${brand}, ${trait}, ${moodTag} atmosphere, natural light, no stock look.`,
-          `Environmental portrait for ${brand}, ${trait}, medium distance, ${moodTag} tone, ${purpose ? `context: ${purpose}` : "brand-faithful context"}.`,
-          `Human gesture or interaction for ${brand}, ${moodTag} emotional tone, ${trait}, coherent with brand offering.`,
+          `${cast} Editorial portrait for ${brand}, ${trait}, ${moodTag} mood, ${colors || "brand palette"}, ${voice || "editorial"} tone.`,
+          `${cast} Candid human moment for ${brand}, ${trait}, ${moodTag} atmosphere, natural light, different person from other variants.`,
+          `${cast} Environmental portrait for ${brand}, ${trait}, medium distance, ${moodTag} tone, face not matching other shots.`,
+          `${cast} Human gesture for ${brand}, ${moodTag} emotional tone, ${trait}, no repeated model identity.`,
         ];
         return frames[index] ?? frames[0];
       });

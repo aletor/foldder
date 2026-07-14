@@ -1,5 +1,6 @@
 import type { VisualWorldValue } from "./brand-kit-types";
 import type { GalleryGenerateCategory } from "./brand-kit-gallery-plan";
+import { PEOPLE_MOOD_ANTI_REPEAT_CORE } from "./brand-kit-gallery-people-guidance";
 import { PLACES_LOCATION_FIRST_CORE, PLACES_LOCATION_FIRST_FINISH } from "./brand-kit-gallery-places-guidance";
 
 export const BRAND_IMAGE_MEDIA = [
@@ -220,12 +221,13 @@ function photographyCores(category: GalleryGenerateCategory): CategoryCores {
     case "people_mood":
       return {
         core: [
+          PEOPLE_MOOD_ANTI_REPEAT_CORE,
           "Editorial lifestyle photograph with human presence.",
           "Focus on emotion, expression, posture, and lighting described in the brief.",
           "Photorealistic portrait or candid moment — not generic stock-corporate.",
           "No logos, no readable text.",
         ].join(" "),
-        finish: "Photorealistic, cinematic natural light.",
+        finish: "Photorealistic, cinematic natural light, believable skin and anatomy.",
       };
     case "objects":
       return {

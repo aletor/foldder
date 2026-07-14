@@ -1,7 +1,5 @@
 import {
-  BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT,
-  BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT,
-  BRAND_KIT_GALLERY_PER_IMAGE_USD,
+  estimateBrandKitGalleryWalletCost,
 } from "@/lib/brandkit/brand-kit-gallery-cost";
 import {
   estimateGeminiImageGenerationUsd,
@@ -383,17 +381,16 @@ export function estimateWalletCostForRoute(
   if (route === "/api/spaces/brandKit/gallery/generate") {
     const category =
       body && typeof body === "object" && typeof (body as { category?: string }).category === "string"
-        ? (body as { category?: string }).category
+        ? (body as { category?: import("@/lib/brandkit/brand-kit-gallery-plan").GalleryGenerateCategory }).category
         : undefined;
-    const imageCount = category ? BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT : BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT;
-    const estimated = roundedUsd(BRAND_KIT_GALLERY_PER_IMAGE_USD * imageCount);
+    const wallet = estimateBrandKitGalleryWalletCost(category);
     return {
-      label: category ? "BrandKit · generar categoría" : "BrandKit · generar galería",
+      label: wallet.label,
       route,
-      category: "image",
-      estimatedCostMicros: usdToMicros(estimated),
-      reserveMicros: reserveUsdToMicros(estimated, 1.5),
-      tone: "confirm",
+      category: wallet.category,
+      estimatedCostMicros: wallet.estimatedCostMicros,
+      reserveMicros: wallet.reserveMicros,
+      tone: wallet.tone,
     };
   }
 

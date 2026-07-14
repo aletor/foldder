@@ -30,7 +30,7 @@ describe("brand-kit-gallery-plan", () => {
   it("builds category briefing with tone", () => {
     const briefing = buildCategoryBriefing("places", "Luz cálida y espacios amplios.");
     expect(briefing.label).toBe("Entorno");
-    expect(briefing.hint).toMatch(/arquitectura|paisaje/i);
+    expect(briefing.hint).toMatch(/localización|vacío|ocupación/i);
     expect(briefing.tone).toBe("Luz cálida y espacios amplios.");
   });
 });

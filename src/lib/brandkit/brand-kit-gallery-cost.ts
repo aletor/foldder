@@ -3,44 +3,62 @@ import {
   BRAND_KIT_GALLERY_IMAGE_COUNT,
   GALLERY_CATEGORY_SLOT_COUNT,
 } from "./brand-kit-gallery-plan";
+import {
+  estimateGalleryGenerateCostUsd,
+  estimateGalleryImageUnitUsd,
+} from "./brand-kit-gallery-generate-profile";
 
 const GALLERY_GENERATE_ROUTE = "/api/spaces/brandKit/gallery/generate";
-const IMAGE_MODEL_KEY = "flash25";
-const IMAGE_RESOLUTION = "1k";
 const RESERVE_MULTIPLIER = 1.5;
 
 export { BRAND_KIT_GALLERY_IMAGE_COUNT as BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT };
 export { GALLERY_CATEGORY_SLOT_COUNT as BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT };
-export const BRAND_KIT_GALLERY_PER_IMAGE_USD = estimateGeminiImageGenerationUsd(IMAGE_MODEL_KEY, IMAGE_RESOLUTION);
 
-export function estimateBrandKitGalleryGenerateCostUsd(imageCount = BRAND_KIT_GALLERY_IMAGE_COUNT): number {
-  return Math.round(BRAND_KIT_GALLERY_PER_IMAGE_USD * imageCount * 1_000_000) / 1_000_000;
+/** Coste medio ponderado (8× Flash 3.1 + 12× Flash 2.5). */
+export const BRAND_KIT_GALLERY_PER_IMAGE_USD =
+  Math.round((estimateGalleryGenerateCostUsd(BRAND_KIT_GALLERY_IMAGE_COUNT) / BRAND_KIT_GALLERY_IMAGE_COUNT) * 1_000_000) /
+  1_000_000;
+
+export function estimateBrandKitGalleryGenerateCostUsd(
+  imageCount = BRAND_KIT_GALLERY_IMAGE_COUNT,
+  category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory,
+): number {
+  return estimateGalleryGenerateCostUsd(imageCount, category);
 }
 
-export function estimateBrandKitGalleryCategoryCostUsd(): number {
-  return estimateBrandKitGalleryGenerateCostUsd(GALLERY_CATEGORY_SLOT_COUNT);
+export function estimateBrandKitGalleryCategoryCostUsd(
+  category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory,
+): number {
+  return estimateGalleryGenerateCostUsd(GALLERY_CATEGORY_SLOT_COUNT, category);
 }
 
-export function estimateBrandKitGalleryReserveUsd(imageCount = BRAND_KIT_GALLERY_IMAGE_COUNT): number {
+export function estimateBrandKitGalleryReserveUsd(
+  imageCount = BRAND_KIT_GALLERY_IMAGE_COUNT,
+  category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory,
+): number {
+  const estimated = estimateGalleryGenerateCostUsd(imageCount, category);
   const reserveMicros = Math.max(
     1_000,
-    Math.ceil(estimateBrandKitGalleryGenerateCostUsd(imageCount) * 1_000_000 * RESERVE_MULTIPLIER),
+    Math.ceil(estimated * 1_000_000 * RESERVE_MULTIPLIER),
   );
   return Math.round(reserveMicros) / 1_000_000;
 }
 
-export function estimateBrandKitGalleryWalletCost() {
-  const estimatedUsd = estimateBrandKitGalleryGenerateCostUsd();
-  const reserveUsd = estimateBrandKitGalleryReserveUsd();
+export function estimateBrandKitGalleryWalletCost(category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory) {
+  const imageCount = category ? GALLERY_CATEGORY_SLOT_COUNT : BRAND_KIT_GALLERY_IMAGE_COUNT;
+  const estimatedUsd = estimateGalleryGenerateCostUsd(imageCount, category);
+  const reserveUsd = estimateBrandKitGalleryReserveUsd(imageCount, category);
   return {
-    label: "BrandKit · generar galería",
+    label: category ? "BrandKit · generar categoría" : "BrandKit · generar galería",
     route: GALLERY_GENERATE_ROUTE,
     category: "image" as const,
     estimatedCostMicros: Math.ceil(estimatedUsd * 1_000_000),
     reserveMicros: Math.ceil(reserveUsd * 1_000_000),
     tone: "confirm" as const,
-    perImageUsd: BRAND_KIT_GALLERY_PER_IMAGE_USD,
-    imageCount: BRAND_KIT_GALLERY_IMAGE_COUNT,
+    perImageUsd: category
+      ? estimateGalleryImageUnitUsd(category)
+      : BRAND_KIT_GALLERY_PER_IMAGE_USD,
+    imageCount,
   };
 }
 
@@ -53,10 +71,13 @@ function formatUsd(amount: number, language: "es" | "en"): string {
   }).format(amount);
 }
 
-export function formatBrandKitGalleryCategoryCostHint(language: "es" | "en" = "es"): string {
-  const total = estimateBrandKitGalleryCategoryCostUsd();
-  const per = BRAND_KIT_GALLERY_PER_IMAGE_USD;
-  const reserve = estimateBrandKitGalleryReserveUsd(GALLERY_CATEGORY_SLOT_COUNT);
+export function formatBrandKitGalleryCategoryCostHint(
+  language: "es" | "en" = "es",
+  category?: import("./brand-kit-gallery-plan").GalleryGenerateCategory,
+): string {
+  const total = estimateBrandKitGalleryCategoryCostUsd(category);
+  const per = category ? estimateGalleryImageUnitUsd(category) : BRAND_KIT_GALLERY_PER_IMAGE_USD;
+  const reserve = estimateBrandKitGalleryReserveUsd(GALLERY_CATEGORY_SLOT_COUNT, category);
   if (language === "es") {
     return `${GALLERY_CATEGORY_SLOT_COUNT} imágenes · ~${formatUsd(per, "es")}/img · ~${formatUsd(total, "es")} (reserva máx. ${formatUsd(reserve, "es")})`;
   }
@@ -76,3 +97,5 @@ export function formatBrandKitGalleryCostHint(language: "es" | "en" = "es"): str
 export function formatBrandKitGalleryPerImageCost(language: "es" | "en" = "es"): string {
   return formatUsd(BRAND_KIT_GALLERY_PER_IMAGE_USD, language);
 }
+
+export { estimateGeminiImageGenerationUsd };
