@@ -1,4 +1,4 @@
-/* BrandKit v2 — split layout (30% sidebar · 70% libro) */
+/* BrandKit v2 — split layout (20% sidebar · 80% libro) */
 
 .brandKit-studio--split {
   --surface: #f6f5f2;
@@ -26,7 +26,7 @@
 
 .brandKit-studio-split__sidebar {
   display: flex;
-  width: 30%;
+  width: 20%;
   min-width: 280px;
   max-width: 420px;
   flex-shrink: 0;

@@ -114,7 +114,13 @@ export async function* runBrandKitGalleryGenerate(input: {
     };
 
     try {
-      const promptSuffix = promptHintForGalleryCategory(gallery, slot.category, slot.promptSuffix);
+      const promptSuffix = promptHintForGalleryCategory(
+        gallery,
+        slot.category,
+        slot.promptSuffix,
+        docForPrompt,
+        slot.variantIndex,
+      );
       const prompt = buildGalleryImagePrompt(slot.category, stylePrompt, promptSuffix, docForPrompt);
       const result = await geminiImageGenerate(
         {

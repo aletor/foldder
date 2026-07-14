@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { corpusContainsQuote } from "../crawl/copy-corpus";
 import type { EssenceValue, VisualWorldValue, VoiceValue } from "../brand-kit-types";
+import { BRAND_IMAGE_MEDIA, normalizeBrandImageMedium } from "../brand-kit-visual-style";
 import {
   type EvidenceCandidate,
   resolveEvidenceIds,
@@ -52,6 +53,8 @@ export const VisualWorldBatchSchema = z.object({
   moodTags: z.array(z.string().min(1)).max(8).optional(),
   visualTraits: z.array(z.string().min(1)).min(1).max(10),
   limits: z.array(z.string().min(1)).min(1).max(12),
+  imageMedium: z.enum(BRAND_IMAGE_MEDIA).optional(),
+  imageStyleTags: z.array(z.string().min(1)).max(8).optional(),
   evidenceIds: z.array(z.string()).optional(),
   evidence: z.array(EvidenceSchema).max(5).optional(),
   galleryRefs: z.array(z.string().min(1)).max(24).optional(),
@@ -158,6 +161,8 @@ function groundVisualWorld(raw: z.infer<typeof VisualWorldBatchSchema>): VisualW
     moodTags: raw.moodTags?.map((item) => item.trim()) ?? [],
     visualTraits: raw.visualTraits.map((item) => item.trim()),
     limits: raw.limits.map((item) => item.trim()),
+    imageMedium: raw.imageMedium ? normalizeBrandImageMedium(raw.imageMedium) : undefined,
+    imageStyleTags: raw.imageStyleTags?.map((item) => item.trim()).filter(Boolean) ?? [],
     evidence: (raw.evidence ?? []).map((item) => ({ quote: item.quote.trim(), sourceUrl: item.sourceUrl })),
     galleryRefs: raw.galleryRefs ?? [],
   };

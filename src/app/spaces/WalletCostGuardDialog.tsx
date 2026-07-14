@@ -21,6 +21,7 @@ import {
   type WalletCostDecisionEventDetail,
   type WalletCostDecisionRequest,
 } from "@/lib/wallet-client-events";
+import { BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
 
 type PendingDecision = {
   request: WalletCostDecisionRequest;
@@ -147,8 +148,8 @@ function operationDescription(request: WalletCostDecisionRequest, language: Dial
         : "BrandKit triages uploaded files (PDF, images, docs) and may synthesize voice/values with Gemini.";
     case "/api/spaces/brandKit/gallery/generate":
       return es
-        ? "Se generarán 10 imágenes de estilo con IA (2 personas & mood, 2 lugares, 2 objetos, 2 texturas, 2 general) a ~0,02 $/imagen (~0,20 $ total). La reserva máxima aparece abajo; no se cobra hasta que confirmes."
-        : "BrandKit will generate 10 style images with AI (2 people & mood, 2 places, 2 objects, 2 textures, 2 general) at ~$0.02/image (~$0.20 total). Max reserve is shown below; nothing is charged until you confirm.";
+        ? `Se generarán ${BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT} imágenes de estilo con IA (4 por categoría: personas & mood, entornos, objetos, texturas y general) a ~0,02 $/imagen (~${(BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT * 0.02).toFixed(2)} $ total). La reserva máxima aparece abajo; no se cobra hasta que confirmes.`
+        : `BrandKit will generate ${BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT} style images with AI (4 per category: people & mood, places, objects, textures, and general) at ~$0.02/image (~$${(BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT * 0.02).toFixed(2)} total). Max reserve is shown below; nothing is charged until you confirm.`;
     case "/api/spaces/describe":
     case "/api/gemini/analyze-areas":
     case "/api/gemini/analyze-correction":

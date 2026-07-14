@@ -153,14 +153,24 @@ export interface VisualWorldValue {
   moodTags: string[];
   visualTraits: string[];
   limits: string[];
+  /** Medio artístico dominante detectado en referencias (foto, ilustración, collage…). */
+  imageMedium?: string;
+  /** Chips de tratamiento visual (p. ej. flat vector, cut-paper, photorealistic macro). */
+  imageStyleTags?: string[];
   evidence: BrandKitEvidence[];
   galleryRefs: string[];
+}
+
+export interface GalleryCategoryBriefVariant {
+  description: string;
+  promptHint: string;
 }
 
 export interface GalleryCategoryBrief {
   category: "people_mood" | "places" | "objects" | "textures" | "general";
   description: string;
   promptHint: string;
+  variants: GalleryCategoryBriefVariant[];
   confidence: "high" | "medium" | "low";
   evidenceCount: number;
 }

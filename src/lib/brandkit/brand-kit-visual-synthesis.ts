@@ -1,5 +1,6 @@
 import type { GalleryValue, VisualWorldValue } from "./brand-kit-types";
 import { galleryRefIds, galleryUsefulCount } from "./brand-kit-gallery-filter";
+import { inferImageMediumFromText } from "./brand-kit-visual-style";
 
 function harvestContexts(gallery: GalleryValue): string {
   return gallery.harvested
@@ -45,12 +46,25 @@ export function buildVisualWorldFromGallery(
   ];
 
   const refs = galleryRefIds(gallery);
+  const imageMedium = inferImageMediumFromText(context);
+  const imageStyleTags: string[] = [];
+  if (imageMedium === "illustration" || /vector|flat|hand-?drawn/i.test(context)) {
+    imageStyleTags.push("ilustración editorial");
+  }
+  if (imageMedium === "collage" || /collage|cut paper/i.test(context)) {
+    imageStyleTags.push("collage editorial");
+  }
+  if (imageMedium === "photography" || /cine|cinema|film|foto/i.test(context)) {
+    imageStyleTags.push("luz cinematográfica");
+  }
 
   return {
     summary: `${brand} construye un mundo visual ${moodTags.slice(0, 3).join(", ")}: referencias con rostros, luz con intención, contraste y escenas que parecen fotogramas. Analizado a partir de ${useful} imágenes cosechadas.`,
     moodTags: moodTags.slice(0, 5),
     visualTraits: visualTraits.slice(0, 5),
     limits,
+    imageMedium,
+    imageStyleTags: imageStyleTags.slice(0, 4),
     evidence: [],
     galleryRefs: refs,
   };

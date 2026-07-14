@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * La cara de BrandKit (§5): 30% panel de entrada · 70% libro de estilo, full-bleed.
+ * La cara de BrandKit (§5): 20% panel de entrada · 80% libro de estilo, full-bleed.
  *
  * Estética: sin marcos, sin ventanas, sin badges gritones. Bloques de color al
  * sangrado, tipografía grande, copy en español y en minúscula de frase. Cada
@@ -702,7 +702,7 @@ function VisualUniverseSection({
   );
 }
 
-// ── Panel izquierdo (30%) ─────────────────────────────────────────────────────
+// ── Panel izquierdo (20%) ─────────────────────────────────────────────────────
 
 function LeftPanel({
   projectId,
@@ -736,7 +736,7 @@ function LeftPanel({
   };
 
   return (
-    <aside className="flex h-full w-[30%] min-w-[280px] max-w-[420px] flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--surface)]">
+    <aside className="flex h-full w-[20%] min-w-[280px] max-w-[420px] flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--surface)]">
       <div className={cx("min-h-0 flex-1 overflow-y-auto overscroll-contain", G.panel, "flex flex-col gap-8 pb-6")}>
         <div>
           <p className={G.label}>brandKit</p>

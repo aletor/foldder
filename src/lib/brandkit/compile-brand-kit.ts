@@ -9,6 +9,7 @@ import type {
   VisualWorldValue,
   VoiceValue,
 } from "./brand-kit-types";
+import { brandImageStyleLead, brandImageStyleRenderClause } from "./brand-kit-visual-style";
 
 async function sha256Hex(input: string): Promise<string> {
   const data = new TextEncoder().encode(input);
@@ -45,7 +46,7 @@ export function buildBrandKitStylePrompt(doc: BrandKitDocument, version = 0): st
     gallery?.generated?.filter((g) => g.verdict === "down").map((g) => g.previewUrl ?? g.assetId).slice(0, 3) ?? [];
 
   return [
-    `Brand editorial photo for ${brand}.`,
+    brandImageStyleLead(brand, visualWorld),
     `Palette: ${colors}.`,
     `Typography mood: ${fonts}.`,
     `Voice: ${tone}.`,
@@ -55,7 +56,7 @@ export function buildBrandKitStylePrompt(doc: BrandKitDocument, version = 0): st
     visualSummary ? `Visual world: ${visualSummary}.` : "",
     upExamples.length ? `Prefer style like: ${upExamples.join(", ")}.` : "",
     downExamples.length ? `Avoid style like: ${downExamples.join(", ")}.` : "",
-    `Prompt version ${version}. Photorealistic brand imagery, no text overlays, no logos.`,
+    `Prompt version ${version}. ${brandImageStyleRenderClause(visualWorld)}`,
   ]
     .filter(Boolean)
     .join(" ");

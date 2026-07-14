@@ -7,8 +7,14 @@ export type MosaicDetailState = {
   content: React.ReactNode;
 } | null;
 
+export type MosaicSurfaceOverride = {
+  background: string;
+  color: string;
+};
+
 type BrandKitMosaicCellContextValue = {
   setActionSlot: (id: string, node: React.ReactNode | null) => void;
+  setSurfaceOverride: (override: MosaicSurfaceOverride | null) => void;
 };
 
 const BrandKitMosaicCellContext = createContext<BrandKitMosaicCellContextValue | null>(null);
@@ -28,7 +34,13 @@ function MosaicActionBar({ actionMap }: { actionMap: Record<string, React.ReactN
   );
 }
 
-export function BrandKitMosaicCellProvider({ children }: { children: React.ReactNode }) {
+export function BrandKitMosaicCellProvider({
+  children,
+  onSurfaceOverrideChange,
+}: {
+  children: React.ReactNode;
+  onSurfaceOverrideChange?: (override: MosaicSurfaceOverride | null) => void;
+}) {
   const [actionMap, setActionMap] = useState<Record<string, React.ReactNode>>({});
 
   const setActionSlot = useCallback((id: string, node: React.ReactNode | null) => {
@@ -45,7 +57,17 @@ export function BrandKitMosaicCellProvider({ children }: { children: React.React
     });
   }, []);
 
-  const value = useMemo(() => ({ setActionSlot }), [setActionSlot]);
+  const setSurfaceOverride = useCallback(
+    (override: MosaicSurfaceOverride | null) => {
+      onSurfaceOverrideChange?.(override);
+    },
+    [onSurfaceOverrideChange],
+  );
+
+  const value = useMemo(
+    () => ({ setActionSlot, setSurfaceOverride }),
+    [setActionSlot, setSurfaceOverride],
+  );
 
   return (
     <BrandKitMosaicCellContext.Provider value={value}>

@@ -1,5 +1,6 @@
 import {
   BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT,
+  BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT,
   BRAND_KIT_GALLERY_PER_IMAGE_USD,
 } from "@/lib/brandkit/brand-kit-gallery-cost";
 import {
@@ -384,7 +385,7 @@ export function estimateWalletCostForRoute(
       body && typeof body === "object" && typeof (body as { category?: string }).category === "string"
         ? (body as { category?: string }).category
         : undefined;
-    const imageCount = category ? 2 : BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT;
+    const imageCount = category ? BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT : BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT;
     const estimated = roundedUsd(BRAND_KIT_GALLERY_PER_IMAGE_USD * imageCount);
     return {
       label: category ? "BrandKit · generar categoría" : "BrandKit · generar galería",

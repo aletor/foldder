@@ -6,6 +6,7 @@ import { galleryItemSourceUrl } from "@/lib/brandkit/brand-kit-gallery-media";
 import { galleryIncludedCount } from "@/lib/brandkit/brand-kit-gallery-filter";
 import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES } from "@/lib/brandkit/brand-kit-gallery-brief";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
+import { brandImageMediumLabelEs, resolveBrandImageStyle } from "@/lib/brandkit/brand-kit-visual-style";
 import { DnaBlock } from "../DnaBlock";
 import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
 import { BrandKitClickableImage } from "../BrandKitClickableImage";
@@ -132,6 +133,17 @@ export function VisualWorldBlock({
             multiline: true,
           },
           {
+            id: "imageMedium",
+            label: brandKitLocaleEs.imageMedium,
+            value: visualWorld.imageMedium ?? resolveBrandImageStyle(visualWorld).medium,
+          },
+          {
+            id: "imageStyleTags",
+            label: brandKitLocaleEs.imageStyleTags,
+            value: (visualWorld.imageStyleTags ?? []).join(", "),
+            multiline: true,
+          },
+          {
             id: "visualTraits",
             label: brandKitLocaleEs.visualTerritory,
             value: (visualWorld.visualTraits ?? []).join("\n"),
@@ -146,6 +158,11 @@ export function VisualWorldBlock({
               ...visualWorld,
               summary: values.summary.trim(),
               moodTags: values.moodTags
+                .split(/[,\n]/)
+                .map((item) => item.trim())
+                .filter(Boolean),
+              imageMedium: values.imageMedium.trim() || undefined,
+              imageStyleTags: values.imageStyleTags
                 .split(/[,\n]/)
                 .map((item) => item.trim())
                 .filter(Boolean),
@@ -206,6 +223,17 @@ export function VisualWorldBlock({
         {tag}
       </span>
     ));
+    const { medium, styleTags } = resolveBrandImageStyle(visualWorld);
+    const styleChips = [
+      <span key="medium" className="brandKit-v2-chip">
+        {brandImageMediumLabelEs(medium)}
+      </span>,
+      ...styleTags.slice(0, 3).map((tag) => (
+        <span key={tag} className="brandKit-v2-chip">
+          {tag}
+        </span>
+      )),
+    ];
 
     body = (
       <div className="brandKit-v2-visual-layout">
@@ -213,7 +241,7 @@ export function VisualWorldBlock({
           <SemanticDetailPanels
             summary={<BrandKitRichText text={visualWorld.summary} className="brandKit-v2-prose" as="p" />}
             chips={
-              visualWorld.moodTags?.length ? (
+              visualWorld.moodTags?.length || medium ? (
                 <BrandKitEvidenceTrigger
                   id={`visual-mood-${slotId}`}
                   slot={slot}
@@ -221,7 +249,10 @@ export function VisualWorldBlock({
                   onAction={onAction}
                   onCorrect={() => setEditing(true)}
                 >
-                  <>{moodChips}</>
+                  <>
+                    {styleChips}
+                    {moodChips}
+                  </>
                 </BrandKitEvidenceTrigger>
               ) : null
             }

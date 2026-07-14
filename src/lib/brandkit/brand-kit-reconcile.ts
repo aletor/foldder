@@ -208,6 +208,8 @@ function mergeVisualWorld(
     moodTags: uniqueStrings([...(current.moodTags ?? []), ...(incoming.moodTags ?? [])]),
     visualTraits: uniqueStrings([...(current.visualTraits ?? []), ...(incoming.visualTraits ?? [])]),
     limits: uniqueStrings([...(current.limits ?? []), ...(incoming.limits ?? [])]),
+    imageMedium: current.imageMedium ?? incoming.imageMedium,
+    imageStyleTags: uniqueStrings([...(current.imageStyleTags ?? []), ...(incoming.imageStyleTags ?? [])]),
     evidence: mergeEvidence(current.evidence ?? [], incoming.evidence ?? []),
     galleryRefs: uniqueStrings([...(current.galleryRefs ?? []), ...(incoming.galleryRefs ?? [])]),
   };
@@ -227,6 +229,8 @@ export function semanticCandidateFingerprint(slotId: SemanticTextSlotId, value: 
       sortedNormalized(visual.moodTags),
       sortedNormalized(visual.visualTraits),
       sortedNormalized(visual.limits),
+      normalizeText(visual.imageMedium ?? ""),
+      sortedNormalized(visual.imageStyleTags),
     ].join("§");
   }
   if (slotId === "voice") {

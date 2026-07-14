@@ -8,7 +8,7 @@ import {
   resolveGalleryCategoryBriefing,
 } from "@/lib/brandkit/brand-kit-gallery-brief";
 import { formatBrandKitGalleryCategoryCostHint } from "@/lib/brandkit/brand-kit-gallery-cost";
-import { GALLERY_CATEGORY_ORDER, groupGeneratedByCategory, type GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { GALLERY_CATEGORY_ORDER, GALLERY_CATEGORY_SLOT_COUNT, groupGeneratedByCategory, type GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import type { BrandKitGalleryGenerateProgress } from "../../brand-kit-api";
 import { DnaBlock } from "../DnaBlock";
@@ -112,7 +112,7 @@ export function GalleryBlock({
             {GALLERY_CATEGORY_ORDER.map((category) => {
               const briefing = resolveGalleryCategoryBriefing(doc, category);
               const items = grouped[category];
-              const slots = [items[0], items[1]];
+              const slots = Array.from({ length: GALLERY_CATEGORY_SLOT_COUNT }, (_, index) => items[index]);
               const isGeneratingThis = generatingGalleryCategory === category;
               const hasImages = items.length > 0;
               const progressForCard = galleryProgress?.category === category ? galleryProgress : null;
@@ -124,7 +124,7 @@ export function GalleryBlock({
 
               return (
                 <article key={category} className="brandKit-v2-generated-category">
-                  <div className="brandKit-v2-generated-category__imgs">
+                  <div className="brandKit-v2-generated-category__imgs brandKit-v2-generated-category__imgs--grid-2x2">
                     {slots.map((item, slotIndex) => {
                       const showLoading = isGeneratingThis && !item;
                       return (

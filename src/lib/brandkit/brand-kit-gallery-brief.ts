@@ -3,7 +3,18 @@ import { galleryIncludedCount } from "./brand-kit-gallery-filter";
 import { galleryItemSourceUrl } from "./brand-kit-gallery-media";
 import { categoryMeta, GALLERY_CATEGORY_ORDER, type GalleryGenerateCategory } from "./brand-kit-gallery-plan";
 import { slotValue } from "./brand-kit-gallery-tone-utils";
-import type { EssenceValue, PaletteValue, VisualWorldValue, VoiceValue } from "./brand-kit-types";
+import type { PaletteValue, VisualWorldValue } from "./brand-kit-types";
+import {
+  galleryBriefSourcePartsFromDoc,
+  hasGalleryAdnContext,
+  promptHintsFromAdn,
+  type GalleryBriefSourceParts,
+} from "./brand-kit-gallery-brief-adn";
+import {
+  galleryVariantPromptHint,
+  normalizeGalleryCategoryBrief,
+  categoryBriefDisplayDescription,
+} from "./brand-kit-gallery-brief-variants";
 
 export const GALLERY_BRIEF_MIN_INCLUDED_IMAGES = 4;
 export const GALLERY_BRIEF_MAX_VISION_FRAMES = 10;
@@ -24,29 +35,20 @@ function stableFingerprint(input: string): string {
 }
 
 export function computeGalleryBriefSourceKey(doc: BrandKitDocument): string {
-  const gallery = doc.slots.gallery?.value as GalleryValue | undefined;
-  const visual = slotValue<VisualWorldValue>(doc, "visualWorld");
-  return computeGalleryBriefSourceKeyFromParts({
-    brandName: doc.brandName?.value,
-    visualSummary: visual?.summary,
-    moodTags: visual?.moodTags,
-    includedAssetIds: (gallery?.harvested ?? [])
-      .filter((item) => item.included !== false)
-      .map((item) => item.assetId),
-  });
+  return computeGalleryBriefSourceKeyFromParts(galleryBriefSourcePartsFromDoc(doc));
 }
 
-export function computeGalleryBriefSourceKeyFromParts(input: {
-  brandName?: string;
-  visualSummary?: string;
-  moodTags?: string[];
-  includedAssetIds: string[];
-}): string {
+export function computeGalleryBriefSourceKeyFromParts(input: GalleryBriefSourceParts): string {
   const included = [...input.includedAssetIds].sort();
   const payload = [
     input.brandName ?? "",
     input.visualSummary ?? "",
     (input.moodTags ?? []).join("|"),
+    input.imageMedium ?? "",
+    (input.imageStyleTags ?? []).join("|"),
+    input.essenceHeadline ?? "",
+    input.voiceSummary ?? "",
+    (input.voiceDescriptors ?? []).join("|"),
     included.join("|"),
   ].join("::");
   return stableFingerprint(payload);
@@ -68,18 +70,20 @@ export function applyCategoryBriefsToGallery(
 export function mergeBatchBriefsIntoGallery(
   gallery: GalleryValue,
   briefs: GalleryCategoryBrief[] | null | undefined,
-  parts: { brandName?: string; visualSummary?: string; moodTags?: string[] },
+  parts: Omit<GalleryBriefSourceParts, "includedAssetIds">,
 ): GalleryValue {
   if (!briefs?.length) return gallery;
   const sourceKey = computeGalleryBriefSourceKeyFromParts({
-    brandName: parts.brandName,
-    visualSummary: parts.visualSummary,
-    moodTags: parts.moodTags,
+    ...parts,
     includedAssetIds: gallery.harvested
       .filter((item) => item.included !== false)
       .map((item) => item.assetId),
   });
-  return applyCategoryBriefsToGallery(gallery, briefs, sourceKey);
+  return applyCategoryBriefsToGallery(
+    gallery,
+    briefs.map((brief) => normalizeGalleryCategoryBrief(brief)),
+    sourceKey,
+  );
 }
 
 export function galleryBriefsAreFresh(gallery: GalleryValue | undefined, sourceKey: string): boolean {
@@ -90,13 +94,11 @@ export function galleryBriefsAreFresh(gallery: GalleryValue | undefined, sourceK
 /** Alinea la clave guardada con el ADN actual sin volver a llamar al LLM. */
 export function syncGalleryBriefSourceKey(
   gallery: GalleryValue,
-  parts: { brandName?: string; visualSummary?: string; moodTags?: string[] },
+  parts: Omit<GalleryBriefSourceParts, "includedAssetIds">,
 ): GalleryValue {
   if (!gallery.categoryBriefs?.length) return gallery;
   const sourceKey = computeGalleryBriefSourceKeyFromParts({
-    brandName: parts.brandName,
-    visualSummary: parts.visualSummary,
-    moodTags: parts.moodTags,
+    ...parts,
     includedAssetIds: gallery.harvested
       .filter((item) => item.included !== false)
       .map((item) => item.assetId),
@@ -171,7 +173,7 @@ export function resolveGalleryCategoryBriefing(
   if (stored && fresh) {
     return {
       label: meta.label,
-      description: stored.description,
+      description: categoryBriefDisplayDescription(stored),
       confidence: stored.confidence,
       evidenceCount: stored.evidenceCount,
       stale: false,
@@ -179,23 +181,32 @@ export function resolveGalleryCategoryBriefing(
     };
   }
 
-  const needsAnalysis = included < GALLERY_BRIEF_MIN_INCLUDED_IMAGES || !fresh || !stored;
-
   if (stored && !fresh) {
     return {
       label: meta.label,
-      description: stored.description,
+      description: categoryBriefDisplayDescription(stored),
       confidence: stored.confidence,
       evidenceCount: stored.evidenceCount,
       stale: true,
-      needsAnalysis: true,
+      needsAnalysis: false,
+    };
+  }
+
+  const adnReady = hasGalleryAdnContext(doc);
+
+  if (adnReady) {
+    return {
+      label: meta.label,
+      description: fallbackDescription(doc, category),
+      stale: false,
+      needsAnalysis: false,
     };
   }
 
   if (included < GALLERY_BRIEF_MIN_INCLUDED_IMAGES) {
     return {
       label: meta.label,
-      description: `Añade al menos ${GALLERY_BRIEF_MIN_INCLUDED_IMAGES} imágenes en Mundo visual para describir con precisión qué generar en ${meta.label.toLowerCase()}.`,
+      description: `Completa esencia, voz o mundo visual para describir qué generar en ${meta.label.toLowerCase()}, o añade ${GALLERY_BRIEF_MIN_INCLUDED_IMAGES} imágenes para un análisis visual.`,
       stale: false,
       needsAnalysis: true,
     };
@@ -217,12 +228,20 @@ export function promptHintForGalleryCategory(
   gallery: GalleryValue | undefined,
   category: GalleryGenerateCategory,
   fallbackSuffix: string,
+  doc?: BrandKitDocument,
+  variantIndex = 0,
 ): string {
   const brief = galleryBriefForCategory(gallery, category);
-  const hint = brief?.promptHint?.trim();
-  if (hint) return hint;
+  const variantHint = galleryVariantPromptHint(brief, variantIndex);
+  if (variantHint) return variantHint;
+  if (doc && hasGalleryAdnContext(doc)) {
+    const adnHints = promptHintsFromAdn(doc, category);
+    return adnHints[variantIndex] ?? adnHints[0] ?? fallbackSuffix;
+  }
   return fallbackSuffix;
 }
+
+export { hasGalleryAdnContext } from "./brand-kit-gallery-brief-adn";
 
 export function includedHarvestForBriefAnalysis(gallery: GalleryValue): GalleryValue["harvested"] {
   return [...gallery.harvested]

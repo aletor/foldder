@@ -23,6 +23,7 @@ import {
   mergeOtherImageLists,
   PROBE_BRAND_PDF_PAGES,
   selectPdfPagesForExtendedImageProbe,
+  selectPdfPagesForLogoProbe,
 } from "./document-probe-image-scan";
 
 const PROBE_MODEL =
@@ -108,10 +109,7 @@ async function buildProbeFrames(
 
   if (documentType === "pdf") {
     const totalPages = await countPdfPagesInBuffer(buffer, 200).catch(() => PROBE_BRAND_PDF_PAGES);
-    const pageNumbers = Array.from(
-      { length: Math.min(PROBE_BRAND_PDF_PAGES, Math.max(1, totalPages)) },
-      (_, index) => index + 1,
-    );
+    const pageNumbers = selectPdfPagesForLogoProbe(Math.max(1, totalPages));
     const frames = await buildPdfProbeFrames(buffer, pageNumbers);
     return { documentType, frames, textSample, totalPdfPages: totalPages };
   }
@@ -526,7 +524,7 @@ const EXTENDED_OTHER_IMAGES_SCHEMA = {
 };
 
 function formatLogoExclusionHint(logos: BrandKitDocumentProbeLogo[]): string {
-  if (!logos.length) return "Ningún logo previo en las primeras páginas.";
+  if (!logos.length) return "Ningún logo previo en portada ni contraportada.";
   return logos
     .map((logo) => {
       const page = logo.page ? `pág. ${logo.page}` : "imagen";
@@ -559,7 +557,7 @@ async function runExtendedOtherImagesProbe(input: {
         `Hasta ${OTHER_IMAGES_PER_PAGE_MAX} imágenes distintas por página si hay varias.`,
         "page = número de página PDF (1-based). x, y, width, height: bbox normalizado 0–1.",
         "description: frase breve en español sobre qué hay en la imagen.",
-        "NO repitas logos ya detectados en las primeras páginas:",
+        "NO repitas logos ya detectados en portada o contraportada:",
         formatLogoExclusionHint(input.knownLogos),
       ].join("\n"),
     },

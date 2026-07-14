@@ -7,6 +7,19 @@ import { renderPdfPagesAt } from "@/lib/brain/pdf-page-render";
 
 export const PROBE_BRAND_PDF_PAGES = 4;
 
+/** Portada (1–4) + última página si el PDF tiene más de 4 páginas — solo para logos. */
+export function selectPdfPagesForLogoProbe(totalPages: number): number[] {
+  if (totalPages <= 0) return [];
+  const picked = new Set<number>();
+  for (let page = 1; page <= Math.min(PROBE_BRAND_PDF_PAGES, totalPages); page += 1) {
+    picked.add(page);
+  }
+  if (totalPages > PROBE_BRAND_PDF_PAGES) {
+    picked.add(totalPages);
+  }
+  return [...picked].sort((a, b) => a - b);
+}
+
 const SCAN_DPI = 48;
 const SCAN_LONG_EDGE = 220;
 const SCAN_PAGE_LIMIT = 80;

@@ -1,9 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import type { SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
 import { boardChapterLabel } from "./brand-kit-board-chapters";
-import { BrandKitMosaicCellProvider } from "./brand-kit-mosaic-context";
+import { BrandKitMosaicCellProvider, type MosaicSurfaceOverride } from "./brand-kit-mosaic-context";
 import type { SlotMotionState } from "./use-brand-kit-board-slot-motion";
 
 export type MosaicSurface = "primary" | "raised" | "page" | "accent";
@@ -61,14 +61,25 @@ export function BrandKitMosaicCell({
   const ghost = showGhostNumeral ? (ghostNumeral ?? chapterGhostNumeral(slotId)) : null;
   const locked = Boolean(slot?.locked);
   const proposed = Boolean(slot && !slot.locked && (slot.status === "resolved" || slot.status === "candidates"));
+  const [surfaceOverride, setSurfaceOverride] = useState<MosaicSurfaceOverride | null>(null);
+
+  const sectionStyle: React.CSSProperties | undefined = surfaceOverride
+    ? {
+        background: surfaceOverride.background,
+        color: surfaceOverride.color,
+        ...(alignSelf ? { alignSelf } : {}),
+      }
+    : alignSelf
+      ? { alignSelf }
+      : undefined;
 
   return (
     <section
-      className={`brandKit-mosaic-cell brandKit-mosaic-cell--${mosaicKey} brandKit-mosaic-cell--surface-${surface}${alignSelf === "start" ? " brandKit-mosaic-cell--align-start" : ""}${ghostVacant ? " brandKit-mosaic-cell--ghost-vacant" : ""}${attentionClass}${motion ? tileMotionClass(motion) : ""}`}
+      className={`brandKit-mosaic-cell brandKit-mosaic-cell--${mosaicKey} brandKit-mosaic-cell--surface-${surface}${surfaceOverride ? " brandKit-mosaic-cell--surface-custom" : ""}${alignSelf === "start" ? " brandKit-mosaic-cell--align-start" : ""}${ghostVacant ? " brandKit-mosaic-cell--ghost-vacant" : ""}${attentionClass}${motion ? tileMotionClass(motion) : ""}`}
       data-brandkit-slot={slotId}
       data-mosaic-key={mosaicKey}
       data-col-span={colSpan}
-      style={alignSelf ? { alignSelf } : undefined}
+      style={sectionStyle}
       tabIndex={0}
       onAnimationEnd={(event) => {
         if (event.target !== event.currentTarget) return;
@@ -77,7 +88,7 @@ export function BrandKitMosaicCell({
         }
       }}
     >
-      <BrandKitMosaicCellProvider>
+      <BrandKitMosaicCellProvider onSurfaceOverrideChange={setSurfaceOverride}>
         {showChapter && chapter ? (
           <div className="brandKit-mosaic-cell__chapter-row">
             <span className="brandKit-mosaic-cell__chapter">{chapter}</span>

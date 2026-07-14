@@ -54,6 +54,8 @@ const VALID_VISUAL = {
   moodTags: ["cinematográfico", "íntimo"],
   visualTraits: ["Primeros planos de personas.", "Luz dramática o direccional."],
   limits: ["Evitar stock corporativo.", "Evitar estética publicitaria plana."],
+  imageMedium: "photography",
+  imageStyleTags: ["luz cinematográfica"],
   evidenceIds: ["ev_02"],
 };
 
@@ -73,6 +75,10 @@ describe("brandKit batch validate", () => {
     expect(result.visualWorld.ok).toBe(true);
     if (result.voice.ok) {
       expect(result.voice.value.evidence[0].quote).toBe("Somos directores de cine frustrados");
+    }
+    if (result.visualWorld.ok) {
+      expect(result.visualWorld.value.imageMedium).toBe("photography");
+      expect(result.visualWorld.value.imageStyleTags).toContain("luz cinematográfica");
     }
   });
 

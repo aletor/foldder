@@ -12,7 +12,6 @@ import { BrandKitEvidencePopoverProvider } from "./BrandKitEvidencePopoverContex
 import { BrandKitReviewPrompt } from "./BrandKitReviewPrompt";
 import { BrandKitReviewQueueBar } from "./BrandKitReviewQueueBar";
 import { useBrandKitReviewMode, type BrandKitReviewModeStats } from "./use-brand-kit-review-mode";
-import { BrandKitCoverTile } from "./BrandKitCoverTile";
 import { BrandKitBanda08 } from "./BrandKitBanda08";
 import { shouldRenderBrandKitShowcase } from "./showcase/brand-kit-showcase-data";
 import { LogoBlock } from "./blocks/LogoBlock";
@@ -139,9 +138,6 @@ export function BrandKitBoardV2({
     return classes.join("");
   };
 
-  const ancillaryReviewClass =
-    reviewMode && current ? " brandKit-mosaic-cell--review-muted" : "";
-
   const reviewPrompt = (slotId: SlotId) =>
     reviewMode && current?.slotId === slotId ? <BrandKitReviewPrompt doc={doc} item={current} /> : null;
 
@@ -159,7 +155,6 @@ export function BrandKitBoardV2({
           >
             {/*
              * MAPA FINAL — bandas horizontales (12 col, gap 8px, altura = contenido)
-             * A  cover        12 × auto
              * B  logo          7 × auto  |  essence       5 × auto
              * C  palette      12 × auto
              * D  typography    7 × auto  |  voice          5 × auto
@@ -168,26 +163,6 @@ export function BrandKitBoardV2({
              * 08 banda-08: hermana posterior al mosaico (fuera del grid)
              */}
             <div className="brandKit-v2-mosaic-bands">
-              <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--a">
-                <BrandKitMosaicCell
-                  mosaicKey="cover"
-                  surface="primary"
-                  colSpan={12}
-                  showChapter={false}
-                  showGhost={false}
-                  showStatus={false}
-                  attentionClass={ancillaryReviewClass}
-                >
-                  <BrandKitCoverTile
-                    doc={doc}
-                    presentationMode={presentationMode}
-                    brandReady={brandTheme.ready}
-                    brandVars={brandTheme.vars}
-                    mosaic
-                  />
-                </BrandKitMosaicCell>
-              </div>
-
               <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--b">
                 <BrandKitMosaicCell
                   slotId="logo"
@@ -284,7 +259,6 @@ export function BrandKitBoardV2({
                   mosaicKey="voice"
                   surface="primary"
                   colSpan={5}
-                  alignSelf="start"
                   ghostVacant
                   slot={slots.voice}
                   motion={motionBySlot.voice}

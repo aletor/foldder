@@ -134,6 +134,8 @@ function repairVisualWorldValue(
     moodTags: visual.moodTags?.length ? visual.moodTags : fallback.moodTags,
     visualTraits: visual.visualTraits?.length ? visual.visualTraits : fallback.visualTraits,
     limits: visual.limits?.length ? visual.limits : fallback.limits,
+    imageMedium: visual.imageMedium ?? fallback.imageMedium,
+    imageStyleTags: visual.imageStyleTags?.length ? visual.imageStyleTags : fallback.imageStyleTags,
     evidence: visual.evidence?.length ? visual.evidence : fallback.evidence,
     galleryRefs: visual.galleryRefs?.length ? visual.galleryRefs : fallback.galleryRefs,
   };

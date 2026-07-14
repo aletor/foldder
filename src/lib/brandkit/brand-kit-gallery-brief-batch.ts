@@ -1,13 +1,18 @@
 import type { GalleryCategoryBrief } from "./brand-kit-types";
-import { GALLERY_CATEGORY_ORDER } from "./brand-kit-gallery-plan";
+import { GALLERY_CATEGORY_ORDER, GALLERY_CATEGORY_SLOT_COUNT } from "./brand-kit-gallery-plan";
+import {
+  normalizeGalleryCategoryBrief,
+  parseGalleryBriefVariantsFromRaw,
+} from "./brand-kit-gallery-brief-variants";
 
 const CATEGORY_SET = new Set(GALLERY_CATEGORY_ORDER);
 
 export type GalleryCategoryBriefBatchRaw = {
   category: string;
   description: string;
-  promptHint: string;
+  promptHint?: string;
   confidence: string;
+  variants?: Array<{ description?: string; promptHint?: string }>;
 };
 
 export function parseGalleryCategoryBriefsFromBatch(
@@ -24,19 +29,26 @@ export function parseGalleryCategoryBriefsFromBatch(
     const row = entry as GalleryCategoryBriefBatchRaw;
     if (!CATEGORY_SET.has(row.category as (typeof GALLERY_CATEGORY_ORDER)[number])) continue;
     const description = row.description?.trim();
-    const promptHint = row.promptHint?.trim();
-    if (!description || !promptHint) continue;
+    if (!description) continue;
+    const variants = parseGalleryBriefVariantsFromRaw(
+      row.category as GalleryCategoryBrief["category"],
+      row,
+    );
+    if (!variants || variants.length < GALLERY_CATEGORY_SLOT_COUNT) continue;
     const confidence =
       row.confidence === "high" || row.confidence === "medium" || row.confidence === "low"
         ? row.confidence
         : "medium";
-    parsed.push({
-      category: row.category as GalleryCategoryBrief["category"],
-      description,
-      promptHint,
-      confidence,
-      evidenceCount,
-    });
+    parsed.push(
+      normalizeGalleryCategoryBrief({
+        category: row.category as GalleryCategoryBrief["category"],
+        description,
+        promptHint: variants[0]?.promptHint ?? row.promptHint?.trim() ?? "",
+        variants,
+        confidence,
+        evidenceCount,
+      }),
+    );
   }
 
   if (!parsed.length) return null;
@@ -51,32 +63,13 @@ export function parseGalleryCategoryBriefsFromBatch(
 export const GALLERY_CATEGORY_BRIEFS_JSON_SHAPE = `"galleryCategoryBriefs": [
   {
     "category": "people_mood",
-    "description": "Descripción concreta en español de personas y mood",
-    "promptHint": "Concrete English image prompt for people and mood",
-    "confidence": "high"
-  },
-  {
-    "category": "places",
-    "description": "Interior vacío de estudio con luz rasante desde ventanal lateral; suelo de hormigón pulido y paredes blancas, sin personas.",
-    "promptHint": "Empty modern studio interior, polished concrete floor, side window light, no people, no furniture clutter",
-    "confidence": "medium"
-  },
-  {
-    "category": "objects",
-    "description": "…",
-    "promptHint": "…",
-    "confidence": "high"
-  },
-  {
-    "category": "textures",
-    "description": "Macro de lino crudo con trama visible y sombras rasantes que marcan el grano; acabado mate, sin brillo especular.",
-    "promptHint": "Macro full-frame raw linen fabric weave, matte finish, visible thread grain, raking light, no people or objects",
-    "confidence": "medium"
-  },
-  {
-    "category": "general",
-    "description": "…",
-    "promptHint": "…",
-    "confidence": "high"
+    "description": "Párrafo único: esencia de personas y mood para la marca (no listar variantes).",
+    "confidence": "high",
+    "variants": [
+      { "description": "Retrato editorial", "promptHint": "Distinct English prompt for variant 1" },
+      { "description": "Momento candido", "promptHint": "Distinct English prompt for variant 2" },
+      { "description": "Retrato ambiental", "promptHint": "Distinct English prompt for variant 3" },
+      { "description": "Gesto o interacción", "promptHint": "Distinct English prompt for variant 4" }
+    ]
   }
 ]`;

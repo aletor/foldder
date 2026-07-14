@@ -189,7 +189,7 @@
 .brandKit-palette-proportions__bar {
   display: flex;
   height: 10px;
-  border-radius: 18px;
+  border-radius: 0;
   overflow: hidden;
   background: rgba(26, 26, 26, 0.06);
 }

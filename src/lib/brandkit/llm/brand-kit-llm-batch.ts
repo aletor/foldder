@@ -50,18 +50,27 @@ const BATCH_SYSTEM_BASE = [
   "essence.beliefs: creencias interpretadas con label corto y explanation.",
   "voice.descriptors: 2-5 chips concretos; voice.rules: instrucciones accionables (mínimo 2).",
   "visualWorld.visualTraits: territorio visual positivo; visualWorld.limits: qué evitar.",
+  "Analiza las imágenes cosechadas para detectar el medio artístico dominante.",
+  "visualWorld.imageMedium: photography | illustration | collage | 3d_render | graphic_design | mixed.",
+  "visualWorld.imageStyleTags: 2-5 chips de tratamiento (flat vector, hand-drawn, photorealistic macro, cut-paper collage…).",
+  "Si la marca mezcla medios, usa mixed y detalla en imageStyleTags y limits.",
   BRAND_KIT_RICH_TEXT_PROMPT,
 ];
 
 const BATCH_SYSTEM_GALLERY_BRIEFS = [
   "galleryCategoryBriefs: exactamente 5 entradas (people_mood, places, objects, textures, general).",
+  "Cada entrada: description (párrafo único: esencia de la categoría en español, 1-2 frases) + variants (exactamente 4 escenas distintas para generar).",
+  "description NO debe listar ni repetir las 4 variantes; sintetiza qué tipo de imágenes define esta categoría para la marca.",
+  "Cada variant: description corta + promptHint en inglés alineado con visualWorld.imageMedium (no fotografía por defecto si el ADN es ilustración, collage, 3D, etc.). Sin texto ni logos.",
+  "Las 4 variantes por categoría deben diferir en sujeto, escena, material o mood — nunca repetir el mismo objeto, textura, entorno ni retrato.",
+  "Coherencia de marca: respeta producto, propósito, promesa y límites del ADN; no uses productos, usos o competidores incoherentes.",
   "Mezcla voz, tono, colores del contexto y lo que ves en las imágenes cosechadas.",
   "Reglas por categoría:",
   galleryCategoryBriefRulesBlock(),
-  "description: español CONCRETO (materiales, colores nombrados, rugosidad, brillo, grano, luz). Prohibido «evoca la marca» sin especificar.",
-  "promptHint: instrucción visual en inglés para generador de imágenes, concreta y fotográfica. Sin texto ni logos.",
-  "Para textures: promptHint debe pedir macro full-frame surface photograph, nunca escenas con personas ni UI.",
-  "Para places: promptHint debe pedir empty location/architecture/landscape, nunca personas ni escenas corporativas.",
+  "Para people_mood: variantes concretas del ADN — quién aparece, emoción, luz, encuadre. No asumas familias ni parques temáticos salvo que el ADN lo indique.",
+  "Para objects: variantes con objetos concretos del ADN (producto, props, materiales, iluminación still life). Prohibido personajes con copyright o marcas registradas.",
+  "Para textures: cada variant debe pedir macro full-frame surface photograph distinta (material diferente).",
+  "Para places: cada variant debe pedir empty location/architecture/landscape distinta, nunca personas.",
   "confidence: high si hay evidencia clara en imágenes; medium si inferido; low si casi sin evidencia.",
 ];
 
@@ -87,6 +96,8 @@ const BATCH_JSON_SHAPE_BASE = `{
     "moodTags": [],
     "visualTraits": [],
     "limits": [],
+    "imageMedium": "photography",
+    "imageStyleTags": [],
     "evidenceIds": []
   }
 }`;

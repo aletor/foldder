@@ -89,6 +89,8 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
   if (gallerySlot?.value) {
     const normalizedGallery = normalizeGalleryInclusions(gallerySlot.value as GalleryValue);
     const visual = slots.visualWorld?.value as VisualWorldValue | undefined;
+    const voice = slots.voice?.value as VoiceValue | undefined;
+    const essence = slots.essence?.value as EssenceValue | undefined;
     const syncedGallery = syncGalleryBriefSourceKey(
       {
         ...normalizedGallery,
@@ -100,6 +102,9 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
         brandName,
         visualSummary: visual?.summary,
         moodTags: visual?.moodTags,
+        essenceHeadline: essence?.headline?.trim() || essence?.summary?.trim(),
+        voiceSummary: voice?.summary,
+        voiceDescriptors: voice?.descriptors,
       },
     );
     slots.gallery = {

@@ -9,7 +9,7 @@ import {
 } from "./brand-kit-gallery-plan";
 
 describe("brand-kit-gallery-plan", () => {
-  it("defines two slots per category", () => {
+  it("defines four slots per category", () => {
     for (const category of GALLERY_CATEGORY_ORDER) {
       expect(slotsForCategory(category)).toHaveLength(GALLERY_CATEGORY_SLOT_COUNT);
     }
@@ -30,7 +30,7 @@ describe("brand-kit-gallery-plan", () => {
   it("builds category briefing with tone", () => {
     const briefing = buildCategoryBriefing("places", "Luz cálida y espacios amplios.");
     expect(briefing.label).toBe("Entorno");
-    expect(briefing.hint).toMatch(/espacios/i);
+    expect(briefing.hint).toMatch(/arquitectura|paisaje/i);
     expect(briefing.tone).toBe("Luz cálida y espacios amplios.");
   });
 });

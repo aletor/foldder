@@ -5,7 +5,7 @@
 .brandKit-studio--v2 .brandKit-v2-semantic__summary .brandKit-rich-text__emph,
 .brandKit-studio--v2 .brandKit-rich-text__emph {
   font-weight: 700;
-  color: var(--brandKit-v2-text);
+  color: inherit;
 }
 
 /* Preview image base — always visible without parent height chains */

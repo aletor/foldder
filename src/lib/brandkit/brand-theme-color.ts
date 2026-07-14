@@ -209,6 +209,7 @@ export function deriveBrandThemeFromDoc(doc: BrandKitDocument): BrandThemeResult
   const rule = mixHex(ink, surfacePage, 0.85);
   const cta = pickCtaColors(accent, ink, surfacePage);
   const plinthAuto = mixHex(surfaceRaised, "#FFFFFF", polarity === "dark" ? 0.72 : 0.08);
+  const onPrimary = relativeLuminance(primary) > 0.45 ? "#1A1A1A" : "#FFFFFF";
   const fonts = pickTypographyStacks(doc.slots.typography.value as TypographyValue | undefined);
 
   const vars: Record<string, string> = {
@@ -221,6 +222,7 @@ export function deriveBrandThemeFromDoc(doc: BrandKitDocument): BrandThemeResult
     "--brand-ink": ink,
     "--brand-ink-soft": inkSoft,
     "--brand-rule": rule,
+    "--brand-on-primary": onPrimary,
     "--brand-font-display": fonts.display,
     "--brand-font-text": fonts.text,
     "--brand-cta-bg": cta.bg,

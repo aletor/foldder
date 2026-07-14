@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Candidate, LogoValue, SlotAction, SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import {
@@ -28,6 +28,8 @@ import type { BrandThemePolarity } from "@/lib/brandkit/brand-theme-color";
 import { BrandKitLogoClearanceZone } from "../BrandKitLogoClearanceZone";
 import { BrandKitEvidenceTrigger } from "../BrandKitEvidenceTrigger";
 import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
+import { useLogoLateralEdgeBackground } from "../use-logo-lateral-edge-background";
+import { readableTextOn } from "../../face-utils";
 
 function canAdjustLogo(logo?: LogoValue): boolean {
   return Boolean(logo?.sourcePdfSha256 && logo.sourcePageNumber);
@@ -114,11 +116,27 @@ export function LogoBlock({
 
   const mosaicCell = useBrandKitMosaicCellOptional();
   const isMosaic = Boolean(mosaicCell);
+  const edgeBackground = useLogoLateralEdgeBackground(logo?.previewUrl);
   const plinthClass = useMemo(
     () => resolvePlinthClass(logo, plinthMode, brandReady, brandPolarity),
     [logo, plinthMode, brandPolarity, brandReady],
   );
   const pageHint = logoPageHint(logo);
+
+  useEffect(() => {
+    if (!mosaicCell) return;
+    if (plinthMode === "auto" && edgeBackground) {
+      const textColor = readableTextOn(edgeBackground);
+      mosaicCell.setSurfaceOverride({
+        background: edgeBackground,
+        color: textColor,
+      });
+    } else {
+      mosaicCell.setSurfaceOverride(null);
+    }
+    return () => mosaicCell.setSurfaceOverride(null);
+  }, [edgeBackground, mosaicCell, plinthMode]);
+
   const editingLogo =
     adjustCandidateIndex != null
       ? (slot.candidates[adjustCandidateIndex]?.value as LogoValue | undefined)

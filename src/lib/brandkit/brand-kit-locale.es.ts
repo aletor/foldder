@@ -81,6 +81,8 @@ export const brandKitLocaleEs = {
   beliefs: "Creencias",
   writingRules: "Reglas de escritura",
   mood: "Mood",
+  imageMedium: "Medio",
+  imageStyleTags: "Tratamiento visual",
   visualTerritory: "Territorio visual",
   limits: "Límites",
   evidence: "Evidencia",

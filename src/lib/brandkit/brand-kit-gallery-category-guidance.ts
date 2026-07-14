@@ -1,19 +1,24 @@
-import type { BrandKitDocument, PaletteValue, VisualWorldValue } from "./brand-kit-types";
+import type { BrandKitDocument, PaletteValue, VisualWorldValue, EssenceValue } from "./brand-kit-types";
 import { GALLERY_CATEGORY_ORDER, type GalleryGenerateCategory } from "./brand-kit-gallery-plan";
 import { slotValue } from "./brand-kit-gallery-tone-utils";
+import {
+  galleryCategoryPromptCores,
+  gallerySceneLead,
+  resolveBrandImageStyle,
+} from "./brand-kit-visual-style";
 
-/** Reglas para que el LLM escriba briefs alineados con cada categoría de galería. */
+/** Reglas para que el LLM escriba briefs alineados con cada categoría de galería (4 variantes distintas por categoría). */
 export const GALLERY_CATEGORY_BRIEF_LLM_RULES: Record<GalleryGenerateCategory, string> = {
   people_mood:
-    "Personas y mood: rostros, presencia humana, expresión, luz sobre piel. Sin escenas corporativas genéricas.",
+    "Personas y mood: 4 variantes con emoción, luz, postura y encuadre distintos según el ADN. No repitas el mismo retrato ni la misma escena humana.",
   places:
-    "Entornos y localizaciones SIN personas: arquitectura, interior vacío, paisaje o ciudad sin gente visible. Luz, volumen, materiales del espacio. PROHIBIDO: personas, siluetas, manos, retratos, escenas corporativas con ejecutivos, UI/hologramas, mapas en suelo.",
+    "Entornos: 4 localizaciones vacías distintas (arquitectura, interior, paisaje, urbano…). Sin personas. Cada variant debe ser un espacio diferente.",
   objects:
-    "Objetos o producto aislado en still life. Sin personas ni entorno dominante. Material, escala y luz coherentes con la marca.",
+    "Objetos: 4 still life distintos coherentes con el producto y utilidad de la marca. Cada variant = objeto o composición diferente; respeta categoría de producto y uso real.",
   textures:
-    "SOLO macrofotografía de superficie material que llena el encuadre. Detalle de rugosidad, micrograno, acabado (mate/satinado/brillante) y luz rasante. PROHIBIDO: personas, manos, objetos enteros, salas, UI, hologramas, ilustraciones stock, iconos, mapas, patrones abstractos de «datos» o «tecnología».",
+    "Texturas: 4 macros de superficies materiales distintas (tela, metal, piedra, madera…). Solo superficie, sin personas ni escenas.",
   general:
-    "Síntesis atmosférica del ADN visual (luz, paleta, mood) sin encajar en las otras cuatro categorías.",
+    "General: 4 síntesis atmosféricas distintas del ADN visual (luz, paleta, mood) con focal points diferentes.",
 };
 
 export function galleryCategoryBriefRulesBlock(): string {
@@ -22,19 +27,26 @@ export function galleryCategoryBriefRulesBlock(): string {
   ).join("\n");
 }
 
-const TEXTURE_IMAGE_PROMPT_CORE = [
-  "Macro material texture photograph filling the entire frame.",
-  "Extreme close-up of one physical surface only — wood grain, fabric weave, stone, metal brush marks, plaster, leather, paper fiber, etc.",
-  "Show specific roughness, micro-grain, and specular response (matte, satin, or glossy).",
-  "No people, no hands, no faces, no whole objects, no rooms, no technology scenes, no UI screens, no holograms, no circuit graphics, no stock illustrations, no text, no logos.",
-].join(" ");
+const GALLERY_IMAGE_POLICY_SUFFIX =
+  "No copyrighted characters, trademarks, logos, or readable text in frame.";
 
-const PLACES_IMAGE_PROMPT_CORE = [
-  "Architectural environment photograph with no people in frame.",
-  "Empty interior, landscape, or urban location — space, light, materials, and atmosphere only.",
-  "No humans, no silhouettes, no hands, no crowds, no business people, no portraits.",
-  "No holograms, no UI screens, no floor projections, no stock corporate tech scenes, no text, no logos.",
-].join(" ");
+/** Elimina marcas/personajes registrados del texto sin sustituirlos por arquetipos temáticos. */
+const PROMPT_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }> = [
+  {
+    pattern:
+      /\b(disney(?:land|world)?|marvel|mickey mouse|minnie mouse|elsa|anna|olaf|spider-?man|iron man|captain america|hulk|thor|buzz lightyear|woody|pixar|star wars|harry potter|pok[eé]mon|nintendo|mario)\b/gi,
+    replacement: "",
+  },
+];
+
+/** Neutraliza términos que suelen bloquear Gemini Image sin inyectar escenas predefinidas. */
+export function sanitizeGalleryImagePrompt(prompt: string): string {
+  let next = prompt;
+  for (const { pattern, replacement } of PROMPT_REPLACEMENTS) {
+    next = next.replace(pattern, replacement);
+  }
+  return next.replace(/\s{2,}/g, " ").replace(/\s+([,.])/g, "$1").trim();
+}
 
 function brandPaletteHint(doc?: BrandKitDocument): string {
   const palette = doc ? slotValue<PaletteValue>(doc, "palette") : undefined;
@@ -42,39 +54,58 @@ function brandPaletteHint(doc?: BrandKitDocument): string {
   return colors ? `Subtle brand palette influence: ${colors}.` : "";
 }
 
-/** Prompt final para el generador de imágenes; texturas y entornos usan prompts dedicados. */
+function visualMoodHint(doc?: BrandKitDocument): string {
+  const visual = doc ? slotValue<VisualWorldValue>(doc, "visualWorld") : undefined;
+  const mood = visual?.moodTags?.slice(0, 3).join(", ");
+  return mood ? `Atmosphere: ${mood}.` : "";
+}
+
+function visualStyleHint(doc?: BrandKitDocument): string {
+  const visual = doc ? slotValue<VisualWorldValue>(doc, "visualWorld") : undefined;
+  const { medium, styleTags } = resolveBrandImageStyle(visual);
+  const tags = styleTags.length ? ` Treatment: ${styleTags.slice(0, 4).join(", ")}.` : "";
+  return `Image medium: ${medium}.${tags}`;
+}
+
+function brandCoherenceHint(doc?: BrandKitDocument): string {
+  if (!doc) return "";
+  const essence = slotValue<EssenceValue>(doc, "essence");
+  const visual = slotValue<VisualWorldValue>(doc, "visualWorld");
+  const parts: string[] = [];
+  if (essence?.purpose?.trim()) parts.push(`Brand purpose: ${essence.purpose.trim()}.`);
+  if (essence?.promise?.trim()) parts.push(`Brand promise: ${essence.promise.trim()}.`);
+  if (essence?.brandContext?.trim()) parts.push(`Product context: ${essence.brandContext.trim()}.`);
+  if (visual?.limits?.length) {
+    parts.push(`Avoid: ${visual.limits.slice(0, 3).join("; ")}.`);
+  }
+  if (!parts.length) return "";
+  return `Stay faithful to brand offering and intended use. ${parts.join(" ")} Do not depict competing or incoherent products or uses.`;
+}
+
+function assembleGalleryImagePrompt(parts: string[]): string {
+  return sanitizeGalleryImagePrompt(parts.filter(Boolean).join(" "));
+}
+
+/** Prompt final para el generador de imágenes; el brief (`hint`) define la escena en todas las categorías. */
 export function buildGalleryImagePrompt(
   category: GalleryGenerateCategory,
   stylePrompt: string,
   hint: string,
   doc?: BrandKitDocument,
 ): string {
-  const trimmedHint = hint.trim();
+  const visual = doc ? slotValue<VisualWorldValue>(doc, "visualWorld") : undefined;
+  const { medium } = resolveBrandImageStyle(visual);
+  const sceneLead = gallerySceneLead(hint, medium);
+  const { core, finish } = galleryCategoryPromptCores(category, visual);
 
-  if (category === "textures") {
-    return [
-      TEXTURE_IMAGE_PROMPT_CORE,
-      brandPaletteHint(doc),
-      trimmedHint,
-      "Photorealistic macro texture, shallow depth of field.",
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  if (category === "places") {
-    const visual = doc ? slotValue<VisualWorldValue>(doc, "visualWorld") : undefined;
-    const mood = visual?.moodTags?.slice(0, 3).join(", ");
-    return [
-      PLACES_IMAGE_PROMPT_CORE,
-      brandPaletteHint(doc),
-      mood ? `Atmosphere: ${mood}.` : "",
-      trimmedHint,
-      "Photorealistic empty location, wide or medium shot, cinematic natural or architectural light.",
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  return `${stylePrompt} ${trimmedHint}`.trim();
+  return assembleGalleryImagePrompt([
+    sceneLead,
+    brandCoherenceHint(doc),
+    visualStyleHint(doc),
+    core,
+    brandPaletteHint(doc),
+    visualMoodHint(doc),
+    finish,
+    GALLERY_IMAGE_POLICY_SUFFIX,
+  ]);
 }

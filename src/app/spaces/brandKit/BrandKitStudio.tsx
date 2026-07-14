@@ -51,9 +51,8 @@ import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-p
 import {
   computeGalleryBriefSourceKey,
   galleryBriefsAreFresh,
-  GALLERY_BRIEF_MIN_INCLUDED_IMAGES,
+  hasGalleryAdnContext,
 } from "@/lib/brandkit/brand-kit-gallery-brief";
-import { galleryIncludedCount } from "@/lib/brandkit/brand-kit-gallery-filter";
 import "./brand-kit.css";
 import "./brand-kit-board-theme.css";
 import "./board-v2/brand-kit-board-motion.css";
@@ -406,9 +405,8 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
 
   useEffect(() => {
     const gallery = brandKit.slots.gallery?.value as GalleryValue | undefined;
-    const visualWorld = brandKit.slots.visualWorld?.value as import("@/lib/brandkit/brand-kit-types").VisualWorldValue | undefined;
-    if (!gallery || !visualWorld?.summary?.trim()) return;
-    if (galleryIncludedCount(gallery) < GALLERY_BRIEF_MIN_INCLUDED_IMAGES) return;
+    if (!gallery) return;
+    if (!hasGalleryAdnContext(brandKit)) return;
     if (!gallery.categoryBriefs?.length) return;
     if (galleryBriefsAreFresh(gallery, galleryBriefSourceKey)) return;
     if (isAnalyzingGalleryBriefs || generatingGalleryCategory || isAnalyzing) return;

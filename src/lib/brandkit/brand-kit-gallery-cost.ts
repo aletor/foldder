@@ -58,9 +58,9 @@ export function formatBrandKitGalleryCategoryCostHint(language: "es" | "en" = "e
   const per = BRAND_KIT_GALLERY_PER_IMAGE_USD;
   const reserve = estimateBrandKitGalleryReserveUsd(GALLERY_CATEGORY_SLOT_COUNT);
   if (language === "es") {
-    return `2 imágenes · ~${formatUsd(per, "es")}/img · ~${formatUsd(total, "es")} (reserva máx. ${formatUsd(reserve, "es")})`;
+    return `${GALLERY_CATEGORY_SLOT_COUNT} imágenes · ~${formatUsd(per, "es")}/img · ~${formatUsd(total, "es")} (reserva máx. ${formatUsd(reserve, "es")})`;
   }
-  return `2 images · ~${formatUsd(per, "en")}/img · ~${formatUsd(total, "en")} (max reserve ${formatUsd(reserve, "en")})`;
+  return `${GALLERY_CATEGORY_SLOT_COUNT} images · ~${formatUsd(per, "en")}/img · ~${formatUsd(total, "en")} (max reserve ${formatUsd(reserve, "en")})`;
 }
 
 export function formatBrandKitGalleryCostHint(language: "es" | "en" = "es"): string {

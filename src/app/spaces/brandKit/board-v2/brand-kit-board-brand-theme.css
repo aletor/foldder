@@ -60,6 +60,29 @@
   color: var(--brand-ink);
 }
 
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary {
+  color: var(--brand-on-primary, #fff);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-mosaic-cell__chapter,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-mosaic-cell__status,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-v2-prose,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-v2-semantic__summary,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-rich-text__emph,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-v2-chip,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-primary .brandKit-v2-muted {
+  color: var(--brand-on-primary, #fff);
+}
+
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-raised .brandKit-v2-prose,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-raised .brandKit-v2-semantic__summary,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-page .brandKit-v2-prose,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-page .brandKit-v2-semantic__summary,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-accent .brandKit-v2-prose,
+.brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-mosaic-cell--surface-accent .brandKit-v2-semantic__summary {
+  color: var(--brand-ink);
+}
+
 .brandKit-v2-bento-board[data-brand-ready="true"] .brandKit-v2-chip {
   border-color: var(--brand-rule);
   color: var(--brand-ink);

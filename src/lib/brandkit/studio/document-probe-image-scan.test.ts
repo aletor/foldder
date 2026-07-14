@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { bboxIoU, mergeOtherImageLists } from "./document-probe-image-scan";
+import {
+  bboxIoU,
+  mergeOtherImageLists,
+  selectPdfPagesForLogoProbe,
+} from "./document-probe-image-scan";
 
 describe("document-probe-image-scan", () => {
+  it("selectPdfPagesForLogoProbe incluye portada y última si total > 4", () => {
+    expect(selectPdfPagesForLogoProbe(3)).toEqual([1, 2, 3]);
+    expect(selectPdfPagesForLogoProbe(4)).toEqual([1, 2, 3, 4]);
+    expect(selectPdfPagesForLogoProbe(5)).toEqual([1, 2, 3, 4, 5]);
+    expect(selectPdfPagesForLogoProbe(130)).toEqual([1, 2, 3, 4, 130]);
+  });
+
   it("mergeOtherImageLists deduplica por IoU en la misma página", () => {
     const primary = [
       {
