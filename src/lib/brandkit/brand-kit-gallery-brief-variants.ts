@@ -10,10 +10,10 @@ const VARIANT_ANGLE_SUFFIXES: Record<GalleryGenerateCategory, string[]> = {
     "Hands or over-shoulder detail, no identifiable repeated face.",
   ],
   places: [
-    "Uninhabited interior or architectural volume with light and material focus.",
-    "Wide exterior, landscape, or urban view with sparse or no human presence.",
-    "Lived-in space with ambient tools, objects, or signage native to the location.",
-    "Alternative location plate at a different scale; default empty unless brief specifies a crowded venue.",
+    "Uninhabited interior or architectural volume with light and material focus. No titles or overlaid text.",
+    "Wide exterior, landscape, or urban view with sparse or no human presence. No headlines or captions.",
+    "Lived-in space with ambient tools and objects native to the location. No marketing copy in frame.",
+    "Alternative location plate at a different scale; default empty unless brief specifies a crowded venue. Pure environment, no typography overlays.",
   ],
   objects: [
     "Hero still life of primary product or prop, studio lighting.",

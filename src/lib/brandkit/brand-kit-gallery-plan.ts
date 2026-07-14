@@ -26,10 +26,10 @@ const CATEGORY_FALLBACK_SUFFIXES: Record<GalleryGenerateCategory, string[]> = {
     "Human interaction or gesture scene with mood and light coherent with brand identity. No text, no logos.",
   ],
   places: [
-    "Location-first establishing shot: uninhabited interior, landscape, or urban place — architecture, light, and materials as subject. No hero product or portrait focal subject.",
-    "Wide exterior or horizon with sparse or no human presence — spatial mood and atmosphere lead the frame.",
-    "Lived-in workshop, garage, or niche space with ambient tools and objects native to the place; no people unless brief specifies.",
-    "Alternative architectural or natural setting at a different scale or time of day — default empty or lightly occupied unless brief names a crowded venue.",
+    "Location-first establishing shot: uninhabited interior, landscape, or urban place — architecture, light, and materials as subject. No text overlays, titles, or logos.",
+    "Wide exterior or horizon with sparse or no human presence — spatial mood leads the frame. No headlines or captions.",
+    "Lived-in workshop or niche space with ambient tools native to the place; no people unless brief specifies. No overlaid typography.",
+    "Alternative architectural or natural setting at a different scale — default empty unless brief names a crowded venue. Pure environmental photograph, no title graphics.",
   ],
   objects: [
     "Still life object study aligned with brand palette and lighting. Product or symbolic object. No text, no logos.",

@@ -41,7 +41,10 @@ export function buildBrandKitStylePrompt(doc: BrandKitDocument, version = 0): st
   const visualSummary = visualWorld?.summary?.trim();
   const gallery = slotValue<GalleryValue>(doc, "gallery");
   const upExamples =
-    gallery?.generated?.filter((g) => g.verdict === "up").map((g) => g.previewUrl ?? g.assetId).slice(0, 3) ?? [];
+    gallery?.generated
+      ?.filter((g) => g.verdict !== "down")
+      .map((g) => g.previewUrl ?? g.assetId)
+      .slice(0, 3) ?? [];
   const downExamples =
     gallery?.generated?.filter((g) => g.verdict === "down").map((g) => g.previewUrl ?? g.assetId).slice(0, 3) ?? [];
 

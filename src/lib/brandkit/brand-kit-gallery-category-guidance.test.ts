@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGalleryImagePrompt } from "./brand-kit-gallery-category-guidance";
+import { buildGalleryImagePrompt, softenGallerySceneHint } from "./brand-kit-gallery-category-guidance";
 
 describe("buildGalleryImagePrompt", () => {
   const stylePrompt =
@@ -98,6 +98,8 @@ describe("buildGalleryImagePrompt", () => {
     expect(prompt).toContain("Empty airport terminal");
     expect(prompt).toContain("Default to uninhabited");
     expect(prompt).toContain("unless the scene brief explicitly");
+    expect(prompt).toContain("no titles");
+    expect(prompt).toContain("never render brand copy as overlaid titles");
     expect(prompt.toLowerCase()).not.toContain("are welcome");
     expect(prompt.toLowerCase()).not.toContain("product context");
     for (const term of FORBIDDEN_HARDCODED) {
@@ -159,6 +161,21 @@ describe("buildGalleryImagePrompt", () => {
     for (const term of FORBIDDEN_HARDCODED) {
       expect(prompt.toLowerCase()).not.toContain(term);
     }
+  });
+
+  it("softens media-brand scene hints that trigger copyright filters", () => {
+    const doc = {
+      brandName: { value: "Atresmedia", provenance: { type: "user", detail: "" } },
+      slots: {},
+      updatedAt: "",
+    } as import("./brand-kit-types").BrandKitDocument;
+    const softened = softenGallerySceneHint(
+      "Wide shot of narrativas de Atresmedia with characters from Atresmedia drama",
+      "places",
+      doc,
+    );
+    expect(softened.toLowerCase()).not.toContain("atresmedia");
+    expect(softened).toMatch(/original cinematic|the brand/i);
   });
 
   it("strips copyrighted names from hints without injecting character archetypes", () => {

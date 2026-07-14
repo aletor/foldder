@@ -48,6 +48,7 @@ import {
 } from "@/lib/brandkit/brand-kit-studio-feedback";
 import { BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
 import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
+import { PanelLeft, PanelLeftClose } from "lucide-react";
 import "./brand-kit.css";
 import "./brand-kit-board-theme.css";
 import "./board-v2/brand-kit-board-motion.css";
@@ -93,6 +94,7 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
   const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
   const [presentationMode, setPresentationMode] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     if (presentationMode) setReviewMode(false);
@@ -443,7 +445,7 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
       />
 
       <div
-        className="brandKit-studio brandKit-studio--v2 brandKit-studio--split min-h-0 flex-1"
+        className={`brandKit-studio brandKit-studio--v2 brandKit-studio--split min-h-0 flex-1${sidebarOpen ? "" : " brandKit-studio--split-sidebar-collapsed"}`}
         style={{ ["--brandKit-v2-accent" as string]: BRAND_KIT_STUDIO_ACCENT }}
       >
         <BrandKitSidebarPanel
@@ -469,9 +471,21 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
           presentationMode={presentationMode}
           onPresentationModeChange={setPresentationMode}
           onBrandNameChange={handleBrandNameChange}
+          sidebarOpen={sidebarOpen}
         />
 
         <main className="brandKit-studio-split__main brandKit-studio__board-shell">
+          <button
+            type="button"
+            className="brandKit-studio-split__sidebar-toggle"
+            onClick={() => setSidebarOpen((open) => !open)}
+            aria-expanded={sidebarOpen}
+            aria-controls="brandKit-studio-sidebar"
+            aria-label={sidebarOpen ? brandKitLocaleEs.sidebarHide : brandKitLocaleEs.sidebarShow}
+            title={sidebarOpen ? brandKitLocaleEs.sidebarHide : brandKitLocaleEs.sidebarShow}
+          >
+            {sidebarOpen ? <PanelLeftClose size={16} aria-hidden /> : <PanelLeft size={16} aria-hidden />}
+          </button>
           {showBoard ? (
             <BrandKitBoardV2
               doc={brandKit}

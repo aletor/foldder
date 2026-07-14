@@ -29,4 +29,19 @@ describe("compileBrandKit", () => {
     const prompt = buildBrandKitStylePrompt(doc, 1);
     expect(prompt).toContain("example.com/a.png");
   });
+
+  it("treats generated images without verdict as accepted in style prompt", () => {
+    const doc = createDemoBrandKitFixture();
+    doc.slots.gallery = {
+      ...doc.slots.gallery,
+      status: "resolved",
+      value: {
+        harvested: [],
+        generated: [{ assetId: "b", previewUrl: "https://example.com/b.png", promptVersion: 1 }],
+        stylePromptVersion: 1,
+      },
+    };
+    const prompt = buildBrandKitStylePrompt(doc, 1);
+    expect(prompt).toContain("example.com/b.png");
+  });
 });

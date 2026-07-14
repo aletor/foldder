@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   galleryCategoryGenerateProfile,
   galleryStyleReferenceUrls,
+  galleryStyleReferencesAllowed,
   estimateGalleryGenerateCostUsd,
   isPremiumGalleryCategory,
 } from "./brand-kit-gallery-generate-profile";
@@ -27,6 +28,19 @@ describe("brand-kit-gallery-generate-profile", () => {
     expect(galleryCategoryGenerateProfile("places").model).toBe("flash25");
     expect(galleryCategoryGenerateProfile("objects").model).toBe("flash25");
     expect(galleryCategoryGenerateProfile("textures").model).toBe("flash25");
+  });
+
+  it("skips harvested refs for people_mood and places (copyright risk)", () => {
+    expect(galleryStyleReferencesAllowed("people_mood")).toBe(false);
+    expect(galleryStyleReferencesAllowed("places")).toBe(false);
+    expect(galleryStyleReferencesAllowed("objects")).toBe(true);
+    const gallery: GalleryValue = {
+      harvested: [{ assetId: "b", rankScore: 5, included: true, previewUrl: "https://x/b.jpg" }],
+      generated: [],
+      stylePromptVersion: 1,
+    };
+    expect(galleryStyleReferenceUrls(gallery, 2, "people_mood")).toEqual([]);
+    expect(galleryStyleReferenceUrls(gallery, 2, "objects")).toEqual(["https://x/b.jpg"]);
   });
 
   it("collects top harvested references excluding omitted items", () => {

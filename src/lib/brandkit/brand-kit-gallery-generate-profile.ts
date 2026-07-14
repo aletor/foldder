@@ -55,7 +55,19 @@ export function estimateGalleryGenerateCostUsd(
 }
 
 /** Fase 2: hasta 2 referencias cosechadas para luz/color (no identidad). */
-export function galleryStyleReferenceUrls(gallery: GalleryValue | undefined, limit = 2): string[] {
+const REFERENCE_SKIP_CATEGORIES = new Set<GalleryGenerateCategory>(["people_mood", "places"]);
+
+/** Personas y entornos: las refs cosechadas suelen traer actores, sets o logos (riesgo copyright). */
+export function galleryStyleReferencesAllowed(category: GalleryGenerateCategory): boolean {
+  return !REFERENCE_SKIP_CATEGORIES.has(category);
+}
+
+export function galleryStyleReferenceUrls(
+  gallery: GalleryValue | undefined,
+  limit = 2,
+  category?: GalleryGenerateCategory,
+): string[] {
+  if (category && !galleryStyleReferencesAllowed(category)) return [];
   const urls: string[] = [];
   const seen = new Set<string>();
   for (const item of [...(gallery?.harvested ?? [])].sort(

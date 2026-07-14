@@ -25,7 +25,6 @@ import {
   type BrandKitBlockMotionProps,
 } from "../brand-kit-block-motion";
 import type { BrandThemePolarity } from "@/lib/brandkit/brand-theme-color";
-import { BrandKitLogoClearanceZone } from "../BrandKitLogoClearanceZone";
 import { BrandKitEvidenceTrigger } from "../BrandKitEvidenceTrigger";
 import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
 import { useLogoLateralEdgeBackground } from "../use-logo-lateral-edge-background";
@@ -282,9 +281,6 @@ export function LogoBlock({
     body = resolvedPlinth;
   }
 
-  const showClearance =
-    Boolean(logo?.previewUrl) && (slot.status === "resolved" || slot.locked);
-
   return (
     <DnaBlock
       slotId={slotId}
@@ -295,7 +291,6 @@ export function LogoBlock({
       activeSlotId={activeSlotId}
     >
       {body}
-      {showClearance && logo?.previewUrl ? <BrandKitLogoClearanceZone previewUrl={logo.previewUrl} /> : null}
       {adjustOpen && editingLogo ? (
         <BrandKitLogoAdjustPortal>
           <BrandKitLogoBboxEditor

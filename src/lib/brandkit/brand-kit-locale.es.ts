@@ -276,6 +276,8 @@ export const brandKitLocaleEs = {
   sidebarReadyMeta: (locked: number, sources: number) =>
     `${locked} bloque${locked === 1 ? "" : "s"} confirmado${locked === 1 ? "" : "s"} · ${sources} fuente${sources === 1 ? "" : "s"}`,
   sidebarExportCollapsed: "exportar",
+  sidebarHide: "Ocultar panel",
+  sidebarShow: "Mostrar panel",
   galleryVerdictUp: "Encaja",
   galleryVerdictDown: "No encaja",
   recalibrateHint: "Regenera imágenes con el estilo actualizado del ADN.",

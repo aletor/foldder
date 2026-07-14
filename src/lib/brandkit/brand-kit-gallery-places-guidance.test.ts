@@ -3,6 +3,7 @@ import {
   brandPlacesWorldHint,
   PLACES_LOCATION_FIRST_CORE,
   PLACES_LOCATION_FIRST_FINISH,
+  PLACES_NO_TEXT_OVERLAY_RULE,
   placesAdnSuggestsPopulatedVenue,
 } from "./brand-kit-gallery-places-guidance";
 
@@ -14,12 +15,18 @@ describe("brand-kit-gallery-places-guidance", () => {
     expect(PLACES_LOCATION_FIRST_FINISH).toContain("unless the scene brief");
   });
 
+  it("forbids overlaid titles and marketing typography", () => {
+    expect(PLACES_NO_TEXT_OVERLAY_RULE).toContain("no titles");
+    expect(PLACES_LOCATION_FIRST_CORE).toContain("no titles");
+    expect(PLACES_LOCATION_FIRST_FINISH).toContain("overlaid titles");
+  });
+
   it("detects populated venue cues from ADN", () => {
     expect(placesAdnSuggestsPopulatedVenue({ moodTags: ["festival", "nocturno"] })).toBe(true);
     expect(placesAdnSuggestsPopulatedVenue({ moodTags: ["minimal", "sereno"] })).toBe(false);
   });
 
-  it("brandPlacesWorldHint avoids product context", () => {
+  it("brandPlacesWorldHint uses visual territory only, not purpose copy", () => {
     const hint = brandPlacesWorldHint({
       brandName: { value: "Acme", provenance: { type: "user", detail: "" } },
       slots: {
@@ -48,9 +55,10 @@ describe("brand-kit-gallery-places-guidance", () => {
       updatedAt: "",
     } as import("./brand-kit-types").BrandKitDocument);
 
-    expect(hint).toContain("place and atmosphere");
-    expect(hint).toContain("Urban running culture");
+    expect(hint).toContain("place, light, and atmosphere");
+    expect(hint).toContain("Ciudad nocturna");
+    expect(hint).toContain("never as overlaid titles");
+    expect(hint).not.toContain("Urban running culture");
     expect(hint.toLowerCase()).not.toContain("running shoes catalog");
-    expect(hint.toLowerCase()).not.toContain("product context");
   });
 });

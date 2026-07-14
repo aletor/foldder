@@ -306,10 +306,10 @@ function collageCores(category: GalleryGenerateCategory): CategoryCores {
       "Editorial collage composition with cut-paper, texture layers, and mixed media.",
       category === "textures"
         ? "Macro material collage filling the frame — surface and grain only."
-        : category === "places"
+        :       category === "places"
           ? PLACES_LOCATION_FIRST_CORE
           : "Cohesive collage layout faithful to the brief scene.",
-      category === "places" ? "" : "No UI screens, no holograms, no readable text, no logos.",
+      "No UI screens, no holograms, no readable text, no logos, no title overlays.",
       noPeople,
     ]
       .filter(Boolean)
@@ -327,7 +327,7 @@ function render3dCores(category: GalleryGenerateCategory): CategoryCores {
         : category === "places"
           ? PLACES_LOCATION_FIRST_CORE
           : "Faithful to the brief subject and composition.",
-      category === "places" ? "" : "No UI screens, no holograms, no readable text, no logos.",
+      "No UI screens, no holograms, no readable text, no logos, no title overlays.",
     ]
       .filter(Boolean)
       .join(" "),
@@ -344,7 +344,7 @@ function graphicDesignCores(category: GalleryGenerateCategory): CategoryCores {
         : category === "places"
           ? PLACES_LOCATION_FIRST_CORE
           : "Clear focal hierarchy faithful to the brief.",
-      category === "places" ? "" : "No readable text, no logos, no UI mockups.",
+      "No readable text, no logos, no UI mockups, no title overlays or headline typography.",
     ].join(" "),
     finish: `Bold graphic design composition with flat or semi-flat color fields.${category === "places" ? ` ${PLACES_LOCATION_FIRST_FINISH}` : ""}`,
   };

@@ -14,7 +14,7 @@ import type { BrandKitGalleryGenerateProgress } from "../../brand-kit-api";
 import { DnaBlock } from "../DnaBlock";
 import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
 import { BrandKitClickableImage } from "../BrandKitClickableImage";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { BrandKitBlockSkeleton } from "../BrandKitBlockSkeleton";
 import {
   shouldShowAnalyzingSkeleton,
@@ -58,19 +58,6 @@ export function GalleryBlock({
   const briefsFresh = galleryBriefsAreFresh(gallery, briefSourceKey);
   const showBriefStaleBanner = Boolean(gallery?.categoryBriefs?.length) && !briefsFresh;
 
-  const setVerdict = (item: GalleryValue["generated"][number], verdict: "up" | "down") => {
-    if (!gallery) return;
-    onAction(slotId, {
-      action: "set",
-      value: {
-        ...gallery,
-        generated: gallery.generated.map((entry) =>
-          entry.assetId === item.assetId ? { ...entry, verdict } : entry,
-        ),
-      },
-    });
-  };
-
   let body: React.ReactNode;
 
   if (shouldShowAnalyzingSkeleton(motion)) {
@@ -87,7 +74,7 @@ export function GalleryBlock({
             <p className="brandKit-v2-gallery-brief-banner__text">{brandKitLocaleEs.galleryBriefStale}</p>
             {onAnalyzeGalleryBriefs ? (
               <BrandKitFoldderButton
-                variant="white"
+                variant="dock"
                 compact
                 icon={RefreshCw}
                 onClick={onAnalyzeGalleryBriefs}
@@ -121,6 +108,9 @@ export function GalleryBlock({
                   ? Math.round((progressForCard.index / progressForCard.total) * 100)
                   : 0;
               const canGenerate = briefsFresh || !briefing.needsAnalysis;
+              const generateLabel = hasImages
+                ? brandKitLocaleEs.regenerateGalleryCategory
+                : brandKitLocaleEs.generateGalleryCategory;
 
               return (
                 <article key={category} className="brandKit-v2-generated-category">
@@ -132,24 +122,6 @@ export function GalleryBlock({
                           {item?.previewUrl ? (
                             <div className="brandKit-v2-gallery-generated">
                               <BrandKitClickableImage src={item.previewUrl} fit="cover" eager />
-                              <div className="brandKit-v2-gallery-verdicts">
-                                <button
-                                  type="button"
-                                  className={`brandKit-v2-gallery-verdict${item.verdict === "up" ? " is-active" : ""}`}
-                                  aria-label={brandKitLocaleEs.galleryVerdictUp}
-                                  onClick={() => setVerdict(item, "up")}
-                                >
-                                  <span aria-hidden>✓</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`brandKit-v2-gallery-verdict${item.verdict === "down" ? " is-active" : ""}`}
-                                  aria-label={brandKitLocaleEs.galleryVerdictDown}
-                                  onClick={() => setVerdict(item, "down")}
-                                >
-                                  <span aria-hidden>✗</span>
-                                </button>
-                              </div>
                             </div>
                           ) : showLoading ? (
                             <div className="brandKit-v2-generated-slot__loading" aria-hidden />
@@ -172,34 +144,34 @@ export function GalleryBlock({
                       ) : null}
                     </div>
                     <div className="brandKit-v2-generated-category__action">
-                      {briefing.needsAnalysis && onAnalyzeGalleryBriefs && !briefsFresh ? (
-                        <BrandKitFoldderButton
-                          variant="white"
-                          compact
-                          icon={RefreshCw}
-                          onClick={onAnalyzeGalleryBriefs}
-                          disabled={isAnalyzingGalleryBriefs || Boolean(generatingGalleryCategory)}
-                        >
-                          {isAnalyzingGalleryBriefs
-                            ? brandKitLocaleEs.analyzingGalleryBriefs
-                            : brandKitLocaleEs.analyzeGalleryBriefs}
-                        </BrandKitFoldderButton>
-                      ) : onGenerateGalleryCategory ? (
-                        <BrandKitFoldderButton
-                          variant="white"
-                          compact
-                          icon={Sparkles}
-                          onClick={() => onGenerateGalleryCategory(category)}
-                          disabled={Boolean(generatingGalleryCategory) || isAnalyzingGalleryBriefs || !canGenerate}
-                          aria-busy={isGeneratingThis}
-                        >
-                          {isGeneratingThis
-                            ? brandKitLocaleEs.generatingGalleryCategory(briefing.label)
-                            : hasImages
-                              ? brandKitLocaleEs.regenerateGalleryCategory
-                              : brandKitLocaleEs.generateGalleryCategory}
-                        </BrandKitFoldderButton>
-                      ) : null}
+                      <div className="brandKit-v2-generated-category__action-row">
+                        {briefing.needsAnalysis && onAnalyzeGalleryBriefs && !briefsFresh ? (
+                          <BrandKitFoldderButton
+                            variant="dock"
+                            compact
+                            icon={RefreshCw}
+                            onClick={onAnalyzeGalleryBriefs}
+                            disabled={isAnalyzingGalleryBriefs || Boolean(generatingGalleryCategory)}
+                          >
+                            {isAnalyzingGalleryBriefs
+                              ? brandKitLocaleEs.analyzingGalleryBriefs
+                              : brandKitLocaleEs.analyzeGalleryBriefs}
+                          </BrandKitFoldderButton>
+                        ) : onGenerateGalleryCategory ? (
+                          <BrandKitFoldderButton
+                            variant="dock"
+                            iconOnly
+                            round
+                            icon={RefreshCw}
+                            className={isGeneratingThis ? "is-spinning" : ""}
+                            onClick={() => onGenerateGalleryCategory(category)}
+                            disabled={Boolean(generatingGalleryCategory) || isAnalyzingGalleryBriefs || !canGenerate}
+                            aria-busy={isGeneratingThis}
+                            aria-label={generateLabel}
+                            title={generateLabel}
+                          />
+                        ) : null}
+                      </div>
                       {!isGeneratingThis && canGenerate ? (
                         <p className="brandKit-v2-generated-category__cost">{categoryCostHint}</p>
                       ) : progressForCard ? (

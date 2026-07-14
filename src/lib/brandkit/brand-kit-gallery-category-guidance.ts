@@ -6,7 +6,7 @@ import {
   gallerySceneLead,
   resolveBrandImageStyle,
 } from "./brand-kit-visual-style";
-import { brandPlacesWorldHint, PLACES_BRIEF_LLM_RULE } from "./brand-kit-gallery-places-guidance";
+import { brandPlacesWorldHint, PLACES_BRIEF_LLM_RULE, PLACES_NO_TEXT_OVERLAY_RULE } from "./brand-kit-gallery-places-guidance";
 import {
   PEOPLE_BRIEF_LLM_RULE,
   PEOPLE_MOOD_ANTI_REPEAT_CORE,
@@ -42,6 +42,47 @@ const PROMPT_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }> = [
     replacement: "",
   },
 ];
+
+/** Suaviza hints de brief que nombran la marca o «producciones» (dispara copyright en medios). */
+export function softenGallerySceneHint(
+  hint: string,
+  category: GalleryGenerateCategory,
+  doc?: BrandKitDocument,
+): string {
+  if (category !== "people_mood" && category !== "places") return hint;
+  let next = hint.trim();
+  const brand = doc?.brandName?.value?.trim();
+  if (brand) {
+    const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    next = next.replace(
+      new RegExp(`personajes de (las )?producciones de ${escaped}`, "gi"),
+      "original fictional cast in an editorial drama scene",
+    );
+    next = next.replace(
+      new RegExp(`(las )?narrativas de ${escaped}`, "gi"),
+      "original cinematic narrative environments",
+    );
+    next = next.replace(
+      new RegExp(`producciones de ${escaped}`, "gi"),
+      "original television-style productions",
+    );
+    next = next.replace(
+      new RegExp(`(characters?|cast|protagonists?|actors?) from ${escaped}`, "gi"),
+      "generic fictional $1",
+    );
+    next = next.replace(
+      new RegExp(`${escaped}\\s+(character|production|drama|series|show|cast|narrative)`, "gi"),
+      "original fictional $1",
+    );
+    next = next.replace(new RegExp(`\\b${escaped}\\b`, "gi"), "the brand");
+  }
+  next = next.replace(
+    /\bpersonajes de (las )?producciones\b/gi,
+    "fictional cast in original editorial scenes",
+  );
+  next = next.replace(/\bnarrativas de [\wáéíóúñ]+/gi, "original cinematic narratives");
+  return sanitizeGalleryImagePrompt(next);
+}
 
 /** Neutraliza términos que suelen bloquear Gemini Image sin inyectar escenas predefinidas. */
 export function sanitizeGalleryImagePrompt(prompt: string): string {
@@ -107,7 +148,7 @@ export function buildGalleryImagePrompt(
 ): string {
   const visual = doc ? slotValue<VisualWorldValue>(doc, "visualWorld") : undefined;
   const { medium } = resolveBrandImageStyle(visual);
-  const sceneLead = gallerySceneLead(hint, medium);
+  const sceneLead = gallerySceneLead(softenGallerySceneHint(hint, category, doc), medium);
   const { core, finish } = galleryCategoryPromptCores(category, visual);
 
   const coherenceHint =
@@ -116,15 +157,19 @@ export function buildGalleryImagePrompt(
   const peopleCast =
     category === "people_mood" ? peopleMoodCastDirective(variantIndex) : "";
   const peopleAntiRepeat = category === "people_mood" ? PEOPLE_MOOD_ANTI_REPEAT_CORE : "";
+  const placesNoText = category === "places" ? PLACES_NO_TEXT_OVERLAY_RULE : "";
 
   return assembleGalleryImagePrompt([
     sceneLead,
-    brandStyleCondensed(stylePrompt),
+    category === "places"
+      ? "Brand style applies to color, light, and mood only — never render brand copy as overlaid titles."
+      : brandStyleCondensed(stylePrompt),
     peopleCast,
     coherenceHint,
     visualStyleHint(doc),
     core,
     peopleAntiRepeat,
+    placesNoText,
     brandPaletteHint(doc),
     visualMoodHint(doc),
     finish,

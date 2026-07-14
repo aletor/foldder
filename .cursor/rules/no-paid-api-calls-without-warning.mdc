@@ -1,33 +1,80 @@
 ---
-description: No añadir llamadas a APIs de pago sin aviso explícito al usuario
+description: Normas absolutas — APIs de pago (aviso, sin auto-triggers, sin reintentos)
 alwaysApply: true
 ---
 
-# APIs de pago — aviso obligatorio
+# APIs de pago — normas absolutas de desarrollo
 
-## Norma absoluta
+## 1. Sin rellamada tras error (INVIOLABLE)
+
+**Nunca** volver a llamar a una API de pago porque la llamada anterior falló.
+
+Esto incluye, sin excepción:
+
+- Bloqueo copyright / safety / `finishReason: OTHER` / `SAFETY` / `RECITATION`
+- Timeout, 503, 429, 5xx, respuesta vacía, prompt bloqueado
+- “Fallback” silencioso (p. ej. misma petición sin referencias, otro modelo, prompt acortado)
+- Segundo intento en `catch` sobre la misma operación que el usuario pagó una vez
+
+**Una operación confirmada = una llamada de pago como máximo.** Si falla → parar, informar al usuario, esperar **gesto explícito** (botón Reintentar + confirmación wallet si aplica).
+
+### Prohibido en código
+
+```typescript
+// ❌ NUNCA
+try {
+  await geminiImageGenerate(...);
+} catch (e) {
+  await geminiImageGenerate({ ...variante }); // rellamada de pago
+}
+
+// ❌ NUNCA
+if (policyBlock) return await generateWithoutRefs(); // fallback de pago
+
+// ✅ SÍ
+try {
+  await geminiImageGenerate(...);
+} catch (e) {
+  throw mapError(e); // una llamada, error visible, fin
+}
+```
+
+### Reintentar solo con gesto del usuario
+
+- Botón “Reintentar” / “Generar de nuevo” visible
+- Confirmación wallet / preflight si la ruta es de pago
+- El usuario sabe que es **otra** llamada con **otro** coste
+
+---
+
+## 2. Sin nuevas llamadas de pago sin aviso
 
 **Nunca** introducir, activar ni ampliar llamadas a APIs de pago (Gemini, visión, generación de imágenes, wallet preflight, etc.) sin **avisar primero** al usuario y dejar claro que el cambio **añadirá llamadas de pago**.
 
-## Antes de implementar
+### Antes de implementar
 
 1. Identificar si el cambio dispara nuevas rutas de pago, más frecuencia, auto-triggers (`useEffect`, cron, post-ingest) o batch ampliado.
-2. **Parar y explicar** al usuario: qué endpoint, cuándo se llama, coste estimado y si es manual o automático.
-3. Solo implementar tras confirmación explícita, salvo que el usuario pida explícitamente quitar llamadas automáticas o reducir coste.
+2. **Parar y explicar**: qué endpoint, cuándo se llama, coste estimado, manual vs automático.
+3. Solo implementar tras confirmación explícita, salvo que el usuario pida quitar llamadas automáticas o reducir coste.
 
-## Prohibido sin aviso
+### Prohibido sin aviso
 
 - `useEffect` / hooks que llamen APIs de pago al cargar o al terminar otro análisis.
 - Nuevos endpoints con `fetchPostWithWalletPreflight` / `reserveApiWalletCharge`.
 - Ampliar batch LLM con bloques extra que antes iban en llamada separada.
 - Re-análisis automático por “stale keys” u obsolescencia de caché.
 
-## Preferir
+---
+
+## 3. Preferir
 
 - Reutilizar datos del batch/análisis principal ya pagado.
 - Sincronizar claves/caché sin re-llamar al proveedor.
 - Acciones de pago **solo bajo gesto explícito** del usuario (botón, confirmación wallet).
+- Mensajes de error claros en español; **no** enmascarar fallos con rellamadas.
 
-## Si el usuario dice “no más llamadas”
+---
 
-Eliminar auto-triggers y alinear persistencia para que un análisis principal no invalide datos que obliguen a otra llamada.
+## 4. Referencia en código
+
+Ver `src/lib/paid-api-policy.ts` — constante y comentario de política para rutas de generación (galería, imágenes, LLM de pago).

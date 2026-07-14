@@ -18,9 +18,14 @@ import {
   GALLERY_REFERENCE_STYLE_LEAD,
 } from "./brand-kit-gallery-generate-profile";
 import type { GalleryValue, BrandKitDocument } from "./brand-kit-types";
-import { geminiImageGenerate } from "@/lib/gemini-image-generate";
+import { geminiImageGenerate, GeminiGenerateError } from "@/lib/gemini-image-generate";
 
 const IMAGE_MODEL = "gemini-2.5-flash-image";
+
+/** Política absoluta: `src/lib/paid-api-policy.ts` — una variante = una llamada; sin rellamada en catch. */
+
+const GALLERY_POLICY_BLOCK_MESSAGE =
+  "Generación bloqueada por copyright o seguridad. Las imágenes cosechadas pueden incluir actores, logos o sets reconocibles — exclúyelas en la galería o re-analiza briefs con escenas más genéricas.";
 
 export type BrandKitGalleryStreamEvent =
   | {
@@ -69,6 +74,13 @@ function mergeGeneratedForCategory(
   return [...kept, ...incoming];
 }
 
+function mapGalleryGenerateError(error: unknown): string {
+  if (error instanceof GeminiGenerateError && /copyright|safety filter|content blocked/i.test(error.message)) {
+    return GALLERY_POLICY_BLOCK_MESSAGE;
+  }
+  return error instanceof Error ? error.message : "Error generando imagen";
+}
+
 export async function* runBrandKitGalleryGenerate(input: {
   brandKit: BrandKitDocument;
   stylePromptVersion: number;
@@ -107,11 +119,12 @@ export async function* runBrandKitGalleryGenerate(input: {
   const total = plan.length;
   const generated: GalleryGeneratedItem[] = [];
   let lastError: string | undefined;
-  const styleRefs = galleryStyleReferenceUrls(gallery, 2);
 
   for (let index = 0; index < plan.length; index += 1) {
     const slot = plan[index];
     const profile = galleryCategoryGenerateProfile(slot.category);
+    const styleRefs = galleryStyleReferenceUrls(gallery, 2, slot.category);
+
     yield {
       type: "progress",
       index: index + 1,
@@ -129,16 +142,17 @@ export async function* runBrandKitGalleryGenerate(input: {
         docForPrompt,
         slot.variantIndex,
       );
-      let prompt = buildGalleryImagePrompt(
+      const basePrompt = buildGalleryImagePrompt(
         slot.category,
         stylePrompt,
         promptSuffix,
         docForPrompt,
         slot.variantIndex,
       );
-      if (styleRefs.length) {
-        prompt = `${GALLERY_REFERENCE_STYLE_LEAD} ${prompt}`;
-      }
+      const prompt = styleRefs.length
+        ? `${GALLERY_REFERENCE_STYLE_LEAD} ${basePrompt}`
+        : basePrompt;
+
       const result = await geminiImageGenerate(
         {
           prompt,
@@ -160,11 +174,12 @@ export async function* runBrandKitGalleryGenerate(input: {
         promptVersion: input.stylePromptVersion,
         category: slot.category,
         categoryLabel: slot.categoryLabel,
+        verdict: "up",
       };
       generated.push(item);
       yield { type: "image_done", index: index + 1, item };
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Error generando imagen";
+      lastError = mapGalleryGenerateError(error);
       console.error(`[brandKit/gallery/generate] ${slot.category} ${index + 1}`, error);
     }
   }

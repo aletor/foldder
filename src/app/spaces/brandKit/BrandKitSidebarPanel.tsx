@@ -43,6 +43,7 @@ export type BrandKitSidebarPanelProps = {
   presentationMode?: boolean;
   onPresentationModeChange?: (enabled: boolean) => void;
   onBrandNameChange?: (name: string) => void;
+  sidebarOpen?: boolean;
 };
 
 export function BrandKitSidebarPanel({
@@ -67,6 +68,7 @@ export function BrandKitSidebarPanel({
   presentationMode = false,
   onPresentationModeChange,
   onBrandNameChange,
+  sidebarOpen = true,
 }: BrandKitSidebarPanelProps) {
   const [exportMode, setExportMode] = useState<BrandKitStyleGuideExportMode>("operativo");
   const [exportOpen, setExportOpen] = useState(false);
@@ -80,7 +82,12 @@ export function BrandKitSidebarPanel({
   const showExportCollapsedToggle = phase === "review" && !exportOpen;
 
   return (
-    <aside className={`brandKit-studio-split__sidebar brandKit-sidebar-phase--${phase}`} aria-label="Entrada de material">
+    <aside
+      id="brandKit-studio-sidebar"
+      className={`brandKit-studio-split__sidebar brandKit-sidebar-phase--${phase}`}
+      aria-label="Entrada de material"
+      aria-hidden={!sidebarOpen}
+    >
       <div className="brandKit-studio-split__sidebar-scroll">
         <BrandKitSidebarOverview
           doc={doc}
