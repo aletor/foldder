@@ -10,6 +10,7 @@ import type { EssenceValue } from "../brand-kit-types";
 import { buildLogoSlotPatch } from "../brand-kit-logo-policy";
 import { buildGalleryContextForLlm, galleryRefIds } from "../brand-kit-gallery-filter";
 import { mergeBatchBriefsIntoGallery } from "../brand-kit-gallery-brief";
+import { galleryBriefSourcePartsFromSynthesis } from "../brand-kit-gallery-brief-adn";
 import { buildVisualWorldFromGallery } from "../brand-kit-visual-synthesis";
 import { buildPaletteValue, buildTypographyValue, rankLogoCandidates } from "../crawl/scoring";
 import type { BrandKitStreamEvent } from "../crawl/types";
@@ -621,11 +622,16 @@ export async function* runBrandKitIngest(
     }
 
     if (batch.categoryBriefs?.length) {
-      galleryValue = mergeBatchBriefsIntoGallery(galleryValue, batch.categoryBriefs, {
-        brandName,
-        visualSummary: batch.visualWorld?.summary,
-        moodTags: batch.visualWorld?.moodTags,
-      });
+      galleryValue = mergeBatchBriefsIntoGallery(
+        galleryValue,
+        batch.categoryBriefs,
+        galleryBriefSourcePartsFromSynthesis({
+          brandName,
+          essence: batch.essence,
+          voice: batch.voice,
+          visualWorld: batch.visualWorld,
+        }),
+      );
     }
 
     if (galleryValue.harvested.length > 0) {

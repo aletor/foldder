@@ -1,6 +1,6 @@
 import type { GalleryValue, BrandKitDocument, LogoValue, SlotState, VoiceValue, VisualWorldValue, EssenceValue } from "./brand-kit-types";
 import { galleryItemSourceUrl } from "./brand-kit-gallery-media";
-import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES, syncGalleryBriefSourceKey } from "./brand-kit-gallery-brief";
+import { GALLERY_BRIEF_MIN_INCLUDED_IMAGES, syncGalleryBriefSourceKeyFromDoc } from "./brand-kit-gallery-brief";
 import { galleryIncludedCount, galleryUsefulCount, normalizeGalleryInclusions } from "./brand-kit-gallery-filter";
 import { buildVisualWorldFromGallery } from "./brand-kit-visual-synthesis";
 import { isFirstBrandKitMaterial, sootheFirstMaterialSlots } from "./brand-kit-first-material";
@@ -91,21 +91,14 @@ export function enrichBrandKitDocument(doc: BrandKitDocument): BrandKitDocument 
     const visual = slots.visualWorld?.value as VisualWorldValue | undefined;
     const voice = slots.voice?.value as VoiceValue | undefined;
     const essence = slots.essence?.value as EssenceValue | undefined;
-    const syncedGallery = syncGalleryBriefSourceKey(
+    const syncedGallery = syncGalleryBriefSourceKeyFromDoc(
       {
         ...normalizedGallery,
         harvested: rankHarvestedGalleryItems(
           normalizeGalleryHarvestedPreviewUrls(normalizedGallery.harvested),
         ),
       },
-      {
-        brandName,
-        visualSummary: visual?.summary,
-        moodTags: visual?.moodTags,
-        essenceHeadline: essence?.headline?.trim() || essence?.summary?.trim(),
-        voiceSummary: voice?.summary,
-        voiceDescriptors: voice?.descriptors,
-      },
+      { ...doc, slots },
     );
     slots.gallery = {
       ...gallerySlot,

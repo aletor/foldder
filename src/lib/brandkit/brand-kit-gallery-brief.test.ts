@@ -5,7 +5,8 @@ import {
   promptHintForGalleryCategory,
   resolveGalleryCategoryBriefing,
 } from "./brand-kit-gallery-brief";
-import { hasGalleryAdnContext, promptHintFromAdn, promptHintsFromAdn } from "./brand-kit-gallery-brief-adn";
+import { hasGalleryAdnContext, promptHintFromAdn, promptHintsFromAdn, galleryBriefSourcePartsFromSynthesis } from "./brand-kit-gallery-brief-adn";
+import { mergeBatchBriefsIntoGallery } from "./brand-kit-gallery-brief";
 import type { BrandKitDocument, GalleryValue } from "./brand-kit-types";
 
 function docWithGallery(gallery: GalleryValue): BrandKitDocument {
@@ -92,6 +93,70 @@ describe("brand-kit-gallery-brief", () => {
     expect(resolved.stale).toBe(false);
     expect(resolved.description).toContain("Micrófono");
     expect(resolved.needsAnalysis).toBe(false);
+  });
+
+  it("mergeBatchBriefs uses full synthesis source key including imageMedium", () => {
+    const harvested = Array.from({ length: 4 }, (_, index) => ({
+      assetId: `img-${index}`,
+      included: true,
+      provenance: { type: "header_img" as const, detail: `foto ${index}` },
+    }));
+    const gallery: GalleryValue = {
+      harvested,
+      generated: [],
+      stylePromptVersion: 0,
+    };
+    const doc = {
+      brandName: { value: "Acme", provenance: { type: "user", detail: "" } },
+      slots: {
+        visualWorld: {
+          status: "resolved",
+          value: {
+            summary: "Ilustración editorial",
+            moodTags: ["alegre"],
+            visualTraits: [],
+            limits: [],
+            imageMedium: "illustration",
+            imageStyleTags: ["flat vector"],
+            evidence: [],
+            galleryRefs: [],
+          },
+        },
+        essence: {
+          status: "resolved",
+          value: { summary: "Marca creativa", beliefs: [], evidence: [] },
+        },
+        voice: {
+          status: "resolved",
+          value: { summary: "Directa", descriptors: ["clara"], rules: ["Corto"], evidence: [] },
+        },
+        gallery: { status: "resolved", value: gallery },
+      },
+      updatedAt: "",
+    } as BrandKitDocument;
+
+    const merged = mergeBatchBriefsIntoGallery(
+      gallery,
+      [
+        {
+          category: "places",
+          description: "Interior amplio",
+          promptHint: "Wide interior",
+          variants: [],
+          confidence: "medium",
+          evidenceCount: 4,
+        },
+      ],
+      galleryBriefSourcePartsFromSynthesis({
+        brandName: "Acme",
+        essence: doc.slots.essence!.value as import("./brand-kit-types").EssenceValue,
+        voice: doc.slots.voice!.value as import("./brand-kit-types").VoiceValue,
+        visualWorld: doc.slots.visualWorld!.value as import("./brand-kit-types").VisualWorldValue,
+      }),
+    );
+
+    expect(merged.categoryBriefsSourceKey).toBe(computeGalleryBriefSourceKey(doc));
+    expect(galleryBriefsAreFresh(merged, computeGalleryBriefSourceKey(doc))).toBe(true);
   });
 
   it("allows generation from ADN text without harvested images", () => {

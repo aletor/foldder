@@ -8,6 +8,7 @@ import {
   galleryBriefMediumInstruction,
   resolveBrandImageStyle,
 } from "./brand-kit-visual-style";
+import { placesAdnSuggestsPopulatedVenue } from "./brand-kit-gallery-places-guidance";
 
 export type GalleryBriefSourceParts = {
   brandName?: string;
@@ -39,6 +40,25 @@ export function galleryBriefSourcePartsFromDoc(doc: BrandKitDocument): GalleryBr
     includedAssetIds: (gallery?.harvested ?? [])
       .filter((item) => item.included !== false)
       .map((item) => item.assetId),
+  };
+}
+
+export function galleryBriefSourcePartsFromSynthesis(input: {
+  brandName?: string;
+  essence?: EssenceValue | null;
+  voice?: VoiceValue | null;
+  visualWorld?: VisualWorldValue | null;
+}): Omit<GalleryBriefSourceParts, "includedAssetIds"> {
+  const visual = input.visualWorld ?? undefined;
+  return {
+    brandName: input.brandName,
+    visualSummary: visual?.summary,
+    moodTags: visual?.moodTags,
+    imageMedium: visual?.imageMedium ?? resolveBrandImageStyle(visual).medium,
+    imageStyleTags: visual?.imageStyleTags,
+    essenceHeadline: input.essence?.headline?.trim() || input.essence?.summary?.trim(),
+    voiceSummary: input.voice?.summary,
+    voiceDescriptors: input.voice?.descriptors,
   };
 }
 
@@ -163,11 +183,18 @@ export function promptHintsFromAdn(
       return Array.from({ length: GALLERY_CATEGORY_SLOT_COUNT }, (_, index) => {
         const trait = pick(traits, index, "architectural atmosphere");
         const moodTag = pick(moods, index, mood);
+        const populated = placesAdnSuggestsPopulatedVenue({
+          moodTags: moods,
+          visualTraits: traits,
+          purpose,
+        });
         const frames = [
-          `Location plate for ${brand}: ${trait}, ${moodTag} light, ${colors || "brand colors"} — the place is the subject, not a product hero shot.`,
-          `Wide establishing shot for ${brand}: ${trait}, ${moodTag} atmosphere, ambient crowds or street life allowed, no portrait focal subject.`,
-          `Lived-in environment for ${brand}: ${moodTag} tones, ${trait}, ambient objects and signage native to the place.`,
-          `Alternative location for ${brand}: material and spatial focus, ${trait}, ${moodTag} mood — no packaging or hero product.`,
+          `Uninhabited location plate for ${brand}: ${trait}, ${moodTag} light, ${colors || "brand colors"} — architecture and spatial atmosphere only.`,
+          `Wide establishing shot for ${brand}: ${trait}, ${moodTag} atmosphere, empty or sparsely occupied exterior or landscape.`,
+          `Lived-in environment for ${brand}: ${moodTag} tones, ${trait}, ambient tools or objects native to the place, no portrait focal subject.`,
+          populated
+            ? `Populated venue for ${brand}: ${moodTag} atmosphere, distant crowd as soft background mass, place still leads — no portrait or product hero.`
+            : `Alternative uninhabited space for ${brand}: material and light focus, ${trait}, ${moodTag} mood — no people unless essential to the location.`,
         ];
         return frames[index] ?? frames[0];
       });

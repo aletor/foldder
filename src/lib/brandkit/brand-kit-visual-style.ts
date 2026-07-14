@@ -1,6 +1,6 @@
 import type { VisualWorldValue } from "./brand-kit-types";
 import type { GalleryGenerateCategory } from "./brand-kit-gallery-plan";
-import { PLACES_LOCATION_FIRST_CORE } from "./brand-kit-gallery-places-guidance";
+import { PLACES_LOCATION_FIRST_CORE, PLACES_LOCATION_FIRST_FINISH } from "./brand-kit-gallery-places-guidance";
 
 export const BRAND_IMAGE_MEDIA = [
   "photography",
@@ -215,7 +215,7 @@ function photographyCores(category: GalleryGenerateCategory): CategoryCores {
     case "places":
       return {
         core: PLACES_LOCATION_FIRST_CORE,
-        finish: "Photorealistic location plate, wide or medium establishing shot, cinematic natural or architectural light.",
+        finish: `Photorealistic location plate, wide or medium establishing shot, cinematic natural or architectural light. ${PLACES_LOCATION_FIRST_FINISH}`,
       };
     case "people_mood":
       return {
@@ -263,7 +263,7 @@ function illustrationCores(category: GalleryGenerateCategory): CategoryCores {
     case "places":
       return {
         core: PLACES_LOCATION_FIRST_CORE,
-        finish: "Illustrated location plate with deliberate perspective, light, and spatial depth.",
+        finish: `Illustrated location plate with deliberate perspective, light, and spatial depth. ${PLACES_LOCATION_FIRST_FINISH}`,
       };
     case "people_mood":
       return {
@@ -312,7 +312,7 @@ function collageCores(category: GalleryGenerateCategory): CategoryCores {
     ]
       .filter(Boolean)
       .join(" "),
-    finish: "Cut-paper and mixed-media collage with tactile layering.",
+    finish: `Cut-paper and mixed-media collage with tactile layering. ${category === "places" ? PLACES_LOCATION_FIRST_FINISH : ""}`.trim(),
   };
 }
 
@@ -329,7 +329,7 @@ function render3dCores(category: GalleryGenerateCategory): CategoryCores {
     ]
       .filter(Boolean)
       .join(" "),
-    finish: "High-quality 3D render with coherent materials and soft studio or cinematic light.",
+    finish: `High-quality 3D render with coherent materials and soft studio or cinematic light.${category === "places" ? ` ${PLACES_LOCATION_FIRST_FINISH}` : ""}`,
   };
 }
 
@@ -344,7 +344,7 @@ function graphicDesignCores(category: GalleryGenerateCategory): CategoryCores {
           : "Clear focal hierarchy faithful to the brief.",
       category === "places" ? "" : "No readable text, no logos, no UI mockups.",
     ].join(" "),
-    finish: "Bold graphic design composition with flat or semi-flat color fields.",
+    finish: `Bold graphic design composition with flat or semi-flat color fields.${category === "places" ? ` ${PLACES_LOCATION_FIRST_FINISH}` : ""}`,
   };
 }
 

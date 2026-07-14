@@ -48,11 +48,6 @@ import {
 } from "@/lib/brandkit/brand-kit-studio-feedback";
 import { BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
 import type { GalleryGenerateCategory } from "@/lib/brandkit/brand-kit-gallery-plan";
-import {
-  computeGalleryBriefSourceKey,
-  galleryBriefsAreFresh,
-  hasGalleryAdnContext,
-} from "@/lib/brandkit/brand-kit-gallery-brief";
 import "./brand-kit.css";
 import "./brand-kit-board-theme.css";
 import "./board-v2/brand-kit-board-motion.css";
@@ -92,7 +87,6 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
   const compileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const brandKitRef = useRef(brandKit);
   const galleryHydrateKeyRef = useRef("");
-  const galleryBriefAttemptKeyRef = useRef<string | null>(null);
   const lastCrawlJobRef = useRef<{ url: string; enableLlm: boolean } | null>(null);
   const [lastCrawlJob, setLastCrawlJob] = useState<{ url: string; enableLlm: boolean } | null>(null);
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
@@ -380,48 +374,11 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     const result = await analyzeBrandKitGalleryBriefs(snapshot);
     setIsAnalyzingGalleryBriefs(false);
     if (!result.ok) {
-      galleryBriefAttemptKeyRef.current = null;
       setCrawlError(result.message);
       return;
     }
     persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: result.gallery }));
-    galleryBriefAttemptKeyRef.current = computeGalleryBriefSourceKey({
-      ...brandKitRef.current,
-      slots: {
-        ...brandKitRef.current.slots,
-        gallery: {
-          ...brandKitRef.current.slots.gallery,
-          value: result.gallery,
-        },
-      },
-    });
   }, [persistBrandKit]);
-
-  const galleryBriefSourceKey = useMemo(() => computeGalleryBriefSourceKey(brandKit), [brandKit]);
-
-  useEffect(() => {
-    galleryBriefAttemptKeyRef.current = null;
-  }, [galleryBriefSourceKey]);
-
-  useEffect(() => {
-    const gallery = brandKit.slots.gallery?.value as GalleryValue | undefined;
-    if (!gallery) return;
-    if (!hasGalleryAdnContext(brandKit)) return;
-    if (!gallery.categoryBriefs?.length) return;
-    if (galleryBriefsAreFresh(gallery, galleryBriefSourceKey)) return;
-    if (isAnalyzingGalleryBriefs || generatingGalleryCategory || isAnalyzing) return;
-    if (galleryBriefAttemptKeyRef.current === galleryBriefSourceKey) return;
-
-    galleryBriefAttemptKeyRef.current = galleryBriefSourceKey;
-    void handleAnalyzeGalleryBriefs();
-  }, [
-    brandKit,
-    galleryBriefSourceKey,
-    generatingGalleryCategory,
-    handleAnalyzeGalleryBriefs,
-    isAnalyzing,
-    isAnalyzingGalleryBriefs,
-  ]);
 
   const handleExportTokens = useCallback(() => {
     void applyBrandKitCompile(brandKit).then((compiledDoc) => {
@@ -526,10 +483,7 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
               gallerySuccessMessage={gallerySuccess}
               galleryProgress={galleryProgress}
               onGenerateGalleryCategory={(category) => void handleGenerateGalleryCategory(category)}
-              onAnalyzeGalleryBriefs={() => {
-                galleryBriefAttemptKeyRef.current = null;
-                void handleAnalyzeGalleryBriefs();
-              }}
+              onAnalyzeGalleryBriefs={() => void handleAnalyzeGalleryBriefs()}
               isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
               onExportTokens={handleExportTokens}
               onExportCompiled={handleExportCompiled}

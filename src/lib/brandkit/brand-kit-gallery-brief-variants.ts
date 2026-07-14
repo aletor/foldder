@@ -10,10 +10,10 @@ const VARIANT_ANGLE_SUFFIXES: Record<GalleryGenerateCategory, string[]> = {
     "Interaction or gesture scene with authentic emotional tone.",
   ],
   places: [
-    "Wide location plate: interior, street, or landscape where the place is the subject.",
-    "Crowded venue or urban scene — ambient people as part of the environment, not portrait focus.",
-    "Lived-in space with tools, objects, or signage native to the location.",
-    "Architectural or natural setting at a different scale; spatial atmosphere leads.",
+    "Uninhabited interior or architectural volume with light and material focus.",
+    "Wide exterior, landscape, or urban view with sparse or no human presence.",
+    "Lived-in space with ambient tools, objects, or signage native to the location.",
+    "Alternative location plate at a different scale; default empty unless brief specifies a crowded venue.",
   ],
   objects: [
     "Hero still life of primary product or prop, studio lighting.",

@@ -26,10 +26,10 @@ const CATEGORY_FALLBACK_SUFFIXES: Record<GalleryGenerateCategory, string[]> = {
     "Human interaction or gesture scene with mood and light coherent with brand identity. No text, no logos.",
   ],
   places: [
-    "Location-first establishing shot: interior, landscape, or urban place as subject. Ambient crowds, objects, or signage allowed. No hero product or portrait focal subject. No text overlays, no logos.",
-    "Packed venue or streetscape from wide angle — the place and atmosphere define the frame, not a single person or product.",
-    "Workshop, garage, or lived-in space with ambient tools and clutter belonging to the location. No brand product hero shot.",
-    "Architectural or natural environment at another scale or time of day — spatial mood is the subject. No product still life.",
+    "Location-first establishing shot: uninhabited interior, landscape, or urban place — architecture, light, and materials as subject. No hero product or portrait focal subject.",
+    "Wide exterior or horizon with sparse or no human presence — spatial mood and atmosphere lead the frame.",
+    "Lived-in workshop, garage, or niche space with ambient tools and objects native to the place; no people unless brief specifies.",
+    "Alternative architectural or natural setting at a different scale or time of day — default empty or lightly occupied unless brief names a crowded venue.",
   ],
   objects: [
     "Still life object study aligned with brand palette and lighting. Product or symbolic object. No text, no logos.",
@@ -64,7 +64,7 @@ export function categoryMeta(category: GalleryGenerateCategory): { label: string
     case "people_mood":
       return { label: "Personas & mood", hint: "Rostros, emoción, actitud y luz sobre personas." };
     case "places":
-      return { label: "Entorno", hint: "Localización como sujeto: el lugar manda; multitudes, objetos y textos ambientales son válidos." };
+      return { label: "Entorno", hint: "Localización como sujeto: por defecto vacío o con ocupación ligera; multitudes solo si el brief lo pide." };
     case "objects":
       return { label: "Objetos", hint: "Objetos simbólicos o de producto con tratamiento editorial." };
     case "textures":

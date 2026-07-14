@@ -25,6 +25,7 @@ import { buildEssenceHeadlineCandidates, buildEssenceHeadlineAlternatives, build
 import { galleryItemSourceUrl } from "../brand-kit-gallery-media";
 import { buildGalleryContextForLlm, filterHarvestedGallery, galleryRefIds, galleryUsefulCount } from "../brand-kit-gallery-filter";
 import { mergeBatchBriefsIntoGallery } from "../brand-kit-gallery-brief";
+import { galleryBriefSourcePartsFromSynthesis } from "../brand-kit-gallery-brief-adn";
 import { buildVisualWorldFromGallery } from "../brand-kit-visual-synthesis";
 import {
   extractOnelinerCandidatesFromPages,
@@ -917,11 +918,16 @@ export async function* runBrandKitCrawl(
     }
 
     if (batch.categoryBriefs?.length) {
-      galleryValue = mergeBatchBriefsIntoGallery(galleryValue, batch.categoryBriefs, {
-        brandName,
-        visualSummary: batch.visualWorld?.summary,
-        moodTags: batch.visualWorld?.moodTags,
-      });
+      galleryValue = mergeBatchBriefsIntoGallery(
+        galleryValue,
+        batch.categoryBriefs,
+        galleryBriefSourcePartsFromSynthesis({
+          brandName,
+          essence: batch.essence,
+          voice: batch.voice,
+          visualWorld: batch.visualWorld,
+        }),
+      );
     }
 
     if (galleryValue.harvested.length > 0) {

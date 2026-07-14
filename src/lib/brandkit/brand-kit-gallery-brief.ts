@@ -107,6 +107,17 @@ export function syncGalleryBriefSourceKey(
   return { ...gallery, categoryBriefsSourceKey: sourceKey };
 }
 
+export function syncGalleryBriefSourceKeyFromDoc(
+  gallery: GalleryValue,
+  doc: BrandKitDocument,
+): GalleryValue {
+  const { includedAssetIds, ...parts } = galleryBriefSourcePartsFromDoc({
+    ...doc,
+    slots: { ...doc.slots, gallery: { ...doc.slots.gallery, value: gallery } },
+  });
+  return syncGalleryBriefSourceKey(gallery, parts);
+}
+
 export function galleryBriefForCategory(
   gallery: GalleryValue | undefined,
   category: GalleryGenerateCategory,
@@ -146,8 +157,8 @@ function fallbackDescription(
         : `Retratos y presencia humana ${mood} para ${brand}, sin estética stock.`;
     case "places":
       return trait
-        ? `**Localización vacía** con ${trait.toLowerCase()}: arquitectura o paisaje sin personas, luz ${mood} y materiales del espacio.`
-        : `**Entorno deshabitado** ${mood} para ${brand} — interior, calle o paisaje sin gente visible.`;
+        ? `**Localización** con ${trait.toLowerCase()}: arquitectura o paisaje como sujeto, por defecto sin personas, luz ${mood} y materiales del espacio.`
+        : `**Entorno** ${mood} para ${brand} — interior, calle o paisaje donde el lugar manda; ocupación ligera salvo que el brief indique un espacio concurrido.`;
     case "objects":
       return `Objetos o detalles de producto de ${brand} con ${colors} y luz ${mood}.`;
     case "textures":

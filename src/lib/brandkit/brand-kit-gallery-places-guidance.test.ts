@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { brandPlacesWorldHint, PLACES_LOCATION_FIRST_CORE } from "./brand-kit-gallery-places-guidance";
+import {
+  brandPlacesWorldHint,
+  PLACES_LOCATION_FIRST_CORE,
+  PLACES_LOCATION_FIRST_FINISH,
+  placesAdnSuggestsPopulatedVenue,
+} from "./brand-kit-gallery-places-guidance";
 
 describe("brand-kit-gallery-places-guidance", () => {
-  it("allows ambient crowds and graffiti in core rule", () => {
-    expect(PLACES_LOCATION_FIRST_CORE).toContain("Crowds, ambient objects");
-    expect(PLACES_LOCATION_FIRST_CORE).toContain("graffiti");
-    expect(PLACES_LOCATION_FIRST_CORE).toContain("hero SKU");
+  it("defaults to uninhabited spaces and only allows people when brief specifies", () => {
+    expect(PLACES_LOCATION_FIRST_CORE).toContain("Default to uninhabited");
+    expect(PLACES_LOCATION_FIRST_CORE).toContain("only if the scene brief explicitly");
+    expect(PLACES_LOCATION_FIRST_CORE).not.toContain("are welcome");
+    expect(PLACES_LOCATION_FIRST_FINISH).toContain("unless the scene brief");
+  });
+
+  it("detects populated venue cues from ADN", () => {
+    expect(placesAdnSuggestsPopulatedVenue({ moodTags: ["festival", "nocturno"] })).toBe(true);
+    expect(placesAdnSuggestsPopulatedVenue({ moodTags: ["minimal", "sereno"] })).toBe(false);
   });
 
   it("brandPlacesWorldHint avoids product context", () => {

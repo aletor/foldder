@@ -1,0 +1,33 @@
+---
+description: No añadir llamadas a APIs de pago sin aviso explícito al usuario
+alwaysApply: true
+---
+
+# APIs de pago — aviso obligatorio
+
+## Norma absoluta
+
+**Nunca** introducir, activar ni ampliar llamadas a APIs de pago (Gemini, visión, generación de imágenes, wallet preflight, etc.) sin **avisar primero** al usuario y dejar claro que el cambio **añadirá llamadas de pago**.
+
+## Antes de implementar
+
+1. Identificar si el cambio dispara nuevas rutas de pago, más frecuencia, auto-triggers (`useEffect`, cron, post-ingest) o batch ampliado.
+2. **Parar y explicar** al usuario: qué endpoint, cuándo se llama, coste estimado y si es manual o automático.
+3. Solo implementar tras confirmación explícita, salvo que el usuario pida explícitamente quitar llamadas automáticas o reducir coste.
+
+## Prohibido sin aviso
+
+- `useEffect` / hooks que llamen APIs de pago al cargar o al terminar otro análisis.
+- Nuevos endpoints con `fetchPostWithWalletPreflight` / `reserveApiWalletCharge`.
+- Ampliar batch LLM con bloques extra que antes iban en llamada separada.
+- Re-análisis automático por “stale keys” u obsolescencia de caché.
+
+## Preferir
+
+- Reutilizar datos del batch/análisis principal ya pagado.
+- Sincronizar claves/caché sin re-llamar al proveedor.
+- Acciones de pago **solo bajo gesto explícito** del usuario (botón, confirmación wallet).
+
+## Si el usuario dice “no más llamadas”
+
+Eliminar auto-triggers y alinear persistencia para que un análisis principal no invalide datos que obliguen a otra llamada.

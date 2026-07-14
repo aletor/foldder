@@ -59,7 +59,7 @@ describe("buildGalleryImagePrompt", () => {
     }
   });
 
-  it("uses location-first places scene and omits product coherence hint", () => {
+  it("uses location-first places scene with sparse default and omits product coherence hint", () => {
     const docWithProduct = {
       ...doc,
       slots: {
@@ -80,15 +80,15 @@ describe("buildGalleryImagePrompt", () => {
     const prompt = buildGalleryImagePrompt(
       "places",
       stylePrompt,
-      "Packed concert hall from rear, stage lights, crowd as ambient mass, wide establishing shot.",
+      "Empty airport terminal at dawn, wide shot, no passengers in frame.",
       docWithProduct,
     );
     expect(prompt).toContain("Scene to photograph:");
-    expect(prompt).toContain("Packed concert hall");
-    expect(prompt).toContain("Location-first establishing shot");
-    expect(prompt).toContain("Crowds, ambient objects");
+    expect(prompt).toContain("Empty airport terminal");
+    expect(prompt).toContain("Default to uninhabited");
+    expect(prompt).toContain("unless the scene brief explicitly");
+    expect(prompt.toLowerCase()).not.toContain("are welcome");
     expect(prompt.toLowerCase()).not.toContain("product context");
-    expect(prompt.toLowerCase()).not.toContain("brand offering");
     for (const term of FORBIDDEN_HARDCODED) {
       expect(prompt.toLowerCase()).not.toContain(term);
     }
