@@ -213,7 +213,7 @@ export function areNodesConnectable(
   }
 
   if (sourceNode.type === "site" && connection.sourceHandle === "leads") {
-    return targetHandleType === "json" || targetHandleType === "generic";
+    return targetHandleType === "json" || (targetHandleType as string) === "generic";
   }
 
   // Brain handle should only connect to brain-compatible inputs.

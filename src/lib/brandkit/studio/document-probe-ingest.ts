@@ -29,7 +29,7 @@ export function buildDocumentProbeContext(probe: BrandKitDocumentProbeResult): B
     textSummary: probe.textSummary.filter((line) => line.trim()),
     primaryColors: probe.primaryColors.map((color) => ({
       hex: color.hex,
-      label: color.label,
+      label: color.label ?? undefined,
     })),
     typography: probe.typography.map((row) => ({
       family: row.family,

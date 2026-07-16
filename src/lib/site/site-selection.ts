@@ -173,7 +173,6 @@ export function resolveSiteSelection(
       isSectionRootBlock: false,
       humanLabel: `Sección · ${sectionLabel}`,
       breadcrumb: [],
-      capabilities: null as never,
     });
     const breadcrumb = buildBreadcrumb(sectionLabel, section.id, null, "section", section, null);
     return {
@@ -220,7 +219,7 @@ export function resolveSiteSelection(
     humanLabel,
   };
 
-  const capabilities = getSelectionCapabilities({ ...draft, breadcrumb: [], capabilities: null as never });
+  const capabilities = getSelectionCapabilities({ ...draft, breadcrumb: [] });
   const breadcrumb = buildBreadcrumb(sectionLabel, section.id, block.id, "block", section, block);
 
   return { ...draft, breadcrumb, capabilities };

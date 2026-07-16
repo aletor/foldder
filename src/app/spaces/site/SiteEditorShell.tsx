@@ -569,7 +569,6 @@ export function SiteEditorShell({
             onPreviewLocaleChange={onPreviewLocaleChange}
             onPatchLedger={onPatchLedger}
             focus={advancedInspectorContext}
-            selectionKind={selectionKind}
           />
         </div>
       ) : (

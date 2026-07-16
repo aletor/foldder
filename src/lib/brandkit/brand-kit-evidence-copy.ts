@@ -108,7 +108,6 @@ export function translateReconciliationSignal(reconciliation?: SlotReconciliatio
   if (!reconciliation) return null;
   if (reconciliation.outcome === "reinforcement") return "refuerza lo que ya tenías";
   if (reconciliation.outcome === "extension") return "amplía lo confirmado con material nuevo";
-  if (reconciliation.outcome === "identical") return "coincide con lo confirmado";
   return null;
 }
 

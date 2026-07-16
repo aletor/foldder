@@ -8999,7 +8999,7 @@ export function FreehandStudioCanvas({
   designerBrainTelemetry,
   brainConnected = false,
   brandKitPaletteColors = [],
-  designerFlowNodeId = null,
+  designerFlowNodeId,
   designerConnectedDataset = null,
   designerConnectedDatasetLoading = false,
   designerActivePageDatasetRowIndex = 0,

@@ -56,11 +56,16 @@ export function buildStyleGuideChapterPlan(
   const slotIncluded = (slotId: SlotId) => (soloValidado ? slotIncludedInFinal(doc, slotId) : slotHasContent(doc, slotId));
 
   const showcase = buildBrandKitShowcaseData(doc, soloValidado);
-  const applicationsIncluded =
-    Boolean(showcase) && (soloValidado ? showcaseRequirementsMet(showcase.requirements) : true);
-  const stationeryIncluded =
-    Boolean(showcase) &&
-    (soloValidado ? stationeryRequirementsMet(doc, true) : stationeryRequirementsMet(doc, false));
+  const applicationsIncluded = showcase
+    ? soloValidado
+      ? showcaseRequirementsMet(showcase.requirements)
+      : true
+    : false;
+  const stationeryIncluded = showcase
+    ? soloValidado
+      ? stationeryRequirementsMet(doc, true)
+      : stationeryRequirementsMet(doc, false)
+    : false;
   const stationeryView =
     showcase && stationeryIncluded
       ? buildBrandKitStationeryView(doc, {

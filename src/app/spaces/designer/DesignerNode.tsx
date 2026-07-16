@@ -158,7 +158,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     nodeId: id,
     nodeType: "designer",
   });
-  const { brainConnected, brandKitPaletteColors } = useDesignerBrandKitConnection(id);
+  const { brainConnected, paletteColors: brandKitPaletteColors } = useDesignerBrandKitConnection(id);
   const { datasetConnected, connectedDataset, datasetLoading } = useDesignerConnectedDataset(id);
   const effectiveDataset = connectedDataset;
   const currentNodeFrameSnapshot = useStore(

@@ -2,8 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import type { SlotId } from "@/lib/brandkit/brand-kit-types";
-import type { BrandKitDocument } from "@/lib/brandkit/brand-kit-types";
+import type { BrandKitDocument, SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
 import { buildFallbackSlotDetailPayload } from "./brand-kit-slot-detail-payload";
 import type {
   BrandKitBoardSelectionId,
@@ -11,7 +10,6 @@ import type {
   BrandKitStudioMode,
 } from "@/lib/brandkit/studio/brand-kit-studio-mode";
 import { mapDetailTabToInspectorTab } from "@/lib/brandkit/studio/brand-kit-inspector";
-import type { SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
 
 export type MosaicDetailTab = {
   id: string;

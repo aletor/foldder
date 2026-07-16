@@ -81,7 +81,7 @@ export function buildSidebarNavItems(
   const appsStatus: SidebarSlotStatusIcon = paletteOk ? "confirmed" : "pending";
   const showApps = options?.presentationOnly ? shouldShowApplicationsInPresentation(doc) : true;
 
-  const items = [...dnaItems];
+  const items: SidebarNavItem[] = [...dnaItems];
   if (showApps) {
     items.push({
       id: "applications",

@@ -521,7 +521,7 @@ function renderPaletteCards(
       hex: slot.value?.hex,
       usageWeight: paletteFromDoc?.colors.find((c) => c.role === role)?.usageWeight,
     }))
-    .filter((entry): entry is { role: string; hex: string; usageWeight?: number } => Boolean(entry.hex));
+    .filter((entry): entry is typeof entry & { hex: string } => typeof entry.hex === "string" && entry.hex.length > 0);
 
   if (!colors.length) return `<p class="sg-prose">Sin paleta definida</p>`;
 

@@ -1198,10 +1198,11 @@ export function SiteInspector({
 
   const renderContentPanel = () => {
     if (!section || !activeBlock) return null;
-    const showSource = !focused || focus?.part === "source" || focus?.part === undefined;
-    const showBody = !focused || focus?.part === "body" || focus?.part === undefined;
+    const focusPart = focus?.mode === "focused" ? focus.part : undefined;
+    const showSource = !focused || focusPart === "source" || focusPart === undefined;
+    const showBody = !focused || focusPart === "body" || focusPart === undefined;
 
-    if (focus?.part === "source") {
+    if (focusPart === "source") {
       return (
         <div className="site-studio__inspector-panel">
           <BlockSourceEditor

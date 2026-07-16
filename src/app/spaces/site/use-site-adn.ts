@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback } from "react";
-import { useStore, type Edge, type ReactFlowState } from "@xyflow/react";
+import { useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { normalizeBrandKitDocument } from "@/lib/brandkit/brand-kit-defaults";
-import type { BrandKitDocument, BrandKitNodeData } from "@/lib/brandkit/brand-kit-types";
+import type { BrandKitNodeData } from "@/lib/brandkit/brand-kit-types";
 import { resolveSiteAdnFromBrandKit, type SiteAdnContext } from "@/lib/site/site-adn";
 
 export function useSiteAdnConnection(siteNodeId: string): {
@@ -15,7 +15,7 @@ export function useSiteAdnConnection(siteNodeId: string): {
 } {
   return useStore(
     useCallback(
-      (state: ReactFlowState<unknown, Edge>) => {
+      (state: ReactFlowState<Node, Edge>) => {
         const edge = state.edges.find(
           (item) =>
             item.target === siteNodeId &&

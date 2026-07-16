@@ -119,7 +119,7 @@ export async function POST(req: Request) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
-    if (walletCharge) await releaseApiWalletChargeOnError(walletCharge);
+    if (walletCharge) await releaseApiWalletChargeOnError(walletCharge, error);
     const walletResponse = walletGateErrorResponse(error);
     if (walletResponse) return walletResponse;
     console.error("[site/generate-copy]", error);
