@@ -7,22 +7,25 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
 
-export type FoldderLibraryTab = "imported" | "generated" | "exported";
+export type FoldderLibraryPrimaryTab = "gallery" | "flows" | "templates" | "brandKits";
+export type FoldderGalleryBucketTab = "imported" | "generated" | "exported";
+/** @deprecated Prefer FoldderLibraryPrimaryTab / FoldderGalleryBucketTab */
+export type FoldderLibraryTab = FoldderLibraryPrimaryTab | FoldderGalleryBucketTab;
 
-export type FoldderLibraryTabItem = {
-  id: FoldderLibraryTab;
+export type FoldderLibraryTabItem<T extends string = string> = {
+  id: T;
   label: string;
   count?: number;
 };
 
-export function FoldderLibraryStudioTabBar({
+export function FoldderLibraryStudioTabBar<T extends string>({
   tabs,
   activeTab,
   onTabChange,
 }: {
-  tabs: FoldderLibraryTabItem[];
-  activeTab: FoldderLibraryTab;
-  onTabChange: (tab: FoldderLibraryTab) => void;
+  tabs: FoldderLibraryTabItem<T>[];
+  activeTab: T;
+  onTabChange: (tab: T) => void;
 }) {
   return (
     <nav

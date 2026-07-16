@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const filename = brandKitStyleGuideFilename(body.projectName, doc.generatedAt);
+    const filename = brandKitStyleGuideFilename(body.projectName, doc.generatedAt, doc.exportMode);
 
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,

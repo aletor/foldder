@@ -20,6 +20,7 @@ import {
   shouldShowLegacyPendingSkeleton,
   type BrandKitBlockMotionProps,
 } from "../brand-kit-block-motion";
+import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
 
 function linesToList(text: string): string[] {
   return text
@@ -43,6 +44,7 @@ export function VoiceBlock({
   const voice = slot.value as VoiceValue | undefined;
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
+  const isMosaic = Boolean(useBrandKitMosaicCellOptional());
   let body: React.ReactNode;
   let primaryAction: React.ReactNode;
 
@@ -173,6 +175,10 @@ export function VoiceBlock({
 
     body = (
       <SemanticDetailPanels
+        slotId={slotId}
+        slot={slot}
+        onAction={onAction}
+        onEdit={() => setEditing(true)}
         summary={
           <BrandKitRichText
             text={voice.summary}
@@ -226,7 +232,7 @@ export function VoiceBlock({
       slot={slot}
       onAction={onAction}
       primaryAction={primaryAction}
-      secondaryActions={editButton}
+      secondaryActions={isMosaic ? undefined : editButton}
       activeSlotId={activeSlotId}
     >
       {body}

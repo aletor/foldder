@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import type { PaletteValue, SlotAction, SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import { nameColor } from "@/lib/brandkit/name-color";
@@ -15,6 +15,12 @@ import {
   shouldShowLegacyPendingSkeleton,
   type BrandKitBlockMotionProps,
 } from "../brand-kit-block-motion";
+import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
+import { useBrandKitPalettePreview } from "../brand-kit-palette-preview-context";
+import { useBrandKitPresentationReadOnly } from "../use-brand-kit-presentation";
+import { buildMosaicDetailPayload } from "../BrandKitDetailPanel";
+import { useRegisterSlotDetail } from "../BrandKitDetailFooterActions";
+import { getSlotAttention } from "@/lib/brandkit/brand-kit-board-status";
 
 const ROLE_LABELS: Record<PaletteValue["colors"][number]["role"], string> = {
   primary: "Principal",
@@ -37,6 +43,8 @@ function PaletteColorCard({
   interactive = true,
   onPickPrimary,
   onColorChange,
+  onColorPreview,
+  onColorPreviewEnd,
   staggerIndex,
   slot,
   slotId,
@@ -49,6 +57,8 @@ function PaletteColorCard({
   interactive?: boolean;
   onPickPrimary?: () => void;
   onColorChange?: (nextHex: string) => void;
+  onColorPreview?: (nextHex: string) => void;
+  onColorPreviewEnd?: () => void;
   staggerIndex?: number;
   slot?: SlotState<unknown>;
   slotId?: SlotId;
@@ -108,7 +118,12 @@ function PaletteColorCard({
             type="color"
             className="brandKit-palette-card__picker-input"
             value={pickerValue}
-            onChange={(event) => onColorChange(normalizeHex(event.target.value))}
+            onInput={(event) => onColorPreview?.(normalizeHex(event.currentTarget.value))}
+            onChange={(event) => {
+              const next = normalizeHex(event.target.value);
+              onColorChange(next);
+              onColorPreviewEnd?.();
+            }}
           />
         </label>
       ) : null}
@@ -173,6 +188,8 @@ function PaletteStrip({
   colors,
   onPickPrimary,
   onColorChange,
+  onColorPreview,
+  onColorPreviewEnd,
   interactive = true,
   showProportions = false,
   slot,
@@ -182,6 +199,8 @@ function PaletteStrip({
   colors: PaletteValue["colors"];
   onPickPrimary?: (hex: string) => void;
   onColorChange?: (fromHex: string, toHex: string) => void;
+  onColorPreview?: (fromHex: string, toHex: string) => void;
+  onColorPreviewEnd?: () => void;
   interactive?: boolean;
   showProportions?: boolean;
   slot?: SlotState<unknown>;
@@ -203,6 +222,8 @@ function PaletteStrip({
             staggerIndex={index}
             onPickPrimary={onPickPrimary ? () => onPickPrimary(color.hex) : undefined}
             onColorChange={onColorChange ? (next) => onColorChange(color.hex, next) : undefined}
+            onColorPreview={onColorPreview ? (next) => onColorPreview(color.hex, next) : undefined}
+            onColorPreviewEnd={onColorPreviewEnd}
             slot={slot}
             slotId={slotId}
             onAction={onAction}
@@ -228,6 +249,52 @@ export function PaletteBlock({
   activeSlotId?: SlotId;
 } & BrandKitBlockMotionProps) {
   const palette = slot.value as PaletteValue | undefined;
+  const mosaicCell = useBrandKitMosaicCellOptional();
+  const palettePreview = useBrandKitPalettePreview();
+  const readOnly = useBrandKitPresentationReadOnly();
+  const isMosaic = Boolean(mosaicCell);
+
+  const paletteDetailPayload = useMemo(() => {
+    if (!isMosaic) return null;
+    return buildMosaicDetailPayload({
+      slotId,
+      blockLabel: brandKitLocaleEs.palette,
+      statusLabel: slot.locked ? brandKitLocaleEs.locked : brandKitLocaleEs.confirmedStatus,
+      sourceLabel: slot.provenance?.detail ? `Fuente principal: ${slot.provenance.detail}` : undefined,
+      panels: [
+        {
+          id: "colors",
+          label: brandKitLocaleEs.palette,
+          count: palette?.colors?.length,
+          content: palette?.colors?.length ? (
+            <ul className="brandKit-slot-detail-palette">
+              {palette.colors.map((color) => (
+                <li key={`${color.role}-${color.hex}`} className="brandKit-slot-detail-palette__row">
+                  <span
+                    className="brandKit-slot-detail-palette__swatch"
+                    style={{ backgroundColor: color.hex }}
+                    aria-hidden
+                  />
+                  <span className="brandKit-slot-detail-palette__meta">
+                    <strong>{nameColor(color.hex)}</strong>
+                    <span>
+                      {ROLE_LABELS[color.role]} · {color.hex}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="brandKit-v2-muted">{brandKitLocaleEs.noPalette}</p>
+          ),
+        },
+      ],
+      initialTabId: getSlotAttention(slot).kind === "conflict" ? "evidence" : undefined,
+    });
+  }, [isMosaic, palette?.colors, slot, slotId]);
+
+  useRegisterSlotDetail(isMosaic ? slotId : undefined, paletteDetailPayload);
+
   let body: React.ReactNode;
   let primaryAction: React.ReactNode;
 
@@ -246,12 +313,25 @@ export function PaletteBlock({
   const changeColor = (fromHex: string, toHex: string) => {
     if (!palette?.colors?.length || slot.locked) return;
     const normalized = normalizeHex(toHex);
+    palettePreview?.setPreviewPalette(null);
     onAction(slotId, {
       action: "set",
       value: {
         colors: palette.colors.map((entry) => (entry.hex === fromHex ? { ...entry, hex: normalized } : entry)),
       },
     });
+  };
+
+  const previewColor = (fromHex: string, toHex: string) => {
+    if (!palette?.colors?.length || slot.locked) return;
+    const normalized = normalizeHex(toHex);
+    palettePreview?.setPreviewPalette({
+      colors: palette.colors.map((entry) => (entry.hex === fromHex ? { ...entry, hex: normalized } : entry)),
+    });
+  };
+
+  const endColorPreview = () => {
+    palettePreview?.setPreviewPalette(null);
   };
 
   if (shouldShowAnalyzingSkeleton(motion)) {
@@ -297,8 +377,11 @@ export function PaletteBlock({
     body = (
       <PaletteStrip
         colors={palette.colors}
-        onPickPrimary={slot.locked ? undefined : pickPrimary}
-        onColorChange={slot.locked ? undefined : changeColor}
+        onPickPrimary={readOnly || slot.locked ? undefined : pickPrimary}
+        onColorChange={readOnly || slot.locked ? undefined : changeColor}
+        onColorPreview={readOnly || slot.locked ? undefined : previewColor}
+        onColorPreviewEnd={readOnly || slot.locked ? undefined : endColorPreview}
+        interactive={!readOnly && !slot.locked}
         showProportions
         slot={slot}
         slotId={slotId}

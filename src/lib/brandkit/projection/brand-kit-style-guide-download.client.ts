@@ -130,7 +130,11 @@ export async function downloadBrandKitDocumentStyleGuidePdf(
     }
 
     const blob = await response.blob();
-    const filename = brandKitStyleGuideFilename(projectName, new Date().toISOString());
+    const filename = brandKitStyleGuideFilename(
+      projectName,
+      new Date().toISOString(),
+      options.exportMode ?? "operativo",
+    );
     triggerBlobDownload(blob, filename);
     return { ok: true };
   } catch (error) {

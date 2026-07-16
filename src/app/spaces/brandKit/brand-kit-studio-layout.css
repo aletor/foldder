@@ -1,0 +1,230 @@
+/* ── BrandKit Studio shell — layout, responsive, alineación ── */
+
+.brandKit-studio-root {
+  --brandKit-studio-header-height: 40px;
+}
+
+@media (max-width: 900px) {
+  .brandKit-studio-root {
+    --brandKit-studio-header-height: 72px;
+  }
+}
+
+/* Light editorial shell sobre .brandKit-studio--v2 (evita tokens oscuros en chrome) */
+.brandKit-studio.brandKit-studio--split {
+  --brandKit-v2-bg: #f6f5f2;
+  --brandKit-v2-surface: #fbfaf8;
+  --brandKit-v2-border: rgba(26, 26, 26, 0.1);
+  --brandKit-v2-text: #141414;
+  --brandKit-v2-muted: rgba(20, 20, 20, 0.48);
+  background: var(--surface);
+  color: var(--text-main);
+}
+
+.brandKit-studio-split__main {
+  background: var(--surface);
+}
+
+/* Sidebar: flex column estable + previews sin recorte horizontal */
+.brandKit-studio-split__sidebar {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: visible;
+}
+
+.brandKit-studio-split__sidebar-scroll {
+  position: relative;
+  z-index: 1;
+  overflow-y: auto;
+  overflow-x: visible;
+  overscroll-behavior: contain;
+}
+
+.brandKit-sidebar-nav__item {
+  z-index: 1;
+}
+
+.brandKit-sidebar-nav__item.is-hovered {
+  z-index: 50;
+}
+
+/* Rail nav — números y estado */
+.brandKit-sidebar-nav__rail-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-main);
+}
+
+.brandKit-sidebar-nav__rail-status {
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.brandKit-sidebar-nav--rail .brandKit-sidebar-nav__rail-btn {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+}
+
+.brandKit-studio--mode-edit .brandKit-sidebar-nav--rail .brandKit-sidebar-nav__rail-btn {
+  grid-template-columns: 1fr auto;
+  justify-items: stretch;
+}
+
+.brandKit-studio-split__sidebar.is-collapsed-rail .brandKit-studio-split__sidebar-scroll,
+.brandKit-studio--split-sidebar-collapsed .brandKit-studio-split__sidebar-scroll {
+  align-items: center;
+}
+
+.brandKit-studio--mode-presentation .brandKit-studio-split__sidebar-scroll {
+  padding-inline: 8px;
+}
+
+/* Preview flotante (no recortado por overflow del sidebar) */
+.brandKit-sidebar-nav__preview--floating {
+  position: fixed;
+  z-index: 100110;
+  min-width: 180px;
+  max-width: 240px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 20, 20, 0.14);
+  border: 1px solid rgba(20, 20, 20, 0.08);
+  pointer-events: none;
+}
+
+/* Footer técnico del sidebar */
+.brandKit-studio-split__sidebar-footer {
+  flex-shrink: 0;
+}
+
+.brandKit-studio-split__sidebar-footer .brandKit-sidebar-export {
+  padding: 16px 20px 20px;
+}
+
+@media (min-width: 768px) {
+  .brandKit-studio-split__sidebar-footer .brandKit-sidebar-export {
+    padding-inline: 32px;
+  }
+}
+
+/* Review bar — no tapar contenido del board */
+.brandKit-v2-mosaic-board.is-review {
+  padding-bottom: 88px;
+}
+
+/* Toasts alineados bajo cabecera real */
+.brandKit-studio-toasts {
+  top: calc(var(--brandKit-studio-header-height, 40px) + 12px);
+}
+
+/* Hints export en sidebar claro */
+.brandKit-split-export__hint,
+.brandKit-sidebar-export__hint {
+  color: var(--text-muted);
+}
+
+.brandKit-studio-workspace__center .brandKit-studio__board-shell {
+  min-height: 0;
+  flex: 1;
+}
+
+/* Rail expand — anclado al pie del sidebar */
+.brandKit-sidebar-rail-expand {
+  flex-shrink: 0;
+}
+
+/* Menú export por encima de overlays laterales */
+.brandKit-studio-header-export__menu {
+  z-index: 100140;
+}
+
+/* Review bar — móvil sin salirse del viewport */
+@media (max-width: 640px) {
+  .brandKit-review-bar {
+    left: 12px;
+    right: 12px;
+    transform: none;
+    width: auto;
+    max-width: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: 14px;
+  }
+
+  .brandKit-v2-mosaic-board.is-review {
+    padding-bottom: 104px;
+  }
+}
+
+/* ── Onboarding: 1 columna (vacío + primer ingest) ── */
+.brandKit-studio-workspace--onboarding {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.brandKit-studio-workspace--onboarding .brandKit-studio-workspace__center {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.brandKit-studio-onboarding {
+  display: flex;
+  min-height: 100%;
+  width: 100%;
+  background: var(--surface, #f6f5f2);
+  color: var(--text-main, #141414);
+}
+
+.brandKit-studio-onboarding__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 28px;
+  width: min(520px, 100%);
+  padding: 48px 40px 64px;
+}
+
+@media (min-width: 768px) {
+  .brandKit-studio-onboarding__inner {
+    padding: 64px 72px 80px;
+  }
+}
+
+.brandKit-board-empty--onboarding {
+  min-height: 0;
+  padding: 0;
+  justify-content: flex-start;
+}
+
+.brandKit-board-empty--onboarding .brandKit-board-empty__title {
+  max-width: 18ch;
+}
+
+.brandKit-studio-onboarding__entry,
+.brandKit-studio-onboarding__progress {
+  width: 100%;
+  max-width: 420px;
+}
+
+.brandKit-sidebar-entry--onboarding .brandKit-split-entry__dropzone--hero {
+  min-height: 120px;
+}
+
+.brandKit-studio-onboarding__error {
+  width: 100%;
+  max-width: 420px;
+}

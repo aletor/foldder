@@ -27,6 +27,14 @@ import {
   type BrandKitStyleGuideExportMode,
   resolveBrandKitStyleGuideSoloValidado,
 } from "./style-guide-export-types";
+import { buildStyleGuideChapterPlan } from "../brand-kit-presentation-export";
+import {
+  presentationSectionsCss,
+  renderStyleGuideApplicationsSection,
+  renderStyleGuideClosingPage,
+  renderStyleGuideStationerySection,
+  renderStyleGuideTableOfContents,
+} from "./style-guide-presentation-sections";
 import {
   categoryMeta,
   GALLERY_CATEGORY_ORDER,
@@ -855,6 +863,75 @@ export async function renderBrandKitStyleGuide(
   const typoFaces = typographyInlineFontFaces(view, soloValidado);
 
   const coverHeadline = rich.essenceHeadline || view.voice.tagline.value?.text || rich.essenceSummary;
+  const sourceDoc = options.sourceDocument;
+  const chapterPlan = sourceDoc ? buildStyleGuideChapterPlan(sourceDoc, soloValidado) : null;
+  const chapterIncluded = (id: string) => !chapterPlan || chapterPlan.find((c) => c.id === id)?.included !== false;
+
+  const logoPaletteBand =
+    chapterIncluded("logo") || chapterIncluded("palette")
+      ? `<section class="sg-band sg-band--page" id="sg-chapter-logo">
+    ${chapterIncluded("logo") ? `<div class="sg-cell sg-cell--7 sg-surface-raised">
+      <p class="sg-chapter">Logo</p>
+      ${renderLogoSection(view, genome, soloValidado, embedded)}
+      ${derivations.logoSafeAreaSvg ? `<div style="margin-top:20px">${derivations.logoSafeAreaSvg}</div>` : ""}
+    </div>` : ""}
+    ${chapterIncluded("palette") ? `<div class="sg-cell sg-cell--${chapterIncluded("logo") ? "5" : "12"} sg-surface-page">
+      <p class="sg-chapter">Paleta</p>
+      ${renderPaletteCards(view, soloValidado, paletteDoc)}
+    </div>` : ""}
+  </section>`
+      : "";
+
+  const typographyBand = chapterIncluded("typography")
+    ? `<section class="sg-band sg-band--page" id="sg-chapter-typography">
+    <div class="sg-cell sg-cell--12 sg-surface-raised">
+      <p class="sg-chapter">Tipografía</p>
+      ${renderTypography(view, soloValidado, rich)}
+    </div>
+  </section>`
+    : "";
+
+  const voiceVisualBand =
+    chapterIncluded("voice") || chapterIncluded("visual")
+      ? `<section class="sg-band sg-band--page" id="sg-chapter-voice">
+    ${chapterIncluded("voice") ? `<div class="sg-cell sg-cell--5 sg-surface-accent">
+      <p class="sg-chapter">Voz & esencia</p>
+      ${renderVoiceEssence(view, soloValidado, rich)}
+    </div>` : ""}
+    ${chapterIncluded("visual") ? `<div class="sg-cell sg-cell--${chapterIncluded("voice") ? "7" : "12"} sg-surface-raised">
+      <p class="sg-chapter">Mundo visual</p>
+      ${renderVisualDna(rich)}
+    </div>` : ""}
+  </section>`
+      : "";
+
+  const galleryBand = chapterIncluded("gallery")
+    ? `<section class="sg-band sg-band--page" id="sg-chapter-gallery">
+    <div class="sg-cell sg-cell--12 sg-surface-page">
+      <p class="sg-chapter">Biblioteca visual</p>
+      ${renderGallery(view, soloValidado, embedded, rich)}
+    </div>
+  </section>`
+    : "";
+
+  const toc = chapterPlan ? renderStyleGuideTableOfContents(chapterPlan) : "";
+  const applications =
+    sourceDoc && chapterIncluded("applications")
+      ? renderStyleGuideApplicationsSection(sourceDoc, soloValidado, embedded)
+      : "";
+  const stationery =
+    sourceDoc && chapterIncluded("stationery")
+      ? renderStyleGuideStationerySection(sourceDoc, soloValidado, embedded)
+      : "";
+  const closing = renderStyleGuideClosingPage(
+    projectName,
+    generatedAt,
+    soloValidado ? "versión final" : modeLabel,
+  );
+  const sourcesAppendix = renderSources(genome, soloValidado).replace(
+    'class="sg-band"',
+    'class="sg-band sg-appendix"',
+  );
 
   const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/>
 <title>${esc(projectName)} — libro de estilo</title>
@@ -865,64 +942,41 @@ ${typoSheets}
     raised: "#ffffff",
     accent: accentHex,
     onPrimary,
-  })}${typoFaces ? `\n${typoFaces}` : ""}</style></head><body>
+  })}${presentationSectionsCss()}${typoFaces ? `\n${typoFaces}` : ""}</style></head><body>
 <div class="sg-bands">
-  <section class="sg-band">
+  <section class="sg-band sg-band--page" id="sg-chapter-cover">
     <div class="sg-cell sg-cell--12 sg-surface-primary sg-cover">
       ${coverLogo ? `<img class="sg-cover__logo" src="${escAttr(coverLogo)}" alt=""/>` : ""}
-      <p class="sg-meta">libro de estilo · ${esc(new Date(generatedAt).toLocaleDateString("es-ES"))}${!soloValidado ? ` · ${esc(modeLabel)}` : ""}</p>
+      <p class="sg-meta">libro de estilo · ${esc(new Date(generatedAt).toLocaleDateString("es-ES"))} · ${esc(soloValidado ? "versión final" : modeLabel)}</p>
       <h1 class="sg-headline">${esc(projectName)}</h1>
       ${coverHeadline ? `<p class="sg-subhead">${esc(coverHeadline)}</p>` : ""}
     </div>
   </section>
 
-  <section class="sg-band">
-    <div class="sg-cell sg-cell--7 sg-surface-raised">
-      <p class="sg-chapter">Logo</p>
-      ${renderLogoSection(view, genome, soloValidado, embedded)}
-      ${derivations.logoSafeAreaSvg ? `<div style="margin-top:20px">${derivations.logoSafeAreaSvg}</div>` : ""}
-    </div>
-    <div class="sg-cell sg-cell--5 sg-surface-page">
-      <p class="sg-chapter">Paleta</p>
-      ${renderPaletteCards(view, soloValidado, paletteDoc)}
-    </div>
-  </section>
-
-  <section class="sg-band">
-    <div class="sg-cell sg-cell--12 sg-surface-raised">
-      <p class="sg-chapter">Tipografía</p>
-      ${renderTypography(view, soloValidado, rich)}
-    </div>
-  </section>
-
-  <section class="sg-band">
-    <div class="sg-cell sg-cell--5 sg-surface-accent">
-      <p class="sg-chapter">Voz & esencia</p>
-      ${renderVoiceEssence(view, soloValidado, rich)}
-    </div>
-    <div class="sg-cell sg-cell--7 sg-surface-raised">
-      <p class="sg-chapter">Mundo visual</p>
-      ${renderVisualDna(rich)}
-    </div>
-  </section>
-
-  <section class="sg-band">
-    <div class="sg-cell sg-cell--12 sg-surface-page">
-      <p class="sg-chapter">Imágenes generadas</p>
-      ${renderGallery(view, soloValidado, embedded, rich)}
-    </div>
-  </section>
+  ${toc}
+  ${logoPaletteBand}
+  ${typographyBand}
+  ${voiceVisualBand}
+  ${galleryBand}
+  ${applications}
+  ${stationery}
+  ${closing}
 </div>
-${renderSources(genome, soloValidado)}
+${sourcesAppendix}
 </body></html>`;
 
   return { html, completenessPercent: view.completenessPercent, generatedAt, exportMode, soloValidado };
 }
 
-export function brandKitStyleGuideFilename(projectName: string | undefined, generatedAt: string): string {
+export function brandKitStyleGuideFilename(
+  projectName: string | undefined,
+  generatedAt: string,
+  exportMode: BrandKitStyleGuideExportMode = "operativo",
+): string {
   const slug = (projectName ?? "brandKit").replace(/\W+/g, "-").toLowerCase();
   const date = generatedAt.slice(0, 10);
-  return `${slug}-libro-${date}.pdf`;
+  const suffix = exportMode === "cliente" ? "final" : "borrador";
+  return `${slug}-libro-${suffix}-${date}.pdf`;
 }
 
 /** Fallback cliente: descarga HTML cuando Chromium no está disponible. */

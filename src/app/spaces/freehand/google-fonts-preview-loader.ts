@@ -77,7 +77,7 @@ export function ensureGoogleFontPreviewBatchLoaded(families: string[]): Promise<
     })
     .catch(() => {
       previewLoadKey = "";
-      throw new Error("Google Font preview batch failed");
+      // Preview opcional: no tumbar la app si Google Fonts falla (red, familia inválida, etc.).
     })
     .finally(() => {
       if (previewLoadKey !== key) previewLoadPromise = null;

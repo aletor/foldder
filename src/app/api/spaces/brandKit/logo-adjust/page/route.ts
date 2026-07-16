@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { loadBrandKitSourceForLogoAdjust } from "@/lib/brandkit/ingest/brand-kit-source-pdf-store";
-import { buildLogoAdjustPagePayload } from "@/lib/brandkit/ingest/brand-kit-logo-adjust-page";
+import { resolveLogoAdjustPagePayload } from "@/lib/brandkit/ingest/brand-kit-logo-adjust-page";
 import type { NormalizedBboxPage } from "@/lib/brandkit/brand-kit-logo-bbox";
 import { isValidBboxPage } from "@/lib/brandkit/brand-kit-logo-bbox";
 
@@ -32,21 +32,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
-  const source = await loadBrandKitSourceForLogoAdjust(auth.user.email, contentSha256);
-  if (!source) {
-    return NextResponse.json({ error: "source_not_found" }, { status: 404 });
-  }
-
   const bboxPage = parseBboxPage(bboxRaw) ?? ([0.04, 0.03, 0.32, 0.12] as NormalizedBboxPage);
 
   try {
-    const payload = await buildLogoAdjustPagePayload({
-      source,
+    const payload = await resolveLogoAdjustPagePayload({
+      userEmail: auth.user.email,
+      contentSha256,
       pageNumber,
       bboxPage,
+      loadSource: () => loadBrandKitSourceForLogoAdjust(auth.user.email, contentSha256),
     });
     return NextResponse.json(payload);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "source_not_found") {
+      return NextResponse.json({ error: "source_not_found" }, { status: 404 });
+    }
     return NextResponse.json({ error: "edit_page_failed" }, { status: 500 });
   }
 }

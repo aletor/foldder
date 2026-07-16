@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import type { SlotAction, SlotId, SlotState, TypographyValue } from "@/lib/brandkit/brand-kit-types";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
 import { DnaBlock } from "../DnaBlock";
 import { BrandKitFoldderButton } from "../BrandKitFoldderButton";
+import { buildMosaicDetailPayload } from "../BrandKitDetailPanel";
 import { BrandKitTextEditPanel } from "../BrandKitTextEditPanel";
 import { CaseSensitive, Pencil } from "lucide-react";
 import { BrandKitBlockSkeleton } from "../BrandKitBlockSkeleton";
@@ -15,8 +16,9 @@ import {
 } from "../brand-kit-block-motion";
 import { normalizeFontDisplayName } from "@/lib/brandkit/normalize-font-display-name";
 import { BrandKitEvidenceTrigger } from "../BrandKitEvidenceTrigger";
-import { useBrandKitMosaicBoard } from "../brand-kit-mosaic-context";
 import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
+import { useRegisterSlotDetail } from "../BrandKitDetailFooterActions";
+import { getSlotAttention } from "@/lib/brandkit/brand-kit-board-status";
 import { useMosaicSpecimenCascade } from "../use-mosaic-specimen-cascade";
 
 type TypographyFamily = TypographyValue["families"][number];
@@ -223,8 +225,6 @@ function TypographyMosaicLayout({
   onAction?: (slotId: SlotId, action: SlotAction) => void;
   onCorrect?: () => void;
 }) {
-  const mosaicCell = useBrandKitMosaicCellOptional();
-  const mosaicBoard = useBrandKitMosaicBoard();
   const stripRef = useRef<HTMLDivElement>(null);
   const { primary, secondary } = pickPrimarySecondary(families);
   if (!primary) return null;
@@ -257,24 +257,26 @@ function TypographyMosaicLayout({
     return <div className="brandKit-mosaic-detail-panels">{blocks}</div>;
   }, [primary, secondary]);
 
-  const detailAction = useMemo(
-    () => (
-      <BrandKitFoldderButton
-        variant="white"
-        compact
-        onClick={() => mosaicBoard?.openDetailSheet({ title: "Pesos tipográficos", content: weightDetail })}
-      >
-        Detalle
-      </BrandKitFoldderButton>
-    ),
-    [mosaicBoard, weightDetail],
-  );
+  const detailPayload = useMemo(() => {
+    if (!slot || !slotId) return null;
+    return buildMosaicDetailPayload({
+      slotId,
+      blockLabel: brandKitLocaleEs.typography,
+      brandName: mosaicBrandName,
+      statusLabel: slot.locked ? brandKitLocaleEs.locked : brandKitLocaleEs.confirmedStatus,
+      sourceLabel: slot.provenance?.detail ? `Fuente principal: ${slot.provenance.detail}` : undefined,
+      summary: (
+        <p className="brandKit-v2-prose">
+          {typographyDisplayName(primary)}
+          {secondary && secondary.family !== primary.family ? ` · ${typographyDisplayName(secondary)}` : ""}
+        </p>
+      ),
+      panels: [{ id: "weights", label: "Pesos", content: weightDetail }],
+      initialTabId: getSlotAttention(slot).kind === "conflict" ? "evidence" : undefined,
+    });
+  }, [mosaicBrandName, primary, secondary, slot, slotId, weightDetail]);
 
-  useEffect(() => {
-    if (!mosaicCell) return;
-    mosaicCell.setActionSlot("typography-weights", detailAction);
-    return () => mosaicCell.setActionSlot("typography-weights", null);
-  }, [detailAction, mosaicCell]);
+  useRegisterSlotDetail(slotId, detailPayload);
 
   return (
     <div ref={stripRef} className="brandKit-type-strip brandKit-type-strip--mosaic">
@@ -418,6 +420,8 @@ export function TypographyBlock({
   mosaicBrandName?: string;
 } & BrandKitBlockMotionProps) {
   const typography = slot.value as TypographyValue | undefined;
+  const mosaicCell = useBrandKitMosaicCellOptional();
+  const isMosaic = Boolean(mosaicCell);
   const [editing, setEditing] = useState(false);
   let body: React.ReactNode;
   let primaryAction: React.ReactNode;
@@ -526,7 +530,7 @@ export function TypographyBlock({
       slot={slot}
       onAction={onAction}
       primaryAction={primaryAction}
-      secondaryActions={editButton}
+      secondaryActions={isMosaic ? undefined : editButton}
       activeSlotId={activeSlotId}
     >
       {body}

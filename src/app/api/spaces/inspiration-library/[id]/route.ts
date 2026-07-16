@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   deleteInspirationLibraryItem,
+  getInspirationBrandKit,
   getInspirationFlow,
   getInspirationTemplatePages,
 } from "@/lib/inspiration-library-store";
@@ -10,7 +11,7 @@ export const runtime = "nodejs";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** GET — devuelve la carga útil de un item: páginas (plantilla Designer) o nodos+aristas (flujo). */
+/** GET — carga útil: páginas Designer, flujo o BrandKit. */
 export async function GET(req: Request, context: RouteContext) {
   try {
     const authState = await requireSpacesAuthUser(req);
@@ -24,6 +25,10 @@ export async function GET(req: Request, context: RouteContext) {
     const flow = await getInspirationFlow(authState.user.email, id);
     if (flow) {
       return NextResponse.json({ flow });
+    }
+    const brandKit = await getInspirationBrandKit(authState.user.email, id);
+    if (brandKit) {
+      return NextResponse.json({ brandKit });
     }
     return NextResponse.json({ error: "item_not_found" }, { status: 404 });
   } catch (error) {

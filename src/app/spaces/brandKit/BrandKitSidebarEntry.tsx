@@ -13,6 +13,8 @@ type BrandKitSidebarEntryProps = {
   hasSources: boolean;
   onAnalyze: (url: string, enableLlm?: boolean) => void;
   onIngestFiles: (files: File[], enableLlm?: boolean) => void;
+  /** En onboarding el lead/sub van en BrandKitBoardEmpty; aquí solo controles. */
+  variant?: "sidebar" | "onboarding";
 };
 
 export function BrandKitSidebarEntry({
@@ -21,6 +23,7 @@ export function BrandKitSidebarEntry({
   hasSources,
   onAnalyze,
   onIngestFiles,
+  variant = "sidebar",
 }: BrandKitSidebarEntryProps) {
   const [url, setUrl] = useState("");
   const [enableLlm, setEnableLlm] = useState(true);
@@ -54,14 +57,21 @@ export function BrandKitSidebarEntry({
     );
   }
 
+  const isOnboarding = variant === "onboarding";
+
   return (
-    <section className="brandKit-sidebar-entry" aria-label="Entrada de material">
-      {phase === "empty" ? (
+    <section
+      className={`brandKit-sidebar-entry${isOnboarding ? " brandKit-sidebar-entry--onboarding" : ""}`}
+      aria-label="Entrada de material"
+    >
+      {phase === "empty" && !isOnboarding ? (
         <>
           <p className="brandKit-sidebar-entry__lead">{brandKitLocaleEs.sidebarEmptyLead}</p>
           <p className="brandKit-sidebar-entry__sub">{brandKitLocaleEs.sidebarEmptySub}</p>
         </>
-      ) : (
+      ) : null}
+
+      {phase !== "empty" && !isOnboarding ? (
         <button
           type="button"
           className="brandKit-sidebar-entry__collapse"
@@ -69,7 +79,7 @@ export function BrandKitSidebarEntry({
         >
           {brandKitLocaleEs.hideAddSource}
         </button>
-      )}
+      ) : null}
 
       <div
         role="button"
@@ -92,9 +102,13 @@ export function BrandKitSidebarEntry({
           setDragOver(false);
           ingestFiles(event.dataTransfer.files);
         }}
-        className={`brandKit-split-entry__dropzone${dragOver ? " is-dragover" : ""}${isAnalyzing ? " is-disabled" : ""}${phase === "empty" ? " brandKit-split-entry__dropzone--hero" : ""}`}
+        className={`brandKit-split-entry__dropzone${dragOver ? " is-dragover" : ""}${isAnalyzing ? " is-disabled" : ""}${phase === "empty" || isOnboarding ? " brandKit-split-entry__dropzone--hero" : ""}`}
       >
-        <span>{phase === "empty" ? brandKitLocaleEs.sidebarDropHero : "suelta archivos o haz clic"}</span>
+        <span>
+          {phase === "empty" || isOnboarding
+            ? brandKitLocaleEs.sidebarDropHero
+            : "suelta archivos o haz clic"}
+        </span>
         <span className="brandKit-split-entry__dropzone-meta">pdf, imágenes, manual de marca</span>
       </div>
 
@@ -126,7 +140,7 @@ export function BrandKitSidebarEntry({
         <input
           value={url}
           onChange={(event) => setUrl(event.target.value)}
-          placeholder="url de la marca"
+          placeholder={brandKitLocaleEs.sidebarUrlPlaceholder}
           className="brandKit-split-entry__input"
           inputMode="url"
           autoCapitalize="none"

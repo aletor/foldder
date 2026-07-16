@@ -61,13 +61,13 @@ export const GALLERY_CATEGORY_ORDER: GalleryGenerateCategory[] = [
 export function categoryMeta(category: GalleryGenerateCategory): { label: string; hint: string } {
   switch (category) {
     case "people_mood":
-      return { label: "Personas & mood", hint: "Rostros, emoción, actitud y luz sobre personas." };
+      return { label: "Personas y actitud", hint: "Rostros, emoción, actitud y luz sobre personas." };
     case "places":
-      return { label: "Entorno", hint: "Localización como sujeto: por defecto vacío o con ocupación ligera; multitudes solo si el brief lo pide." };
+      return { label: "Entornos", hint: "Localización como sujeto: por defecto vacío o con ocupación ligera; multitudes solo si el brief lo pide." };
     case "objects":
-      return { label: "Objetos", hint: "Objetos simbólicos o de producto con tratamiento editorial." };
+      return { label: "Producto y detalle", hint: "Objetos simbólicos o de producto con tratamiento editorial." };
     case "textures":
-      return { label: "Texturas", hint: "Macro de superficie material: rugosidad, brillo y grano." };
+      return { label: "Materiales y texturas", hint: "Macro de superficie material: rugosidad, brillo y grano." };
     default:
       return { label: "General", hint: "Composición libre que sintetiza el tono visual global." };
   }

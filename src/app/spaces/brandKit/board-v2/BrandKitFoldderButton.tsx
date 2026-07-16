@@ -39,7 +39,7 @@ export function BrandKitFoldderButton({
       className={`brandKit-foldder-btn${variantClass}${compact ? " brandKit-foldder-btn--compact" : ""}${iconOnly ? " brandKit-foldder-btn--icon-only" : ""}${round ? " brandKit-foldder-btn--round" : ""} ${className}`.trim()}
       {...props}
     >
-      {Icon ? <Icon size={14} strokeWidth={1.75} aria-hidden /> : null}
+      {Icon ? <Icon size={16} strokeWidth={1.75} aria-hidden /> : null}
       {children}
     </button>
   );

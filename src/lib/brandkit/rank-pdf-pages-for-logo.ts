@@ -1,19 +1,14 @@
 import { renderPdfPages } from "@/lib/brain/pdf-page-render";
 import { scoreBrandBoardLogoRegion } from "./brand-kit-brand-board-logo-regions";
 import type { BBoxPage } from "./logo-intake/bbox";
+import { capLogoVisionPages, guaranteedLogoPages } from "./rank-pdf-pages-for-logo-select";
+
+export { capLogoVisionPages, guaranteedLogoPages } from "./rank-pdf-pages-for-logo-select";
 
 const LOGO_KEYWORDS =
   /logo|logotipo|logotype|wordmark|isotipo|imagotipo|marca|brand\s*mark|identidad\s*visual/i;
 
 const HERO_REGION: BBoxPage = [0.02, 0.02, 0.98, 0.45];
-
-function guaranteedLogoPages(totalPages: number): number[] {
-  if (totalPages <= 0) return [];
-  const picked = new Set<number>([1]);
-  if (totalPages >= 2) picked.add(2);
-  if (totalPages >= 3) picked.add(totalPages);
-  return [...picked].sort((a, b) => a - b);
-}
 
 function keywordBoostPages(fullText: string, totalPages: number): number[] {
   if (!LOGO_KEYWORDS.test(fullText)) return [];
@@ -31,6 +26,9 @@ async function visuallyRankPdfPages(
   const stride = totalPages <= maxVisualPages ? 1 : Math.ceil(totalPages / maxVisualPages);
   const pageNumbers: number[] = [];
   for (let page = 1; page <= totalPages; page += stride) pageNumbers.push(page);
+  if (totalPages >= 3 && !pageNumbers.includes(totalPages)) {
+    pageNumbers.push(totalPages);
+  }
 
   const rendered = await renderPdfPages(pdfBuffer, { maxPages: totalPages, dpi: 96 });
   const byPage = new Map(rendered.map((row) => [row.pageNumber, row]));
@@ -93,7 +91,7 @@ export async function rankPdfPagesForLogoVision(input: {
     if (row.score >= 0.42) picked.add(row.pageNumber);
   }
 
-  return [...picked].sort((a, b) => a - b).slice(0, cap);
+  return capLogoVisionPages(picked, totalPages, cap);
 }
 
 /** Deck: portada + cierre + top visual (máx. 4 páginas). */

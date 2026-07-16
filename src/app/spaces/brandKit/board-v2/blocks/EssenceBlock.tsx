@@ -20,6 +20,7 @@ import {
   shouldShowLegacyPendingSkeleton,
   type BrandKitBlockMotionProps,
 } from "../brand-kit-block-motion";
+import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
 
 function beliefsToText(beliefs: EssenceValue["beliefs"]): string {
   return beliefs
@@ -54,6 +55,7 @@ export function EssenceBlock({
 } & BrandKitBlockMotionProps) {
   const essence = slot.value as EssenceValue | undefined;
   const [editing, setEditing] = useState(false);
+  const isMosaic = Boolean(useBrandKitMosaicCellOptional());
   let body: React.ReactNode;
   let primaryAction: React.ReactNode;
 
@@ -163,6 +165,10 @@ export function EssenceBlock({
           </BrandKitEvidenceTrigger>
         ) : null}
         <SemanticDetailPanels
+        slotId={slotId}
+        slot={slot}
+        onAction={onAction}
+        onEdit={() => setEditing(true)}
         summary={
           <BrandKitRichText
             text={essence.summary}
@@ -219,7 +225,7 @@ export function EssenceBlock({
       slot={slot}
       onAction={onAction}
       primaryAction={primaryAction}
-      secondaryActions={editButton}
+      secondaryActions={isMosaic ? undefined : editButton}
       activeSlotId={activeSlotId}
     >
       {body}

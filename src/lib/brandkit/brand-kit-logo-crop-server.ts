@@ -5,19 +5,22 @@ import type { NormalizedBboxPage } from "./brand-kit-logo-bbox";
 export type { NormalizedBboxPage } from "./brand-kit-logo-bbox";
 export { logoSourceBboxToPageTuple, pageTupleToLogoSourceBbox } from "./brand-kit-logo-bbox";
 
+/** DPI del recorte final (caché PNG aparte del preview del editor). */
+export const LOGO_ADJUST_CROP_DPI = 216;
+
 export async function cropLogoFromPdfPage(input: {
   pdfBuffer: Buffer;
   pageNumber: number;
   bboxPage: NormalizedBboxPage;
   dpi?: number;
 }): Promise<{ buffer: Buffer; width: number; height: number }> {
-  const dpi = input.dpi ?? 216;
+  const dpi = input.dpi ?? LOGO_ADJUST_CROP_DPI;
   const pages = await renderPdfPagesAt(input.pdfBuffer, [input.pageNumber], { dpi });
   const page = pages[0];
   if (!page) throw new Error("page_not_found");
 
-  return cropLogoFromPagePng({
-    pagePng: page.pngBuffer,
+  return cropLogoFromPageImage({
+    pageImage: page.pngBuffer,
     pageWidth: page.width,
     pageHeight: page.height,
     bboxPage: input.bboxPage,
@@ -34,16 +37,16 @@ export async function cropLogoFromRasterPage(input: {
   const pageHeight = meta.height ?? 0;
   if (!pageWidth || !pageHeight) throw new Error("page_not_found");
 
-  return cropLogoFromPagePng({
-    pagePng,
+  return cropLogoFromPageImage({
+    pageImage: pagePng,
     pageWidth,
     pageHeight,
     bboxPage: input.bboxPage,
   });
 }
 
-async function cropLogoFromPagePng(input: {
-  pagePng: Buffer;
+export async function cropLogoFromPageImage(input: {
+  pageImage: Buffer;
   pageWidth: number;
   pageHeight: number;
   bboxPage: NormalizedBboxPage;
@@ -56,7 +59,7 @@ async function cropLogoFromPagePng(input: {
   const width = Math.max(1, right - left);
   const height = Math.max(1, bottom - top);
 
-  const buffer = await sharp(input.pagePng)
+  const buffer = await sharp(input.pageImage, { failOn: "none" })
     .extract({ left, top, width, height })
     .png()
     .toBuffer();

@@ -12,7 +12,7 @@ import { readJsonStore, updateJsonStore, type JsonStoreConfig } from "@/lib/json
  * la librería. Mismo patrón de almacenamiento que `dataset-store`.
  */
 
-export type InspirationLibraryItemKind = "designer-template" | "image" | "flow";
+export type InspirationLibraryItemKind = "designer-template" | "image" | "flow" | "brand-kit";
 
 export type InspirationLibraryItem = {
   id: string;
@@ -30,6 +30,8 @@ export type InspirationLibraryItem = {
   height?: number;
   /** flow */
   nodeCount?: number;
+  /** brand-kit */
+  completenessPercent?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -50,6 +52,8 @@ type InspirationItemPayload = {
   pages?: unknown[];
   /** flow */
   flow?: InspirationFlowPayload;
+  /** brand-kit */
+  brandKit?: unknown;
 };
 
 export type AddInspirationLibraryInput = {
@@ -64,6 +68,8 @@ export type AddInspirationLibraryInput = {
   width?: number;
   height?: number;
   flow?: InspirationFlowPayload;
+  brandKit?: unknown;
+  completenessPercent?: number;
 };
 
 const MAX_ITEMS = 300;
@@ -152,6 +158,18 @@ export async function getInspirationFlow(
   };
 }
 
+export async function getInspirationBrandKit(
+  ownerEmail: string,
+  itemId: string,
+): Promise<unknown | null> {
+  const ownerHash = ownerHashFromEmail(ownerEmail);
+  const catalog = await readJsonStore(catalogConfig(ownerHash));
+  const item = catalog.items.find((i) => i.id === itemId);
+  if (!item || item.kind !== "brand-kit") return null;
+  const payload = await readJsonStore(payloadConfig(ownerHash, itemId));
+  return payload.brandKit ?? null;
+}
+
 export async function addInspirationLibraryItem(
   ownerEmail: string,
   input: AddInspirationLibraryInput,
@@ -173,6 +191,9 @@ export async function addInspirationLibraryItem(
     item.pageCount = Array.isArray(input.pages) ? input.pages.length : 0;
   } else if (input.kind === "flow") {
     item.nodeCount = Array.isArray(input.flow?.nodes) ? input.flow!.nodes.length : 0;
+  } else if (input.kind === "brand-kit") {
+    item.completenessPercent =
+      typeof input.completenessPercent === "number" ? Math.round(input.completenessPercent) : undefined;
   } else {
     item.imageUrl = input.imageUrl;
     item.imageS3Key = input.imageS3Key;
@@ -198,6 +219,14 @@ export async function addInspirationLibraryItem(
             nodes: Array.isArray(input.flow?.nodes) ? input.flow!.nodes : [],
             edges: Array.isArray(input.flow?.edges) ? input.flow!.edges : [],
           },
+        }),
+      );
+    } else if (input.kind === "brand-kit") {
+      await updateJsonStore(
+        payloadConfig(ownerHash, id),
+        async (): Promise<InspirationItemPayload> => ({
+          version: 1,
+          brandKit: input.brandKit ?? null,
         }),
       );
     }

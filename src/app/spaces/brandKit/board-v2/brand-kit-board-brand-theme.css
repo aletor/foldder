@@ -3,6 +3,36 @@
 .brandKit-v2-bento-board {
   --brandKit-brand-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --brandKit-brand-duration: 700ms;
+  --brandKit-ui-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* Wave 1 — controles Foldder nunca usan tipografía de marca */
+.brandKit-v2-bento-board :is(
+  .brandKit-mosaic-cell__chapter,
+  .brandKit-mosaic-cell__status,
+  .brandKit-mosaic-action-bar__inner,
+  .brandKit-foldder-btn,
+  .brandKit-v2-chip,
+  .brandKit-evidence-trigger,
+  .brandKit-v2-generated-category__label,
+  .brandKit-v2-generated-category__cost,
+  .brandKit-v2-gallery-global-action,
+  .brandKit-gallery-library__toolbar,
+  .brandKit-gallery-library__filters,
+  .brandKit-gallery-library__category-actions,
+  .brandKit-gallery-library__category-meta,
+  .brandKit-gallery-tile__actions,
+  .brandKit-gallery-tile__state,
+  .banda-08__consistency,
+  .brandKit-showcase-surface-toggle,
+  .brandKit-showcase-requirements,
+  .banda-08__tabs,
+  .brandKit-stationery-panel__meta .brandKit-foldder-btn,
+  .brandKit-stationery-panel__hero .brandKit-foldder-btn,
+  .brandKit-stationery-contact-sheet,
+  .brandKit-v2-review-hint
+) {
+  font-family: var(--brandKit-ui-font) !important;
 }
 
 /* Alias existing board tokens when brand theme is active */

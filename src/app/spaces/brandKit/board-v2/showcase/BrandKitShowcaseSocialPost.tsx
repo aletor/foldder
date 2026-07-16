@@ -36,12 +36,12 @@ export function BrandKitShowcaseSocialPost({
             <BrandKitPreviewImage src={data.logoUrl} alt="" eager />
           </div>
         ) : null}
-        {data.headline ? (
+        {data.campaign.headline ? (
           <div
             className="brandKit-showcase-post__lower-third"
             style={{ color: overlayColor }}
           >
-            <p className="brandKit-showcase-post__headline">{data.headline}</p>
+            <p className="brandKit-showcase-post__headline">{data.campaign.headline}</p>
           </div>
         ) : null}
       </div>

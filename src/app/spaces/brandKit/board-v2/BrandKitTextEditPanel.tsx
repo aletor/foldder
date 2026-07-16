@@ -3,14 +3,10 @@
 import React, { useState } from "react";
 import { BrandKitFoldderButton } from "./BrandKitFoldderButton";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
+import type { BrandKitSlotTextEditField } from "@/lib/brandkit/studio/brand-kit-slot-text-edit";
 import { Check, X } from "lucide-react";
 
-export type BrandKitTextEditField = {
-  id: string;
-  label: string;
-  value: string;
-  multiline?: boolean;
-};
+export type BrandKitTextEditField = BrandKitSlotTextEditField;
 
 export function BrandKitTextEditPanel({
   fields,

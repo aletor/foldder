@@ -11841,54 +11841,60 @@ body.nb-studio-open .spaces-canvas {
   pointer-events: none !important;
 }
 
-/* Designer / otros studios fullscreen: launcher Foldder del grafo (z alto) queda encima del lienzo */
-[data-foldder-canvas-launcher] {
-  position: fixed;
-  right: max(0.75rem, env(safe-area-inset-right, 0px));
-  bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
-  z-index: 10025;
+/* Launcher Foldder — pie del sidebar a ancho completo */
+.foldder-sidebar-launcher,
+[data-foldder-sidebar-launcher] {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
+  gap: 0.45rem;
+  width: 100%;
   margin: 0;
-  padding: 0.375rem;
+  padding: 0.65rem 0.75rem;
   border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 0;
   background: #000;
-  box-shadow: none;
-  backdrop-filter: none;
+  color: rgba(255, 255, 255, 0.92);
   cursor: pointer;
-  line-height: 0;
-  transition: opacity 0.15s ease;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 
-[data-foldder-canvas-launcher]:hover {
-  opacity: 0.82;
+.foldder-sidebar-launcher:hover,
+[data-foldder-sidebar-launcher]:hover {
+  background: #111;
+  opacity: 0.96;
 }
 
-[data-foldder-canvas-launcher] img {
+.foldder-sidebar-launcher img,
+[data-foldder-sidebar-launcher] img {
   display: block;
-  width: calc(2.75rem * 1.1);
-  height: calc(2.75rem * 1.1);
+  width: 1.35rem;
+  height: 1.35rem;
   object-fit: contain;
+  flex-shrink: 0;
 }
 
-/* Toasts + HUD activos: encima del launcher Foldder (esquina inferior derecha). */
+.foldder-sidebar-launcher span,
+[data-foldder-sidebar-launcher] span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* Toasts canvas: esquina inferior derecha (el launcher ya no flota ahí). */
 [data-foldder-canvas-toasts] {
   right: max(1rem, env(safe-area-inset-right, 0px));
-  bottom: calc(
-    max(0.75rem, env(safe-area-inset-bottom, 0px))
-    + 0.75rem
-    + calc(2.75rem * 1.1)
-    + 0.625rem
-  );
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
   max-width: min(92vw, 380px);
 }
 
-body.nb-studio-open [data-foldder-canvas-launcher] {
-  display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
+body.nb-studio-open [data-foldder-sidebar-launcher] {
+  pointer-events: none;
+  opacity: 0.35;
 }
 
 .foldder-library-preview-node {

@@ -1,27 +1,32 @@
 import type { SlotId } from "@/lib/brandkit/brand-kit-types";
+import {
+  BRAND_KIT_MOSAIC_READING_ORDER,
+  boardChapterLabelText,
+  boardChapterNumber as chapterNumber,
+  BRAND_KIT_BOARD_CHAPTER_NUMBER,
+} from "@/lib/brandkit/studio/brand-kit-mosaic-order";
 
-/** Orden canónico de capítulos del libro de estilo (independiente del layout bento). */
-export const BRAND_KIT_BOARD_CHAPTER_ORDER: SlotId[] = [
-  "logo",
-  "palette",
-  "typography",
-  "essence",
-  "voice",
-  "visualWorld",
-  "gallery",
-];
+/** Orden canónico de capítulos = orden de lectura del mosaico. */
+export const BRAND_KIT_BOARD_CHAPTER_ORDER: SlotId[] = [...BRAND_KIT_MOSAIC_READING_ORDER];
+
+export { BRAND_KIT_BOARD_CHAPTER_NUMBER };
 
 export const BRAND_KIT_BOARD_CHAPTER_LABEL: Record<SlotId, string> = {
-  logo: "01 — LOGO",
-  palette: "02 — COLOR",
-  typography: "03 — TIPOGRAFÍA",
-  essence: "04 — ESENCIA",
-  voice: "05 — VOZ",
-  visualWorld: "06 — MUNDO VISUAL",
-  gallery: "07 — GALERÍA",
+  logo: boardChapterLabelText("logo"),
+  essence: boardChapterLabelText("essence"),
+  palette: boardChapterLabelText("palette"),
+  typography: boardChapterLabelText("typography"),
+  voice: boardChapterLabelText("voice"),
+  visualWorld: boardChapterLabelText("visualWorld"),
+  gallery: boardChapterLabelText("gallery"),
 };
 
 export function boardChapterLabel(slotId: SlotId | undefined): string | null {
   if (!slotId) return null;
   return BRAND_KIT_BOARD_CHAPTER_LABEL[slotId] ?? null;
+}
+
+export function boardChapterNumber(slotId: SlotId | undefined): string | null {
+  if (!slotId) return null;
+  return chapterNumber(slotId);
 }

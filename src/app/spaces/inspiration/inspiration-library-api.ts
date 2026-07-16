@@ -2,7 +2,7 @@
 
 import type { DesignerPageState } from "../designer/DesignerNode";
 
-export type InspirationLibraryItemKind = "designer-template" | "image" | "flow";
+export type InspirationLibraryItemKind = "designer-template" | "image" | "flow" | "brand-kit";
 
 export type InspirationLibraryItem = {
   id: string;
@@ -16,6 +16,7 @@ export type InspirationLibraryItem = {
   width?: number;
   height?: number;
   nodeCount?: number;
+  completenessPercent?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -105,6 +106,31 @@ export async function addImageToLibrary(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind: "image", ...input }),
+  });
+  const body = await parseJson<{ item: InspirationLibraryItem }>(res);
+  dispatchInspirationLibraryUpdated();
+  return body.item;
+}
+
+export async function fetchInspirationBrandKit(id: string): Promise<unknown> {
+  const res = await fetch(`/api/spaces/inspiration-library/${encodeURIComponent(id)}`, {
+    cache: "no-store",
+  });
+  const body = await parseJson<{ brandKit?: unknown }>(res);
+  return body.brandKit ?? null;
+}
+
+export async function addBrandKitToLibrary(input: {
+  title: string;
+  brandKit: unknown;
+  thumbUrl?: string;
+  thumbS3Key?: string;
+  completenessPercent?: number;
+}): Promise<InspirationLibraryItem> {
+  const res = await fetch("/api/spaces/inspiration-library", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "brand-kit", ...input }),
   });
   const body = await parseJson<{ item: InspirationLibraryItem }>(res);
   dispatchInspirationLibraryUpdated();

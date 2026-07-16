@@ -22,7 +22,12 @@
 }
 
 .brandKit-studio--v2 .brandKit-v2-board {
-  min-height: calc(100vh - 40px);
+  min-height: calc(100vh - var(--brandKit-studio-header-height, 40px));
+}
+
+.brandKit-studio--split .brandKit-v2-bento-board,
+.brandKit-studio--split .brandKit-v2-mosaic-board {
+  min-height: 0;
 }
 
 /* ── Header ── */
@@ -193,33 +198,39 @@
 }
 
 /* ── Foldder buttons ── */
+.brandKit-studio--v2,
+.brandKit-studio--split {
+  --brandKit-ui-font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
 .brandKit-studio--v2 .brandKit-foldder-btn,
 .brandKit-studio--split .brandKit-foldder-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   border: none;
-  border-radius: 0;
-  background: var(--foldder-studio-accent, #ffbd1b);
-  color: #000;
-  padding: 0 14px;
-  min-height: 32px;
-  height: auto;
-  font-family: var(--brandKit-v2-font, "Helvetica Neue", Helvetica, Arial, sans-serif);
+  border-radius: 8px;
+  background: #141414;
+  color: #ffffff;
+  padding: 0 16px;
+  min-height: 40px;
+  height: 40px;
+  font-family: var(--brandKit-ui-font);
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
-  letter-spacing: 0.02em;
-  text-transform: none;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   cursor: pointer;
-  transition: opacity 0.15s ease, transform 0.12s ease;
+  transition: opacity 0.15s ease, background 0.15s ease;
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn:hover:not(:disabled),
 .brandKit-studio--split .brandKit-foldder-btn:hover:not(:disabled) {
   opacity: 0.9;
-  transform: scale(1.01);
+  transform: none;
+  background: #2a2a2a;
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn:disabled,
@@ -239,7 +250,16 @@
 .brandKit-studio--split .brandKit-foldder-btn--ghost {
   background: transparent;
   color: var(--brandKit-v2-muted);
-  padding-inline: 0;
+  padding-inline: 8px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+.brandKit-studio--v2 .brandKit-foldder-btn--ghost:hover:not(:disabled),
+.brandKit-studio--split .brandKit-foldder-btn--ghost:hover:not(:disabled) {
+  background: rgba(20, 20, 20, 0.06);
+  color: var(--brandKit-v2-heading, #1a1a1a);
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn--white,
@@ -259,37 +279,37 @@
 
 .brandKit-studio--v2 .brandKit-foldder-btn--compact,
 .brandKit-studio--split .brandKit-foldder-btn--compact {
-  padding: 0 8px;
-  font-size: 10px;
-  font-weight: 400;
-  min-height: 26px;
-  height: 26px;
-  gap: 4px;
+  padding: 0 16px;
+  font-size: 11px;
+  font-weight: 600;
+  min-height: 40px;
+  height: 40px;
+  gap: 8px;
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn--icon-only,
 .brandKit-studio--split .brandKit-foldder-btn--icon-only {
-  width: 26px;
-  min-width: 26px;
+  width: 40px;
+  min-width: 40px;
   padding: 0;
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn--dock,
 .brandKit-studio--split .brandKit-foldder-btn--dock {
-  background: #ffffff;
-  color: #000000;
+  background: #141414;
+  color: #ffffff;
   border: none;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn--dock:hover:not(:disabled),
 .brandKit-studio--split .brandKit-foldder-btn--dock:hover:not(:disabled) {
-  background: #e3e3e0;
+  background: #2a2a2a;
   opacity: 1;
-  transform: scale(1.04);
+  transform: none;
 }
 
 .brandKit-studio--v2 .brandKit-foldder-btn--dock:active:not(:disabled),
@@ -2582,7 +2602,7 @@
 /* ── Studio feedback: toasts, status bar, tile attention ── */
 .brandKit-studio-toasts {
   position: fixed;
-  top: 72px;
+  top: calc(var(--brandKit-studio-header-height, 40px) + 12px);
   right: 20px;
   z-index: 100120;
   display: flex;

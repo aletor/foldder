@@ -29,18 +29,30 @@ import {
   FoldderLibraryStudioTabBar,
   FoldderLibraryTextList,
   FoldderLibraryTextListItem,
-  type FoldderLibraryTab,
+  type FoldderGalleryBucketTab,
+  type FoldderLibraryPrimaryTab,
 } from "./foldder/FoldderLibraryStudioChrome";
+import {
+  FoldderUserLibraryPanels,
+  useFoldderUserLibraryCounts,
+} from "./foldder/FoldderUserLibraryPanels";
+import type { DesignerPageState } from "./designer/DesignerNode";
+import type { BrandKitDocument } from "@/lib/brandkit/brand-kit-types";
 
 type Props = {
   open: boolean;
   onClose: () => void;
   libraryView: FoldderLibraryView;
   liveNodeIds: Set<string>;
+  projectId?: string | null;
   onRenameAsset: (assetId: string, name: string) => void;
   onFocusNode: (nodeId: string) => void;
   onExportAsset: (asset: LibraryAsset, downloadUrl?: string) => void;
   onOpenGuionistaTextAsset?: (assetId: string) => void;
+  onInsertDesignerTemplate?: (args: { pages: DesignerPageState[]; title: string }) => void;
+  onInsertLibraryImage?: (args: { imageUrl: string; title: string }) => void;
+  onInsertFlow?: (args: { nodes: unknown[]; edges: unknown[]; title: string }) => void;
+  onInsertBrandKit?: (args: { brandKit: BrandKitDocument; title: string }) => void;
 };
 
 type PreviewState = {
@@ -539,7 +551,14 @@ function MediaBucketPanel({
   );
 }
 
-const LIBRARY_TABS: Array<{ id: FoldderLibraryTab; label: string }> = [
+const PRIMARY_TABS: Array<{ id: FoldderLibraryPrimaryTab; label: string }> = [
+  { id: "gallery", label: "Galería" },
+  { id: "flows", label: "Mis flujos" },
+  { id: "templates", label: "Mis Templates" },
+  { id: "brandKits", label: "Mis BrandKits" },
+];
+
+const GALLERY_BUCKET_TABS: Array<{ id: FoldderGalleryBucketTab; label: string }> = [
   { id: "imported", label: "Importados" },
   { id: "generated", label: "Generados" },
   { id: "exported", label: "Exportados" },
@@ -550,14 +569,21 @@ export function ProjectAssetsFullscreen({
   onClose,
   libraryView,
   liveNodeIds,
+  projectId = null,
   onRenameAsset,
   onFocusNode,
   onExportAsset,
   onOpenGuionistaTextAsset,
+  onInsertDesignerTemplate,
+  onInsertLibraryImage,
+  onInsertFlow,
+  onInsertBrandKit,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<FoldderLibraryTab>("imported");
+  const [primaryTab, setPrimaryTab] = useState<FoldderLibraryPrimaryTab>("gallery");
+  const [galleryBucket, setGalleryBucket] = useState<FoldderGalleryBucketTab>("imported");
   const [refreshedUrls, setRefreshedUrls] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  const userLibraryCounts = useFoldderUserLibraryCounts(open);
 
   const importedCount = libraryView.imported.active.length + libraryView.imported.orphaned.length;
   const generatedMediaCount = libraryView.generated.active.length + libraryView.generated.orphaned.length;
@@ -566,10 +592,29 @@ export function ProjectAssetsFullscreen({
   const onCanvasCount =
     libraryView.imported.active.length +
     libraryView.generated.active.length;
+  const galleryCount = importedCount + generatedCount + exportedCount;
 
-  const tabsWithCounts = useMemo(
+  const primaryTabsWithCounts = useMemo(
     () =>
-      LIBRARY_TABS.map((tab) => ({
+      PRIMARY_TABS.map((tab) => ({
+        ...tab,
+        count:
+          tab.id === "gallery"
+            ? galleryCount
+            : tab.id === "flows"
+              ? userLibraryCounts.flows
+              : tab.id === "templates"
+                ? userLibraryCounts.templates
+                : tab.id === "brandKits"
+                  ? userLibraryCounts.brandKits
+                  : undefined,
+      })),
+    [galleryCount, userLibraryCounts],
+  );
+
+  const galleryBucketTabsWithCounts = useMemo(
+    () =>
+      GALLERY_BUCKET_TABS.map((tab) => ({
         ...tab,
         count:
           tab.id === "imported"
@@ -608,9 +653,9 @@ export function ProjectAssetsFullscreen({
   }, [libraryView.exported]);
 
   const currentPreviewList = useMemo(() => {
-    const list = tabPreviewLists[activeTab === "exported" ? "exported" : activeTab];
+    const list = tabPreviewLists[galleryBucket];
     return list.filter((asset) => isPreviewableAsset(asset, refreshedUrls));
-  }, [activeTab, tabPreviewLists, refreshedUrls]);
+  }, [galleryBucket, tabPreviewLists, refreshedUrls]);
 
   const handleOpenPreview = (asset: LibraryAsset, previewUrl: string, list: LibraryAsset[]) => {
     const navigable = list.filter((item) => isPreviewableAsset(item, refreshedUrls));
@@ -719,14 +764,25 @@ export function ProjectAssetsFullscreen({
         iconBackground="#965b92"
         onClose={onClose}
       />
-      <FoldderLibraryStudioTabBar activeTab={activeTab} onTabChange={setActiveTab} tabs={tabsWithCounts} />
+      <FoldderLibraryStudioTabBar
+        activeTab={primaryTab}
+        onTabChange={setPrimaryTab}
+        tabs={primaryTabsWithCounts}
+      />
+      {primaryTab === "gallery" ? (
+        <FoldderLibraryStudioTabBar
+          activeTab={galleryBucket}
+          onTabChange={setGalleryBucket}
+          tabs={galleryBucketTabsWithCounts}
+        />
+      ) : null}
 
       <main
         className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-4 sm:px-5"
         data-foldder-library-studio-main
       >
         <div className="mx-auto max-w-[1400px]">
-          {activeTab === "imported" ? (
+          {primaryTab === "gallery" && galleryBucket === "imported" ? (
             <MediaBucketPanel
               emptyHint="Aún no hay importados en este proyecto."
               active={libraryView.imported.active}
@@ -741,7 +797,7 @@ export function ProjectAssetsFullscreen({
             />
           ) : null}
 
-          {activeTab === "generated" ? (
+          {primaryTab === "gallery" && galleryBucket === "generated" ? (
             <>
               {generatedMediaCount > 0 && libraryView.generated.texts.length > 0 ? (
                 <FoldderLibrarySectionKicker label="Media" count={generatedMediaCount} />
@@ -773,7 +829,7 @@ export function ProjectAssetsFullscreen({
             </>
           ) : null}
 
-          {activeTab === "exported" ? (
+          {primaryTab === "gallery" && galleryBucket === "exported" ? (
             <FoldderLibraryStudioSection>
               {libraryView.exported.length === 0 ? (
                 <FoldderLibraryEmptyState hint="Usa Exportar en Importados o Generados para descargar y guardar entregas aquí. Las piezas del formulario Populate aparecen agrupadas por partido.">
@@ -808,6 +864,22 @@ export function ProjectAssetsFullscreen({
               )}
             </FoldderLibraryStudioSection>
           ) : null}
+
+          {primaryTab !== "gallery" &&
+          onInsertDesignerTemplate &&
+          onInsertLibraryImage &&
+          onInsertFlow &&
+          onInsertBrandKit ? (
+            <FoldderUserLibraryPanels
+              section={primaryTab}
+              projectId={projectId}
+              onClose={onClose}
+              onInsertDesignerTemplate={onInsertDesignerTemplate}
+              onInsertLibraryImage={onInsertLibraryImage}
+              onInsertFlow={onInsertFlow}
+              onInsertBrandKit={onInsertBrandKit}
+            />
+          ) : null}
         </div>
       </main>
 
@@ -820,7 +892,7 @@ export function ProjectAssetsFullscreen({
           onNavigate={handleNavigatePreview}
           onFocusNode={onFocusNode}
           onExportAsset={onExportAsset}
-          showExportAction={activeTab !== "exported"}
+          showExportAction={galleryBucket !== "exported"}
         />
       ) : null}
     </div>

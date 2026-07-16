@@ -3,8 +3,8 @@ import { resolveStyleGuideSoloValidado, STYLE_GUIDE_EXPORT_MODE_LABELS } from ".
 
 describe("style-guide-export-types", () => {
   it("define etiquetas de modo", () => {
-    expect(STYLE_GUIDE_EXPORT_MODE_LABELS.operativo).toContain("Operativo");
-    expect(STYLE_GUIDE_EXPORT_MODE_LABELS.cliente).toContain("Cliente");
+    expect(STYLE_GUIDE_EXPORT_MODE_LABELS.operativo).toContain("Borrador");
+    expect(STYLE_GUIDE_EXPORT_MODE_LABELS.cliente).toContain("final");
   });
 
   it("modo cliente implica solo validado", () => {

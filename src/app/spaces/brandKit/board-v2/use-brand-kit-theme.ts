@@ -1,12 +1,13 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { BrandKitDocument } from "@/lib/brandkit/brand-kit-types";
+import type { BrandKitDocument, PaletteValue } from "@/lib/brandkit/brand-kit-types";
 import {
   deriveBrandThemeFromDoc,
   type BrandThemePolarity,
   type BrandThemeResult,
 } from "@/lib/brandkit/brand-theme-color";
+import { useBrandKitPalettePreview } from "./brand-kit-palette-preview-context";
 
 export type BrandKitThemeState = {
   ready: boolean;
@@ -28,6 +29,24 @@ function shouldClearPersistedTheme(doc: BrandKitDocument): boolean {
 }
 
 export function useBrandKitTheme(doc: BrandKitDocument): BrandKitThemeState {
+  const previewCtx = useBrandKitPalettePreview();
+  const previewPalette = previewCtx?.previewPalette ?? null;
+
+  const themeDoc = useMemo((): BrandKitDocument => {
+    if (!previewPalette) return doc;
+    return {
+      ...doc,
+      slots: {
+        ...doc.slots,
+        palette: {
+          ...doc.slots.palette,
+          value: previewPalette,
+          status: doc.slots.palette.status === "empty" ? "resolved" : doc.slots.palette.status,
+        },
+      },
+    };
+  }, [doc, previewPalette]);
+
   const [persisted, setPersisted] = useState<BrandThemeResult>(() => {
     const initial = deriveBrandThemeFromDoc(doc);
     return initial.ready ? initial : EMPTY_THEME;
@@ -36,7 +55,7 @@ export function useBrandKitTheme(doc: BrandKitDocument): BrandKitThemeState {
   const prevFingerprintRef = useRef<string | null>(null);
   const seededRef = useRef(false);
 
-  const live = useMemo(() => deriveBrandThemeFromDoc(doc), [doc]);
+  const live = useMemo(() => deriveBrandThemeFromDoc(themeDoc), [themeDoc]);
 
   useLayoutEffect(() => {
     if (live.ready) {
@@ -72,9 +91,9 @@ export function useBrandKitTheme(doc: BrandKitDocument): BrandKitThemeState {
 
     if (prevFingerprintRef.current !== fingerprint) {
       prevFingerprintRef.current = fingerprint;
-      setAnimate(true);
+      setAnimate(!previewPalette);
     }
-  }, [active.ready, active.fingerprint]);
+  }, [active.ready, active.fingerprint, previewPalette]);
 
   return {
     ready: active.ready,

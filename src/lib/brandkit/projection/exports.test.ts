@@ -66,4 +66,14 @@ describe("renderBrandKitStyleGuide — modos de export", () => {
     expect(doc.html).toContain("sg-gallery-grid");
     expect(doc.html).not.toContain('class="sg-badge"');
   });
+
+  it("incluye índice, cierre y versión final en el HTML", async () => {
+    const doc = await renderBrandKitStyleGuide(crownedGenome(), {
+      exportMode: "cliente",
+      projectName: "OARO",
+    });
+    expect(doc.html).toContain("sg-toc");
+    expect(doc.html).toContain("sg-chapter-closing");
+    expect(doc.html).toContain("versión final");
+  });
 });

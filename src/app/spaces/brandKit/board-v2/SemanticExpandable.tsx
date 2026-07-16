@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import React, { useMemo } from "react";
 import { brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
-import { BrandKitCapsuleList } from "./BrandKitCapsuleList";
-import { BrandKitFoldderButton } from "./BrandKitFoldderButton";
-import { useBrandKitMosaicBoard, useBrandKitMosaicCellOptional } from "./brand-kit-mosaic-context";
+import { buildMosaicDetailPayload } from "./BrandKitDetailPanel";
+import type { SlotAction, SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
+import { getSlotAttention } from "@/lib/brandkit/brand-kit-board-status";
+import { useRegisterSlotDetail } from "./BrandKitDetailFooterActions";
+import { useBrandKitMosaicCellOptional } from "./brand-kit-mosaic-context";
 
 export type SemanticDetailPanel = {
   id: string;
@@ -14,82 +15,87 @@ export type SemanticDetailPanel = {
   content: React.ReactNode;
 };
 
-function MosaicDetailAction({
-  title,
-  content,
-}: {
-  title: string;
-  content: React.ReactNode;
-}) {
-  const mosaicBoard = useBrandKitMosaicBoard();
-  return (
-    <BrandKitFoldderButton
-      variant="white"
-      compact
-      onClick={() => mosaicBoard?.openDetailSheet({ title, content })}
-    >
-      Detalle
-    </BrandKitFoldderButton>
-  );
+function slotStatusLabel(slot: SlotState<unknown>): string {
+  if (slot.locked) return brandKitLocaleEs.locked;
+  const attention = getSlotAttention(slot);
+  if (attention.kind === "conflict") return brandKitLocaleEs.conflictChip;
+  if (attention.kind === "candidates") return brandKitLocaleEs.reviewChip;
+  if (attention.kind === "analyzing") return brandKitLocaleEs.slotAnalyzing;
+  if (slot.status === "resolved") return brandKitLocaleEs.confirmedStatus;
+  return brandKitLocaleEs.pendingChip;
 }
+
+const SLOT_DETAIL_LABELS: Partial<Record<SlotId, string>> = {
+  logo: "Logo",
+  palette: "Color",
+  typography: "Tipografía",
+  essence: "Esencia",
+  voice: "Voz",
+  visualWorld: "Mundo visual",
+  gallery: "Galería",
+};
 
 export function SemanticDetailPanels({
   summary,
   chips,
   panels,
   footer,
-  mosaicDetailTitle = "Detalle",
+  slotId,
+  slot,
+  brandName,
+  onAction,
+  onEdit,
 }: {
   summary: React.ReactNode;
   chips?: React.ReactNode;
   panels: SemanticDetailPanel[];
   footer?: React.ReactNode;
-  mosaicDetailTitle?: string;
+  slotId?: SlotId;
+  slot?: SlotState<unknown>;
+  brandName?: string;
+  onAction?: (slotId: SlotId, action: SlotAction) => void;
+  onEdit?: () => void;
 }) {
   const visiblePanels = panels.filter((panel) => panel.content);
-  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const mosaicCell = useBrandKitMosaicCellOptional();
   const isMosaic = Boolean(mosaicCell);
 
-  const toggle = (id: string) => {
-    setOpenIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+  const detailPayload = useMemo(() => {
+    if (!visiblePanels.length && !footer) return null;
+    const sourceLabel = slot?.provenance?.detail
+      ? `Fuente principal: ${slot.provenance.detail}`
+      : undefined;
+    const attention = slot ? getSlotAttention(slot) : { kind: null };
+    const payloadPanels = [
+      ...visiblePanels,
+      ...(footer
+        ? [
+            {
+              id: "supplemental",
+              label: brandKitLocaleEs.supplementalEvidence,
+              content: footer,
+            },
+          ]
+        : []),
+    ];
+    return buildMosaicDetailPayload({
+      slotId,
+      blockLabel: slotId ? (SLOT_DETAIL_LABELS[slotId] ?? slotId) : "Detalle",
+      brandName,
+      statusLabel: slot ? slotStatusLabel(slot) : undefined,
+      sourceLabel,
+      summary,
+      panels: payloadPanels,
+      initialTabId:
+        slot?.reconciliation?.outcome === "contradiction" || attention.kind === "conflict"
+          ? "evidence"
+          : slot?.status === "candidates"
+            ? "alternatives"
+            : undefined,
     });
-  };
+  }, [brandName, footer, slot, slotId, summary, visiblePanels]);
 
-  const mosaicDetailContent = useMemo(() => {
-    if (!visiblePanels.length) return null;
-    return (
-      <div className="brandKit-mosaic-detail-panels">
-        {visiblePanels.map((panel) => (
-          <section key={panel.id} className="brandKit-semantic-panel is-open">
-            <div className="brandKit-semantic-panel__tab brandKit-semantic-panel__tab--static">
-              <span className="brandKit-semantic-panel__label">{panel.label}</span>
-              {panel.count !== undefined ? (
-                <span className="brandKit-semantic-panel__count">{panel.count}</span>
-              ) : null}
-            </div>
-            <div className="brandKit-semantic-panel__body">{panel.content}</div>
-          </section>
-        ))}
-        {footer ? <div className="brandKit-semantic-panels__footer">{footer}</div> : null}
-      </div>
-    );
-  }, [footer, visiblePanels]);
-
-  const detailAction = useMemo(() => {
-    if (!mosaicDetailContent) return null;
-    return <MosaicDetailAction title={mosaicDetailTitle} content={mosaicDetailContent} />;
-  }, [mosaicDetailContent, mosaicDetailTitle]);
-
-  useEffect(() => {
-    if (!isMosaic || !mosaicCell || !detailAction) return;
-    mosaicCell.setActionSlot("semantic-detail", detailAction);
-    return () => mosaicCell.setActionSlot("semantic-detail", null);
-  }, [detailAction, isMosaic, mosaicCell]);
+  useRegisterSlotDetail(slotId, detailPayload);
 
   return (
     <div className={`brandKit-semantic-panels${isMosaic ? " brandKit-semantic-panels--mosaic" : ""}`}>
@@ -97,33 +103,6 @@ export function SemanticDetailPanels({
         <div className="brandKit-v2-semantic__summary">{summary}</div>
         {chips ? <div className="brandKit-v2-chip-row brandKit-v2-semantic__chips">{chips}</div> : null}
       </div>
-
-      {!isMosaic && visiblePanels.length ? (
-        <div className="brandKit-semantic-panels__list">
-          {visiblePanels.map((panel) => {
-            const isOpen = openIds.has(panel.id);
-            return (
-              <section key={panel.id} className={`brandKit-semantic-panel${isOpen ? " is-open" : ""}`}>
-                <button
-                  type="button"
-                  className="brandKit-semantic-panel__tab"
-                  aria-expanded={isOpen}
-                  onClick={() => toggle(panel.id)}
-                >
-                  <span className="brandKit-semantic-panel__label">{panel.label}</span>
-                  {panel.count !== undefined ? (
-                    <span className="brandKit-semantic-panel__count">{panel.count}</span>
-                  ) : null}
-                  <ChevronDown size={14} strokeWidth={1.75} className="brandKit-semantic-panel__chevron" aria-hidden />
-                </button>
-                {isOpen ? <div className="brandKit-semantic-panel__body">{panel.content}</div> : null}
-              </section>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {!isMosaic && footer ? <div className="brandKit-semantic-panels__footer">{footer}</div> : null}
     </div>
   );
 }
@@ -131,9 +110,16 @@ export function SemanticDetailPanels({
 export function EvidenceList({ quotes, hideLabel = false }: { quotes: string[]; hideLabel?: boolean }) {
   if (!quotes.length) return null;
   return (
-    <div className="brandKit-v2-evidence">
+    <div className="brandKit-v2-evidence brandKit-v2-evidence--detail">
       {!hideLabel ? <span className="brandKit-v2-evidence__label">{brandKitLocaleEs.evidence}</span> : null}
-      <BrandKitCapsuleList items={quotes} variant="quote" />
+      <ol className="brandKit-detail-evidence">
+        {quotes.map((quote, index) => (
+          <li key={`${index}-${quote.slice(0, 20)}`} className="brandKit-detail-evidence__item">
+            <span className="brandKit-detail-evidence__index">{index + 1}</span>
+            <blockquote className="brandKit-detail-evidence__quote">"{quote}"</blockquote>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

@@ -312,18 +312,24 @@ export function computeBrandKitCompleteness(doc: BrandKitDocument | undefined): 
 }
 
 export function extractPaletteSwatches(doc: BrandKitDocument | undefined): string[] {
+  const discovered = extractDiscoveredPaletteColors(doc);
+  if (discovered.length) return discovered.slice(0, 5);
+  return ["#6B4C9A", "#E07A5F", "#F4F1EE", "#1F2328", "#8B8F96"];
+}
+
+/** Colores descubiertos en la paleta (confirmados o no), sin fallbacks de demo. */
+export function extractDiscoveredPaletteColors(doc: BrandKitDocument | undefined): string[] {
   const palette = doc?.slots.palette?.value as PaletteValue | undefined;
-  if (!palette?.colors?.length) return ["#6B4C9A", "#E07A5F", "#F4F1EE", "#1F2328", "#8B8F96"];
+  if (!palette?.colors?.length) return [];
   const seen = new Set<string>();
   const out: string[] = [];
   for (const color of palette.colors) {
-    const hex = color.hex.toUpperCase();
-    if (seen.has(hex)) continue;
+    const hex = color.hex?.trim().toUpperCase();
+    if (!hex || seen.has(hex)) continue;
     seen.add(hex);
     out.push(hex);
-    if (out.length >= 5) break;
   }
-  return out.length ? out : ["#6B4C9A", "#E07A5F", "#F4F1EE", "#1F2328", "#8B8F96"];
+  return out;
 }
 
 export function extractLogoPreviewUrl(doc: BrandKitDocument | undefined): string | null {

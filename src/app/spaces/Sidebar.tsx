@@ -46,6 +46,8 @@ type SidebarProps = {
   onSidebarStripMouseEnter?: () => void;
   /** Arrastre desde la librería: sin tooltips de ayuda rollover */
   paletteDragActive?: boolean;
+  /** Abrir el panel Foldder (assets / librería de proyecto) */
+  onOpenFoldder?: () => void;
 };
 
 const SIDEBAR_TILE_BACKGROUND_SRC = NODE_SIDEBAR_TILE_BACKGROUND_SRC;
@@ -221,6 +223,7 @@ const Sidebar = ({
   onSidebarPinnedOpenDismiss,
   onSidebarStripMouseEnter,
   paletteDragActive = false,
+  onOpenFoldder,
 }: SidebarProps) => {
   const { isTouchUI } = useInputMode();
   const [sidebarTouchOpen, setSidebarTouchOpen] = useState(false);
@@ -562,6 +565,23 @@ const Sidebar = ({
             </div>
             ) : null}
           </div>
+          {onOpenFoldder ? (
+            <button
+              type="button"
+              data-foldder-sidebar-launcher
+              className="foldder-sidebar-launcher"
+              title="Abrir Foldder"
+              aria-label="Abrir Foldder"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenFoldder();
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo_bl.svg" alt="" draggable={false} />
+              <span>Foldder</span>
+            </button>
+          ) : null}
         </div>
       </aside>
     </div>

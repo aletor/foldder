@@ -21,8 +21,8 @@ export type StyleGuideChapterMeta = {
 };
 
 export const STYLE_GUIDE_EXPORT_MODE_LABELS: Record<StyleGuideExportMode, string> = {
-  operativo: "Operativo (equipo)",
-  cliente: "Cliente (solo validado)",
+  operativo: "Borrador (con marcas)",
+  cliente: "Versión final",
 };
 
 export function resolveStyleGuideSoloValidado(exportMode: StyleGuideExportMode): boolean {

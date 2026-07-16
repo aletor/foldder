@@ -175,6 +175,15 @@ export interface GalleryCategoryBrief {
   evidenceCount: number;
 }
 
+export type GalleryImageUseFor = "campaign" | "stationery" | "reference";
+
+export type GallerySlotIssue = {
+  error: string;
+  at: string;
+  /** Generación fallida sin nuevo cargo (política sin auto-retry). */
+  noCharge?: boolean;
+};
+
 export interface GalleryValue {
   harvested: {
     assetId: string;
@@ -188,17 +197,29 @@ export interface GalleryValue {
     assetId: string;
     previewUrl?: string;
     verdict?: "up" | "down";
+    /** Aprobación explícita del usuario (distinta de auto-aceptada al generar). */
+    userApproved?: boolean;
+    useFor?: GalleryImageUseFor[];
     promptVersion: number;
     category?: "people_mood" | "places" | "objects" | "textures" | "general";
     categoryLabel?: string;
     variantIndex?: number;
   }[];
+  /** Imagen principal para aplicaciones y showcase. */
+  primaryImageAssetId?: string;
+  /** Errores por slot (`category:variantIndex`) sin sustituir silenciosamente la imagen previa. */
+  slotIssues?: Partial<Record<string, GallerySlotIssue>>;
   stylePromptVersion: number;
   styleToneExplanation?: string;
   categoryBriefs?: GalleryCategoryBrief[];
   categoryBriefsSourceKey?: string;
   categoryBriefsAnalyzedAt?: string;
   archivedHarvest?: GalleryValue["harvested"];
+  /**
+   * Snapshot fijo (máx. 4) para la cara exterior del nodo.
+   * Se congela en la primera generación con URLs y no se actualiza después.
+   */
+  nodeFaceStripUrls?: string[];
 }
 
 export interface CompiledArtifacts {
@@ -227,12 +248,32 @@ export interface SourceRef {
   pageCount?: number;
 }
 
+export type BrandKitStationeryContact = {
+  personName?: string;
+  role?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  website?: string;
+};
+
 export interface BrandKitDocument {
   brandName?: { value: string; provenance: Provenance };
   sources: SourceRef[];
   slots: Record<SlotId, SlotState<unknown>>;
   compiled: CompiledArtifacts | null;
   compiledHash?: string;
+  /** Overrides opcionales de campaña (headline/CTA bloqueados, etc.). */
+  campaignOverrides?: {
+    concept?: string;
+    headline?: string;
+    subheadline?: string;
+    cta?: string;
+    lockedHeadline?: boolean;
+    lockedCta?: boolean;
+  };
+  /** Datos editables para papelería corporativa. */
+  stationeryContact?: BrandKitStationeryContact;
   updatedAt: string;
 }
 

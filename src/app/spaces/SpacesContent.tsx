@@ -50,8 +50,15 @@ import { groupNodesIntoSpace } from "./group-nodes-into-space";
 import Sidebar from "./Sidebar";
 import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
 import { TouchNodeContextMenu } from "./TouchNodeContextMenu";
-import { extractFlowSubgraph } from "./flow/flow-graph";
+import { extractFlowSubgraph, remapInsertedFlow } from "./flow/flow-graph";
 import { saveFlowToInspiration } from "./inspiration/save-flow";
+import type { DesignerPageState } from "./designer/DesignerNode";
+import type { BrandKitDocument } from "@/lib/brandkit/brand-kit-types";
+import {
+  computeBrandKitCompleteness,
+  isBrandKitEmpty,
+  normalizeBrandKitDocument,
+} from "@/lib/brandkit/brand-kit-defaults";
 import { useTouchNodeLongPress } from "./use-touch-node-long-press";
 import { TouchLiteEdge } from "./touch-lite-edge";
 import { useInputMode } from "./input-mode-context";
@@ -956,6 +963,119 @@ export function SpacesContent() {
       );
     }, 80);
   }, [metadata, scheduleFoldderCanvasIntroEnd, screenToFlowPosition, setNodes]);
+
+  const insertDesignerTemplateFromFoldder = useCallback(
+    ({ pages, title }: { pages: DesignerPageState[]; title: string }) => {
+      if (!pages.length) return;
+      takeSnapshot();
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const position = findEmptyPositionForNewNode("designer", liveNodesRef.current, center);
+      const newId = `designer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const newNode = prepareCanvasNodeForCreate({
+        id: newId,
+        type: "designer",
+        position,
+        selected: true,
+        data: withFoldderCanvasIntro("designer", {
+          ...defaultDataForCanvasDropNode("designer"),
+          label: title,
+          pages,
+          activePageIndex: 0,
+          autoImageOptimization: false,
+        }),
+      } as Node);
+      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), newNode]);
+      scheduleFoldderCanvasIntroEnd(newId);
+      setProjectAssetsOpen(false);
+    },
+    [scheduleFoldderCanvasIntroEnd, screenToFlowPosition, setNodes, takeSnapshot],
+  );
+
+  const insertLibraryImageFromFoldder = useCallback(
+    ({ imageUrl, title }: { imageUrl: string; title: string }) => {
+      const url = imageUrl.trim();
+      if (!url) return;
+      takeSnapshot();
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const position = findEmptyPositionForNewNode("urlImage", liveNodesRef.current, center);
+      const newId = `urlImage_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const newNode = prepareCanvasNodeForCreate({
+        id: newId,
+        type: "urlImage",
+        position,
+        selected: true,
+        data: withFoldderCanvasIntro("urlImage", {
+          ...defaultDataForCanvasDropNode("urlImage"),
+          label: title || "Imagen",
+          value: url,
+          urls: [url],
+          selectedIndex: 0,
+          type: "image",
+        }),
+      } as Node);
+      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), newNode]);
+      scheduleFoldderCanvasIntroEnd(newId);
+      setProjectAssetsOpen(false);
+    },
+    [scheduleFoldderCanvasIntroEnd, screenToFlowPosition, setNodes, takeSnapshot],
+  );
+
+  const insertFlowFromFoldder = useCallback(
+    ({ nodes: flowNodes, edges: flowEdges }: { nodes: unknown[]; edges: unknown[]; title: string }) => {
+      if (!Array.isArray(flowNodes) || flowNodes.length === 0) return;
+      takeSnapshot();
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const { nodes: newNodes, edges: newEdges } = remapInsertedFlow(
+        flowNodes as Node[],
+        (Array.isArray(flowEdges) ? flowEdges : []) as Edge[],
+        { offset: center },
+      );
+      setEdges((eds) => [...eds, ...newEdges]);
+      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), ...newNodes]);
+      setProjectAssetsOpen(false);
+    },
+    [screenToFlowPosition, setEdges, setNodes, takeSnapshot],
+  );
+
+  const insertBrandKitFromFoldder = useCallback(
+    ({ brandKit, title }: { brandKit: BrandKitDocument; title: string }) => {
+      takeSnapshot();
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const position = findEmptyPositionForNewNode("brandKit", liveNodesRef.current, center);
+      const doc = normalizeBrandKitDocument(brandKit);
+      const empty = isBrandKitEmpty(doc);
+      const percent = computeBrandKitCompleteness(doc).percent;
+      const newId = `brandKit_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const newNode = prepareCanvasNodeForCreate({
+        id: newId,
+        type: "brandKit",
+        position,
+        selected: true,
+        data: withFoldderCanvasIntro("brandKit", {
+          ...defaultDataForCanvasDropNode("brandKit"),
+          label: title,
+          brandKit: doc,
+          status: empty ? "empty" : doc.compiled ? "done" : percent > 0 ? "partial" : "empty",
+        }),
+      } as Node);
+      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), newNode]);
+      scheduleFoldderCanvasIntroEnd(newId);
+      setProjectAssetsOpen(false);
+    },
+    [scheduleFoldderCanvasIntroEnd, screenToFlowPosition, setNodes, takeSnapshot],
+  );
 
   const getNodeDataSignatureToken = useCallback((value: unknown): string => {
     if (!value || typeof value !== "object") return String(value ?? "");
@@ -6269,6 +6389,7 @@ export function SpacesContent() {
             onSidebarPinnedOpenDismiss={() => setSidebarPinnedAfterWelcome(false)}
             onSidebarStripMouseEnter={() => setSidebarLockedCollapsed(false)}
             paletteDragActive={paletteDragActive}
+            onOpenFoldder={openFoldder}
           />
         </div>
       )}
@@ -6494,20 +6615,6 @@ export function SpacesContent() {
               )}
             </div>
           </div>
-        )}
-
-        {isAuthenticated && (
-          <button
-            type="button"
-            data-foldder-canvas-launcher
-            className="pointer-events-auto"
-            title="Abrir Foldder"
-            aria-label="Abrir Foldder"
-            onClick={() => openFoldder()}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo_bl.svg" alt="" draggable={false} />
-          </button>
         )}
 
         {/* Action HUD — fila1: agente (izq.) + acciones (der.); fila2: accesos fijos inferiores. Oculto con body.nb-studio-open (Nano Banana Studio fullscreen). */}
@@ -6824,12 +6931,17 @@ export function SpacesContent() {
             }}
             libraryView={foldderLibraryView}
             liveNodeIds={new Set(nodes.map((node) => node.id))}
+            projectId={projectScopeId}
             onRenameAsset={renameFoldderLibraryAsset}
             onFocusNode={focusFoldderLibrarySourceNode}
             onExportAsset={(asset, downloadUrl) => {
               void exportFoldderLibraryAsset(asset, downloadUrl);
             }}
             onOpenGuionistaTextAsset={openGuionistaTextAsset}
+            onInsertDesignerTemplate={insertDesignerTemplateFromFoldder}
+            onInsertLibraryImage={insertLibraryImageFromFoldder}
+            onInsertFlow={insertFlowFromFoldder}
+            onInsertBrandKit={insertBrandKitFromFoldder}
           />
         )}
 

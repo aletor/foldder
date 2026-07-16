@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FoldderStudioHeader } from "../FoldderStudioHeader";
-import type { GalleryValue, BrandKitDocument, SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
+import { BrandKitStudioHeader } from "./BrandKitStudioHeader";
+import type { BrandKitStudioMode } from "@/lib/brandkit/studio/brand-kit-studio-mode";
+import { isPresentationMode } from "@/lib/brandkit/studio/brand-kit-studio-mode";
+import type { GalleryValue, BrandKitDocument, SlotAction, SlotId, BrandKitStationeryContact } from "@/lib/brandkit/brand-kit-types";
 import { externalGalleryMediaUrls } from "@/lib/brandkit/brand-kit-gallery-media";
 import { applySlotAction } from "@/lib/brandkit/brand-kit-slot-actions";
 import { enrichBrandKitDocument } from "@/lib/brandkit/brand-kit-enrich";
@@ -14,6 +16,8 @@ import {
   extractBrandTitle,
   isBrandKitEmpty,
 } from "@/lib/brandkit/brand-kit-defaults";
+import { saveBrandKitToInspiration } from "../inspiration/save-brandkit";
+import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
 import {
   analyzeBrandKitGalleryBriefs,
   applyBrandKitCompile,
@@ -28,15 +32,22 @@ import {
 } from "./brand-kit-api";
 import {
   createInitialCrawlProgress,
-  BrandKitCrawlProgress,
   reduceCrawlProgress,
   type BrandKitCrawlProgressState,
 } from "./BrandKitCrawlProgress";
 import { BrandKitBoardV2 } from "./board-v2/BrandKitBoardV2";
-import { BrandKitBoardEmpty } from "./BrandKitBoardEmpty";
+import { BrandKitMosaicBoardProvider } from "./board-v2/brand-kit-mosaic-context";
 import { BrandKitSidebarPanel } from "./BrandKitSidebarPanel";
+import { BrandKitStudioOnboarding } from "./BrandKitStudioOnboarding";
+import { BrandKitStudioWorkspace } from "./BrandKitStudioWorkspace";
 import { BrandKitStudioToastStack } from "./BrandKitStudioToast";
 import type { BrandKitStyleGuideExportMode } from "@/lib/brandkit/projection/style-guide-export-types";
+import { evaluateFinalStyleGuideExport } from "@/lib/brandkit/brand-kit-presentation-export";
+import { shouldPreflightStyleGuideExport } from "@/lib/brandkit/studio/brand-kit-studio-export";
+import {
+  isBrandKitStudioOnboardingLayout,
+  shouldUnlockBrandKitStudioShell,
+} from "@/lib/brandkit/studio/brand-kit-studio-shell";
 import { downloadBrandKitDocumentStyleGuidePdf } from "@/lib/brandkit/projection/brand-kit-style-guide-download.client";
 import {
   buildAnalysisCompleteToast,
@@ -49,11 +60,15 @@ import {
 import { BRAND_KIT_GALLERY_CATEGORY_IMAGE_COUNT, BRAND_KIT_GALLERY_GENERATE_IMAGE_COUNT as BRAND_KIT_GALLERY_IMAGE_COUNT } from "@/lib/brandkit/brand-kit-gallery-cost";
 import type { GalleryGenerateCategory, GalleryGenerateScope } from "@/lib/brandkit/brand-kit-gallery-plan";
 import { mergeSingleGallerySlot } from "@/lib/brandkit/brand-kit-gallery-plan";
-import { PanelLeft, PanelLeftClose } from "lucide-react";
+import { resolveBrandKitSidebarPhase } from "@/lib/brandkit/studio/sidebar-phase";
 import "./brand-kit.css";
 import "./brand-kit-board-theme.css";
 import "./board-v2/brand-kit-board-motion.css";
 import "./brand-kit-split-layout.css";
+import "./brand-kit-sidebar-redesign.css";
+import "./brand-kit-studio-header.css";
+import "./brand-kit-studio-inspector.css";
+import "./brand-kit-studio-layout.css";
 import "./brand-kit-media.css";
 
 const BRAND_KIT_STUDIO_ACCENT = "#FFBD1B";
@@ -77,6 +92,8 @@ function downloadJson(filename: string, payload: unknown) {
 }
 
 export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, onClose }: BrandKitStudioProps) {
+  const projectAssetsCtx = useProjectAssetsCanvas();
+  const projectId = projectAssetsCtx?.projectScopeId ?? null;
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [generatingGallery, setGeneratingGallery] = useState<GalleryGenerateScope | null>(null);
   const [isAnalyzingGalleryBriefs, setIsAnalyzingGalleryBriefs] = useState(false);
@@ -93,13 +110,84 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
   const [lastCrawlJob, setLastCrawlJob] = useState<{ url: string; enableLlm: boolean } | null>(null);
   const [styleGuideDownloadPhase, setStyleGuideDownloadPhase] = useState<"idle" | "vectorizing" | "downloading">("idle");
   const [styleGuideDownloadError, setStyleGuideDownloadError] = useState<string | null>(null);
-  const [presentationMode, setPresentationMode] = useState(false);
+  const [studioMode, setStudioMode] = useState<BrandKitStudioMode>("presentation");
   const [reviewMode, setReviewMode] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [shellUnlocked, setShellUnlocked] = useState(() => brandKit.sources.length > 0);
+  const [saveToLibraryBusy, setSaveToLibraryBusy] = useState(false);
+  const presentationMode = isPresentationMode(studioMode);
+  const prevSidebarPhaseRef = useRef<ReturnType<typeof resolveBrandKitSidebarPhase> | null>(null);
+
+  const sidebarPhase = useMemo(
+    () => resolveBrandKitSidebarPhase(brandKit, { isAnalyzing }),
+    [brandKit, isAnalyzing],
+  );
+
+  const onboardingLayout = isBrandKitStudioOnboardingLayout({
+    sourceCount: brandKit.sources.length,
+    isAnalyzing,
+    shellUnlocked,
+  });
 
   useEffect(() => {
-    if (presentationMode) setReviewMode(false);
-  }, [presentationMode]);
+    if (
+      shouldUnlockBrandKitStudioShell({
+        sourceCount: brandKit.sources.length,
+        isAnalyzing,
+      })
+    ) {
+      setShellUnlocked(true);
+    }
+  }, [brandKit.sources.length, isAnalyzing]);
+
+  useEffect(() => {
+    const prev = prevSidebarPhaseRef.current;
+    prevSidebarPhaseRef.current = sidebarPhase;
+    if (onboardingLayout) return;
+    if (sidebarPhase === "ready" && prev !== "ready") {
+      setSidebarOpen(studioMode === "edit");
+    }
+  }, [sidebarPhase, studioMode, onboardingLayout]);
+
+  useEffect(() => {
+    if (onboardingLayout) {
+      setReviewMode(false);
+      setSidebarOpen(false);
+      return;
+    }
+    if (presentationMode) {
+      setReviewMode(false);
+      setSidebarOpen(false);
+    }
+  }, [presentationMode, onboardingLayout]);
+
+  useEffect(() => {
+    if (onboardingLayout || presentationMode) return;
+    const mq = window.matchMedia("(max-width: 1100px)");
+    const apply = () => {
+      if (mq.matches) setSidebarOpen(false);
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [presentationMode, onboardingLayout]);
+
+  useEffect(() => {
+    if (!shellUnlocked || onboardingLayout) return;
+    if (studioMode === "edit" && (sidebarPhase === "ready" || sidebarPhase === "review")) {
+      setSidebarOpen(true);
+    }
+  }, [shellUnlocked, onboardingLayout, studioMode, sidebarPhase]);
+
+  const handleStudioModeChange = useCallback((mode: BrandKitStudioMode) => {
+    setStudioMode(mode);
+    if (mode === "presentation") {
+      setReviewMode(false);
+      setSidebarOpen(false);
+    } else if (sidebarPhase === "ready" || sidebarPhase === "review") {
+      setSidebarOpen(true);
+    }
+  }, [sidebarPhase]);
 
   useEffect(() => {
     brandKitRef.current = brandKit;
@@ -380,6 +468,13 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     }
     const added = result.addedCount ?? Math.max(0, result.gallery.generated.length - priorCount);
     persistBrandKit(applySlotAction(brandKitRef.current, "gallery", { action: "set", value: result.gallery }));
+    const issueCount = Object.keys(result.gallery.slotIssues ?? {}).length;
+    if (issueCount > 0 && added === 0) {
+      const firstIssue = Object.values(result.gallery.slotIssues ?? {})[0];
+      setCrawlError(firstIssue?.error ?? brandKitLocaleEs.galleryImageStateError);
+    } else if (issueCount > 0) {
+      setCrawlError(brandKitLocaleEs.galleryPartialError(issueCount));
+    }
     setFocusGeneratedTab((value) => value + 1);
     setGallerySuccess(
       added > 0 ? brandKitLocaleEs.galleryGeneratedCount(added) : brandKitLocaleEs.galleryGeneratedSuccess,
@@ -432,6 +527,13 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
 
   const handleExportStyleGuidePdf = useCallback(
     async (exportMode: BrandKitStyleGuideExportMode) => {
+      if (shouldPreflightStyleGuideExport(exportMode)) {
+        const preflight = evaluateFinalStyleGuideExport(brandKitRef.current);
+        if (preflight.shouldWarn && !window.confirm(preflight.message)) {
+          return;
+        }
+      }
+
       setStyleGuideDownloadError(null);
       setStyleGuideDownloadPhase("downloading");
       const result = await downloadBrandKitDocumentStyleGuidePdf(brandKitRef.current, {
@@ -452,12 +554,69 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
     [nodeLabel, pushToast],
   );
 
+  const handleStationeryContactChange = useCallback(
+    (contact: BrandKitStationeryContact) => {
+      persistBrandKit({
+        ...brandKitRef.current,
+        stationeryContact: contact,
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    [persistBrandKit],
+  );
+
   const title = extractBrandTitle(brandKit, nodeLabel?.trim() || "BrandKit");
-  const subtitle = crawlProgress?.message ?? (isAnalyzing ? "Analizando…" : undefined);
+  const showBoard = !onboardingLayout && (!isBrandKitEmpty(brandKit) || isAnalyzing);
   const completeness = computeBrandKitCompleteness(brandKit);
-  const canExport = completeness.percent >= 40 && Boolean(brandKit.compiled);
+  const canExport = !onboardingLayout && completeness.percent >= 40 && Boolean(brandKit.compiled);
   const exportBlockedReason = brandKitExportBlockedReason(brandKit, completeness.percent);
-  const showBoard = !isBrandKitEmpty(brandKit) || isAnalyzing;
+  const canSaveToLibrary = !onboardingLayout && !isBrandKitEmpty(brandKit) && !isAnalyzing;
+  const saveToLibraryBlockedReason = !canSaveToLibrary
+    ? brandKitLocaleEs.saveToMisBrandKitsEmpty
+    : null;
+
+  const handleSaveToMisBrandKits = useCallback(async () => {
+    if (!canSaveToLibrary || saveToLibraryBusy) return;
+    setSaveToLibraryBusy(true);
+    try {
+      await saveBrandKitToInspiration({
+        brandKit: brandKitRef.current,
+        title,
+        projectId,
+      });
+      setToasts((prev) => [
+        ...prev,
+        createBrandKitToast(
+          "success",
+          brandKitLocaleEs.saveToMisBrandKitsDone,
+          brandKitLocaleEs.saveToMisBrandKitsHint,
+        ),
+      ]);
+    } catch (error) {
+      setToasts((prev) => [
+        ...prev,
+        createBrandKitToast(
+          "error",
+          brandKitLocaleEs.saveToMisBrandKitsError,
+          error instanceof Error ? error.message : undefined,
+        ),
+      ]);
+    } finally {
+      setSaveToLibraryBusy(false);
+    }
+  }, [canSaveToLibrary, projectId, saveToLibraryBusy, title]);
+  const headerMeta = onboardingLayout
+    ? isAnalyzing
+      ? "Analizando…"
+      : undefined
+    : isAnalyzing
+      ? "Analizando…"
+      : `${completeness.percent}% ADN · ${canExport ? brandKitLocaleEs.exportReadyLabel : brandKitLocaleEs.exportPendingLabel}`;
+  const exportBusy = styleGuideDownloadPhase !== "idle";
+  const exportBusyLabel =
+    styleGuideDownloadPhase === "vectorizing"
+      ? brandKitLocaleEs.vectorizingLogo
+      : brandKitLocaleEs.downloadingPdf;
 
   return (
     <div
@@ -465,90 +624,118 @@ export function BrandKitStudio({ nodeId, nodeLabel, brandKit, onBrandKitChange, 
       data-foldder-studio-panel
       data-foldder-studio-canvas
       data-foldder-brandkit-studio
+      data-brandkit-onboarding={onboardingLayout ? "true" : "false"}
       role="dialog"
       aria-modal="true"
       aria-label="BrandKit studio"
       style={{ ["--foldder-studio-accent" as string]: BRAND_KIT_STUDIO_ACCENT }}
     >
       <BrandKitStudioToastStack toasts={toasts} onDismiss={dismissToast} />
-      <FoldderStudioHeader
-        nodeType="brandKit"
-        nodeLabel={title}
-        subtitle={subtitle ?? "Brand intelligence studio"}
+      <BrandKitStudioHeader
+        title={title}
+        meta={crawlProgress?.message ?? headerMeta}
+        studioMode={studioMode}
+        onStudioModeChange={handleStudioModeChange}
+        canExport={canExport}
+        exportBlockedReason={exportBlockedReason ?? undefined}
+        exportBusy={exportBusy}
+        exportBusyLabel={exportBusyLabel}
+        onExportPdf={!onboardingLayout && showBoard ? (mode) => void handleExportStyleGuidePdf(mode) : undefined}
+        onExportTokens={!onboardingLayout && showBoard ? handleExportTokens : undefined}
+        onExportCompiled={!onboardingLayout && showBoard ? handleExportCompiled : undefined}
+        canSaveToLibrary={canSaveToLibrary}
+        saveToLibraryBusy={saveToLibraryBusy}
+        saveToLibraryBlockedReason={saveToLibraryBlockedReason}
+        onSaveToMisBrandKits={
+          !onboardingLayout && showBoard ? () => void handleSaveToMisBrandKits() : undefined
+        }
         onClose={onClose}
       />
 
       <div
-        className={`brandKit-studio brandKit-studio--v2 brandKit-studio--split min-h-0 flex-1${sidebarOpen ? "" : " brandKit-studio--split-sidebar-collapsed"}`}
+        className={`brandKit-studio brandKit-studio--v2 brandKit-studio--split min-h-0 flex-1 brandKit-studio--mode-${studioMode}${onboardingLayout ? " brandKit-studio--onboarding" : ""}${!onboardingLayout && !sidebarOpen ? " brandKit-studio--split-sidebar-collapsed" : ""}`}
         style={{ ["--brandKit-v2-accent" as string]: BRAND_KIT_STUDIO_ACCENT }}
       >
-        <BrandKitSidebarPanel
-          doc={brandKit}
-          completenessPercent={completeness.percent}
-          isAnalyzing={isAnalyzing}
-          crawlProgress={crawlProgress}
-          crawlError={crawlError}
-          canExport={canExport}
-          exportBlockedReason={exportBlockedReason}
-          onAnalyze={(url, enableLlm) => void handleAnalyze(url, enableLlm)}
-          onRetryLastJob={handleRetryLastJob}
-          canRetryLastJob={Boolean(lastCrawlJob) && Boolean(crawlError)}
-          onIngestFiles={(files) => void handleIngestFiles(files)}
-          onExportTokens={handleExportTokens}
-          onExportCompiled={handleExportCompiled}
-          onExportStyleGuidePdf={(mode) => void handleExportStyleGuidePdf(mode)}
-          styleGuideDownloadPhase={styleGuideDownloadPhase}
-          styleGuideDownloadError={styleGuideDownloadError}
-          onSetAuthoritativeSource={handleSetAuthoritativeSource}
-          onStartReview={() => setReviewMode(true)}
-          reviewMode={reviewMode}
-          presentationMode={presentationMode}
-          onPresentationModeChange={setPresentationMode}
-          onBrandNameChange={handleBrandNameChange}
-          sidebarOpen={sidebarOpen}
-        />
-
-        <main className="brandKit-studio-split__main brandKit-studio__board-shell">
-          <button
-            type="button"
-            className="brandKit-studio-split__sidebar-toggle"
-            onClick={() => setSidebarOpen((open) => !open)}
-            aria-expanded={sidebarOpen}
-            aria-controls="brandKit-studio-sidebar"
-            aria-label={sidebarOpen ? brandKitLocaleEs.sidebarHide : brandKitLocaleEs.sidebarShow}
-            title={sidebarOpen ? brandKitLocaleEs.sidebarHide : brandKitLocaleEs.sidebarShow}
+        <BrandKitMosaicBoardProvider studioMode={studioMode} doc={brandKit} onSlotAction={handleAction}>
+          <BrandKitStudioWorkspace
+            onboarding={onboardingLayout}
+            sidebar={
+              <BrandKitSidebarPanel
+                doc={brandKit}
+                completenessPercent={completeness.percent}
+                kitTitle={title}
+                isAnalyzing={isAnalyzing}
+                crawlProgress={crawlProgress}
+                crawlError={crawlError}
+                canExport={canExport}
+                exportBlockedReason={exportBlockedReason}
+                onAnalyze={(url, enableLlm) => void handleAnalyze(url, enableLlm)}
+                onRetryLastJob={handleRetryLastJob}
+                canRetryLastJob={Boolean(lastCrawlJob) && Boolean(crawlError)}
+                onIngestFiles={(files) => void handleIngestFiles(files)}
+                onExportTokens={handleExportTokens}
+                onExportCompiled={handleExportCompiled}
+                onSetAuthoritativeSource={handleSetAuthoritativeSource}
+                onReanalyzeSource={(ref) => {
+                  const source = brandKit.sources.find((entry) => entry.ref === ref);
+                  if (source?.kind === "url") void handleAnalyze(source.ref, true);
+                }}
+                onStartReview={() => {
+                  if (studioMode === "edit") setReviewMode(true);
+                }}
+                reviewMode={reviewMode}
+                studioMode={studioMode}
+                onBrandNameChange={handleBrandNameChange}
+                sidebarOpen={sidebarOpen}
+                onSidebarToggle={() => setSidebarOpen((open) => !open)}
+                activeSlotId={crawlProgress?.activeSlot}
+              />
+            }
           >
-            {sidebarOpen ? <PanelLeftClose size={16} aria-hidden /> : <PanelLeft size={16} aria-hidden />}
-          </button>
-          {showBoard ? (
-            <BrandKitBoardV2
-              doc={brandKit}
-              onAction={handleAction}
-              onLogoUpload={handleLogoUpload}
-              isAnalyzing={isAnalyzing}
-              generatingGallery={generatingGallery}
-              focusGeneratedTab={focusGeneratedTab}
-              gallerySuccessMessage={gallerySuccess}
-              galleryProgress={galleryProgress}
-              onGenerateGalleryCategory={(category) => void handleGenerateGalleryCategory(category)}
-              onGenerateGallerySlot={handleGenerateGallerySlot}
-              onGenerateAllGallery={handleGenerateAllGallery}
-              onAnalyzeGalleryBriefs={() => void handleAnalyzeGalleryBriefs()}
-              isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
-              onExportTokens={handleExportTokens}
-              onExportCompiled={handleExportCompiled}
-              canExport={canExport}
-              hideExportActions
-              activeSlotId={crawlProgress?.activeSlot}
-              presentationMode={presentationMode}
-              reviewMode={reviewMode}
-              onReviewModeChange={setReviewMode}
-              onReviewComplete={handleReviewComplete}
-            />
-          ) : (
-            <BrandKitBoardEmpty />
-          )}
-        </main>
+            {onboardingLayout ? (
+              <BrandKitStudioOnboarding
+                isAnalyzing={isAnalyzing}
+                crawlProgress={crawlProgress}
+                crawlError={crawlError}
+                onAnalyze={(url, enableLlm) => void handleAnalyze(url, enableLlm)}
+                onIngestFiles={(files) => void handleIngestFiles(files)}
+                onRetryLastJob={handleRetryLastJob}
+                canRetryLastJob={Boolean(lastCrawlJob) && Boolean(crawlError)}
+              />
+            ) : (
+              <main className="brandKit-studio-split__main brandKit-studio__board-shell">
+                {showBoard ? (
+                  <BrandKitBoardV2
+                    doc={brandKit}
+                    onAction={handleAction}
+                    onLogoUpload={handleLogoUpload}
+                    isAnalyzing={isAnalyzing}
+                    generatingGallery={generatingGallery}
+                    focusGeneratedTab={focusGeneratedTab}
+                    gallerySuccessMessage={gallerySuccess}
+                    galleryProgress={galleryProgress}
+                    onGenerateGalleryCategory={(category) => void handleGenerateGalleryCategory(category)}
+                    onGenerateGallerySlot={handleGenerateGallerySlot}
+                    onGenerateAllGallery={handleGenerateAllGallery}
+                    onAnalyzeGalleryBriefs={() => void handleAnalyzeGalleryBriefs()}
+                    isAnalyzingGalleryBriefs={isAnalyzingGalleryBriefs}
+                    onExportTokens={handleExportTokens}
+                    onExportCompiled={handleExportCompiled}
+                    canExport={canExport}
+                    hideExportActions
+                    activeSlotId={crawlProgress?.activeSlot}
+                    presentationMode={presentationMode}
+                    reviewMode={reviewMode && !presentationMode}
+                    onReviewModeChange={setReviewMode}
+                    onReviewComplete={handleReviewComplete}
+                    onStationeryContactChange={handleStationeryContactChange}
+                    onRequestEditMode={() => handleStudioModeChange("edit")}
+                  />
+                ) : null}
+              </main>
+            )}
+          </BrandKitStudioWorkspace>
+        </BrandKitMosaicBoardProvider>
       </div>
     </div>
   );

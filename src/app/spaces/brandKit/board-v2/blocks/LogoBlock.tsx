@@ -27,6 +27,10 @@ import {
 import type { BrandThemePolarity } from "@/lib/brandkit/brand-theme-color";
 import { BrandKitEvidenceTrigger } from "../BrandKitEvidenceTrigger";
 import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
+import { useBrandKitPresentationReadOnly } from "../use-brand-kit-presentation";
+import { buildMosaicDetailPayload } from "../BrandKitDetailPanel";
+import { useRegisterSlotDetail } from "../BrandKitDetailFooterActions";
+import { getSlotAttention } from "@/lib/brandkit/brand-kit-board-status";
 import { useLogoLateralEdgeBackground } from "../use-logo-lateral-edge-background";
 import { readableTextOn } from "../../face-utils";
 
@@ -115,12 +119,56 @@ export function LogoBlock({
 
   const mosaicCell = useBrandKitMosaicCellOptional();
   const isMosaic = Boolean(mosaicCell);
+  const readOnly = useBrandKitPresentationReadOnly();
+  const pageHint = logoPageHint(logo);
+
+  const logoDetailPayload = useMemo(() => {
+    if (!isMosaic) return null;
+    const sourceLabel = slot.provenance?.detail ? `Fuente principal: ${slot.provenance.detail}` : undefined;
+    return buildMosaicDetailPayload({
+      slotId,
+      blockLabel: brandKitLocaleEs.logo,
+      statusLabel: slot.locked ? brandKitLocaleEs.locked : brandKitLocaleEs.confirmedStatus,
+      sourceLabel,
+      summary: pageHint ? <p className="brandKit-v2-muted">{pageHint}</p> : undefined,
+      panels: [
+        {
+          id: "preview",
+          label: "Logo",
+          content: logo?.previewUrl ? (
+            <div className="brandKit-slot-detail-logo">
+              <img src={logo.previewUrl} alt="" className="brandKit-slot-detail-logo__img" />
+              {logo.format ? <p className="brandKit-v2-muted">Formato {logo.format}</p> : null}
+            </div>
+          ) : (
+            <p className="brandKit-v2-muted">{brandKitLocaleEs.noLogo}</p>
+          ),
+        },
+        ...(slot.candidates.length > 1
+          ? [
+              {
+                id: "alternatives",
+                label: brandKitLocaleEs.alternatives,
+                count: slot.candidates.length,
+                content: (
+                  <p className="brandKit-v2-muted">
+                    {brandKitLocaleEs.candidatesChip(slot.candidates.length)} — elige en el bloque central.
+                  </p>
+                ),
+              },
+            ]
+          : []),
+      ],
+      initialTabId: getSlotAttention(slot).kind === "conflict" ? "evidence" : undefined,
+    });
+  }, [isMosaic, logo?.format, logo?.previewUrl, pageHint, slot, slotId]);
+
+  useRegisterSlotDetail(isMosaic ? slotId : undefined, logoDetailPayload);
   const edgeBackground = useLogoLateralEdgeBackground(logo?.previewUrl);
   const plinthClass = useMemo(
     () => resolvePlinthClass(logo, plinthMode, brandReady, brandPolarity),
     [logo, plinthMode, brandPolarity, brandReady],
   );
-  const pageHint = logoPageHint(logo);
 
   useEffect(() => {
     if (!mosaicCell) return;
@@ -156,10 +204,11 @@ export function LogoBlock({
       </BrandKitFoldderButton>
     ) : null;
   const uploadControl = <LogoUploadControl onUploadLogo={onUploadLogo} disabled={slot.locked} />;
-  const plinthToggle = logo?.previewUrl ? (
+  const plinthToggle = !readOnly && logo?.previewUrl ? (
     <BrandKitLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} />
   ) : null;
-  const secondaryActions = (
+  const secondaryActions =
+    readOnly ? null : (
     <>
       {isMosaic ? plinthToggle : null}
       {adjustControl}
@@ -180,7 +229,7 @@ export function LogoBlock({
         {!isMosaic ? <BrandKitLogoPlinthToggle mode={plinthMode} onChange={setPlinthMode} /> : null}
         {pageHint ? <p className="brandKit-v2-logo-page-hint">{pageHint}</p> : null}
         <BrandKitClickableImage src={logo.previewUrl} fit="logo" eager />
-        <BrandKitSupplementalPanel slot={slot} />
+        {!readOnly ? <BrandKitSupplementalPanel slot={slot} /> : null}
       </div>
     </BrandKitEvidenceTrigger>
   ) : null;

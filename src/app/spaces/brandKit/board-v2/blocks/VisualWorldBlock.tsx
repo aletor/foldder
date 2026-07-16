@@ -20,6 +20,7 @@ import { EvidenceList, SemanticDetailPanels } from "../SemanticExpandable";
 import { Pencil } from "lucide-react";
 import { BrandKitBlockSkeleton } from "../BrandKitBlockSkeleton";
 import { BrandKitEvidenceTrigger } from "../BrandKitEvidenceTrigger";
+import { useBrandKitMosaicCellOptional } from "../brand-kit-mosaic-context";
 import {
   shouldShowAnalyzingSkeleton,
   shouldShowLegacyPendingSkeleton,
@@ -60,9 +61,16 @@ function VisualHarvestStrip({
             <div className="brandKit-v2-visual-harvest__thumb">
               <BrandKitClickableImage src={previewSrc} fit="cover" eager />
             </div>
-            <BrandKitFoldderButton variant="white" compact onClick={() => onExclude(item.assetId)}>
-              {brandKitLocaleEs.excludeHarvestImage}
-            </BrandKitFoldderButton>
+            <div className="brandKit-v2-visual-harvest__actions">
+              <BrandKitFoldderButton
+                variant="ghost"
+                compact
+                onClick={() => onExclude(item.assetId)}
+                aria-label={brandKitLocaleEs.excludeHarvestImage}
+              >
+                {brandKitLocaleEs.excludeHarvestImage}
+              </BrandKitFoldderButton>
+            </div>
           </div>
         );
       })}
@@ -86,6 +94,7 @@ export function VisualWorldBlock({
 } & BrandKitBlockMotionProps) {
   const visualWorld = slot.value as VisualWorldValue | undefined;
   const galleryValue = gallery?.value as GalleryValue | undefined;
+  const isMosaic = Boolean(useBrandKitMosaicCellOptional());
   const [editing, setEditing] = useState(false);
 
   const excludeHarvestImage = (assetId: string) => {
@@ -239,6 +248,10 @@ export function VisualWorldBlock({
       <div className="brandKit-v2-visual-layout">
         <div className="brandKit-v2-visual-layout__copy">
           <SemanticDetailPanels
+            slotId={slotId}
+            slot={slot}
+            onAction={onAction}
+            onEdit={() => setEditing(true)}
             summary={<BrandKitRichText text={visualWorld.summary} className="brandKit-v2-prose" as="p" />}
             chips={
               visualWorld.moodTags?.length || medium ? (
@@ -289,7 +302,7 @@ export function VisualWorldBlock({
   }
 
   return (
-    <DnaBlock label={brandKitLocaleEs.visualWorld} slotId={slotId} slot={slot} onAction={onAction} secondaryActions={editButton} activeSlotId={activeSlotId}>
+    <DnaBlock label={brandKitLocaleEs.visualWorld} slotId={slotId} slot={slot} onAction={onAction} secondaryActions={isMosaic ? undefined : editButton} activeSlotId={activeSlotId}>
       {body}
     </DnaBlock>
   );

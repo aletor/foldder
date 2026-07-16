@@ -7,9 +7,15 @@ import type {
   SourceRef,
   VoiceValue,
 } from "@/lib/brandkit/brand-kit-types";
-import { galleryItemSourceUrl } from "@/lib/brandkit/brand-kit-gallery-media";
+import { deriveBrandKitCampaign, type BrandKitCampaign } from "@/lib/brandkit/brand-kit-campaign";
+import { resolveShowcaseGalleryImage } from "@/lib/brandkit/brand-kit-gallery-image-state";
+import {
+  resolveShowcaseRequirements,
+  showcaseRequirementsMet,
+  type ShowcaseRequirement,
+} from "@/lib/brandkit/brand-kit-showcase-requirements";
 
-export const BRAND_KIT_SHOWCASE_CHAPTER_LABEL = "08 — LA MARCA EN ACCIÓN";
+export const BRAND_KIT_SHOWCASE_CHAPTER_LABEL = "08 — APLICACIONES DE MARCA";
 
 export type ShowcaseSurfaceMode = "light" | "dark";
 
@@ -23,6 +29,9 @@ export type BrandKitShowcaseData = {
   contactEmail?: string;
   galleryImageUrl?: string;
   ctaLabel: string;
+  campaign: BrandKitCampaign;
+  requirements: ShowcaseRequirement[];
+  canRenderMockups: boolean;
 };
 
 function slotUsableValue<T>(slot: SlotState<unknown>, presentationMode: boolean): T | undefined {
@@ -45,9 +54,15 @@ function hasBrandName(doc: BrandKitDocument): boolean {
   return Boolean(doc.brandName?.value?.trim());
 }
 
-export function shouldRenderBrandKitShowcase(doc: BrandKitDocument, presentationMode: boolean): boolean {
+/** Mínimo para mostrar la sección de aplicaciones (puede ser checklist). */
+export function shouldShowBrandKitApplications(doc: BrandKitDocument, presentationMode: boolean): boolean {
   if (!isPaletteResolved(doc, presentationMode)) return false;
   return hasLogoResolved(doc, presentationMode) || hasBrandName(doc);
+}
+
+/** @deprecated Usar shouldShowBrandKitApplications — alias de compatibilidad. */
+export function shouldRenderBrandKitShowcase(doc: BrandKitDocument, presentationMode: boolean): boolean {
+  return shouldShowBrandKitApplications(doc, presentationMode);
 }
 
 function contactEmailFromSources(sources: SourceRef[]): string | undefined {
@@ -63,46 +78,37 @@ function contactEmailFromSources(sources: SourceRef[]): string | undefined {
   }
 }
 
-function voiceActionLabel(voice?: VoiceValue): string {
-  const descriptor = voice?.descriptors?.[0]?.trim();
-  if (!descriptor) return "Descubrir más";
-  if (descriptor.length <= 28) return descriptor;
-  return "Descubrir más";
-}
-
-function firstGalleryImage(gallery?: GalleryValue): string | undefined {
-  if (!gallery?.harvested?.length) return undefined;
-  for (const item of gallery.harvested) {
-    const url = galleryItemSourceUrl(item);
-    if (url) return url;
-  }
-  return undefined;
+function firstGalleryImage(gallery: GalleryValue | undefined, galleryLocked: boolean): string | undefined {
+  return resolveShowcaseGalleryImage(gallery, galleryLocked);
 }
 
 export function buildBrandKitShowcaseData(
   doc: BrandKitDocument,
   presentationMode: boolean,
 ): BrandKitShowcaseData | null {
-  if (!shouldRenderBrandKitShowcase(doc, presentationMode)) return null;
+  if (!shouldShowBrandKitApplications(doc, presentationMode)) return null;
 
   const brandName = doc.brandName?.value?.trim() ?? "Marca";
   const logo = slotUsableValue<LogoValue>(doc.slots.logo, presentationMode);
   const essence = slotUsableValue<EssenceValue>(doc.slots.essence, presentationMode);
   const voice = slotUsableValue<VoiceValue>(doc.slots.voice, presentationMode);
   const gallery = slotUsableValue<GalleryValue>(doc.slots.gallery, presentationMode);
-
-  const headline = essence?.headline?.trim();
-  const tagline = headline || essence?.summary?.trim();
+  const campaign = deriveBrandKitCampaign(doc, presentationMode);
+  const requirements = resolveShowcaseRequirements(doc, presentationMode);
+  const canRenderMockups = showcaseRequirementsMet(requirements);
 
   return {
     brandName,
     monogram: brandName.charAt(0).toUpperCase() || "M",
     logoUrl: logo?.previewUrl?.trim(),
-    headline,
-    tagline,
+    headline: campaign.headline,
+    tagline: campaign.subheadline || essence?.summary?.trim(),
     summary: essence?.summary?.trim(),
     contactEmail: contactEmailFromSources(doc.sources),
-    galleryImageUrl: firstGalleryImage(gallery),
-    ctaLabel: voiceActionLabel(voice),
+    galleryImageUrl: firstGalleryImage(gallery, Boolean(doc.slots.gallery?.locked)),
+    ctaLabel: campaign.cta,
+    campaign,
+    requirements,
+    canRenderMockups,
   };
 }

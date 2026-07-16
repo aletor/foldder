@@ -21,8 +21,8 @@ export function brandKitV2LogoPlinthClass(logo?: LogoValue): string {
 
 export function brandKitNodeLogoWrapClass(logo?: LogoValue): string {
   const tone = brandKitLogoPlinthTone(logo);
-  if (tone === "light") return "brand-kit-node-card-preview__logo-wrap--light";
-  if (tone === "adaptive") return "brand-kit-node-card-preview__logo-wrap--adaptive";
+  if (tone === "light") return "brandKit-node-face__logo--light";
+  if (tone === "adaptive") return "brandKit-node-face__logo--adaptive";
   return "";
 }
 

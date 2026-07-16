@@ -1,13 +1,20 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
-import { Lock, RotateCcw, Unlock } from "lucide-react";
+import React, { useEffect, useMemo, useRef } from "react";
+import { BookOpen, Lock } from "lucide-react";
 import type { SlotAction, SlotId, SlotState } from "@/lib/brandkit/brand-kit-types";
-import { confirmLabelForSlot, brandKitLocaleEs } from "@/lib/brandkit/brand-kit-locale.es";
+import { brandKitLocaleEs, confirmLabelForSlot } from "@/lib/brandkit/brand-kit-locale.es";
 import { getSlotAttention, type SlotAttention } from "@/lib/brandkit/brand-kit-board-status";
 import { BrandKitFoldderButton } from "./BrandKitFoldderButton";
 import { boardChapterLabel } from "./brand-kit-board-chapters";
-import { useBrandKitMosaicCellOptional } from "./brand-kit-mosaic-context";
+import {
+  MOSAIC_CELL_ACTION_MENU,
+  MOSAIC_CELL_ACTION_PRIMARY,
+  MOSAIC_CELL_ACTION_SECONDARY,
+  useBrandKitMosaicBoard,
+  useBrandKitMosaicCellOptional,
+} from "./brand-kit-mosaic-context";
+import { BrandKitCellContextMenu } from "./BrandKitCellContextMenu";
 
 type DnaBlockProps = {
   label?: string;
@@ -17,12 +24,17 @@ type DnaBlockProps = {
   children: React.ReactNode;
   className?: string;
   chip?: string;
+  /** Acción primaria de sección (p. ej. Generar). Solo visible con el bloque seleccionado. */
   primaryAction?: React.ReactNode;
   secondaryActions?: React.ReactNode;
   activeSlotId?: SlotId;
   headExtra?: React.ReactNode;
 };
 
+/**
+ * En mosaico, las acciones van a la barra contextual del capítulo
+ * y solo se muestran cuando la celda está seleccionada (CSS + toolbar).
+ */
 export function DnaBlock({
   label,
   slotId,
@@ -37,69 +49,134 @@ export function DnaBlock({
   headExtra,
 }: DnaBlockProps) {
   const mosaicCell = useBrandKitMosaicCellOptional();
+  const mosaicBoard = useBrandKitMosaicBoard();
   const isMosaic = Boolean(mosaicCell);
+  const isPresentation = mosaicBoard?.studioMode === "presentation";
+  const isEdit = mosaicBoard?.studioMode === "edit";
+  const isSelected = Boolean(isEdit && slotId && mosaicBoard?.selectedSlotId === slotId);
 
-  const hasToolbar = Boolean(slot && onAction && slotId && (slot.status === "resolved" || slot.history.length > 0));
-  const confirmLabel = slotId ? confirmLabelForSlot[slotId] ?? brandKitLocaleEs.confirm : brandKitLocaleEs.confirm;
   const attention: SlotAttention =
     slot && slotId ? getSlotAttention(slot, activeSlotId) : { kind: null };
   const chapter = boardChapterLabel(slotId);
 
-  const slotToolbar = useMemo(() => {
-    if (!hasToolbar || !slot || !slotId || !onAction) return null;
-    return (
-      <>
-        {slot.status === "resolved" ? (
-          slot.locked ? (
-            <BrandKitFoldderButton
-              variant="white"
-              compact
-              icon={Unlock}
-              onClick={() => onAction(slotId, { action: "unlock" })}
-            >
-              {brandKitLocaleEs.unlock}
-            </BrandKitFoldderButton>
-          ) : (
-            <BrandKitFoldderButton
-              variant="white"
-              compact
-              icon={Lock}
-              onClick={() => onAction(slotId, { action: "lock" })}
-            >
-              {confirmLabel}
-            </BrandKitFoldderButton>
-          )
-        ) : null}
-        {slot.history.length > 0 ? (
-          <BrandKitFoldderButton
-            variant="white"
-            compact
-            icon={RotateCcw}
-            onClick={() => onAction(slotId, { action: "revert" })}
-          >
-            {brandKitLocaleEs.revert}
-          </BrandKitFoldderButton>
-        ) : null}
-      </>
-    );
-  }, [confirmLabel, hasToolbar, onAction, slot, slotId]);
+  const canOpenStudy = Boolean(slotId && slot && slot.status !== "empty");
 
-  const mosaicActions = useMemo(
-    () => (
+  const studyAction = useMemo(() => {
+    if (!isEdit || !canOpenStudy || !slotId || !mosaicBoard) return null;
+    return (
+      <BrandKitFoldderButton
+        variant="muted"
+        compact
+        icon={BookOpen}
+        onClick={(event) => {
+          event.stopPropagation();
+          mosaicBoard.inspectSlot(slotId, "synthesis");
+        }}
+      >
+        {brandKitLocaleEs.editInStudio}
+      </BrandKitFoldderButton>
+    );
+  }, [canOpenStudy, isEdit, mosaicBoard, slotId]);
+
+  const confirmAction = useMemo(() => {
+    if (!isEdit || !slot || !slotId || !onAction) return null;
+    if (slot.locked || slot.status !== "resolved") return null;
+    const confirmLabel = confirmLabelForSlot[slotId] ?? brandKitLocaleEs.confirm;
+    return (
+      <BrandKitFoldderButton
+        compact
+        icon={Lock}
+        onClick={(event) => {
+          event.stopPropagation();
+          onAction(slotId, { action: "lock" });
+        }}
+      >
+        {confirmLabel}
+      </BrandKitFoldderButton>
+    );
+  }, [isEdit, onAction, slot, slotId]);
+
+  const menuItems = useMemo(() => {
+    if (!slot || !slotId || !onAction) return [];
+    const items = [];
+    if (slot.locked) {
+      items.push({
+        id: "unlock",
+        label: brandKitLocaleEs.unlock,
+        onClick: () => onAction(slotId, { action: "unlock" }),
+      });
+    }
+    if (slot.history.length > 0) {
+      items.push({
+        id: "revert",
+        label: brandKitLocaleEs.restoreConfirmedVersion,
+        onClick: () => onAction(slotId, { action: "revert" }),
+      });
+    }
+    return items;
+  }, [onAction, slot, slotId]);
+
+  const cellMenu = useMemo(() => {
+    if (!menuItems.length) return null;
+    return <BrandKitCellContextMenu items={menuItems} ariaLabel={brandKitLocaleEs.cellMenuMore} />;
+  }, [menuItems]);
+
+  /** Orden barra: [primaria sección] · Confirmar · Editar en estudio · ··· */
+  const cellPrimaryRef = useRef(primaryAction ?? null);
+  cellPrimaryRef.current = primaryAction ?? null;
+  const cellSecondaryRef = useRef(
+    (
       <>
-        {primaryAction}
+        {confirmAction}
+        {studyAction}
         {secondaryActions}
-        {slotToolbar}
       </>
     ),
-    [primaryAction, secondaryActions, slotToolbar],
   );
+  cellSecondaryRef.current = (
+    <>
+      {confirmAction}
+      {studyAction}
+      {secondaryActions}
+    </>
+  );
+  const cellMenuRef = useRef(cellMenu);
+  cellMenuRef.current = cellMenu;
+
+  const mosaicActionSignature = [
+    Boolean(primaryAction),
+    Boolean(confirmAction),
+    Boolean(studyAction),
+    Boolean(secondaryActions),
+    slot?.locked,
+    slot?.status,
+    slot?.history.length,
+    menuItems.length,
+    isEdit,
+    isSelected,
+  ].join("|");
 
   useEffect(() => {
-    if (!mosaicCell) return;
-    mosaicCell.setActionSlot("dna-block", mosaicActions);
-    return () => mosaicCell.setActionSlot("dna-block", null);
-  }, [mosaicActions, mosaicCell]);
+    if (!mosaicCell || isPresentation) return;
+    if (!isSelected) {
+      mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_PRIMARY, null);
+      mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_SECONDARY, null);
+      mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_MENU, null);
+      return () => {
+        mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_PRIMARY, null);
+        mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_SECONDARY, null);
+        mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_MENU, null);
+      };
+    }
+    mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_PRIMARY, cellPrimaryRef.current);
+    mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_SECONDARY, cellSecondaryRef.current);
+    mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_MENU, cellMenuRef.current);
+    return () => {
+      mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_PRIMARY, null);
+      mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_SECONDARY, null);
+      mosaicCell.setActionSlot(MOSAIC_CELL_ACTION_MENU, null);
+    };
+  }, [isEdit, isPresentation, isSelected, mosaicActionSignature, mosaicCell]);
 
   if (isMosaic) {
     return (
@@ -132,12 +209,7 @@ export function DnaBlock({
         {secondaryActions ? <div className="brandKit-v2-block__head-actions">{secondaryActions}</div> : null}
       </header>
       <div className="brandKit-v2-block__body">{children}</div>
-      {primaryAction || slotToolbar ? (
-        <footer className="brandKit-v2-block__foot">
-          {primaryAction}
-          {slotToolbar}
-        </footer>
-      ) : null}
+      {primaryAction ? <footer className="brandKit-v2-block__foot">{primaryAction}</footer> : null}
     </section>
   );
 }

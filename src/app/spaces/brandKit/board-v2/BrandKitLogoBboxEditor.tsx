@@ -132,16 +132,22 @@ export function BrandKitLogoBboxEditor({
         if (cancelled) return;
         setPage(data);
         setBboxPage(normalizeBBoxPage(data.bboxPage));
-        canvasRef.current = await loadPageCanvas(data.imageBase64, data.mime, data.width, data.height);
+        // Pintar ya; el canvas solo hace falta para trim/preview.
+        setLoading(false);
+        void loadPageCanvas(data.imageBase64, data.mime, data.width, data.height)
+          .then((canvas) => {
+            if (!cancelled) canvasRef.current = canvas;
+          })
+          .catch(() => {
+            /* trim/preview degradan si falla el decode */
+          });
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           const code = err instanceof Error ? err.message : "edit_page_failed";
           setError(formatEditorError(code));
+          setLoading(false);
         }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
       });
 
     return () => {

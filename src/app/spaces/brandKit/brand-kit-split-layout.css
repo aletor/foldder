@@ -1,5 +1,6 @@
 .brandKit-studio--split {
   --surface: #f6f5f2;
+  --surface-raised: #fbfaf8;
   --text-main: #141414;
   --text-muted: rgba(20, 20, 20, 0.48);
   --text-secondary: rgba(20, 20, 20, 0.62);
@@ -31,7 +32,7 @@
   flex-shrink: 0;
   flex-direction: column;
   overflow: hidden;
-  border-right: 1px solid var(--border);
+  border-right: none;
   background: var(--surface);
   transition:
     width 0.22s ease,
@@ -41,11 +42,22 @@
 }
 
 .brandKit-studio--split-sidebar-collapsed .brandKit-studio-split__sidebar {
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  border-right-color: transparent;
-  pointer-events: none;
+  width: 72px;
+  min-width: 72px;
+  max-width: 72px;
+  pointer-events: auto;
+  border-right: none;
+  box-shadow: inset -1px 0 0 rgba(20, 20, 20, 0.05);
+}
+
+.brandKit-studio--split-sidebar-collapsed .brandKit-studio-split__sidebar-scroll {
+  padding: 16px 10px 12px;
+  gap: 12px;
+  align-items: center;
+}
+
+.brandKit-studio--split-sidebar-collapsed .brandKit-studio-split__sidebar-footer {
+  padding: 12px 8px 16px;
 }
 
 .brandKit-studio-split__sidebar-toggle {
@@ -59,19 +71,19 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 6px;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(20, 20, 20, 0.06);
+  box-shadow: none;
   transition:
     background 0.15s ease,
     color 0.15s ease;
 }
 
 .brandKit-studio-split__sidebar-toggle:hover {
-  background: rgba(20, 20, 20, 0.04);
+  background: rgba(20, 20, 20, 0.05);
   color: var(--text-main);
 }
 
@@ -118,7 +130,7 @@
   flex-direction: column;
   gap: 10px;
   padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: none;
 }
 
 .brandKit-sidebar-overview__head {
@@ -247,7 +259,7 @@ button.brandKit-sidebar-overview__tag:hover {
 
 .brandKit-studio-split__sidebar-footer {
   flex-shrink: 0;
-  border-top: 1px solid var(--border);
+  border-top: none;
   background: var(--surface);
   padding: 16px 32px 24px;
 }
@@ -278,6 +290,7 @@ button.brandKit-sidebar-overview__tag:hover {
   flex: 1;
   overflow-y: auto;
   background: var(--brandKit-v2-bg, #f6f5f2);
+  box-shadow: inset 1px 0 0 rgba(20, 20, 20, 0.04);
 }
 
 .brandKit-studio-split__main .brandKit-v2-bento-board .brandKit-v2-header {
@@ -768,7 +781,7 @@ button.brandKit-sidebar-overview__tag:hover {
   margin: 8px 0 0;
   font-size: 10px;
   line-height: 1.4;
-  color: var(--brandKit-split-muted, rgba(244, 241, 236, 0.45));
+  color: var(--text-muted);
 }
 
 /* Empty main panel */

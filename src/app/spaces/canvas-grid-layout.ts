@@ -60,7 +60,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   imageExport: { cols: 3, rows: 2 },
   export_multimedia: { cols: 5, rows: 4 },
   exportMultiple: { cols: 5, rows: 4 },
-  brandKit: { cols: 3, rows: 2 },
+  brandKit: { cols: 4, rows: 4 },
   projectAssets: { cols: 3, rows: 2 },
   space: { cols: 3, rows: 2 },
 

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { loadBrandKitSourceForLogoAdjust } from "@/lib/brandkit/ingest/brand-kit-source-pdf-store";
+import { ensureLogoAdjustCropPage } from "@/lib/brandkit/ingest/brand-kit-logo-adjust-page";
 import { uploadBrandKitIngestFile } from "@/lib/brandkit/ingest/upload-brand-kit-file";
 import {
-  cropLogoFromPdfPage,
-  cropLogoFromRasterPage,
+  cropLogoFromPageImage,
   pageTupleToLogoSourceBbox,
   type NormalizedBboxPage,
 } from "@/lib/brandkit/brand-kit-logo-crop-server";
@@ -51,24 +51,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid_bbox" }, { status: 400 });
   }
 
-  const source = await loadBrandKitSourceForLogoAdjust(auth.user.email, contentSha256);
-  if (!source) {
-    return NextResponse.json({ error: "source_not_found" }, { status: 404 });
+  let pageImage: {
+    imageBuffer: Buffer;
+    width: number;
+    height: number;
+    sourceKind: "pdf" | "raster";
+  };
+  try {
+    pageImage = await ensureLogoAdjustCropPage({
+      userEmail: auth.user.email,
+      contentSha256,
+      pageNumber,
+      loadSource: () => loadBrandKitSourceForLogoAdjust(auth.user.email, contentSha256),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "source_not_found") {
+      return NextResponse.json({ error: "source_not_found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: "crop_failed" }, { status: 500 });
   }
 
   let cropped: { buffer: Buffer; width: number; height: number };
   try {
-    cropped =
-      source.kind === "pdf"
-        ? await cropLogoFromPdfPage({
-            pdfBuffer: source.buffer,
-            pageNumber,
-            bboxPage,
-          })
-        : await cropLogoFromRasterPage({
-            rasterBuffer: source.buffer,
-            bboxPage,
-          });
+    cropped = await cropLogoFromPageImage({
+      pageImage: pageImage.imageBuffer,
+      pageWidth: pageImage.width,
+      pageHeight: pageImage.height,
+      bboxPage,
+    });
   } catch {
     return NextResponse.json({ error: "crop_failed" }, { status: 500 });
   }
@@ -95,11 +105,12 @@ export async function POST(request: NextRequest) {
     sourceBbox: pageTupleToLogoSourceBbox(bboxPage),
     sourceDocName: previous?.sourceDocName ?? docName,
     sourcePdfSha256: contentSha256,
-    totalDocPages: previous?.totalDocPages ?? (source.kind === "raster" ? 1 : undefined),
+    totalDocPages: previous?.totalDocPages ?? (pageImage.sourceKind === "raster" ? 1 : undefined),
     detectionMethod: "adjusted",
   };
 
-  await recordBrandKitLogoUserPattern(auth.user.email, {
+  // No bloquear la respuesta por el patrón de uso.
+  void recordBrandKitLogoUserPattern(auth.user.email, {
     contentSha256,
     pageNumber,
     bboxPage: [...bboxPage] as [number, number, number, number],

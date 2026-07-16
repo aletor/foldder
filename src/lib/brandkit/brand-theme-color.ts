@@ -128,7 +128,7 @@ function editorialSurface(primaryHex: string, polarity: BrandThemePolarity): str
 function raisedSurface(pageHex: string, polarity: BrandThemePolarity): string {
   const hsl = hexToHsl(pageHex);
   if (!hsl) return pageHex;
-  const delta = polarity === "dark" ? 4 : -4;
+  const delta = polarity === "dark" ? 3 : -2;
   return hslToHex(hsl.h, hsl.s, Math.max(4, Math.min(98, hsl.l + delta)));
 }
 

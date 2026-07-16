@@ -33,6 +33,8 @@ type PostBody = {
   width?: unknown;
   height?: unknown;
   flow?: unknown;
+  brandKit?: unknown;
+  completenessPercent?: unknown;
 };
 
 function asString(value: unknown): string | undefined {
@@ -42,10 +44,11 @@ function asString(value: unknown): string | undefined {
 function resolveKind(value: unknown): InspirationLibraryItemKind {
   if (value === "image") return "image";
   if (value === "flow") return "flow";
+  if (value === "brand-kit") return "brand-kit";
   return "designer-template";
 }
 
-/** POST — añade una plantilla Designer, una imagen o un flujo a la librería. */
+/** POST — añade una plantilla Designer, imagen, flujo o BrandKit a la librería. */
 export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
@@ -78,6 +81,13 @@ export async function POST(req: Request) {
         nodes: flow.nodes,
         edges: Array.isArray(flow.edges) ? flow.edges : [],
       };
+    } else if (kind === "brand-kit") {
+      if (!body.brandKit || typeof body.brandKit !== "object") {
+        return NextResponse.json({ error: "brandKit_required" }, { status: 400 });
+      }
+      input.brandKit = body.brandKit;
+      input.completenessPercent =
+        typeof body.completenessPercent === "number" ? body.completenessPercent : undefined;
     } else {
       if (!asString(body.thumbUrl)) {
         return NextResponse.json({ error: "thumbUrl_required" }, { status: 400 });

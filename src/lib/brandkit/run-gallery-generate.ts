@@ -12,6 +12,7 @@ import {
   type GalleryGeneratedItem,
 } from "./brand-kit-gallery-plan";
 import { promptHintForGalleryCategory } from "./brand-kit-gallery-brief";
+import { gallerySlotKey } from "./brand-kit-gallery-image-state";
 import { buildGalleryImagePrompt } from "./brand-kit-gallery-category-guidance";
 import {
   estimateGalleryImageUnitUsd,
@@ -159,6 +160,7 @@ export async function* runBrandKitGalleryGenerate(input: {
   }
   const generated: GalleryGeneratedItem[] = [];
   let lastError: string | undefined;
+  const slotIssues: GalleryValue["slotIssues"] = { ...(gallery?.slotIssues ?? {}) };
 
   for (let index = 0; index < plan.length; index += 1) {
     const slot = plan[index];
@@ -218,25 +220,38 @@ export async function* runBrandKitGalleryGenerate(input: {
         verdict: "up",
       };
       generated.push(item);
+      delete slotIssues[gallerySlotKey(slot.category, slot.variantIndex)];
       yield { type: "image_done", index: index + 1, item };
     } catch (error) {
       lastError = mapGalleryGenerateError(error);
+      slotIssues[gallerySlotKey(slot.category, slot.variantIndex)] = {
+        error: lastError,
+        at: new Date().toISOString(),
+        noCharge: true,
+      };
       console.error(`[brandKit/gallery/generate] ${slot.category} ${index + 1}`, error);
     }
   }
 
-  if (!generated.length) {
+  const hasSlotErrors = Object.keys(slotIssues).length > 0;
+  if (!generated.length && !hasSlotErrors) {
     yield { type: "error", message: lastError ?? "No se pudo generar ninguna imagen de estilo" };
     return;
   }
 
   const priorGenerated = gallery?.generated ?? [];
-  const nextGenerated = mergeGeneratedForCategory(
-    priorGenerated,
-    input.category,
-    generated,
-    input.variantIndex,
-  );
+  const nextGenerated = generated.length
+    ? mergeGeneratedForCategory(priorGenerated, input.category, generated, input.variantIndex)
+    : priorGenerated;
+
+  const priorStrip = gallery?.nodeFaceStripUrls?.filter((url) => Boolean(url?.trim())) ?? [];
+  const freezeStrip =
+    priorStrip.length > 0
+      ? priorStrip.slice(0, 4)
+      : nextGenerated
+          .map((item) => item.previewUrl?.trim())
+          .filter((url): url is string => Boolean(url))
+          .slice(0, 4);
 
   const nextGallery: GalleryValue = {
     ...(gallery ?? { harvested: [], generated: [], stylePromptVersion: 0 }),
@@ -244,6 +259,8 @@ export async function* runBrandKitGalleryGenerate(input: {
     generated: nextGenerated,
     stylePromptVersion: input.stylePromptVersion,
     styleToneExplanation: toneExplanation,
+    slotIssues: Object.keys(slotIssues).length ? slotIssues : undefined,
+    ...(freezeStrip.length ? { nodeFaceStripUrls: freezeStrip } : {}),
   };
 
   const expectedTotal =
@@ -257,7 +274,7 @@ export async function* runBrandKitGalleryGenerate(input: {
     type: "done",
     gallery: nextGallery,
     addedCount: generated.length,
-    partial: generated.length < expectedTotal,
+    partial: generated.length < expectedTotal || hasSlotErrors,
     stylePrompt,
   };
 }

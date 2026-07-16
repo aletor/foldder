@@ -26,13 +26,13 @@ describe("brand-kit-logo-plinth", () => {
     expect(brandKitLogoPlinthTone(logo({ detectionMethod: "adjusted" }))).toBe("light");
     expect(brandKitV2LogoPlinthClass(logo({ background: "solid" }))).toBe("brand-kit-v2-logo-plinth--light");
     expect(brandKitNodeLogoWrapClass(logo({ detectionMethod: "adjusted" }))).toBe(
-      "brand-kit-node-card-preview__logo-wrap--light",
+      "brandKit-node-face__logo--light",
     );
   });
 
   it("adaptive por defecto con preview", () => {
     expect(brandKitLogoPlinthTone(logo())).toBe("adaptive");
     expect(brandKitV2LogoPlinthClass(logo())).toBe("brand-kit-v2-logo-plinth--adaptive");
-    expect(brandKitNodeLogoWrapClass(logo())).toBe("brand-kit-node-card-preview__logo-wrap--adaptive");
+    expect(brandKitNodeLogoWrapClass(logo())).toBe("brandKit-node-face__logo--adaptive");
   });
 });

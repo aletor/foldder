@@ -8,7 +8,10 @@ import { BrandKitLogoRankMeta } from "./BrandKitVisualRankMeta";
 import { BrandKitClickableImage } from "./BrandKitClickableImage";
 import type { LogoValue } from "@/lib/brandkit/brand-kit-types";
 
+import { useBrandKitPresentationReadOnly } from "./use-brand-kit-presentation";
+
 export function BrandKitSupplementalPanel({ slot }: { slot: SlotState<unknown> }) {
+  const readOnly = useBrandKitPresentationReadOnly();
   const [open, setOpen] = useState(false);
   const evidence = slot.supplementalEvidence ?? [];
   const archived = slot.archivedCandidates ?? [];
@@ -20,7 +23,7 @@ export function BrandKitSupplementalPanel({ slot }: { slot: SlotState<unknown> }
     if (total > 0 && total <= 2) setOpen(true);
   }, [total]);
 
-  if (!slot.locked || total === 0) return null;
+  if (readOnly || !slot.locked || total === 0) return null;
 
   return (
     <div className={`brandKit-v2-supplemental${open ? " is-open" : ""}`} data-testid="brandKit-supplemental-panel">

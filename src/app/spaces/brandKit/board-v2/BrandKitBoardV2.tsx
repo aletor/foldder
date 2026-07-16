@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useMemo } from "react";
-import type { EssenceValue, BrandKitDocument, SlotAction, SlotId } from "@/lib/brandkit/brand-kit-types";
+import type { EssenceValue, BrandKitDocument, SlotAction, SlotId, BrandKitStationeryContact } from "@/lib/brandkit/brand-kit-types";
 import { BRAND_KIT_SLOT_IDS } from "@/lib/brandkit/brand-kit-types";
 import type { BrandKitGalleryGenerateProgress } from "../brand-kit-api";
 import type { GalleryGenerateCategory, GalleryGenerateScope } from "@/lib/brandkit/brand-kit-gallery-plan";
@@ -25,14 +25,18 @@ import { useBrandKitBoardSlotMotion } from "./use-brand-kit-board-slot-motion";
 import { useBrandKitTheme } from "./use-brand-kit-theme";
 import { BrandKitBoardGoogleFontsLoader } from "./BrandKitBoardGoogleFontsLoader";
 import { BrandKitMosaicCell } from "./BrandKitMosaicCell";
-import { BrandKitMosaicBoardProvider } from "./brand-kit-mosaic-context";
-import { BrandKitMosaicDetailSheet } from "./BrandKitMosaicDetailSheet";
+import { BrandKitReaderOverlay } from "./BrandKitReaderOverlay";
+import { BrandKitPresentationPendingCard } from "./BrandKitPresentationPendingCard";
+import { isSlotVisibleInPresentation } from "@/lib/brandkit/studio/brand-kit-presentation-pending";
+import { BrandKitPalettePreviewProvider } from "./brand-kit-palette-preview-context";
+import { useBrandKitBoardNavSync } from "./use-brand-kit-board-nav-sync";
 import type { TypographyValue } from "@/lib/brandkit/brand-kit-types";
 import "./brand-kit-board-brand-theme.css";
 import "./brand-kit-board-stylebook.css";
 import "./brand-kit-showcase.css";
 import "./brand-kit-confidence.css";
 import "./brand-kit-board-mosaic.css";
+import "./brand-kit-reader.css";
 
 function mosaicHeadlineCandidate(doc: BrandKitDocument, presentationMode: boolean): string | undefined {
   const essenceSlot = doc.slots.essence;
@@ -65,9 +69,19 @@ type BrandKitBoardV2Props = {
   reviewMode?: boolean;
   onReviewModeChange?: (enabled: boolean) => void;
   onReviewComplete?: (stats: BrandKitReviewModeStats) => void;
+  onStationeryContactChange?: (contact: BrandKitStationeryContact) => void;
+  onRequestEditMode?: () => void;
 };
 
-export function BrandKitBoardV2({
+export function BrandKitBoardV2(props: BrandKitBoardV2Props) {
+  return (
+    <BrandKitPalettePreviewProvider>
+      <BrandKitBoardV2Inner {...props} />
+    </BrandKitPalettePreviewProvider>
+  );
+}
+
+function BrandKitBoardV2Inner({
   doc,
   onAction,
   onLogoUpload,
@@ -90,6 +104,8 @@ export function BrandKitBoardV2({
   reviewMode = false,
   onReviewModeChange,
   onReviewComplete,
+  onStationeryContactChange,
+  onRequestEditMode,
 }: BrandKitBoardV2Props) {
   const slots = doc.slots;
   const { motionBySlot, onTileEnterEnd } = useBrandKitBoardSlotMotion(slots, isAnalyzing);
@@ -129,11 +145,16 @@ export function BrandKitBoardV2({
     return null;
   }, [slots, activeSlotId]);
 
+  const showCell = useCallback(
+    (slotId: SlotId) => !presentationMode || isSlotVisibleInPresentation(slots[slotId]),
+    [presentationMode, slots],
+  );
+
   const cellClass = (slotId: SlotId) => {
+    if (presentationMode) return "";
     const attention = getSlotAttention(slots[slotId], activeSlotId);
     const classes: string[] = [];
     if (attention.kind) classes.push(` brandKit-mosaic-cell--${attention.kind}`);
-    if (presentationMode && !slots[slotId]?.locked) classes.push(" brandKit-mosaic-cell--presentation-muted");
     if (reviewMode && current) {
       if (slotId === current.slotId) classes.push(" brandKit-mosaic-cell--review-active");
       else classes.push(" brandKit-mosaic-cell--review-muted");
@@ -145,10 +166,11 @@ export function BrandKitBoardV2({
   const reviewPrompt = (slotId: SlotId) =>
     reviewMode && current?.slotId === slotId ? <BrandKitReviewPrompt doc={doc} item={current} /> : null;
 
+  useBrandKitBoardNavSync(!reviewMode && !presentationMode);
+
   return (
     <BrandKitEvidencePopoverProvider>
       <BrandKitImageLightboxProvider>
-        <BrandKitMosaicBoardProvider>
           <BrandKitBoardGoogleFontsLoader typography={typography} />
           <div
             className={`brandKit-v2-bento-board brandKit-v2-mosaic-board${presentationMode ? " is-presentation" : ""}${reviewMode ? " is-review" : ""}`}
@@ -159,15 +181,17 @@ export function BrandKitBoardV2({
           >
             {/*
              * MAPA FINAL — bandas horizontales (12 col, gap 8px, altura = contenido)
-             * B  logo          7 × auto  |  essence       5 × auto
-             * C  palette      12 × auto
-             * D  typography    7 × auto  |  voice          5 × auto
-             * E  visual       12 × auto
-             * F  gallery      12 × auto
+             * B  01 logo       7 × auto  |  02 essence    5 × auto
+             * C  03 palette   12 × auto
+             * D  04 typography 7 × auto  |  05 voice      5 × auto
+             * E  06 visual    12 × auto
+             * F  07 gallery   12 × auto
              * 08 banda-08: hermana posterior al mosaico (fuera del grid)
              */}
             <div className="brandKit-v2-mosaic-bands">
+              {showCell("logo") || showCell("essence") ? (
               <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--b">
+                {showCell("logo") ? (
                 <BrandKitMosaicCell
                   slotId="logo"
                   mosaicKey="logo"
@@ -178,6 +202,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.logo}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("logo")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("logo")}
                   <LogoBlock
@@ -191,7 +216,9 @@ export function BrandKitBoardV2({
                     brandReady={brandTheme.ready}
                   />
                 </BrandKitMosaicCell>
+                ) : null}
 
+                {showCell("essence") ? (
                 <BrandKitMosaicCell
                   slotId="essence"
                   mosaicKey="essence"
@@ -201,6 +228,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.essence}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("essence")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("essence")}
                   <EssenceBlock
@@ -211,8 +239,11 @@ export function BrandKitBoardV2({
                     motion={motionBySlot.essence}
                   />
                 </BrandKitMosaicCell>
+                ) : null}
               </div>
+              ) : null}
 
+              {showCell("palette") ? (
               <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--c">
                 <BrandKitMosaicCell
                   slotId="palette"
@@ -223,6 +254,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.palette}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("palette")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("palette")}
                   <PaletteBlock
@@ -234,8 +266,11 @@ export function BrandKitBoardV2({
                   />
                 </BrandKitMosaicCell>
               </div>
+              ) : null}
 
+              {showCell("typography") || showCell("voice") ? (
               <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--d">
+                {showCell("typography") ? (
                 <BrandKitMosaicCell
                   slotId="typography"
                   mosaicKey="typography"
@@ -245,6 +280,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.typography}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("typography")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("typography")}
                   <TypographyBlock
@@ -257,7 +293,9 @@ export function BrandKitBoardV2({
                     mosaicBrandName={mosaicBrandName}
                   />
                 </BrandKitMosaicCell>
+                ) : null}
 
+                {showCell("voice") ? (
                 <BrandKitMosaicCell
                   slotId="voice"
                   mosaicKey="voice"
@@ -268,6 +306,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.voice}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("voice")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("voice")}
                   <VoiceBlock
@@ -278,8 +317,11 @@ export function BrandKitBoardV2({
                     motion={motionBySlot.voice}
                   />
                 </BrandKitMosaicCell>
+                ) : null}
               </div>
+              ) : null}
 
+              {showCell("visualWorld") ? (
               <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--e">
                 <BrandKitMosaicCell
                   slotId="visualWorld"
@@ -291,6 +333,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.visualWorld}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("visualWorld")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("visualWorld")}
                   <VisualWorldBlock
@@ -303,7 +346,9 @@ export function BrandKitBoardV2({
                   />
                 </BrandKitMosaicCell>
               </div>
+              ) : null}
 
+              {showCell("gallery") ? (
               <div className="brandKit-v2-mosaic-band brandKit-v2-mosaic-band--f">
                 <BrandKitMosaicCell
                   slotId="gallery"
@@ -314,6 +359,7 @@ export function BrandKitBoardV2({
                   motion={motionBySlot.gallery}
                   onTileEnterEnd={onTileEnterEnd}
                   attentionClass={cellClass("gallery")}
+                  activeSlotId={activeSlotId}
                 >
                   {reviewPrompt("gallery")}
                   <GalleryBlock
@@ -331,11 +377,17 @@ export function BrandKitBoardV2({
                     focusGeneratedTab={focusGeneratedTab}
                     gallerySuccessMessage={gallerySuccessMessage}
                     activeSlotId={activeSlotId}
+                    presentationMode={presentationMode}
                     motion={motionBySlot.gallery}
                     brandReady={brandTheme.ready}
                   />
                 </BrandKitMosaicCell>
               </div>
+              ) : null}
+
+              {presentationMode ? (
+                <BrandKitPresentationPendingCard doc={doc} onRequestEditMode={onRequestEditMode} />
+              ) : null}
             </div>
 
             {showShowcase ? (
@@ -345,6 +397,7 @@ export function BrandKitBoardV2({
                   presentationMode={presentationMode}
                   brandPolarity={brandTheme.polarity}
                   brandVars={brandTheme.vars}
+                  onStationeryContactChange={onStationeryContactChange}
                 />
               </div>
             ) : null}
@@ -352,9 +405,8 @@ export function BrandKitBoardV2({
             {reviewMode && queue.length > 0 ? (
               <BrandKitReviewQueueBar index={index} total={queue.length} onSkip={skip} onExit={exit} />
             ) : null}
-            <BrandKitMosaicDetailSheet />
+            <BrandKitReaderOverlay doc={doc} />
           </div>
-        </BrandKitMosaicBoardProvider>
       </BrandKitImageLightboxProvider>
     </BrandKitEvidencePopoverProvider>
   );

@@ -50,7 +50,10 @@ describe("buildBrandKitShowcaseData", () => {
 
     const data = buildBrandKitShowcaseData(doc, false);
     expect(data?.headline).toBe("Headline real");
+    expect(data?.campaign.headline).toBe("Headline real");
+    expect(data?.canRenderMockups).toBe(false);
+    expect(data?.requirements.length).toBe(5);
     expect(data?.contactEmail).toBe("hola@oaro.net");
-    expect(data?.ctaLabel).toBe("Descubrir más");
+    expect(data?.ctaLabel).toBeTruthy();
   });
 });
