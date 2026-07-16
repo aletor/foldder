@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     });
 
     releaseWalletOnError = false;
-    await walletCharge.capture({
+    await walletCharge?.capture({
       actualCostUsd: result.costUsd,
       metadata: { briefCount: result.gallery.categoryBriefs?.length ?? 0 },
     });
