@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  extensionForProjectMediaContentType,
+  normalizeProjectMediaContentType,
+} from "@/lib/project-media-upload-policy";
 import { optimizeImageBlobForFoldder } from "./media/foldder-image-optimization";
 
 export type UploadedProjectMedia = {
@@ -90,33 +94,12 @@ function parseDataMedia(value: string): { base64: string; contentType: string } 
   return { contentType: match[1].toLowerCase(), base64: match[2] };
 }
 
-function extensionForContentType(contentType: string): string {
-  if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
-  if (contentType.includes("png")) return "png";
-  if (contentType.includes("webp")) return "webp";
-  if (contentType.includes("gif")) return "gif";
-  if (contentType.includes("mp4")) return "mp4";
-  if (contentType.includes("webm")) return "webm";
-  if (contentType.includes("mpeg")) return "mp3";
-  if (contentType.includes("wav")) return "wav";
-  return "bin";
+function extensionForContentType(contentType: string, filename = ""): string {
+  return extensionForProjectMediaContentType(contentType, filename);
 }
 
 function contentTypeFromFile(file: File): string {
-  const explicit = file.type?.trim().toLowerCase();
-  if (explicit) return explicit;
-  const name = file.name.toLowerCase();
-  if (/\.(jpe?g)$/.test(name)) return "image/jpeg";
-  if (/\.png$/.test(name)) return "image/png";
-  if (/\.webp$/.test(name)) return "image/webp";
-  if (/\.gif$/.test(name)) return "image/gif";
-  if (/\.svg$/.test(name)) return "image/svg+xml";
-  if (/\.mp4$/.test(name)) return "video/mp4";
-  if (/\.webm$/.test(name)) return "video/webm";
-  if (/\.mov$/.test(name)) return "video/quicktime";
-  if (/\.mp3$/.test(name)) return "audio/mpeg";
-  if (/\.wav$/.test(name)) return "audio/wav";
-  return "application/octet-stream";
+  return normalizeProjectMediaContentType(file.type, file.name);
 }
 
 function dataUrlToBlob(value: string): { blob: Blob; contentType: string } | null {

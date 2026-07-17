@@ -40,7 +40,11 @@ export async function warmPdfJsPageObjects(
   for (let i = 0; i < operatorList.fnArray.length; i += 1) {
     if (!imageOps.has(operatorList.fnArray[i]!)) continue;
     const args = operatorList.argsArray[i] ?? [];
-    if (typeof args[0] === "string") names.add(args[0]);
+    const first = args[0];
+    if (typeof first === "string") names.add(first);
+    else if (first && typeof first === "object" && typeof (first as { data?: unknown }).data === "string") {
+      names.add((first as { data: string }).data);
+    }
   }
   await Promise.all([...names].map((name) => getPdfJsObject(page, name)));
 }

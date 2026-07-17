@@ -20,6 +20,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   lightroom: "#666699",
   backgroundRemover: "#a6c85e",
   layerizer: "#ff6666",
+  pdfScan: "#64748b",
   dataset: "#37B7DF",
   loop: "#FD52EB",
   populate: "#33FFCC",

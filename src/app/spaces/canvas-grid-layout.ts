@@ -37,6 +37,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   crop: { cols: 5, rows: 3 },
   backgroundRemover: { cols: 5, rows: 3 },
   layerizer: { cols: 5, rows: 3 },
+  pdfScan: { cols: 5, rows: 3 },
   vfxGenerator: { cols: 5, rows: 3 },
   painter: { cols: 5, rows: 3 },
   lightroom: { cols: 5, rows: 3 },

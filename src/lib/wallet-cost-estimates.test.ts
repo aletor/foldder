@@ -20,6 +20,7 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/spaces/brandKit/gallery/generate",
   "/api/spaces/cine/analyze",
   "/api/spaces/describe",
+  "/api/spaces/pdf-scan/ocr",
   "/api/spaces/matte",
   "/api/spaces/guionista",
   "/api/spaces/search",
@@ -42,6 +43,7 @@ function sampleBodyForRoute(route: string): Record<string, unknown> {
   if (route === "/api/runway/generate" || route === "/api/grok/generate") return { durationSeconds: 5 };
   if (route === "/api/seedance/video") return { duration: 5 };
   if (route === "/api/spaces/describe") return { type: "image", url: "https://example.com/a.png" };
+  if (route === "/api/spaces/pdf-scan/ocr") return { s3Key: "u/pdf.pdf", maxPages: 3, pagesDone: [] };
   if (route === "/api/spaces/search") return { query: "modern workspace", verify: true, limit: 5 };
   if (route === "/api/spaces/guionista") return { task: "draft", idea: "Idea" };
   if (route === "/api/spaces/text-content") return { action: "correct", text: "Corrige esta frase." };

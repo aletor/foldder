@@ -438,6 +438,7 @@ import {
 } from "./freehand/DesignerFontFamilyPicker";
 import { mergeGoogleFontCatalogMaps } from "./freehand/google-fonts-catalog";
 import { ensureGoogleFontPreviewBatchLoaded } from "./freehand/google-fonts-preview-loader";
+import { collectGoogleFontFamiliesFromObjects } from "./pdf-scan/pdf-scan-ensure-fonts";
 import { useGoogleFontsCatalog } from "./hooks/use-google-fonts-catalog";
 import { sanitizeStoryLinkHref, type SpanStyle } from "./indesign/text-model";
 import { computeFittingLayout } from "./indesign/image-frame-layout";
@@ -16415,6 +16416,26 @@ export function FreehandStudioCanvas({
       void ensureGoogleFontStylesheetLoaded(family).catch(() => undefined);
     }
   }, [installedGoogleFonts, ensureGoogleFontStylesheetLoaded]);
+
+  /** PDFScan / imports: cargar Google Fonts referenciadas aunque no estuvieran en “instaladas”. */
+  useEffect(() => {
+    const needed = collectGoogleFontFamiliesFromObjects(objects);
+    if (needed.length === 0) return;
+    setInstalledGoogleFonts((prev) => {
+      const set = new Set(prev);
+      let changed = false;
+      for (const family of needed) {
+        if (!set.has(family)) {
+          set.add(family);
+          changed = true;
+        }
+      }
+      return changed ? [...set].sort((a, b) => a.localeCompare(b)) : prev;
+    });
+    for (const family of needed) {
+      void ensureGoogleFontStylesheetLoaded(family).catch(() => undefined);
+    }
+  }, [objects, ensureGoogleFontStylesheetLoaded]);
 
   /** Misma mutación que `updateSelectedProp` pero sin apilar historial (p. ej. arrastre tipo scrub). */
   const updateSelectedPropSilent = useCallback((key: string, value: any) => {

@@ -296,13 +296,15 @@ export function isLogoSizedEmbeddedImage(width: number, height: number): boolean
   return ratio <= 8;
 }
 
-/** Imágenes raster embebidas en PDF (XObject) filtradas a escala de logo. */
+/** Imágenes raster embebidas en PDF (XObject). Por defecto filtradas a escala de logo. */
 export async function extractEmbeddedRasterImagesFromPdf(
   buffer: Buffer,
-  options?: { maxPages?: number; maxScans?: number },
+  options?: { maxPages?: number; maxScans?: number; mode?: "logo" | "all"; maxImages?: number },
 ): Promise<PdfEmbeddedRasterImage[]> {
   const maxPages = options?.maxPages ?? 20;
   const maxScans = options?.maxScans ?? 80;
+  const mode = options?.mode ?? "logo";
+  const maxImages = options?.maxImages ?? (mode === "logo" ? 40 : 40);
   const images: PdfEmbeddedRasterImage[] = [];
   const seen = new Set<string>();
 
@@ -343,7 +345,8 @@ export async function extractEmbeddedRasterImagesFromPdf(
               inlineImage || (typeof args[0] === "string" ? await getPdfJsObject(page, args[0]) : null);
             const converted = await convertPdfJsImageToUploadable(image);
             if (!converted) continue;
-            if (!isLogoSizedEmbeddedImage(converted.width, converted.height)) continue;
+            if (mode === "logo" && !isLogoSizedEmbeddedImage(converted.width, converted.height)) continue;
+            if (mode === "all" && (converted.width < 48 || converted.height < 48)) continue;
             const contentHash = crypto.createHash("sha256").update(converted.buffer).digest("hex");
             if (seen.has(contentHash)) continue;
             seen.add(contentHash);
@@ -355,6 +358,9 @@ export async function extractEmbeddedRasterImagesFromPdf(
               mime: converted.mime,
               contentHash,
             });
+            if (images.length >= maxImages) {
+              return images;
+            }
           } catch (imageError) {
             console.warn(
               `[brain/pdf-visual-extract] skip embedded image p${pageNumber} idx${index}:`,

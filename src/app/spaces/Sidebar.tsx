@@ -135,6 +135,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'mediaDescriber', label: 'Image Describer' },
   { type: 'backgroundRemover', label: 'BG Removal' },
   { type: 'layerizer', label: 'Layerizer' },
+  { type: 'pdfScan', label: 'PDFScan' },
   { type: 'dataset', label: 'Dataset' },
   { type: 'loop', label: 'Loop' },
   { type: 'populate', label: 'Populate' },
@@ -157,6 +158,9 @@ function toolFallbackBorderClass(type: string): string {
   }
   if (type === 'layerizer') {
     return 'border-white/25 group-hover/tile:border-purple-400/50';
+  }
+  if (type === 'pdfScan') {
+    return 'border-white/25 group-hover/tile:border-slate-400/50';
   }
   if (type === 'lightroom') {
     return 'border-white/25 group-hover/tile:border-sky-400/50';

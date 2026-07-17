@@ -6261,6 +6261,8 @@ export function SpacesContent() {
           filePreviewSnapshot?.position ??
           libraryPreviewPositionFromFlowPoint(position, "mediaInput");
 
+        takeSnapshot();
+
         for (let index = 0; index < files.length; index++) {
           const file = files[index];
           const fileType = inferMediaType(file.name, file.type);
@@ -6273,16 +6275,105 @@ export function SpacesContent() {
                 });
           const nodeId = `node_${Date.now()}_${index}_${Math.floor(Math.random() * 1000)}`;
 
+          // PDF → nodo PDFScan (stage via /api/spaces/pdf-scan), no mediaInput.
+          if (fileType === "pdf") {
+            const pdfPlacement =
+              index === 0
+                ? (filePreviewSnapshot?.position ??
+                  libraryPreviewPositionFromFlowPoint(position, "pdfScan"))
+                : snapPositionToGrid({
+                    x: (filePreviewSnapshot?.position ??
+                      libraryPreviewPositionFromFlowPoint(position, "pdfScan")).x +
+                      index * 28,
+                    y: (filePreviewSnapshot?.position ??
+                      libraryPreviewPositionFromFlowPoint(position, "pdfScan")).y +
+                      index * 28,
+                  });
+            const newNode = prepareCanvasNodeForCreate({
+              id: nodeId,
+              type: "pdfScan",
+              position: pdfPlacement,
+              dragHandle: defaultCanvasNodeDragHandle("pdfScan"),
+              data: withFoldderCanvasIntro("pdfScan", {
+                ...defaultDataForCanvasDropNode("pdfScan"),
+                label: file.name.replace(/\.pdf$/i, "") || "PDFScan",
+                status: "scanning",
+              }),
+              ...(defaultCanvasNodeStyleForType("pdfScan")
+                ? { style: defaultCanvasNodeStyleForType("pdfScan") }
+                : {}),
+            });
+
+            setNodes((nds) => [...nds, newNode]);
+            scheduleFoldderCanvasIntroEnd(nodeId);
+
+            void (async () => {
+              try {
+                const body = new FormData();
+                body.append("mode", "stage");
+                body.append("file", file);
+                const res = await fetch("/api/spaces/pdf-scan", { method: "POST", body });
+                const json = (await res.json().catch(() => ({}))) as {
+                  ok?: boolean;
+                  error?: string;
+                  source?: {
+                    s3Key: string;
+                    contentSha256: string;
+                    fileName: string;
+                    byteSize: number;
+                    url?: string;
+                  };
+                };
+                if (!res.ok || !json.ok || !json.source) {
+                  throw new Error(json.error || `Error ${res.status} al subir el PDF`);
+                }
+                setNodes((nds) =>
+                  nds.map((n) =>
+                    n.id === nodeId
+                      ? {
+                          ...n,
+                          data: {
+                            ...n.data,
+                            status: "staged",
+                            source: json.source,
+                            label: json.source.fileName.replace(/\.pdf$/i, "") || "PDFScan",
+                            error: undefined,
+                          },
+                        }
+                      : n,
+                  ),
+                );
+              } catch (err) {
+                console.error("Auto-drop PDFScan stage error:", err);
+                setNodes((nds) =>
+                  nds.map((n) =>
+                    n.id === nodeId
+                      ? {
+                          ...n,
+                          data: {
+                            ...n.data,
+                            status: "error",
+                            error: err instanceof Error ? err.message : "Upload error",
+                          },
+                        }
+                      : n,
+                  ),
+                );
+              }
+            })();
+            continue;
+          }
+
           const newNode = prepareCanvasNodeForCreate({
             id: nodeId,
-            type: 'mediaInput',
+            type: "mediaInput",
             position: placement,
-            data: withFoldderCanvasIntro('mediaInput', {
-              value: '',
+            data: withFoldderCanvasIntro("mediaInput", {
+              value: "",
               type: fileType,
               label: file.name,
               loading: true,
-              source: 'upload',
+              source: "upload",
             }),
           });
 
@@ -6307,16 +6398,16 @@ export function SpacesContent() {
                           error: false,
                           metadata: {
                             size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-                            resolution: fileType === 'video' || fileType === 'image' ? 'Auto-detected' : '-',
-                            codec: (file.type || uploaded.contentType).split('/')[1]?.toUpperCase() || 'RAW',
+                            resolution: fileType === "video" || fileType === "image" ? "Auto-detected" : "-",
+                            codec: (file.type || uploaded.contentType).split("/")[1]?.toUpperCase() || "RAW",
                           },
                         },
                       }
-                    : n
+                    : n,
                 );
               });
             } catch (err) {
-              console.error('Auto-drop upload error:', err);
+              console.error("Auto-drop upload error:", err);
               setNodes((nds) =>
                 nds.map((n) =>
                   n.id === nodeId
@@ -6326,11 +6417,11 @@ export function SpacesContent() {
                           ...n.data,
                           loading: false,
                           error: true,
-                          uploadError: err instanceof Error ? err.message : 'Upload error',
+                          uploadError: err instanceof Error ? err.message : "Upload error",
                         },
                       }
-                    : n
-                )
+                    : n,
+                ),
               );
             }
           })();

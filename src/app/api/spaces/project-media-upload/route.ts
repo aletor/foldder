@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 import {
+  extensionForProjectMediaContentType,
+  isAllowedProjectMediaContentType,
+  normalizeProjectMediaContentType,
+} from "@/lib/project-media-upload-policy";
+import {
   buildProjectMediaObjectKey,
   requireSpacesAuthUser,
   stableKnowledgeFileUrlFromKey,
@@ -13,29 +18,12 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MAX_UPLOAD_BYTES = 220 * 1024 * 1024;
-const ALLOWED_PREFIXES = ["image/", "video/", "audio/"];
 const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 
 function safeSegment(value: FormDataEntryValue | null, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const cleaned = value.trim().replace(/[^a-zA-Z0-9_-]/g, "");
   return cleaned || fallback;
-}
-
-function extensionForContentType(contentType: string, filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  const fromName = dot >= 0 ? filename.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
-  if (fromName) return fromName;
-  if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
-  if (contentType.includes("png")) return "png";
-  if (contentType.includes("webp")) return "webp";
-  if (contentType.includes("gif")) return "gif";
-  if (contentType.includes("svg")) return "svg";
-  if (contentType.includes("mp4")) return "mp4";
-  if (contentType.includes("webm")) return "webm";
-  if (contentType.includes("mpeg")) return "mp3";
-  if (contentType.includes("wav")) return "wav";
-  return "bin";
 }
 
 function requiresStableProjectId(): boolean {
@@ -59,8 +47,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "file required" }, { status: 400 });
     }
 
-    const contentType = file.type || "application/octet-stream";
-    if (!ALLOWED_PREFIXES.some((prefix) => contentType.startsWith(prefix))) {
+    const contentType = normalizeProjectMediaContentType(file.type, file.name || "");
+    if (!isAllowedProjectMediaContentType(contentType, file.name || "")) {
       return NextResponse.json({ error: "unsupported media type" }, { status: 400 });
     }
 
@@ -74,7 +62,7 @@ export async function POST(req: Request) {
       : {
           buffer: rawBuffer,
           contentType,
-          ext: extensionForContentType(contentType, file.name || ""),
+          ext: extensionForProjectMediaContentType(contentType, file.name || ""),
           optimized: false,
           originalBytes: rawBuffer.length,
         };

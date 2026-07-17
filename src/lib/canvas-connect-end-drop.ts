@@ -188,6 +188,10 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         alphaMode: "auto",
         maxResolution: 1080,
       };
+    case "layerizer":
+      return { label: "Layerizer" };
+    case "pdfScan":
+      return { label: "PDFScan", status: "empty" as const };
     case "presenter":
       return { label: "Presenter" };
     case "dataset":

@@ -35,6 +35,7 @@ import { VideoEditorNode } from "./video-editor/VideoEditorNode";
 import { InspirationNode } from "./inspiration/InspirationNode";
 import { ImageCreationAdvancedNode } from "./image-creation-advanced/ImageCreationAdvancedNode";
 import { LayerizerNode } from "./layerizer/LayerizerNode";
+import { PdfScanNode } from "./pdf-scan/PdfScanNode";
 import { BackgroundRemoverNode } from "./background-remover/BackgroundRemoverNode";
 import { LightroomNode } from "./lightroom/LightroomNode";
 import { DatasetNode } from "./dataset/DatasetNode";
@@ -65,6 +66,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   imageCreationAdvanced: ImageCreationAdvancedNode,
   backgroundRemover: BackgroundRemoverNode,
   layerizer: LayerizerNode,
+  pdfScan: PdfScanNode,
   lightroom: LightroomNode,
   dataset: DatasetNode,
   loop: LoopNode,

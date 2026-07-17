@@ -555,6 +555,27 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       value: 'LayerizerOutput (mirror of output; flows through the layout handle)',
     },
   },
+  pdfScan: {
+    type: 'pdfScan',
+    label: 'PDFScan',
+    description:
+      'Drop a PDF (staged, no auto-scan). Choose Textos editables (clean raster + text fields) or Documento editable (paths + text + images → Freehand). Outputs Image Layout for Designer and media_list for Export Multimedia. Deterministic / no LLM.',
+    inputs: [],
+    outputs: [
+      { id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType },
+      { id: 'media_list', label: 'Export Multimedia', type: 'media_list' as HandleType },
+    ],
+    dataSchema: {
+      status: 'empty | staged | scanning | ready | error',
+      mode: 'texts | document',
+      source: '{ s3Key, contentSha256, fileName, byteSize }',
+      scan: '{ pageCount, dpi, widthPx, heightPx, textSpanCount, imageCount, pathCount? }',
+      images: 'PdfScanImageAsset[]',
+      fidelity: 'PdfScanFidelity',
+      output: 'PdfScanLayoutOutput | PdfDocumentLayoutOutput',
+      mediaListOutput: 'MediaListOutput',
+    },
+  },
   designer: {
     type: 'designer',
     label: 'Designer',
@@ -740,6 +761,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   backgroundRemover: "threshold, expansion, feather",
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
+  pdfScan:
+    "sin auto-scan al drop (status staged); mode texts|document; source en S3; texts=raster limpio+textSpans; document=paths+texto+imágenes (pdf_document_layout); fidelity; mediaListOutput; sin LLM en núcleo",
   brandKit:
     "label (título opcional); brandKit (BrandKitDocument en node.data); salida brand (tipo brain → Site adn, Designer, generadores); abre BrandKit Studio",
   site:

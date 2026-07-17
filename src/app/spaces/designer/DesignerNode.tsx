@@ -45,6 +45,11 @@ import {
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import { buildDesignerPageFromLayerizerOutput } from "../layerizer/layerizer-to-designer";
 import type { LayerizerOutput } from "../layerizer/layerizer-types";
+import {
+  buildDesignerPagesFromPdfScanOutput,
+  isPdfScanAnyLayoutOutput,
+} from "../pdf-scan/pdf-scan-to-designer";
+import type { PdfScanAnyLayoutOutput } from "@/lib/pdf-scan/pdf-scan-types";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
@@ -132,6 +137,8 @@ export type DesignerNodeData = {
   autoImageOptimization?: boolean;
   /** Layerizer: jobId del último Image Layout importado como página (evita reimportar). */
   _layerizerImportedJobId?: string;
+  /** PDFScan: jobId del último layout importado (páginas + texto editable). */
+  _pdfScanImportedJobId?: string;
   /** Raster en vivo por página (pageId → dataURL); alimenta la salida media_list / Export Multimedia. */
   pageThumbnails?: Record<string, string>;
 };
@@ -174,8 +181,22 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         const source = state.nodes.find((n) => n.id === edge.source);
         const out = (source?.data as { output?: unknown } | undefined)?.output;
         if (!out || typeof out !== "object") return null;
+        if (isPdfScanAnyLayoutOutput(out)) return null;
         const candidate = out as LayerizerOutput;
         return candidate.jobId && candidate.background?.url ? candidate : null;
+      },
+      [id],
+    ),
+    shallow,
+  );
+  const connectedPdfScanOutput = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>): PdfScanAnyLayoutOutput | null => {
+        const edge = state.edges.find((e) => e.target === id && e.targetHandle === "layout");
+        if (!edge) return null;
+        const source = state.nodes.find((n) => n.id === edge.source);
+        const out = (source?.data as { output?: unknown } | undefined)?.output;
+        return isPdfScanAnyLayoutOutput(out) ? out : null;
       },
       [id],
     ),
@@ -247,11 +268,13 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     const isLonePlaceholder =
       pages.length === 1 &&
       !designerPageHasContent(pages[0]) &&
-      !nodeData._layerizerImportedJobId;
+      !nodeData._layerizerImportedJobId &&
+      !nodeData._pdfScanImportedJobId;
     const hasDesignedContent =
       Boolean(nodeData.value) ||
       !isLonePlaceholder ||
-      Boolean(nodeData._layerizerImportedJobId);
+      Boolean(nodeData._layerizerImportedJobId) ||
+      Boolean(nodeData._pdfScanImportedJobId);
     const hasConnections = brainConnected || datasetConnected || layerizerConnected;
     const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
     const hasDock = hasConnections || hasDesignedContent || studioTouched;
@@ -353,6 +376,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     id,
     layerizerConnected,
     nodeData._layerizerImportedJobId,
+    nodeData._pdfScanImportedJobId,
     nodeData.value,
     pages,
     setNodes,
@@ -524,6 +548,46 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     );
   }, [connectedLayerizerOutput, nodeData._layerizerImportedJobId, pages, id, isStudioOpen, setNodes]);
 
+  /**
+   * PDFScan → Designer: importa todas las páginas (fondo raster + texto editable).
+   * Idempotente por jobId; si el Designer está vacío, sustituye el placeholder.
+   */
+  useEffect(() => {
+    const output = connectedPdfScanOutput;
+    if (!output) return;
+    if (nodeData._pdfScanImportedJobId === output.jobId) return;
+
+    const pageIdPrefix = `dpg_${id}_pdf_${output.jobId}`;
+    const newPages = buildDesignerPagesFromPdfScanOutput(output, pageIdPrefix);
+    if (newPages.length === 0) return;
+
+    const isLonePlaceholder =
+      pages.length === 1 &&
+      (pages[0].objects?.length ?? 0) === 0 &&
+      (pages[0].textFrames?.length ?? 0) === 0;
+    const nextPages = isLonePlaceholder ? newPages : [...pages, ...newPages];
+    const nextActiveIdx = isLonePlaceholder ? 0 : pages.length;
+
+    const patch: Partial<DesignerNodeData> = {
+      pages: nextPages,
+      activePageIndex: nextActiveIdx,
+      _pdfScanImportedJobId: output.jobId,
+    };
+
+    if (isStudioOpen) {
+      liveDesignerPatchRef.current = { ...(liveDesignerPatchRef.current ?? {}), ...patch };
+      setLiveStudioNodeData(id, patch);
+      return;
+    }
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === id
+          ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, patch as Record<string, unknown>) }
+          : n,
+      ),
+    );
+  }, [connectedPdfScanOutput, nodeData._pdfScanImportedJobId, pages, id, isStudioOpen, setNodes]);
+
   const onExport = useCallback(
     (dataUrl: string) => {
       setNodes((nds) =>
@@ -549,11 +613,13 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const isLonePlaceholder =
     pages.length === 1 &&
     !designerPageHasContent(pages[0]) &&
-    !nodeData._layerizerImportedJobId;
+    !nodeData._layerizerImportedJobId &&
+    !nodeData._pdfScanImportedJobId;
   const hasDesignedContent =
     Boolean(nodeData.value) ||
     !isLonePlaceholder ||
-    Boolean(nodeData._layerizerImportedJobId);
+    Boolean(nodeData._layerizerImportedJobId) ||
+    Boolean(nodeData._pdfScanImportedJobId);
   const hasConnections = brainConnected || datasetConnected || layerizerConnected;
   const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
   const hasDock = hasConnections || hasDesignedContent || studioTouched;

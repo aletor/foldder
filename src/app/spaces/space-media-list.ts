@@ -29,6 +29,7 @@ const MEDIA_SINK_NODE_TYPES = new Set([
   "imageExport",
   "crop",
   "layerizer",
+  "pdfScan",
   "painter",
   "backgroundRemover",
 ]);

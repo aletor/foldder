@@ -5,10 +5,14 @@ import {
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
 import { ensureBrowserUploadCorsForS3, getPresignedUploadUrl } from "@/lib/s3-utils";
+import {
+  extensionForProjectMediaContentType,
+  isAllowedProjectMediaContentType,
+  normalizeProjectMediaContentType,
+} from "@/lib/project-media-upload-policy";
 
 export const runtime = "nodejs";
 
-const ALLOWED_PREFIXES = ["image/", "video/", "audio/"];
 const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 
 type UploadTicketRequest = {
@@ -24,22 +28,6 @@ function safeSegment(value: unknown, fallback: string): string {
   return cleaned || fallback;
 }
 
-function extensionForContentType(contentType: string, filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  const fromName = dot >= 0 ? filename.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
-  if (fromName) return fromName;
-  if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
-  if (contentType.includes("png")) return "png";
-  if (contentType.includes("webp")) return "webp";
-  if (contentType.includes("gif")) return "gif";
-  if (contentType.includes("svg")) return "svg";
-  if (contentType.includes("mp4")) return "mp4";
-  if (contentType.includes("webm")) return "webm";
-  if (contentType.includes("mpeg")) return "mp3";
-  if (contentType.includes("wav")) return "wav";
-  return "bin";
-}
-
 function requiresStableProjectId(): boolean {
   return Boolean(process.env[SPACES_V2_DDB_TABLE_ENV]?.trim());
 }
@@ -50,11 +38,13 @@ export async function POST(req: Request) {
     if (!authState.ok) return authState.response;
 
     const body = (await req.json().catch(() => null)) as UploadTicketRequest | null;
-    const contentType = typeof body?.contentType === "string"
-      ? body.contentType.trim().toLowerCase()
-      : "application/octet-stream";
+    const filename = typeof body?.filename === "string" ? body.filename : "";
+    const contentType = normalizeProjectMediaContentType(
+      typeof body?.contentType === "string" ? body.contentType : "",
+      filename,
+    );
 
-    if (!ALLOWED_PREFIXES.some((prefix) => contentType.startsWith(prefix))) {
+    if (!isAllowedProjectMediaContentType(contentType, filename)) {
       return NextResponse.json({ error: "unsupported media type" }, { status: 400 });
     }
 
@@ -63,8 +53,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "projectId required" }, { status: 400 });
     }
     const mediaId = safeSegment(body?.mediaId, randomUUID());
-    const filename = typeof body?.filename === "string" ? body.filename : "";
-    const ext = extensionForContentType(contentType, filename);
+    const ext = extensionForProjectMediaContentType(contentType, filename);
     const key = buildProjectMediaObjectKey({
       contentExt: ext,
       mediaId,

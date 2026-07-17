@@ -13360,6 +13360,7 @@ body.nb-studio-open [data-foldder-sidebar-launcher] {
 .custom-node.lightroom-node { --foldder-node-card-bg: #666699; }
 .custom-node.mask-node { --foldder-node-card-bg: #a6c85e; }
 .custom-node.layerizer-node { --foldder-node-card-bg: #ff6666; }
+.custom-node.pdf-scan-node { --foldder-node-card-bg: #64748b; }
 .custom-node.vfx-generator-node { --foldder-node-card-bg: var(--foldder-palette-s); }
 .custom-node.presenter-node { --foldder-node-card-bg: #f5b91b; }
 .custom-node.painter-node { --foldder-node-card-bg: #890AF3; }

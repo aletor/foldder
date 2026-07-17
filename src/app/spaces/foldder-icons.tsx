@@ -797,6 +797,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   urlImage: 'web',
   backgroundRemover: 'matting',
   layerizer: 'matting',
+  pdfScan: 'text',
   dataset: 'dataset',
   loop: 'layout',
   populate: 'listPick',

@@ -270,6 +270,21 @@ export function estimateWalletCostForRoute(
     };
   }
 
+  if (route === "/api/spaces/pdf-scan/ocr") {
+    const maxPages = Math.min(10, Math.max(1, numberValue(body.maxPages, 10)));
+    const pagesDone = Array.isArray(body.pagesDone) ? body.pagesDone.length : 0;
+    const pages = Math.max(1, maxPages - pagesDone);
+    const estimated = roundedUsd(pages * 0.008);
+    return {
+      label: pages === 1 ? "OCR PDF (1 página)" : `OCR PDF (${pages} páginas)`,
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "confirm",
+    };
+  }
+
   if (route === "/api/spaces/search") {
     if (body.verify === false) return null;
     const estimated = 0.02;
