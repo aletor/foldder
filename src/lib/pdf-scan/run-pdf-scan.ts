@@ -5,6 +5,8 @@ import { getFromS3, uploadBufferToS3Key } from "@/lib/s3-utils";
 import { stableKnowledgeFileUrlFromKey } from "@/lib/spaces-access-control";
 import type { MediaListItem, MediaListOutput } from "@/app/spaces/media-list-output";
 import { coverTextRegionsOnPageRaster } from "./pdf-scan-clean-background";
+import { extractAndUploadPdfScanFonts } from "./pdf-scan-font-extract";
+import { remainingMissingPdfFonts } from "./pdf-scan-font-style";
 import { collectMissingPdfFonts } from "./pdf-scan-font-map";
 import { extractPdfScanEmbeddedImages, sha256Hex } from "./pdf-scan-images";
 import { extractPdfTextSpans } from "./pdf-scan-text-spans";
@@ -12,6 +14,7 @@ import { assertPdfBuffer, pdfScanObjectKey, sanitizePdfFileName, stagePdfScanSou
 import {
   PDF_SCAN_DEFAULT_DPI,
   PDF_SCAN_MAX_PAGES,
+  type PdfScanFontAsset,
   type PdfScanImageAsset,
   type PdfScanLayoutOutput,
   type PdfScanSourceMeta,
@@ -35,6 +38,7 @@ export type RunPdfScanResult = {
   source: PdfScanSourceMeta;
   scan: PdfScanSummary;
   images: PdfScanImageAsset[];
+  fonts: PdfScanFontAsset[];
   textPreview: Array<{ id: string; page: number; text: string }>;
   output: PdfScanLayoutOutput;
   mediaListOutput: MediaListOutput;
@@ -136,7 +140,27 @@ export async function runPdfScanTexts(input: RunPdfScanInput): Promise<RunPdfSca
   }
 
   const first = layoutPages[0]!;
-  const fontsMissing = collectMissingPdfFonts(textSpans.map((s) => s.fontName));
+  const missingCandidates = collectMissingPdfFonts(textSpans.map((s) => s.fontName));
+  const fonts = await extractAndUploadPdfScanFonts({
+    buffer,
+    userEmail: input.userEmail,
+    contentSha256,
+    missingFamilies: missingCandidates,
+    maxPages,
+  });
+  const fontsMissing = remainingMissingPdfFonts(missingCandidates, fonts);
+  const fontNotes: string[] = [];
+  if (fonts.length) {
+    fontNotes.push(
+      `${fonts.length} tipografía(s) embebida(s) recuperada(s) del PDF (se instalan al importar en Designer).`,
+    );
+  }
+  if (fontsMissing.length) {
+    fontNotes.push(`Sin archivo embebido recuperable: ${fontsMissing.slice(0, 6).join(", ")}.`);
+  }
+  if (!fonts.length && !fontsMissing.length) {
+    fontNotes.push("Tipografías mapeadas a sistema/Google Fonts.");
+  }
   const output: PdfScanLayoutOutput = {
     kind: "pdf_scan_layout",
     jobId,
@@ -144,17 +168,17 @@ export async function runPdfScanTexts(input: RunPdfScanInput): Promise<RunPdfSca
     dpi,
     pageCount: layoutPages.length,
     pages: layoutPages,
+    fonts,
     fidelity: {
       mode: "texts",
       textFieldCount: textSpans.length,
       pathCount: 0,
       imageLayerCount: images.length,
       fontsMissing,
+      fontsExtracted: fonts.length,
       notes: [
         "Modo Textos editables: raster limpio + campos de texto tipográficos.",
-        fontsMissing.length
-          ? `Fuentes sin match exacto: ${fontsMissing.slice(0, 6).join(", ")}.`
-          : "Tipografías mapeadas a sistema/Google Fonts.",
+        ...fontNotes,
       ],
     },
   };
@@ -208,6 +232,7 @@ export async function runPdfScanTexts(input: RunPdfScanInput): Promise<RunPdfSca
       mode: "texts",
     },
     images,
+    fonts,
     textPreview: textSpans.slice(0, 40).map((s) => ({ id: s.id, page: s.page, text: s.text.slice(0, 120) })),
     output,
     mediaListOutput,

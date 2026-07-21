@@ -5,7 +5,12 @@
 import React, { memo, useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Position, useReactFlow, type NodeProps } from "@xyflow/react";
-import { FileText, Loader2, ScanText, Type, Upload, VectorSquare } from "lucide-react";
+import { ExternalLink, FileText, Loader2, ScanText, Type, Upload, VectorSquare } from "lucide-react";
+import {
+  mergeAndInstallDesignerCustomFonts,
+  parseDesignerImportedFontFileName,
+  designerFontFileMime,
+} from "@/app/spaces/freehand/designer-custom-fonts";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import {
   FoldderNodeContentDock,
@@ -38,6 +43,7 @@ type AnalyzeResult = {
   source: NonNullable<PdfScanNodeData["source"]>;
   scan: NonNullable<PdfScanNodeData["scan"]>;
   images: NonNullable<PdfScanNodeData["images"]>;
+  fonts?: NonNullable<PdfScanNodeData["fonts"]>;
   textPreview: NonNullable<PdfScanNodeData["textPreview"]>;
   fidelity?: PdfScanNodeData["fidelity"];
   output: NonNullable<PdfScanNodeData["output"]>;
@@ -80,6 +86,7 @@ async function analyzeStagedPdf(args: {
     source?: PdfScanNodeData["source"];
     scan?: PdfScanNodeData["scan"];
     images?: PdfScanNodeData["images"];
+    fonts?: PdfScanNodeData["fonts"];
     textPreview?: PdfScanNodeData["textPreview"];
     fidelity?: PdfScanNodeData["fidelity"];
     output?: PdfScanNodeData["output"];
@@ -87,15 +94,17 @@ async function analyzeStagedPdf(args: {
   if (!res.ok || !json.ok || !json.jobId || !json.source || !json.scan || !json.output) {
     throw new Error(json.error || `Error ${res.status} al analizar el PDF`);
   }
+  const fonts = json.fonts ?? json.output.fonts ?? [];
   return {
     jobId: json.jobId,
     mode: json.mode === "document" ? "document" : "texts",
     source: json.source,
     scan: json.scan,
     images: json.images ?? [],
+    fonts,
     textPreview: json.textPreview ?? [],
     fidelity: json.fidelity,
-    output: json.output,
+    output: { ...json.output, fonts: json.output.fonts ?? fonts },
   };
 }
 
@@ -153,6 +162,14 @@ function Prop({ label, value }: { label: string; value: string }) {
   );
 }
 
+function fontSearchLinks(family: string): { google: string; dafont: string } {
+  const q = encodeURIComponent(family.trim());
+  return {
+    google: `https://fonts.google.com/?query=${q}`,
+    dafont: `https://www.dafont.com/search.php?q=${q}`,
+  };
+}
+
 function PdfScanStudio({
   data,
   nodeLabel,
@@ -163,6 +180,7 @@ function PdfScanStudio({
   onPickFile,
   onAnalyze,
   onOcr,
+  onImportFontFile,
 }: {
   data: PdfScanNodeData;
   nodeLabel: string;
@@ -173,11 +191,15 @@ function PdfScanStudio({
   onPickFile: (file: File) => void;
   onAnalyze: (mode: PdfScanMode) => void;
   onOcr: () => void;
+  onImportFontFile: (file: File) => void | Promise<void>;
 }) {
   useStudioBodyLock(true);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const fontInputRef = useRef<HTMLInputElement | null>(null);
   const scan = data.scan;
   const images = data.images ?? [];
+  const fontsExtracted = data.fonts?.length ?? data.fidelity?.fontsExtracted ?? 0;
+  const fontsMissing = data.fidelity?.fontsMissing ?? [];
   const staged = data.status === "staged" && Boolean(data.source);
   const ready = data.status === "ready" && Boolean(scan);
 
@@ -358,6 +380,86 @@ function PdfScanStudio({
                 ) : null}
                 {data.fidelity.notes[0] ? <p className="mt-1 text-white/40">{data.fidelity.notes[0]}</p> : null}
                 {data.fidelity.notes[1] ? <p className="mt-1 text-white/35">{data.fidelity.notes[1]}</p> : null}
+                {fontsExtracted > 0 || fontsMissing.length > 0 ? (
+                  <p className="mt-1 text-white/40">
+                    Tipografías: {fontsExtracted} embebida(s) recuperada(s)
+                    {fontsMissing.length ? ` · ${fontsMissing.length} pendiente(s)` : ""}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {fontsExtracted > 0 || fontsMissing.length > 0 ? (
+              <div className="border border-white/10 bg-white/[0.03] px-3 py-3 text-[11px] text-white/55">
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/45">
+                  Tipografías
+                </p>
+                {fontsExtracted > 0 ? (
+                  <p className="mt-1 text-white/50">
+                    {fontsExtracted} archivo(s) embebido(s) del PDF se instalarán al conectar Designer.
+                  </p>
+                ) : null}
+                {fontsMissing.length > 0 ? (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-white/45">
+                      Sin archivo embebido recuperable (Type3, estándar o licencia). Sube el{" "}
+                      <span className="text-white/70">.ttf / .otf</span> o búscalo tú:
+                    </p>
+                    <ul className="space-y-2">
+                      {fontsMissing.slice(0, 8).map((family) => {
+                        const links = fontSearchLinks(family);
+                        return (
+                          <li
+                            key={family}
+                            className="flex flex-wrap items-center gap-x-3 gap-y-1 border border-white/8 bg-black/20 px-2 py-1.5"
+                          >
+                            <span className="font-semibold text-white/80">{family}</span>
+                            <a
+                              href={links.google}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-sky-300/90 hover:text-sky-200"
+                            >
+                              Google Fonts <ExternalLink size={10} />
+                            </a>
+                            <a
+                              href={links.dafont}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] text-sky-300/90 hover:text-sky-200"
+                            >
+                              dafont <ExternalLink size={10} />
+                            </a>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <input
+                      ref={fontInputRef}
+                      type="file"
+                      accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void onImportFontFile(file);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => fontInputRef.current?.click()}
+                      className="mt-1 flex w-full items-center justify-center gap-2 border border-white/15 bg-white/[0.04] px-3 py-2 text-[12px] font-semibold text-white/80 transition hover:border-white/30 hover:bg-white/[0.07] disabled:opacity-50"
+                    >
+                      <Upload size={14} />
+                      Subir tipografía (.ttf / .otf)
+                    </button>
+                    <p className="text-[10px] text-white/35">
+                      No descargamos tipografías automáticamente (licencias). Solo enlaces de
+                      búsqueda y tu archivo local.
+                    </p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -433,6 +535,7 @@ export const PdfScanNode = memo(function PdfScanNode({ id, data, selected }: Nod
           mode: undefined,
           scan: undefined,
           images: undefined,
+          fonts: undefined,
           textPreview: undefined,
           fidelity: undefined,
           ocr: undefined,
@@ -480,6 +583,7 @@ export const PdfScanNode = memo(function PdfScanNode({ id, data, selected }: Nod
           source: result.source,
           scan: result.scan,
           images: result.images,
+          fonts: result.fonts ?? result.output.fonts ?? [],
           textPreview: result.textPreview,
           fidelity: result.fidelity ?? (result.output && "fidelity" in result.output ? result.output.fidelity : undefined),
           output: result.output,
@@ -499,6 +603,32 @@ export const PdfScanNode = memo(function PdfScanNode({ id, data, selected }: Nod
     },
     [id, nodeData.source, patchData],
   );
+
+  const handleImportFontFile = useCallback(async (file: File) => {
+    setLocalError(null);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const raw = String(reader.result || "");
+          if (!raw.startsWith("data:")) {
+            // FileReader sometimes omits mime; rebuild with sniffed type.
+            reject(new Error("Archivo de tipografía inválido."));
+            return;
+          }
+          resolve(raw.startsWith("data:application/octet-stream")
+            ? raw.replace("data:application/octet-stream", `data:${designerFontFileMime(file)}`)
+            : raw);
+        };
+        reader.onerror = () => reject(new Error("No se pudo leer el archivo de tipografía."));
+        reader.readAsDataURL(file);
+      });
+      const parsed = parseDesignerImportedFontFileName(file.name, 400);
+      await mergeAndInstallDesignerCustomFonts([{ ...parsed, dataUrl }]);
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : "No se pudo instalar la tipografía.");
+    }
+  }, []);
 
   const handleOcr = useCallback(async () => {
     const source = nodeData.source;
@@ -624,6 +754,7 @@ export const PdfScanNode = memo(function PdfScanNode({ id, data, selected }: Nod
           onPickFile={(file) => void handleFile(file)}
           onAnalyze={(mode) => void handleAnalyze(mode)}
           onOcr={() => void handleOcr()}
+          onImportFontFile={(file) => void handleImportFontFile(file)}
         />
       ) : null}
     </div>

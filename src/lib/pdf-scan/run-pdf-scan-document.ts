@@ -12,6 +12,8 @@ import {
   comparePageFidelity,
 } from "./pdf-document-fidelity";
 import { attachSoftMaskUrls, prepareSoftMaskLuminanceMasks } from "./pdf-scan-softmask";
+import { extractAndUploadPdfScanFonts } from "./pdf-scan-font-extract";
+import { remainingMissingPdfFonts } from "./pdf-scan-font-style";
 import { collectMissingPdfFonts } from "./pdf-scan-font-map";
 import { sha256Hex } from "./pdf-scan-images";
 import { extractPdfTextSpans } from "./pdf-scan-text-spans";
@@ -24,6 +26,7 @@ import {
   type PdfDocumentImageObject,
   type PdfDocumentPathObject,
   type PdfScanFidelity,
+  type PdfScanFontAsset,
   type PdfScanImageAsset,
   type PdfScanPageQa,
   type PdfScanSourceMeta,
@@ -45,6 +48,7 @@ export type RunPdfScanDocumentResult = {
   source: PdfScanSourceMeta;
   scan: PdfScanSummary;
   images: PdfScanImageAsset[];
+  fonts: PdfScanFontAsset[];
   textPreview: Array<{ id: string; page: number; text: string }>;
   fidelity: PdfScanFidelity;
   output: PdfDocumentLayoutOutput;
@@ -392,10 +396,32 @@ export async function runPdfScanDocument(input: RunPdfScanDocumentInput): Promis
     paths.length +
     clips.reduce((n, c) => n + 1 + c.content.length, 0) +
     groups.reduce((n, g) => n + g.paths.length + g.clips.reduce((m, c) => m + 1 + c.content.length, 0), 0);
-  const fontsMissing = collectMissingPdfFonts(textSpans.map((s) => s.fontName));
+  const missingCandidates = collectMissingPdfFonts(textSpans.map((s) => s.fontName));
+  const fonts = await extractAndUploadPdfScanFonts({
+    buffer,
+    userEmail: input.userEmail,
+    contentSha256,
+    missingFamilies: missingCandidates,
+    maxPages,
+  });
+  const fontsMissing = remainingMissingPdfFonts(missingCandidates, fonts);
   const imageSoftMasks = placedImages.filter((img) => img.softMask).length;
   const qaScore =
     pageQa.length > 0 ? pageQa.reduce((s, p) => s + p.ssim, 0) / pageQa.length : undefined;
+  const fontNotes: string[] = [];
+  if (fonts.length) {
+    fontNotes.push(
+      `${fonts.length} tipografía(s) embebida(s) recuperada(s) del PDF (se instalan al importar en Designer).`,
+    );
+  }
+  if (fontsMissing.length) {
+    fontNotes.push(
+      `Sin archivo embebido recuperable: ${fontsMissing.slice(0, 6).join(", ")}.`,
+    );
+  }
+  if (!fonts.length && !fontsMissing.length) {
+    fontNotes.push("Tipografías mapeadas a sistema/Google Fonts.");
+  }
   const fidelity: PdfScanFidelity = {
     mode: "document",
     textFieldCount: textSpans.length,
@@ -407,6 +433,7 @@ export async function runPdfScanDocument(input: RunPdfScanDocumentInput): Promis
     fallbackRegionCount,
     pageQa,
     fontsMissing,
+    fontsExtracted: fonts.length,
     notes: [
       "Documento editable: paths, clips, grupos (transparency/form/softmask), tipografía, imágenes CTM (también anidadas en Form), blend/opacidad.",
       qaScore != null
@@ -415,9 +442,7 @@ export async function runPdfScanDocument(input: RunPdfScanDocumentInput): Promis
       softMaskHits + imageSoftMasks > 0
         ? `Soft masks (${softMaskHits + imageSoftMasks}): máscara de luminancia (layerMask) cuando es posible; fallback raster solo si falla.`
         : "Sin soft masks detectados.",
-      fontsMissing.length
-        ? `Fuentes sin match exacto en catálogo: ${fontsMissing.slice(0, 6).join(", ")}.`
-        : "Tipografías mapeadas a sistema/Google Fonts.",
+      ...fontNotes,
     ],
   };
 
@@ -428,6 +453,7 @@ export async function runPdfScanDocument(input: RunPdfScanDocumentInput): Promis
     dpi,
     pageCount: layoutPages.length,
     pages: layoutPages,
+    fonts,
     fidelity,
   };
 
@@ -480,6 +506,7 @@ export async function runPdfScanDocument(input: RunPdfScanDocumentInput): Promis
       mode: "document",
     },
     images,
+    fonts,
     textPreview: textSpans.slice(0, 40).map((s) => ({ id: s.id, page: s.page, text: s.text.slice(0, 120) })),
     fidelity,
     output,

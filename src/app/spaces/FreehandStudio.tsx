@@ -104,7 +104,6 @@ const PROP_PANEL_SCRUB_CLASS =
   "cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 outline-none focus:border-violet-500/50";
 const PROP_PANEL_SCRUB_HINT = "Arrastra horizontalmente · Mayús = ×10";
 const DESIGNER_GOOGLE_FONTS_STORAGE_KEY = "foldder.designer.google-fonts-installed.v1";
-const DESIGNER_CUSTOM_FONTS_CHANGED_EVENT = "foldder-custom-fonts-changed";
 
 function designerGoogleFontLinkId(family: string): string {
   const safe = family.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -504,6 +503,7 @@ import {
   visualCapsuleHasUsableDesignerDna,
 } from "./freehand/brain-visual-look";
 import {
+  DESIGNER_CUSTOM_FONTS_CHANGED_EVENT,
   DESIGNER_CUSTOM_FONTS_STORAGE_KEY,
   DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX,
   type DesignerCustomFontStyle,

@@ -4,6 +4,8 @@ import { registerUserFontBuffer } from "./text-outline";
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
 export const DESIGNER_CUSTOM_FONTS_STORAGE_KEY = "foldder.shared.custom-fonts.v1";
+/** Disparado tras merge/persist de custom fonts (misma pestaña; FreehandStudio rehidrata). */
+export const DESIGNER_CUSTOM_FONTS_CHANGED_EVENT = "foldder-custom-fonts-changed";
 
 function normalizeDesignerCustomFontFamilyName(fileName: string): string {
   const lastSegment = fileName.split(/[\\/]/).pop() || fileName;
@@ -42,7 +44,10 @@ export type DesignerCustomFontStyle = {
   family: string;
   style: string;
   weight: number;
+  /** Data URL embebida (import manual). */
   dataUrl?: string;
+  /** URL remota (p. ej. tipografía PDFScan en S3). Preferida sobre dataUrl si ambas. */
+  url?: string;
 };
 type DesignerCustomFontEntry = DesignerCustomFontStyle | string;
 
@@ -92,14 +97,28 @@ export function parseDesignerImportedFontFileName(fileName: string, fallbackWeig
 function normalizeDesignerCustomFontEntry(entry: DesignerCustomFontEntry): DesignerCustomFontStyle | null {
   if (typeof entry === "string") return parseDesignerImportedFontFileName(entry, DEFAULT_DOCUMENT_FONT_WEIGHT);
   if (!entry || !isMeaningfulDesignerFontFamilyName(entry.family)) return null;
+  const url =
+    typeof entry.url === "string" &&
+    (entry.url.startsWith("http://") ||
+      entry.url.startsWith("https://") ||
+      entry.url.startsWith("/"))
+      ? entry.url
+      : undefined;
+  const dataUrl =
+    typeof entry.dataUrl === "string" && entry.dataUrl.startsWith("data:") ? entry.dataUrl : undefined;
   return {
     family: entry.family.trim(),
     style: entry.style?.trim() || DESIGNER_IMPORTED_FONT_STYLE_DEFS.find((d) => d.weight === entry.weight)?.label || `${entry.weight || 400}`,
     weight: clamp(Math.round(entry.weight || DEFAULT_DOCUMENT_FONT_WEIGHT), 100, 900),
-    ...(typeof entry.dataUrl === "string" && entry.dataUrl.startsWith("data:")
-      ? { dataUrl: entry.dataUrl }
-      : {}),
+    ...(url ? { url } : {}),
+    ...(dataUrl ? { dataUrl } : {}),
   };
+}
+
+function designerCustomFontSourceUrl(font: DesignerCustomFontStyle): string | null {
+  if (font.url) return font.url;
+  if (font.dataUrl?.startsWith("data:")) return font.dataUrl;
+  return null;
 }
 
 function sortDesignerCustomFonts(fonts: DesignerCustomFontStyle[]): DesignerCustomFontStyle[] {
@@ -159,13 +178,32 @@ async function designerFontDataUrlToArrayBuffer(dataUrl: string): Promise<ArrayB
 }
 
 export async function loadDesignerCustomFontFace(font: DesignerCustomFontStyle): Promise<void> {
-  if (typeof document === "undefined" || typeof FontFace === "undefined" || !font.dataUrl) return;
-  const face = new FontFace(font.family, `url("${font.dataUrl}")`, {
+  if (typeof document === "undefined" || typeof FontFace === "undefined") return;
+  const src = designerCustomFontSourceUrl(font);
+  if (!src) return;
+  const face = new FontFace(font.family, `url("${src}")`, {
     weight: String(font.weight),
-    style: "normal",
+    style: font.style.toLowerCase().includes("italic") ? "italic" : "normal",
   });
   await face.load();
   document.fonts.add(face);
-  const buf = await designerFontDataUrlToArrayBuffer(font.dataUrl);
+  const buf = await designerFontDataUrlToArrayBuffer(src);
   if (buf) registerUserFontBuffer(font.family, font.weight, buf);
+}
+
+/**
+ * Fusiona tipografías en el almacén compartido, carga FontFace y notifica a FreehandStudio.
+ * Preferir `url` (S3) frente a dataUrl para no saturar localStorage.
+ */
+export async function mergeAndInstallDesignerCustomFonts(
+  incoming: DesignerCustomFontStyle[],
+): Promise<DesignerCustomFontStyle[]> {
+  if (incoming.length === 0) return readStoredDesignerCustomFonts();
+  const next = mergeDesignerCustomFonts([...readStoredDesignerCustomFonts(), ...incoming]);
+  persistDesignerCustomFonts(next);
+  await Promise.all(incoming.map((font) => loadDesignerCustomFontFace(font).catch(() => undefined)));
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(DESIGNER_CUSTOM_FONTS_CHANGED_EVENT));
+  }
+  return next;
 }

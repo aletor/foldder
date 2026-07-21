@@ -50,6 +50,20 @@ export type PdfScanImageAsset = {
   y?: number;
 };
 
+/** Tipografía embebida extraída del PDF y subida a S3 (sin catálogo Google/sistema). */
+export type PdfScanFontAsset = {
+  id: string;
+  family: string;
+  style: string;
+  weight: number;
+  italic: boolean;
+  mime: string;
+  url: string;
+  s3Key: string;
+  contentHash: string;
+  sourceName: string;
+};
+
 export type PdfScanPageLayout = {
   pageNumber: number;
   widthPx: number;
@@ -182,7 +196,10 @@ export type PdfScanFidelity = {
   qaScore?: number;
   fallbackRegionCount?: number;
   pageQa?: PdfScanPageQa[];
+  /** Familias sin match en catálogo y sin binario embebido recuperable. */
   fontsMissing: string[];
+  /** Tipografías embebidas recuperadas del PDF (instalables en Designer). */
+  fontsExtracted?: number;
   notes: string[];
 };
 
@@ -193,6 +210,7 @@ export type PdfScanLayoutOutput = {
   dpi: number;
   pageCount: number;
   pages: PdfScanPageLayout[];
+  fonts?: PdfScanFontAsset[];
   fidelity?: PdfScanFidelity;
 };
 
@@ -203,6 +221,7 @@ export type PdfDocumentLayoutOutput = {
   dpi: number;
   pageCount: number;
   pages: PdfDocumentPageLayout[];
+  fonts?: PdfScanFontAsset[];
   fidelity: PdfScanFidelity;
 };
 
@@ -241,6 +260,7 @@ export type PdfScanNodeData = {
   source?: PdfScanSourceMeta;
   scan?: PdfScanSummary;
   images?: PdfScanImageAsset[];
+  fonts?: PdfScanFontAsset[];
   textPreview?: Array<{ id: string; page: number; text: string }>;
   fidelity?: PdfScanFidelity;
   ocr?: PdfScanOcrMeta;

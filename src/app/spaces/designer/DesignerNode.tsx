@@ -49,6 +49,7 @@ import {
   buildDesignerPagesFromPdfScanOutput,
   isPdfScanAnyLayoutOutput,
 } from "../pdf-scan/pdf-scan-to-designer";
+import { installPdfScanFontsIntoDesigner } from "../pdf-scan/pdf-scan-install-fonts";
 import type { PdfScanAnyLayoutOutput } from "@/lib/pdf-scan/pdf-scan-types";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
@@ -551,6 +552,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   /**
    * PDFScan → Designer: importa todas las páginas (fondo raster + texto editable).
    * Idempotente por jobId; si el Designer está vacío, sustituye el placeholder.
+   * Tipografías embebidas del PDF → custom fonts Designer (FontFace + almacén).
    */
   useEffect(() => {
     const output = connectedPdfScanOutput;
@@ -573,6 +575,8 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       activePageIndex: nextActiveIdx,
       _pdfScanImportedJobId: output.jobId,
     };
+
+    void installPdfScanFontsIntoDesigner(output.fonts).catch(() => undefined);
 
     if (isStudioOpen) {
       liveDesignerPatchRef.current = { ...(liveDesignerPatchRef.current ?? {}), ...patch };

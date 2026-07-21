@@ -52,7 +52,7 @@ export async function extractEmbeddedFontBinaries(
   buffer: Buffer,
   maxPages = 30,
 ): Promise<Map<string, ExtractedFontBinary>> {
-  const loaded = await loadPdfJsDocumentFromBuffer(buffer);
+  const loaded = await loadPdfJsDocumentFromBuffer(buffer, { fontExtraProperties: true });
   const pdf = await loaded.pdf;
   const out = new Map<string, ExtractedFontBinary>();
 

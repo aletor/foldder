@@ -62,6 +62,11 @@ export type LoadPdfJsDocumentOptions = {
   isEvalSupported?: boolean;
   wasmUrl?: string;
   standardFontDataUrl?: string;
+  /**
+   * Conserva `font.data` tras bind (pdf.js hace clearData por defecto).
+   * Necesario para extraer tipografías embebidas (PDFScan / BrandKit).
+   */
+  fontExtraProperties?: boolean;
 };
 
 export function pdfJsGetDocumentInit(
@@ -73,6 +78,7 @@ export function pdfJsGetDocumentInit(
   isEvalSupported: boolean;
   wasmUrl: string;
   standardFontDataUrl: string;
+  fontExtraProperties?: boolean;
 } {
   return {
     data: new Uint8Array(buffer),
@@ -80,6 +86,7 @@ export function pdfJsGetDocumentInit(
     isEvalSupported: options?.isEvalSupported ?? false,
     wasmUrl: options?.wasmUrl ?? PDFJS_WASM_URL,
     standardFontDataUrl: options?.standardFontDataUrl ?? PDFJS_STANDARD_FONT_DATA_URL,
+    ...(options?.fontExtraProperties ? { fontExtraProperties: true } : {}),
   };
 }
 
