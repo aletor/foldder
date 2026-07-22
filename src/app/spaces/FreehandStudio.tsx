@@ -1093,6 +1093,15 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
     imageSrc: string;
     studioNodeKey: string;
   }) => void;
+  /**
+   * Designer: «Modificar con IA» — el host abre Image Creation (Nano) con la capa
+   * como fuente, sin cablear entradas al Designer (patrón Cine).
+   */
+  onDesignerModificarImagenIA?: (payload: {
+    imageObjectId: string;
+    imageSrc: string;
+    studioNodeKey: string;
+  }) => void;
   /** PhotoRoom: desconectar la ranura en el grafo y dejar la capa como bitmap editable local. */
   photoRoomOnRasterizeInputImage?: (payload: {
     imageObjectId: string;
@@ -8962,6 +8971,7 @@ export function FreehandStudioCanvas({
   studioCanvasPanel,
   studioGenerativeFillPanel,
   photoRoomOnModificarImagenIA,
+  onDesignerModificarImagenIA,
   photoRoomOnRasterizeInputImage,
   photoRoomOnOpenConnectedNanoStudio,
   studioCapabilities,
@@ -27431,6 +27441,35 @@ export function FreehandStudioCanvas({
                     className="w-full rounded-[5px] border border-violet-500/25 bg-violet-500/10 px-2.5 py-1.5 text-left text-[11px] text-violet-100 transition-colors hover:bg-violet-500/15"
                   >
                     Modificar imagen con IA
+                  </button>
+                </div>
+              )}
+            {!isMaskBrushMode &&
+              designerMode &&
+              onDesignerModificarImagenIA &&
+              selectedObjects.length === 1 &&
+              firstSelected?.type === "image" &&
+              firstSelected.visible &&
+              !firstSelected.locked &&
+              String((firstSelected as ImageObject).src || "").trim().length > 0 && (
+                <div className="border-b border-white/[0.08] px-[14px] py-3">
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Imagen e IA
+                  </div>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => {
+                      const im = firstSelected as ImageObject;
+                      onDesignerModificarImagenIA({
+                        imageObjectId: im.id,
+                        imageSrc: String(im.src || "").trim(),
+                        studioNodeKey: nodeId,
+                      });
+                    }}
+                    className="w-full rounded-[5px] border border-violet-500/25 bg-violet-500/10 px-2.5 py-1.5 text-left text-[11px] text-violet-100 transition-colors hover:bg-violet-500/15"
+                  >
+                    Modificar con IA
                   </button>
                 </div>
               )}

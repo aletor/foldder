@@ -54,6 +54,14 @@ import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image
 import { nodeFrameNeedsSync, parseAspectRatioValue, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import { takePendingNanoStudioOpenFromCine } from "../cine/cine-nano-open-pending";
 import type { CineImageStudioResult, CineImageStudioSession } from "../cine-types";
+import {
+  FOLDDER_OPEN_DESIGNER_STUDIO_EVENT,
+  takePendingNanoStudioOpenFromDesigner,
+} from "../designer/designer-nano-open-pending";
+import type {
+  DesignerImageStudioResult,
+  DesignerImageStudioSession,
+} from "../designer/designer-image-studio-types";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
@@ -523,7 +531,7 @@ interface NanoBananaStudioProps {
   /** Última composición Brain aplicada en Studio (para «Ver por qué» en el nodo). */
   onBrainImageGeneratorDiagnostics?: (d: BrainImageGeneratorPromptDiagnostics | null) => void;
   /** Entradas desde otros Studio: botón superior = volver al Studio origen. */
-  topBarCloseMode?: 'default' | 'returnCine';
+  topBarCloseMode?: 'default' | 'returnCine' | 'returnDesigner';
   onClose: () => void;
   onGenerated: (dataUrl: string, s3Key?: string) => void;
   onResolutionChange?: (resolution: '1k' | '2k' | '4k') => void;
@@ -1582,10 +1590,12 @@ const NanoBananaStudio = memo(({
               type="button"
               onClick={onClose}
               className={foldderStudioHeaderActionClassName()}
-              title="Volver a Cine"
+              title={topBarCloseMode === "returnDesigner" ? "Volver a Designer" : "Volver a Cine"}
             >
               <ChevronLeft size={14} strokeWidth={2.5} aria-hidden />
-              <span className="hidden sm:inline">Cine</span>
+              <span className="hidden sm:inline">
+                {topBarCloseMode === "returnDesigner" ? "Designer" : "Cine"}
+              </span>
             </button>
           ) : undefined
         }
@@ -2344,12 +2354,15 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
   const cineReturnSessionRef = useRef<CineImageStudioSession | null>(null);
+  const designerReturnSessionRef = useRef<DesignerImageStudioSession | null>(null);
   const latestStudioAssetRef = useRef<string | null>(null);
   const latestStudioS3KeyRef = useRef<string | null>(null);
   const [cineStudioPrompt, setCineStudioPrompt] = useState("");
   const [cineStudioSourceImage, setCineStudioSourceImage] = useState<string | null>(null);
   const [cineStudioHistory, setCineStudioHistory] = useState<string[]>([]);
-  const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnCine'>('default');
+  const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<
+    "default" | "returnCine" | "returnDesigner"
+  >("default");
 
   const updateNodeInternals = useUpdateNodeInternals();
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
@@ -2419,6 +2432,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
   const openNanoStudioNormal = useCallback(() => {
     cineReturnSessionRef.current = null;
+    designerReturnSessionRef.current = null;
     setCineStudioPrompt("");
     setCineStudioSourceImage(null);
     setCineStudioHistory([]);
@@ -2428,6 +2442,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
   const closeNanoStudio = useCallback(() => {
     const cineSession = cineReturnSessionRef.current;
+    const designerSession = designerReturnSessionRef.current;
     const cineResult: CineImageStudioResult | null = cineSession
       ? {
           assetId: latestStudioAssetRef.current || undefined,
@@ -2438,7 +2453,14 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           mode: cineSession.mode,
         }
       : null;
+    const designerResult: DesignerImageStudioResult | null = designerSession
+      ? {
+          imageUrl: latestStudioAssetRef.current || undefined,
+          s3Key: latestStudioS3KeyRef.current || undefined,
+        }
+      : null;
     cineReturnSessionRef.current = null;
+    designerReturnSessionRef.current = null;
     latestStudioS3KeyRef.current = null;
     setCineStudioPrompt("");
     setCineStudioSourceImage(null);
@@ -2483,11 +2505,27 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           }),
         );
       });
+      return;
+    }
+
+    if (designerSession) {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(
+          new CustomEvent(FOLDDER_OPEN_DESIGNER_STUDIO_EVENT, {
+            detail: {
+              designerNodeId: designerSession.designerNodeId,
+              session: designerSession,
+              result: designerResult ?? {},
+            },
+          }),
+        );
+      });
     }
   }, [getNodes, getEdges, setNodes, setEdges, id]);
 
   useEffect(() => {
     const openFromCineSession = (session: CineImageStudioSession) => {
+      designerReturnSessionRef.current = null;
       cineReturnSessionRef.current = session;
       latestStudioAssetRef.current = null;
       latestStudioS3KeyRef.current = null;
@@ -2509,10 +2547,37 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [id]);
 
   useEffect(() => {
+    const openFromDesignerSession = (session: DesignerImageStudioSession) => {
+      cineReturnSessionRef.current = null;
+      designerReturnSessionRef.current = session;
+      latestStudioAssetRef.current = null;
+      latestStudioS3KeyRef.current = null;
+      setCineStudioPrompt("");
+      setCineStudioSourceImage(session.sourceImageUrl || null);
+      setCineStudioHistory(session.sourceImageUrl ? [session.sourceImageUrl] : []);
+      setNanoStudioTopBarCloseMode("returnDesigner");
+      setShowStudio(true);
+    };
+    const onOpenFromDesigner = (ev: Event) => {
+      const e = ev as CustomEvent<{ nanoNodeId: string; session: DesignerImageStudioSession }>;
+      if (e.detail?.nanoNodeId !== id || !e.detail.session) return;
+      takePendingNanoStudioOpenFromDesigner(id);
+      openFromDesignerSession(e.detail.session);
+    };
+    window.addEventListener("foldder-open-nano-studio-from-designer", onOpenFromDesigner as EventListener);
+    return () =>
+      window.removeEventListener(
+        "foldder-open-nano-studio-from-designer",
+        onOpenFromDesigner as EventListener,
+      );
+  }, [id]);
+
+  useEffect(() => {
     const onOpenStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
       cineReturnSessionRef.current = null;
+      designerReturnSessionRef.current = null;
       setCineStudioPrompt("");
       setCineStudioSourceImage(null);
       setCineStudioHistory([]);
@@ -2537,8 +2602,22 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [closeNanoStudio, id]);
 
   useLayoutEffect(() => {
+    const pendingDesigner = takePendingNanoStudioOpenFromDesigner(id);
+    if (pendingDesigner) {
+      cineReturnSessionRef.current = null;
+      designerReturnSessionRef.current = pendingDesigner;
+      latestStudioAssetRef.current = null;
+      latestStudioS3KeyRef.current = null;
+      setCineStudioPrompt("");
+      setCineStudioSourceImage(pendingDesigner.sourceImageUrl || null);
+      setCineStudioHistory(pendingDesigner.sourceImageUrl ? [pendingDesigner.sourceImageUrl] : []);
+      setNanoStudioTopBarCloseMode("returnDesigner");
+      setShowStudio(true);
+      return;
+    }
     const pending = takePendingNanoStudioOpenFromCine(id);
     if (!pending) return;
+    designerReturnSessionRef.current = null;
     cineReturnSessionRef.current = pending;
     latestStudioAssetRef.current = null;
     latestStudioS3KeyRef.current = null;
@@ -3135,8 +3214,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         const studioPrompt = cineStudioPrompt || promptValue;
         const refImgs = refImages;
         const connected0 = cineStudioSourceImage || (refImgs[0] as string | null | undefined) || null;
-        const isCineStudioSession = Boolean(cineStudioPrompt || cineStudioSourceImage);
-        const studioLastGenerated = isCineStudioSession ? null : outputImage;
+        const isHostStudioSession = Boolean(
+          cineReturnSessionRef.current ||
+            designerReturnSessionRef.current ||
+            cineStudioPrompt ||
+            cineStudioSourceImage,
+        );
+        const studioLastGenerated = isHostStudioSession ? null : outputImage;
         return (
           <NanoBananaStudio
             nodeId={id}
@@ -3148,11 +3232,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             resolution={normalizeNanoBananaResolution(nodeData.resolution)}
             thinking={!!nodeData.thinking}
             prompt={studioPrompt}
-            externalPromptIgnored={!cineStudioPrompt}
+            externalPromptIgnored={
+              nanoStudioTopBarCloseMode === "returnDesigner" || !cineStudioPrompt
+            }
             onBrainImageGeneratorDiagnostics={setBrainImageDiagSync}
             topBarCloseMode={nanoStudioTopBarCloseMode}
-            generationHistory={isCineStudioSession ? cineStudioHistory : persistedGenerationHistory}
-            onGenerationHistoryChange={isCineStudioSession ? setCineStudioHistory : onGenerationHistoryChange}
+            generationHistory={isHostStudioSession ? cineStudioHistory : persistedGenerationHistory}
+            onGenerationHistoryChange={isHostStudioSession ? setCineStudioHistory : onGenerationHistoryChange}
             onClose={closeNanoStudio}
             onGenerated={(url, s3Key) => {
               latestStudioAssetRef.current = url;

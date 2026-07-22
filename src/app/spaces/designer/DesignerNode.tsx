@@ -51,6 +51,19 @@ import {
 } from "../pdf-scan/pdf-scan-to-designer";
 import { installPdfScanFontsIntoDesigner } from "../pdf-scan/pdf-scan-install-fonts";
 import type { PdfScanAnyLayoutOutput } from "@/lib/pdf-scan/pdf-scan-types";
+import { applyDesignerImageStudioResult } from "./designer-image-studio-apply";
+import type {
+  DesignerImageStudioResult,
+  DesignerImageStudioSession,
+} from "./designer-image-studio-types";
+import {
+  dispatchOpenNanoStudioFromDesigner,
+  FOLDDER_OPEN_DESIGNER_STUDIO_EVENT,
+  registerPendingNanoStudioOpenFromDesigner,
+} from "./designer-nano-open-pending";
+import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
+import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
+import { FOLDDER_REGISTER_CANVAS_INTRO_EVENT } from "../hooks/use-foldder-canvas-intro";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
@@ -159,7 +172,7 @@ function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
 export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useFoldderRenderMetric("DesignerNode", id);
   const nodeData = data as DesignerNodeData;
-  const { setNodes } = useReactFlow();
+  const { setNodes, getNodes, fitView } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const liveDesignerPatchRef = useRef<Partial<DesignerNodeData> | null>(null);
   const { isStudioOpen, openStudio, closeStudio } = useStudioNodeController({
@@ -455,6 +468,123 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       ),
     );
   }, [id, setNodes]);
+
+  const getOrCreateDesignerImageStudioNode = useCallback((): string | null => {
+    const nodesNow = getNodes() as Array<{
+      id: string;
+      type?: string;
+      position: { x: number; y: number };
+      data?: Record<string, unknown>;
+    }>;
+    const existing = nodesNow.find(
+      (node) =>
+        node.type === "nanoBanana" &&
+        node.data?.companionFor === "designer-node" &&
+        node.data?.designerNodeId === id,
+    );
+    if (existing) return existing.id;
+    const designerNode = nodesNow.find((node) => node.id === id);
+    if (!designerNode) return null;
+    const nanoId = `nanoBanana_designer_${id}_${Date.now()}`;
+    const defaults = defaultDataForCanvasDropNode("nanoBanana") as Record<string, unknown>;
+    const nanoNode = {
+      id: nanoId,
+      type: "nanoBanana",
+      position: {
+        x: designerNode.position.x + 360,
+        y: designerNode.position.y + 18,
+      },
+      data: withFoldderCanvasIntro("nanoBanana", {
+        ...defaults,
+        label: "Designer · Modificar IA",
+        companionFor: "designer-node",
+        designerNodeId: id,
+      }),
+    };
+    setNodes((nds) => [...nds, nanoNode as (typeof nds)[number]]);
+    window.dispatchEvent(
+      new CustomEvent(FOLDDER_REGISTER_CANVAS_INTRO_EVENT, {
+        detail: { nodeIds: [nanoId] },
+      }),
+    );
+    return nanoId;
+  }, [getNodes, id, setNodes]);
+
+  const handleModificarImagenIA = useCallback(
+    (payload: { imageObjectId: string; imageSrc: string; pageId: string; studioNodeKey: string }) => {
+      const trimmed = payload.imageSrc.trim();
+      if (!trimmed || !payload.pageId || !payload.imageObjectId) return;
+
+      commitLiveDesignerPatch();
+
+      const nanoNodeId = getOrCreateDesignerImageStudioNode();
+      if (!nanoNodeId) return;
+
+      const session: DesignerImageStudioSession = {
+        designerNodeId: id,
+        nanoNodeId,
+        pageId: payload.pageId,
+        imageObjectId: payload.imageObjectId,
+        sourceImageUrl: trimmed,
+        mode: "edit",
+      };
+      registerPendingNanoStudioOpenFromDesigner(nanoNodeId, session);
+      closeStudio();
+      requestAnimationFrame(() => {
+        void fitView({
+          nodes: [{ id }, { id: nanoNodeId }],
+          padding: 0.45,
+          duration: 560,
+        });
+        dispatchOpenNanoStudioFromDesigner(nanoNodeId, session);
+      });
+    },
+    [closeStudio, commitLiveDesignerPatch, fitView, getOrCreateDesignerImageStudioNode, id],
+  );
+
+  useEffect(() => {
+    const onOpenDesigner = (ev: Event) => {
+      const detail = (
+        ev as CustomEvent<{
+          designerNodeId?: string;
+          session?: DesignerImageStudioSession;
+          result?: DesignerImageStudioResult;
+        }>
+      ).detail;
+      if (detail?.designerNodeId !== id) return;
+
+      if (detail.session && detail.result?.imageUrl) {
+        setNodes((nds) =>
+          nds.map((node) => {
+            if (node.id !== id) return node;
+            const currentPages = (
+              Array.isArray((node.data as DesignerNodeData).pages)
+                ? (node.data as DesignerNodeData).pages!
+                : pages
+            ) as DesignerPageState[];
+            const nextPages = applyDesignerImageStudioResult(
+              currentPages,
+              detail.session!,
+              detail.result!,
+            );
+            if (nextPages === currentPages) return node;
+            const pageIdx = nextPages.findIndex((p) => p.id === detail.session!.pageId);
+            return {
+              ...node,
+              data: touchStudioNodeData(node.data as Record<string, unknown>, {
+                pages: nextPages,
+                ...(pageIdx >= 0 ? { activePageIndex: pageIdx } : {}),
+              } as Record<string, unknown>),
+            };
+          }),
+        );
+      }
+      openStudio();
+    };
+    window.addEventListener(FOLDDER_OPEN_DESIGNER_STUDIO_EVENT, onOpenDesigner as EventListener);
+    return () =>
+      window.removeEventListener(FOLDDER_OPEN_DESIGNER_STUDIO_EVENT, onOpenDesigner as EventListener);
+  }, [id, openStudio, pages, setNodes]);
 
   useEffect(() => () => clearLiveStudioNodeData(id), [id]);
 
@@ -811,6 +941,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             onUpdatePageThumbnails={onUpdatePageThumbnails}
             autoImageOptimization={nodeData.autoImageOptimization !== false}
             onAutoImageOptimizationChange={onAutoImageOptimizationChange}
+            onModificarImagenIA={handleModificarImagenIA}
           />
         </StudioNodePortal>
       )}
@@ -837,6 +968,12 @@ function DesignerStudioLazy(props: {
   onUpdatePageThumbnails?: (thumbnails: Record<string, string>) => void;
   autoImageOptimization?: boolean;
   onAutoImageOptimizationChange?: (enabled: boolean) => void;
+  onModificarImagenIA?: (payload: {
+    imageObjectId: string;
+    imageSrc: string;
+    pageId: string;
+    studioNodeKey: string;
+  }) => void;
 }) {
   const [Studio, setStudio] = useState<React.ComponentType<any> | null>(null);
   useEffect(() => {

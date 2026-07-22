@@ -142,6 +142,13 @@ interface DesignerStudioProps {
   designerConnectedDatasetLoading?: boolean;
   headlessPdfExport?: HeadlessPdfExportRequest | null;
   headlessImageExport?: HeadlessImageExportRequest | null;
+  /** Abrir Image Creation con la capa imagen seleccionada (sin cable al Designer). */
+  onModificarImagenIA?: (payload: {
+    imageObjectId: string;
+    imageSrc: string;
+    pageId: string;
+    studioNodeKey: string;
+  }) => void;
 }
 
 export function safeDesignerExportFilenameBase(raw: string | undefined): string {
@@ -177,6 +184,7 @@ export default function DesignerStudio({
   designerConnectedDatasetLoading = false,
   headlessPdfExport = null,
   headlessImageExport = null,
+  onModificarImagenIA,
 }: DesignerStudioProps) {
   /**
    * El editor inline puede inyectar estilos métricos (font-size/family/letter-spacing) en spans.
@@ -2411,6 +2419,15 @@ export default function DesignerStudio({
           />
         }
         studioGenerativeFillPanel={<DesignerGenerativeFillPanel {...generativeFillPanelProps} />}
+        onDesignerModificarImagenIA={
+          onModificarImagenIA
+            ? (payload) => {
+                const pageId = activePage?.id;
+                if (!pageId) return;
+                onModificarImagenIA({ ...payload, pageId });
+              }
+            : undefined
+        }
         {...designerFreehandProps}
       />
 
