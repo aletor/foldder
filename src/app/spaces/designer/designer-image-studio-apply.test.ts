@@ -28,6 +28,7 @@ describe("applyDesignerImageStudioResult", () => {
         nanoNodeId: "n1",
         pageId: "p1",
         imageObjectId: "img1",
+        targetKind: "image",
         sourceImageUrl: "old.png",
         mode: "edit",
       },
@@ -36,6 +37,49 @@ describe("applyDesignerImageStudioResult", () => {
 
     expect((next[0]!.objects[0] as { src: string }).src).toBe("https://cdn.example/new.png");
     expect((next[1]!.objects[0] as { src: string }).src).toBe("other.png");
+  });
+
+  it("rellena imageFrameContent en un marco", () => {
+    const pages = [
+      {
+        id: "p1",
+        format: "custom",
+        objects: [
+          {
+            id: "frame1",
+            type: "rect",
+            isImageFrame: true,
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 100,
+            imageFrameContent: null,
+          },
+        ],
+      },
+    ] as unknown as DesignerPageState[];
+
+    const next = applyDesignerImageStudioResult(
+      pages,
+      {
+        designerNodeId: "d1",
+        nanoNodeId: "n1",
+        pageId: "p1",
+        imageObjectId: "frame1",
+        targetKind: "imageFrame",
+        sourceImageUrl: "data:image/png;base64,black",
+        seedIsPlaceholder: true,
+        mode: "edit",
+      },
+      { imageUrl: "https://cdn.example/gen.png", s3Key: "opt/gen.png" },
+    );
+
+    const frame = next[0]!.objects[0] as {
+      imageFrameContent?: { src: string; s3Key?: string; generatedByAi?: boolean };
+    };
+    expect(frame.imageFrameContent?.src).toBe("https://cdn.example/gen.png");
+    expect(frame.imageFrameContent?.s3Key).toBe("opt/gen.png");
+    expect(frame.imageFrameContent?.generatedByAi).toBe(true);
   });
 
   it("no cambia nada si no hay imageUrl", () => {
@@ -53,6 +97,7 @@ describe("applyDesignerImageStudioResult", () => {
         nanoNodeId: "n1",
         pageId: "p1",
         imageObjectId: "img1",
+        targetKind: "image",
         sourceImageUrl: "old.png",
         mode: "edit",
       },

@@ -51,7 +51,8 @@ import {
 } from "../pdf-scan/pdf-scan-to-designer";
 import { installPdfScanFontsIntoDesigner } from "../pdf-scan/pdf-scan-install-fonts";
 import type { PdfScanAnyLayoutOutput } from "@/lib/pdf-scan/pdf-scan-types";
-import { applyDesignerImageStudioResult } from "./designer-image-studio-apply";
+import { applyDesignerImageStudioResultWithProbe } from "./designer-image-studio-apply";
+import { designerBlackSeedDataUrl } from "./designer-black-seed";
 import type {
   DesignerImageStudioResult,
   DesignerImageStudioSession,
@@ -63,7 +64,6 @@ import {
 } from "./designer-nano-open-pending";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
-import { FOLDDER_REGISTER_CANVAS_INTRO_EVENT } from "../hooks/use-foldder-canvas-intro";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
@@ -169,10 +169,39 @@ function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
   return <NodeResizer {...props} />;
 }
 
+const DESIGNER_COMPANION_NANO_STYLE: React.CSSProperties = {
+  opacity: 0,
+  width: 1,
+  height: 1,
+  maxWidth: 1,
+  maxHeight: 1,
+  overflow: "hidden",
+  pointerEvents: "none",
+};
+
+function findDesignerObjectById(
+  objects: FreehandObject[] | undefined,
+  objectId: string,
+): FreehandObject | undefined {
+  if (!objects?.length) return undefined;
+  for (const o of objects) {
+    if (o.id === objectId) return o;
+    const nested =
+      ("children" in o && Array.isArray((o as { children?: FreehandObject[] }).children)
+        ? findDesignerObjectById((o as { children: FreehandObject[] }).children, objectId)
+        : undefined) ||
+      ("content" in o && Array.isArray((o as { content?: FreehandObject[] }).content)
+        ? findDesignerObjectById((o as { content: FreehandObject[] }).content, objectId)
+        : undefined);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
 export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useFoldderRenderMetric("DesignerNode", id);
   const nodeData = data as DesignerNodeData;
-  const { setNodes, getNodes, fitView } = useReactFlow();
+  const { setNodes, getNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const liveDesignerPatchRef = useRef<Partial<DesignerNodeData> | null>(null);
   const { isStudioOpen, openStudio, closeStudio } = useStudioNodeController({
@@ -469,12 +498,45 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     );
   }, [id, setNodes]);
 
+  useEffect(() => {
+    // Ocultar companions visibles creados en versiones anteriores.
+    setNodes((nds) => {
+      let changed = false;
+      const next = nds.map((n) => {
+        if (
+          n.type !== "nanoBanana" ||
+          (n.data as { companionFor?: string; designerNodeId?: string } | undefined)?.companionFor !==
+            "designer-node" ||
+          (n.data as { designerNodeId?: string }).designerNodeId !== id
+        ) {
+          return n;
+        }
+        const style = n.style as React.CSSProperties | undefined;
+        if (style?.opacity === 0 && style?.pointerEvents === "none") return n;
+        changed = true;
+        return {
+          ...n,
+          selectable: false,
+          draggable: false,
+          connectable: false,
+          style: { ...style, ...DESIGNER_COMPANION_NANO_STYLE },
+          data: {
+            ...(n.data as Record<string, unknown>),
+            companionHidden: true,
+          },
+        };
+      });
+      return changed ? next : nds;
+    });
+  }, [id, setNodes]);
+
   const getOrCreateDesignerImageStudioNode = useCallback((): string | null => {
     const nodesNow = getNodes() as Array<{
       id: string;
       type?: string;
       position: { x: number; y: number };
       data?: Record<string, unknown>;
+      style?: React.CSSProperties;
     }>;
     const existing = nodesNow.find(
       (node) =>
@@ -482,7 +544,28 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         node.data?.companionFor === "designer-node" &&
         node.data?.designerNodeId === id,
     );
-    if (existing) return existing.id;
+    if (existing) {
+      // Asegurar que el compañero no se vea en el lienzo (sigue montado para el Studio).
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === existing.id
+            ? {
+                ...n,
+                selectable: false,
+                draggable: false,
+                connectable: false,
+                style: { ...(n.style as object | undefined), ...DESIGNER_COMPANION_NANO_STYLE },
+                data: {
+                  ...(n.data as Record<string, unknown>),
+                  companionHidden: true,
+                  label: "Designer · Modificar IA",
+                },
+              }
+            : n,
+        ),
+      );
+      return existing.id;
+    }
     const designerNode = nodesNow.find((node) => node.id === id);
     if (!designerNode) return null;
     const nanoId = `nanoBanana_designer_${id}_${Date.now()}`;
@@ -491,29 +574,48 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       id: nanoId,
       type: "nanoBanana",
       position: {
-        x: designerNode.position.x + 360,
-        y: designerNode.position.y + 18,
+        // Debajo del Designer: invisible; el Studio de Nano es portal a pantalla completa.
+        x: designerNode.position.x,
+        y: designerNode.position.y,
       },
+      selectable: false,
+      draggable: false,
+      connectable: false,
+      style: DESIGNER_COMPANION_NANO_STYLE,
       data: withFoldderCanvasIntro("nanoBanana", {
         ...defaults,
         label: "Designer · Modificar IA",
         companionFor: "designer-node",
         designerNodeId: id,
+        companionHidden: true,
       }),
     };
     setNodes((nds) => [...nds, nanoNode as (typeof nds)[number]]);
-    window.dispatchEvent(
-      new CustomEvent(FOLDDER_REGISTER_CANVAS_INTRO_EVENT, {
-        detail: { nodeIds: [nanoId] },
-      }),
-    );
     return nanoId;
   }, [getNodes, id, setNodes]);
 
   const handleModificarImagenIA = useCallback(
-    (payload: { imageObjectId: string; imageSrc: string; pageId: string; studioNodeKey: string }) => {
-      const trimmed = payload.imageSrc.trim();
-      if (!trimmed || !payload.pageId || !payload.imageObjectId) return;
+    (payload: {
+      imageObjectId: string;
+      imageSrc: string;
+      pageId: string;
+      studioNodeKey: string;
+      targetKind: "image" | "imageFrame";
+      seedIsPlaceholder?: boolean;
+    }) => {
+      if (!payload.pageId || !payload.imageObjectId) return;
+
+      let sourceImageUrl = payload.imageSrc.trim();
+      let seedIsPlaceholder = Boolean(payload.seedIsPlaceholder);
+      if (!sourceImageUrl || seedIsPlaceholder) {
+        // Marco vacío (o sin src): seed negra para Image Creation.
+        const page = pages.find((p) => p.id === payload.pageId);
+        const frame = findDesignerObjectById(page?.objects, payload.imageObjectId);
+        const fw = frame && "width" in frame ? Number(frame.width) || 512 : 512;
+        const fh = frame && "height" in frame ? Number(frame.height) || 512 : 512;
+        sourceImageUrl = designerBlackSeedDataUrl(fw, fh);
+        seedIsPlaceholder = true;
+      }
 
       commitLiveDesignerPatch();
 
@@ -525,21 +627,19 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         nanoNodeId,
         pageId: payload.pageId,
         imageObjectId: payload.imageObjectId,
-        sourceImageUrl: trimmed,
+        targetKind: payload.targetKind,
+        sourceImageUrl,
+        seedIsPlaceholder,
         mode: "edit",
       };
       registerPendingNanoStudioOpenFromDesigner(nanoNodeId, session);
       closeStudio();
+      // Sin fitView al companion (está oculto); el Studio de Nano es portal fullscreen.
       requestAnimationFrame(() => {
-        void fitView({
-          nodes: [{ id }, { id: nanoNodeId }],
-          padding: 0.45,
-          duration: 560,
-        });
         dispatchOpenNanoStudioFromDesigner(nanoNodeId, session);
       });
     },
-    [closeStudio, commitLiveDesignerPatch, fitView, getOrCreateDesignerImageStudioNode, id],
+    [closeStudio, commitLiveDesignerPatch, getOrCreateDesignerImageStudioNode, id, pages],
   );
 
   useEffect(() => {
@@ -553,38 +653,41 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       ).detail;
       if (detail?.designerNodeId !== id) return;
 
-      if (detail.session && detail.result?.imageUrl) {
-        setNodes((nds) =>
-          nds.map((node) => {
-            if (node.id !== id) return node;
-            const currentPages = (
-              Array.isArray((node.data as DesignerNodeData).pages)
-                ? (node.data as DesignerNodeData).pages!
-                : pages
-            ) as DesignerPageState[];
-            const nextPages = applyDesignerImageStudioResult(
-              currentPages,
-              detail.session!,
-              detail.result!,
-            );
-            if (nextPages === currentPages) return node;
+      const applyAndOpen = async () => {
+        if (detail.session && detail.result?.imageUrl) {
+          const currentPages = (
+            Array.isArray(nodeData.pages) ? nodeData.pages : pages
+          ) as DesignerPageState[];
+          const nextPages = await applyDesignerImageStudioResultWithProbe(
+            currentPages,
+            detail.session,
+            detail.result,
+          );
+          if (nextPages !== currentPages) {
             const pageIdx = nextPages.findIndex((p) => p.id === detail.session!.pageId);
-            return {
-              ...node,
-              data: touchStudioNodeData(node.data as Record<string, unknown>, {
-                pages: nextPages,
-                ...(pageIdx >= 0 ? { activePageIndex: pageIdx } : {}),
-              } as Record<string, unknown>),
-            };
-          }),
-        );
-      }
-      openStudio();
+            setNodes((nds) =>
+              nds.map((node) =>
+                node.id === id
+                  ? {
+                      ...node,
+                      data: touchStudioNodeData(node.data as Record<string, unknown>, {
+                        pages: nextPages,
+                        ...(pageIdx >= 0 ? { activePageIndex: pageIdx } : {}),
+                      } as Record<string, unknown>),
+                    }
+                  : node,
+              ),
+            );
+          }
+        }
+        openStudio();
+      };
+      void applyAndOpen();
     };
     window.addEventListener(FOLDDER_OPEN_DESIGNER_STUDIO_EVENT, onOpenDesigner as EventListener);
     return () =>
       window.removeEventListener(FOLDDER_OPEN_DESIGNER_STUDIO_EVENT, onOpenDesigner as EventListener);
-  }, [id, openStudio, pages, setNodes]);
+  }, [id, nodeData.pages, openStudio, pages, setNodes]);
 
   useEffect(() => () => clearLiveStudioNodeData(id), [id]);
 
@@ -973,6 +1076,8 @@ function DesignerStudioLazy(props: {
     imageSrc: string;
     pageId: string;
     studioNodeKey: string;
+    targetKind: "image" | "imageFrame";
+    seedIsPlaceholder?: boolean;
   }) => void;
 }) {
   const [Studio, setStudio] = useState<React.ComponentType<any> | null>(null);

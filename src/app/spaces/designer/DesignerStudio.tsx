@@ -142,12 +142,14 @@ interface DesignerStudioProps {
   designerConnectedDatasetLoading?: boolean;
   headlessPdfExport?: HeadlessPdfExportRequest | null;
   headlessImageExport?: HeadlessImageExportRequest | null;
-  /** Abrir Image Creation con la capa imagen seleccionada (sin cable al Designer). */
+  /** Abrir Image Creation con la capa/marco imagen seleccionado (sin cable al Designer). */
   onModificarImagenIA?: (payload: {
     imageObjectId: string;
     imageSrc: string;
     pageId: string;
     studioNodeKey: string;
+    targetKind: "image" | "imageFrame";
+    seedIsPlaceholder?: boolean;
   }) => void;
 }
 
