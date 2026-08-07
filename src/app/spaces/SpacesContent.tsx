@@ -6327,6 +6327,7 @@ export function SpacesContent() {
                 if (!res.ok || !json.ok || !json.source) {
                   throw new Error(json.error || `Error ${res.status} al subir el PDF`);
                 }
+                const source = json.source;
                 setNodes((nds) =>
                   nds.map((n) =>
                     n.id === nodeId
@@ -6335,8 +6336,8 @@ export function SpacesContent() {
                           data: {
                             ...n.data,
                             status: "staged",
-                            source: json.source,
-                            label: json.source.fileName.replace(/\.pdf$/i, "") || "PDFScan",
+                            source,
+                            label: source.fileName.replace(/\.pdf$/i, "") || "PDFScan",
                             error: undefined,
                           },
                         }
