@@ -30,6 +30,7 @@ import {
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
+import { geminiProviderErrorResponse } from "@/lib/gemini-provider-error";
 import crypto from "crypto";
 import { mkdtemp, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -498,6 +499,8 @@ export async function POST(req: NextRequest) {
     if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
     const walletResponse = walletGateErrorResponse(error);
     if (walletResponse) return walletResponse;
+    const providerResponse = geminiProviderErrorResponse(error);
+    if (providerResponse) return providerResponse;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Gemini Video] Global Exception:", message);
     return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });

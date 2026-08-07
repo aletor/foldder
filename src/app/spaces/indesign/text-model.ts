@@ -128,12 +128,12 @@ export function flattenStoryContent(nodes: StoryNode[]): FlatRun[] {
     if (pi > 0) runs.push({ text: "\n" });
     const p = paragraphs[pi]!;
     if (p.listStyle === "disc") {
-      runs.push({ text: "\u2022  " });
+      runs.push({ text: "\u2003\u2003\u2022\u00a0\u00a0" });
     } else if (p.listStyle === "decimal") {
       let start = pi;
       while (start > 0 && paragraphs[start - 1]!.listStyle === "decimal") start--;
       const n = pi - start + 1;
-      runs.push({ text: `${n}.  ` });
+      runs.push({ text: `\u2003\u2003${n}.\u00a0\u00a0` });
     }
     for (const span of p.spans) {
       if (span.text.length > 0) {
@@ -496,8 +496,10 @@ function orderedItemIndex1Based(paragraphs: ParagraphNode[], pi: number): number
 /** Longitud en caracteres del prefijo de lista en el plano `flattenStoryContent` (viñeta o `n. `). */
 function listPrefixFlatLength(paragraphs: ParagraphNode[], pi: number): number {
   const p = paragraphs[pi]!;
-  if (p.listStyle === "disc") return 3;
-  if (p.listStyle === "decimal") return `${orderedItemIndex1Based(paragraphs, pi)}.  `.length;
+  if (p.listStyle === "disc") return "\u2003\u2003\u2022\u00a0\u00a0".length;
+  if (p.listStyle === "decimal") {
+    return `\u2003\u2003${orderedItemIndex1Based(paragraphs, pi)}.\u00a0\u00a0`.length;
+  }
   return 0;
 }
 

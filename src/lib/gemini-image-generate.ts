@@ -305,8 +305,11 @@ export async function finalizeGeminiImageBuffer(
 }
 
 function geminiApiErrorMessage(status: number, detail: string): string {
-  if (status === 429) {
-    return "Google API Quota Reached (429). No automatic retry was made.";
+  if (status === 429 || /RESOURCE_EXHAUSTED|monthly spending cap|project spend cap/i.test(detail)) {
+    if (/monthly spending cap|project spend cap|ai\.studio\/spend/i.test(detail)) {
+      return "El proyecto de Google AI ha superado el tope de gasto mensual. Súbelo o restablécelo en https://ai.studio/spend y vuelve a intentar.";
+    }
+    return "Cuota o límite de Google Gemini agotado (429). No se ha reintentado automáticamente.";
   }
   if (isGeminiDeadlineError(status, detail)) {
     return "Gemini could not complete the image generation in time (503). No automatic retry was made to avoid extra cost.";

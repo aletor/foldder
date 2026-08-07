@@ -67,10 +67,10 @@ describe("layoutRichTextInFrame", () => {
     expect(result.hasOverflow).toBe(false);
     expect(result.lines).toHaveLength(4);
     expect(result.lines.map((line) => line.text)).toEqual([
-      "\u2022  una pelota,",
-      "\u2022  una tarta,",
-      "\u2022  una cuerda,",
-      "\u2022  un trofeo",
+      "\u2003\u2003\u2022\u00a0\u00a0una pelota,",
+      "\u2003\u2003\u2022\u00a0\u00a0una tarta,",
+      "\u2003\u2003\u2022\u00a0\u00a0una cuerda,",
+      "\u2003\u2003\u2022\u00a0\u00a0un trofeo",
     ]);
   });
 });

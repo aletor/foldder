@@ -524,6 +524,7 @@ import {
   richSpansToInlineHtml,
   simpleTextRichPayloadFromHtml,
 } from "./freehand/designer-rich-text";
+import { autoFormatDesignerText } from "./freehand/designer-auto-format-text";
 import { CtxMenu, type ContextMenuItem } from "./freehand/studio-context-menu";
 import {
   TOOLBAR_ICON_STROKE,
@@ -13365,6 +13366,68 @@ export function FreehandStudioCanvas({
     },
     [designerMode, designerStoryMap, onDesignerStoryTextChange, pushHistory, singleSelected],
   );
+
+  const applyAutoFormatText = useCallback(() => {
+    if (!singleSelected || singleSelected.type !== "text") return;
+    const tx = singleSelected as TextObject;
+    const storyId = tx.isTextFrame ? tx.storyId : undefined;
+    // Preferir el texto del lienzo (incluye viñetas de listas vía rich spans).
+    // El story map serializa sin marcadores de lista y rompía el auto-formato.
+    const fromCanvas = textContentForLayoutMeasure(tx);
+    const fromStory =
+      designerMode && storyId && designerStoryMap?.get(storyId)
+        ? designerStoryMap.get(storyId)!
+        : "";
+    const sourceText = (fromCanvas.trim() ? fromCanvas : fromStory) || "";
+
+    if (!sourceText.trim()) {
+      setToast("No hay texto que formatear");
+      window.setTimeout(() => setToast(null), 2400);
+      return;
+    }
+
+    const result = autoFormatDesignerText(sourceText);
+    if (!result.changed) {
+      setToast("El texto ya está bien formateado");
+      window.setTimeout(() => setToast(null), 2200);
+      return;
+    }
+
+    if (designerMode && tx.isTextFrame && storyId && onDesignerStoryRichChange) {
+      onDesignerStoryRichChange(storyId, result.html);
+    } else if (designerMode && tx.isTextFrame && storyId && onDesignerStoryTextChange) {
+      onDesignerStoryTextChange(storyId, result.plainText);
+    } else {
+      const targetId = tx.id;
+      setObjects((prev) => {
+        const next = prev.map((o) =>
+          o.id === targetId && o.type === "text"
+            ? ({
+                ...o,
+                text: result.plainText,
+                _designerRichSpans: result.spans,
+              } as FreehandObject)
+            : o,
+        );
+        pushHistory(next, new Set([targetId]));
+        return next;
+      });
+      if (inlineFrameEditorObjectIdRef.current === targetId && inlineFrameEditorRef.current) {
+        inlineFrameEditorRef.current.innerHTML = richSpansToInlineHtml(result.spans, result.plainText);
+      }
+    }
+
+    setSelectedIds(new Set([tx.id]));
+    setToast("Texto auto-formateado");
+    window.setTimeout(() => setToast(null), 2200);
+  }, [
+    designerMode,
+    designerStoryMap,
+    onDesignerStoryRichChange,
+    onDesignerStoryTextChange,
+    pushHistory,
+    singleSelected,
+  ]);
 
   const applyBrainImageSuggestion = useCallback(
     async (src: string, imageSuggestionId?: string) => {
@@ -28974,6 +29037,13 @@ export function FreehandStudioCanvas({
                         </div>
                       </div>
 
+                      <button
+                        type="button"
+                        onClick={() => applyAutoFormatText()}
+                        className="inline-flex h-6 w-full items-center justify-center rounded-[5px] border border-[#2d2f34] bg-[#1e2024] text-[10px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
+                      >
+                        Auto-formato
+                      </button>
                       <button
                         type="button"
                         onClick={() => {

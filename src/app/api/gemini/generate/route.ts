@@ -10,6 +10,7 @@ import {
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
+import { geminiProviderErrorResponse } from "@/lib/gemini-provider-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -59,6 +60,8 @@ export async function POST(req: NextRequest) {
     if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
     const walletResponse = walletGateErrorResponse(error);
     if (walletResponse) return walletResponse;
+    const providerResponse = geminiProviderErrorResponse(error);
+    if (providerResponse) return providerResponse;
     if (error instanceof GeminiGenerateError) {
       return NextResponse.json(
         { error: error.message, details: error.details },
