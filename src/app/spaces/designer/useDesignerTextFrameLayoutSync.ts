@@ -162,7 +162,9 @@ export function useDesignerTextFrameLayoutSync({
           ox.fontSize !== typo.fontSize ||
           ox.fontFamily !== typo.fontFamily ||
           ox.lineHeight !== typo.lineHeight ||
-          ox.letterSpacing !== typo.letterSpacing
+          ox.letterSpacing !== typo.letterSpacing ||
+          (ox.fontWeight != null && String(ox.fontWeight) !== String(typo.fontWeight)) ||
+          (ox.textAlign != null && ox.textAlign !== typo.align)
         ) {
           const ta = ox.textAlign;
           const align: Typography["align"] =
@@ -211,12 +213,16 @@ export function useDesignerTextFrameLayoutSync({
           fontFamily?: string;
           lineHeight?: number;
           letterSpacing?: number;
+          fontWeight?: number | string;
+          textAlign?: string;
         };
         if (
           a.fontSize !== typo.fontSize ||
           a.fontFamily !== typo.fontFamily ||
           a.lineHeight !== typo.lineHeight ||
-          a.letterSpacing !== typo.letterSpacing
+          a.letterSpacing !== typo.letterSpacing ||
+          (a.fontWeight != null && String(a.fontWeight) !== String(typo.fontWeight)) ||
+          (a.textAlign != null && a.textAlign !== typo.align)
         ) {
           return o.id;
         }
@@ -231,6 +237,7 @@ export function useDesignerTextFrameLayoutSync({
         storyId?: string;
         fontFamily?: string;
         fontSize?: number;
+        fontWeight?: number | string;
         lineHeight?: number;
         letterSpacing?: number;
         textAlign?: string;
@@ -249,6 +256,7 @@ export function useDesignerTextFrameLayoutSync({
         liveTypoSource = {
           fontFamily: obj.fontFamily,
           fontSize: obj.fontSize,
+          fontWeight: obj.fontWeight,
           lineHeight: obj.lineHeight,
           letterSpacing: obj.letterSpacing,
           textAlign: obj.textAlign,
@@ -275,6 +283,7 @@ export function useDesignerTextFrameLayoutSync({
           const obj = frameObj as FreehandObject & {
             fontFamily?: string;
             fontSize?: number;
+            fontWeight?: number | string;
             lineHeight?: number;
             letterSpacing?: number;
             textAlign?: string;
@@ -287,6 +296,9 @@ export function useDesignerTextFrameLayoutSync({
           if (obj) {
             if (src.fontFamily != null && obj.fontFamily !== src.fontFamily) typoPatch.fontFamily = src.fontFamily;
             if (src.fontSize != null && obj.fontSize !== src.fontSize) typoPatch.fontSize = src.fontSize;
+            if (src.fontWeight != null && String(obj.fontWeight) !== String(src.fontWeight)) {
+              typoPatch.fontWeight = src.fontWeight;
+            }
             if (src.lineHeight != null && obj.lineHeight !== src.lineHeight) typoPatch.lineHeight = src.lineHeight;
             if (src.letterSpacing != null && obj.letterSpacing !== src.letterSpacing) typoPatch.letterSpacing = src.letterSpacing;
             if (src.textAlign != null && obj.textAlign !== src.textAlign) typoPatch.textAlign = src.textAlign;

@@ -51,17 +51,36 @@ export type GlyphPathPayload = {
 
 /** Fuentes cargadas por el usuario (FontFace) — buffer para opentype. Clave: `family|weight`. */
 const userFontBuffers = new Map<string, ArrayBuffer>();
+const fontCache = new Map<string, opentype.Font>();
 
-export function registerUserFontBuffer(primaryFamily: string, fontWeight: number, buffer: ArrayBuffer): void {
-  const key = `${primaryFamily.trim().toLowerCase()}|${fontWeight}`;
-  userFontBuffers.set(key, buffer.slice(0));
+const STANDARD_FONT_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
+
+/** Pesos candidatos ordenados por cercanía al pedido (misma familia: Light/Book/Black, etc.). */
+export function pickClosestFontWeights(requested: number): number[] {
+  const clamped = Math.min(900, Math.max(100, Math.round(requested)));
+  const rounded = Math.min(900, Math.max(100, Math.round(clamped / 100) * 100));
+  const candidates = new Set<number>([clamped, rounded, ...STANDARD_FONT_WEIGHTS]);
+  return Array.from(candidates).sort(
+    (a, b) => Math.abs(a - clamped) - Math.abs(b - clamped) || a - b,
+  );
 }
 
-/** Fallback tipográfico si no hay URL para la familia (Noto ≈ Inter UI). */
-const NOTO_SANS_REG =
-  "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
-const NOTO_SANS_BOLD =
-  "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Bold.ttf";
+export function registerUserFontBuffer(primaryFamily: string, fontWeight: number, buffer: ArrayBuffer): void {
+  const family = primaryFamily.trim().toLowerCase();
+  const weight = Math.min(900, Math.max(100, Math.round(fontWeight)));
+  const key = `${family}|${weight}`;
+  userFontBuffers.set(key, buffer.slice(0));
+  fontCache.delete(key);
+}
+
+function lookupUserFontBuffer(primary: string, fontWeight: number): ArrayBuffer | null {
+  const family = normalizeFamilyKey(primary);
+  for (const w of pickClosestFontWeights(fontWeight)) {
+    const buf = userFontBuffers.get(`${family}|${w}`);
+    if (buf) return buf;
+  }
+  return null;
+}
 
 /**
  * Slugs en fonts.bunny.net para nombres del selector (Google Fonts en la app).
@@ -76,6 +95,35 @@ const BUNNY_FAMILY_SLUG: Record<string, string> = {
   "ibm plex sans": "ibm-plex-sans",
   system: "inter",
 };
+
+/** Nombres de estilo → peso CSS (fuentes locales / archivos). */
+const FONT_STYLE_WEIGHT_ALIASES: Array<{ weight: number; aliases: string[] }> = [
+  { weight: 100, aliases: ["hairline", "thin", "ultrathin"] },
+  { weight: 200, aliases: ["extralight", "extra light", "ultralight", "ultra light"] },
+  { weight: 300, aliases: ["light"] },
+  { weight: 450, aliases: ["book"] },
+  { weight: 400, aliases: ["regular", "roman", "normal", "plain"] },
+  { weight: 500, aliases: ["medium"] },
+  { weight: 600, aliases: ["semibold", "semi bold", "demibold", "demi bold"] },
+  { weight: 700, aliases: ["bold"] },
+  { weight: 800, aliases: ["extrabold", "extra bold", "ultrabold", "ultra bold"] },
+  { weight: 900, aliases: ["black", "heavy", "ultrablack", "ultra black"] },
+];
+
+function weightFromFontStyleLabel(style: string): number | null {
+  const lower = style.trim().toLowerCase().replace(/[-_]+/g, " ");
+  if (!lower) return null;
+  for (const def of FONT_STYLE_WEIGHT_ALIASES) {
+    for (const alias of def.aliases) {
+      if (lower === alias || lower.endsWith(` ${alias}`) || lower.startsWith(`${alias} `)) {
+        return def.weight;
+      }
+    }
+  }
+  const m = lower.match(/\b([1-9]00)\b/);
+  if (m) return Number(m[1]);
+  return null;
+}
 
 function normalizeFamilyKey(primary: string): string {
   return primary.trim().toLowerCase();
@@ -106,49 +154,52 @@ async function tryFetchText(url: string): Promise<string | null> {
   }
 }
 
-function parseFontUrlsFromGoogleCss(css: string): string[] {
-  const urls: string[] = [];
-  for (const m of css.matchAll(/url\(([^)]+)\)\s*format\(['"]woff2['"]\)/g)) {
-    urls.push(m[1].replace(/^['"]|['"]$/g, ""));
+type GoogleCssFace = { weight: number; url: string };
+
+/** Extrae pares peso↔url de CSS Google Fonts (@font-face). */
+function parseGoogleCssFontFaces(css: string): GoogleCssFace[] {
+  const faces: GoogleCssFace[] = [];
+  for (const block of css.split("@font-face").slice(1)) {
+    const weightMatch = block.match(/font-weight:\s*(\d+)/i);
+    const weight = weightMatch ? Number(weightMatch[1]) : 400;
+    let url: string | null = null;
+    const woff2 = block.match(/url\(([^)]+)\)\s*format\(['"]woff2['"]\)/i);
+    if (woff2) url = woff2[1].replace(/^['"]|['"]$/g, "");
+    if (!url) {
+      const any = block.match(/url\(([^)]+)\)/i);
+      if (any) url = any[1].replace(/^['"]|['"]$/g, "");
+    }
+    if (url) faces.push({ weight: Number.isFinite(weight) ? weight : 400, url });
   }
-  if (urls.length === 0) {
-    const m = css.match(/url\(([^)]+)\)/);
-    if (m) urls.push(m[1].replace(/^['"]|['"]$/g, ""));
-  }
-  return urls;
+  return faces;
 }
 
 /** Descarga el binario de una familia Google Fonts vía CSS2 (fonts.gstatic.com). */
 async function fetchFontFromGoogleFonts(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
   const familyParam = primary.trim().replace(/\s+/g, "+");
+  const weightList = pickClosestFontWeights(fontWeight)
+    .filter((w) => w % 100 === 0)
+    .slice(0, 6)
+    .join(";");
   const cssUrls = [
-    `https://fonts.googleapis.com/css2?family=${familyParam}:wght@${fontWeight}&display=swap`,
+    `https://fonts.googleapis.com/css2?family=${familyParam}:wght@${Math.round(fontWeight)}&display=swap`,
+    `https://fonts.googleapis.com/css2?family=${familyParam}:wght@${weightList}&display=swap`,
     `https://fonts.googleapis.com/css2?family=${familyParam}&display=swap`,
   ];
   for (const cssUrl of cssUrls) {
     const css = await tryFetchText(cssUrl);
     if (!css) continue;
-    for (const fontUrl of parseFontUrlsFromGoogleCss(css)) {
-      const buf = await tryFetchArrayBuffer(fontUrl);
+    const faces = parseGoogleCssFontFaces(css);
+    if (faces.length === 0) continue;
+    const ordered = [...faces].sort(
+      (a, b) => Math.abs(a.weight - fontWeight) - Math.abs(b.weight - fontWeight) || a.weight - b.weight,
+    );
+    for (const face of ordered) {
+      const buf = await tryFetchArrayBuffer(face.url);
       if (buf) return buf;
     }
   }
   return null;
-}
-
-/** opentype.js acepta WOFF; probamos pesos cercanos por si falta un corte. */
-function pickLatinFileWeights(requested: number): number[] {
-  const r = Math.min(900, Math.max(100, Math.round(requested / 100) * 100));
-  const order = [r, 400, 500, 600, 700, 300, 800, 200, 900, 100];
-  const seen = new Set<number>();
-  const out: number[] = [];
-  for (const w of order) {
-    if (!seen.has(w)) {
-      seen.add(w);
-      out.push(w);
-    }
-  }
-  return out;
 }
 
 function bunnyLatinWoffUrl(slug: string, fileWeight: number): string {
@@ -156,18 +207,56 @@ function bunnyLatinWoffUrl(slug: string, fileWeight: number): string {
 }
 
 async function fetchFontFromBunnyNet(slug: string, fontWeight: number): Promise<ArrayBuffer | null> {
-  for (const w of pickLatinFileWeights(fontWeight)) {
+  for (const w of pickClosestFontWeights(fontWeight)) {
+    if (w % 100 !== 0) continue;
     const buf = await tryFetchArrayBuffer(bunnyLatinWoffUrl(slug, w));
     if (buf) return buf;
   }
   return null;
 }
 
-function notoSansFallbackUrl(fontWeight: number): string {
-  return fontWeight >= 600 ? NOTO_SANS_BOLD : NOTO_SANS_REG;
+/**
+ * Local Font Access API: binario real del sistema (Helvetica Neue Light, etc.)
+ * cuando el usuario otorga permiso. Sin permiso o sin API → null.
+ */
+async function fetchFontFromLocalFonts(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
+  if (typeof window === "undefined") return null;
+  const queryLocalFonts = (
+    window as Window & {
+      queryLocalFonts?: (options?: { postscriptNames?: string[] }) => Promise<
+        Array<{ family: string; fullName: string; style: string; blob: () => Promise<Blob> }>
+      >;
+    }
+  ).queryLocalFonts;
+  if (typeof queryLocalFonts !== "function") return null;
+  try {
+    const fonts = await queryLocalFonts();
+    const want = normalizeFamilyKey(primary);
+    const matches = fonts.filter((f) => {
+      const fam = normalizeFamilyKey(f.family);
+      const full = normalizeFamilyKey(f.fullName);
+      return fam === want || full.startsWith(want) || fam.includes(want) || want.includes(fam);
+    });
+    if (matches.length === 0) return null;
+    const scored = matches.map((f) => {
+      const fromStyle = weightFromFontStyleLabel(f.style) ?? weightFromFontStyleLabel(f.fullName);
+      const w = fromStyle ?? 400;
+      return { font: f, weight: w, dist: Math.abs(w - fontWeight) };
+    });
+    scored.sort((a, b) => a.dist - b.dist || a.weight - b.weight);
+    const best = scored[0];
+    if (!best || best.dist > 150) return null;
+    const blob = await best.font.blob();
+    return await blob.arrayBuffer();
+  } catch {
+    return null;
+  }
 }
 
-const fontCache = new Map<string, opentype.Font>();
+/** Último recurso: Noto Sans con el peso más cercano (no colapsar Light→Regular / Black→Bold). */
+async function fetchWeightMatchedNotoSans(fontWeight: number): Promise<ArrayBuffer | null> {
+  return fetchFontFromBunnyNet("noto-sans", fontWeight);
+}
 
 export function parsePrimaryFontFamily(fontFamily: string): string {
   const s = fontFamily.trim();
@@ -175,6 +264,13 @@ export function parsePrimaryFontFamily(fontFamily: string): string {
   if (m) return m[1].trim();
   const first = s.split(",")[0].trim();
   return first.replace(/^["']|["']$/g, "").trim() || "Inter";
+}
+
+export function normalizePdfTextAlign(
+  align: string | undefined | null,
+): "left" | "center" | "right" | "justify" {
+  if (align === "center" || align === "right" || align === "justify" || align === "left") return align;
+  return "left";
 }
 
 function fontFaceCheckString(primary: string, fontWeight: number, fontSize: number): string {
@@ -191,8 +287,7 @@ export function isFontFaceAvailableForConversion(primary: string, fontWeight: nu
 }
 
 async function fetchFontBinary(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
-  const uKey = `${primary.toLowerCase()}|${fontWeight}`;
-  const userBuf = userFontBuffers.get(uKey);
+  const userBuf = lookupUserFontBuffer(primary, fontWeight);
   if (userBuf) return userBuf;
 
   const slug = familyToBunnySlug(primary);
@@ -208,7 +303,10 @@ async function fetchFontBinary(primary: string, fontWeight: number): Promise<Arr
   const fromGoogle = await fetchFontFromGoogleFonts(primary, fontWeight);
   if (fromGoogle) return fromGoogle;
 
-  return await tryFetchArrayBuffer(notoSansFallbackUrl(fontWeight));
+  const fromLocal = await fetchFontFromLocalFonts(primary, fontWeight);
+  if (fromLocal) return fromLocal;
+
+  return fetchWeightMatchedNotoSans(fontWeight);
 }
 
 export async function loadFontForTextConversion(args: {
@@ -235,7 +333,7 @@ export async function loadFontForTextConversion(args: {
     fontCache.set(cacheKey, font);
     return { font };
   } catch {
-    const fb = await tryFetchArrayBuffer(notoSansFallbackUrl(args.fontWeight));
+    const fb = await fetchWeightMatchedNotoSans(args.fontWeight);
     if (!fb) return { error: FONT_CONVERSION_UNAVAILABLE };
     try {
       const font = opentype.parse(fb);
@@ -653,7 +751,7 @@ function lineJustificationExtraSpacing(
   contentInnerW: number,
   isLastInParagraph: boolean,
 ): number {
-  if (t.textMode !== "area" || t.textAlign !== "justify" || isLastInParagraph) return 0;
+  if (t.textMode !== "area" || normalizePdfTextAlign(t.textAlign) !== "justify" || isLastInParagraph) return 0;
   const gaps = countJustificationSpaces(line);
   if (gaps <= 0) return 0;
   const extra = contentInnerW - lineWidth;
@@ -765,7 +863,7 @@ export async function richTextToGlyphPaintOps(
   const contentInnerW = Math.max(1, boxW - 2 * pad - indent);
   const lhPx = t.fontSize * t.lineHeight;
   const useKern = t.fontKerning !== "none";
-  const ta = t.textAlign;
+  const ta = normalizePdfTextAlign(t.textAlign);
   const leftInset = pad + indent;
   const charStyles = buildCharStyleMap(t.text, runs);
   if (pdfOpts?.makeUrlsClickable) {
@@ -778,7 +876,12 @@ export async function richTextToGlyphPaintOps(
   }
   const fontByWeight = new Map<number, opentype.Font>();
   for (const w of weights) {
-    const res = await loadFontForTextConversion({ fontFamily: t.fontFamily, fontSize: t.fontSize, fontWeight: w });
+    const res = await loadFontForTextConversion({
+      fontFamily: t.fontFamily,
+      fontSize: t.fontSize,
+      fontWeight: w,
+      forceFetch: true,
+    });
     if ("error" in res) fontByWeight.set(w, baseFont);
     else fontByWeight.set(w, res.font);
   }
@@ -991,7 +1094,7 @@ export async function textToGlyphPathPayloads(
   const lhPx = t.fontSize * t.lineHeight;
   const useKern = t.fontKerning !== "none";
   const physicalLines = computePhysicalLines(t, font);
-  const ta = t.textAlign;
+  const ta = normalizePdfTextAlign(t.textAlign);
   const out: GlyphPathPayload[] = [];
   let gIdx = 0;
 
@@ -1084,7 +1187,7 @@ async function appendInvisibleSelectableTextLayerAsync(
   const leftInset = pad + indent;
   const lhPx = conv.fontSize * conv.lineHeight;
   const useKern = conv.fontKerning !== "none";
-  const ta = conv.textAlign;
+  const ta = normalizePdfTextAlign(conv.textAlign);
 
   const charStyles = buildCharStyleMap(conv.text, runs);
   if (pdfOpts?.makeUrlsClickable) {
@@ -1102,6 +1205,7 @@ async function appendInvisibleSelectableTextLayerAsync(
       fontFamily: conv.fontFamily,
       fontSize: conv.fontSize,
       fontWeight: w,
+      forceFetch: true,
     });
     fontByWeight.set(w, "error" in res ? baseFont : res.font);
   }
@@ -1274,7 +1378,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
       lineHeight: t.lineHeight,
       letterSpacing: t.letterSpacing,
       fontKerning: t.fontKerning,
-      textAlign: t.textAlign,
+      textAlign: normalizePdfTextAlign(t.textAlign),
       paragraphIndent: t.paragraphIndent,
     };
     g.replaceChildren();

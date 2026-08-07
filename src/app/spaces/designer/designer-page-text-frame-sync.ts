@@ -42,7 +42,9 @@ function typographyForLayout(story: Story, objectById: Map<string, FreehandObjec
       ox.fontSize !== typo.fontSize ||
       ox.fontFamily !== typo.fontFamily ||
       ox.lineHeight !== typo.lineHeight ||
-      ox.letterSpacing !== typo.letterSpacing
+      ox.letterSpacing !== typo.letterSpacing ||
+      (ox.fontWeight != null && String(ox.fontWeight) !== String(typo.fontWeight)) ||
+      (ox.textAlign != null && ox.textAlign !== typo.align)
     ) {
       const ta = ox.textAlign;
       const align: Typography["align"] =

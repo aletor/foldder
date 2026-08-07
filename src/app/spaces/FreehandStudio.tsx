@@ -414,6 +414,7 @@ import {
 import {
   FONT_CONVERSION_UNAVAILABLE,
   loadFontForTextConversion,
+  normalizePdfTextAlign,
   parsePrimaryFontFamily,
   registerUserFontBuffer,
   substituteTextWithOutlinedPathsInSvg,
@@ -1798,6 +1799,8 @@ function textObjectToVectorPdfOutlineItem(tx: TextObject) {
    */
   const textForPdf =
     richRuns && richRuns.length > 0 ? richRuns.map((r) => r.text).join("") : tx.text;
+  /** Misma caja que el foreignObject del lienzo (point text usa medida, no width crudo). */
+  const { w: layoutW, h: layoutH } = textLayoutDims(tx);
   return {
     id: tx.id,
     name: tx.name,
@@ -1805,14 +1808,14 @@ function textObjectToVectorPdfOutlineItem(tx: TextObject) {
     textMode: tx.textMode,
     x: tx.x,
     y: tx.y,
-    width: tx.width,
-    height: tx.height,
+    width: layoutW,
+    height: layoutH,
     fontSize: tx.fontSize,
     fontWeight: tx.fontWeight,
     lineHeight: tx.lineHeight,
     letterSpacing: tx.letterSpacing,
     fontKerning: tx.fontKerning,
-    textAlign: tx.textAlign,
+    textAlign: normalizePdfTextAlign(tx.textAlign),
     paragraphIndent: tx.paragraphIndent,
     fontFamily: tx.fontFamily,
     fontStyle: tx.fontStyle,
@@ -5154,6 +5157,21 @@ function pathObjToD(obj: PathObject): string {
   return rings.map((r) => bezierToSvgD(r, true)).join(" ");
 }
 
+/** Elipse → path cúbico para clipPath (svg2pdf no maneja bien `<ellipse>` en clips). */
+function ellipseToPathDForClip(cx: number, cy: number, rx: number, ry: number): string {
+  const κ = 0.5522847498307936;
+  const ox = rx * κ;
+  const oy = ry * κ;
+  return [
+    `M ${cx - rx} ${cy}`,
+    `C ${cx - rx} ${cy - oy} ${cx - ox} ${cy - ry} ${cx} ${cy - ry}`,
+    `C ${cx + ox} ${cy - ry} ${cx + rx} ${cy - oy} ${cx + rx} ${cy}`,
+    `C ${cx + rx} ${cy + oy} ${cx + ox} ${cy + ry} ${cx} ${cy + ry}`,
+    `C ${cx - ox} ${cy + ry} ${cx - rx} ${cy + oy} ${cx - rx} ${cy}`,
+    `Z`,
+  ].join(" ");
+}
+
 /** evenodd solo con varios contornos / subpaths (agujeros); en trazos simples nonzero evita regiones raras en clipPath. */
 function clipMaskFillRuleForPath(p: PathObject): "evenodd" | "nonzero" {
   const cs = p.contourStarts;
@@ -5272,16 +5290,8 @@ function renderMaskShapeClipInner(m: ClipMaskShape): React.ReactNode {
   if (m.type === "ellipse") {
     const e = m as EllipseObject;
     const transform = buildObjTransform(e);
-    return (
-      <ellipse
-        cx={e.x + e.width / 2}
-        cy={e.y + e.height / 2}
-        rx={e.width / 2}
-        ry={e.height / 2}
-        fill="#000"
-        transform={transform}
-      />
-    );
+    const d = ellipseToPathDForClip(e.x + e.width / 2, e.y + e.height / 2, e.width / 2, e.height / 2);
+    return <path d={d} fill="#000" transform={transform} />;
   }
   return renderPathClipMaskGeometry(m as PathObject);
 }
@@ -5311,16 +5321,8 @@ function renderMaskShapeEffectAlpha(m: ClipMaskShape): React.ReactNode {
   if (m.type === "ellipse") {
     const e = m as EllipseObject;
     const transform = buildObjTransform(e);
-    return (
-      <ellipse
-        cx={e.x + e.width / 2}
-        cy={e.y + e.height / 2}
-        rx={e.width / 2}
-        ry={e.height / 2}
-        fill="#fff"
-        transform={transform}
-      />
-    );
+    const d = ellipseToPathDForClip(e.x + e.width / 2, e.y + e.height / 2, e.width / 2, e.height / 2);
+    return <path d={d} fill="#fff" transform={transform} />;
   }
   return renderPathClipMaskGeometry(m as PathObject, "#fff");
 }
@@ -5723,6 +5725,50 @@ function fhFxSanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+/** Padding del bbox de export PDF para glow / grano / viñeta. */
+function pdfFxBakePad(effects: LayerEffects | undefined): number {
+  let pad = 4;
+  const og = effects?.outerGlow;
+  if (og?.enabled) {
+    pad = Math.max(pad, Math.ceil(og.size * 3.5 + 40));
+  }
+  const pf = effects?.photoFilter;
+  if (pf?.enabled) {
+    if ((pf.grain ?? 0) > 0.01 || (pf.vignette ?? 0) > 0.01) pad = Math.max(pad, 12);
+  }
+  return pad;
+}
+
+/**
+ * Marca un composite con efectos de capa para hornearlo a PNG en el PDF
+ * (svg2pdf no aplica CSS/SVG filter ni mask).
+ */
+function wrapPdfFxBakeGroup(
+  objId: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  pad: number,
+  children: React.ReactNode,
+): React.ReactNode {
+  const bx = x - pad;
+  const by = y - pad;
+  const bw = Math.max(1, w + pad * 2);
+  const bh = Math.max(1, h + pad * 2);
+  return (
+    <g
+      data-fh-fx-bake={objId}
+      data-fh-fx-x={bx}
+      data-fh-fx-y={by}
+      data-fh-fx-w={bw}
+      data-fh-fx-h={bh}
+    >
+      {children}
+    </g>
+  );
+}
+
 /**
  * Resuelve el `filter` CSS de un photoFilter. Presets de color simple → cadena `filter` CSS.
  * Presets de mapeo tonal (duotono/teal&orange/split-tone) → `url(#id)` + el `<defs>` del filtro SVG.
@@ -5961,98 +6007,101 @@ function VectorShapeWithLayerEffects(props: {
     </>
   );
 
+  let body: React.ReactNode;
   if (!ogOn || !og) {
-    return (
+    body = (
       <>
         {children}
         {overlays}
       </>
     );
-  }
+  } else {
+    const sid = fhFxSanitizeId(objId);
+    const { primitives, fx, fy, fw, fh } = fhOuterGlowRingFilterPrimitives(og, x, y, w, h);
 
-  const sid = fhFxSanitizeId(objId);
-  const { primitives, fx, fy, fw, fh } = fhOuterGlowRingFilterPrimitives(og, x, y, w, h);
+    if (og.fill === "color") {
+      const fid = `fh-og-solid-${sid}`;
+      body = (
+        <>
+          <defs>
+            <filter
+              id={fid}
+              colorInterpolationFilters="sRGB"
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              x={fx}
+              y={fy}
+              width={fw}
+              height={fh}
+            >
+              {primitives}
+              <feFlood floodColor={og.color} floodOpacity={clamp(og.opacity, 0, 1)} result="fl" />
+              <feComposite in="fl" in2="ringLuma" operator="in" result="glowPainted" />
+              <feMerge>
+                <feMergeNode in="glowPainted" />
+              </feMerge>
+            </filter>
+          </defs>
+          <g filter={`url(#${fid})`} style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, 1)}>
+            {alphaSource}
+          </g>
+          {children}
+          {overlays}
+        </>
+      );
+    } else {
+      const glowGradId = `fh-og-grad-${sid}`;
+      const maskFid = `fh-og-maskf-${sid}`;
+      const mid = `fh-og-mask-${sid}`;
+      const gradDef = fhLayerGradientDefinition(glowGradId, x, y, w, h, og.gradient);
 
-  if (og.fill === "color") {
-    const fid = `fh-og-solid-${sid}`;
-    return (
-      <>
-        <defs>
-          <filter
-            id={fid}
-            colorInterpolationFilters="sRGB"
-            filterUnits="userSpaceOnUse"
-            primitiveUnits="userSpaceOnUse"
+      body = (
+        <>
+          <defs>
+            {gradDef}
+            <filter
+              id={maskFid}
+              colorInterpolationFilters="sRGB"
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              x={fx}
+              y={fy}
+              width={fw}
+              height={fh}
+            >
+              {primitives}
+            </filter>
+          </defs>
+          <mask
+            id={mid}
+            maskUnits="userSpaceOnUse"
+            maskContentUnits="userSpaceOnUse"
             x={fx}
             y={fy}
             width={fw}
             height={fh}
+            style={{ maskType: "luminance" }}
           >
-            {primitives}
-            <feFlood floodColor={og.color} floodOpacity={clamp(og.opacity, 0, 1)} result="fl" />
-            <feComposite in="fl" in2="ringLuma" operator="in" result="glowPainted" />
-            <feMerge>
-              <feMergeNode in="glowPainted" />
-            </feMerge>
-          </filter>
-        </defs>
-        <g filter={`url(#${fid})`} style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, 1)}>
-          {alphaSource}
-        </g>
-        {children}
-        {overlays}
-      </>
-    );
+            <rect x={fx} y={fy} width={fw} height={fh} fill="black" />
+            <g filter={`url(#${maskFid})`}>{alphaSource}</g>
+          </mask>
+          <rect
+            x={fx}
+            y={fy}
+            width={fw}
+            height={fh}
+            fill={`url(#${glowGradId})`}
+            mask={`url(#${mid})`}
+            style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, og.opacity)}
+          />
+          {children}
+          {overlays}
+        </>
+      );
+    }
   }
 
-  const glowGradId = `fh-og-grad-${sid}`;
-  const maskFid = `fh-og-maskf-${sid}`;
-  const mid = `fh-og-mask-${sid}`;
-  const gradDef = fhLayerGradientDefinition(glowGradId, x, y, w, h, og.gradient);
-
-  return (
-    <>
-      <defs>
-        {gradDef}
-        <filter
-          id={maskFid}
-          colorInterpolationFilters="sRGB"
-          filterUnits="userSpaceOnUse"
-          primitiveUnits="userSpaceOnUse"
-          x={fx}
-          y={fy}
-          width={fw}
-          height={fh}
-        >
-          {primitives}
-        </filter>
-      </defs>
-      <mask
-        id={mid}
-        maskUnits="userSpaceOnUse"
-        maskContentUnits="userSpaceOnUse"
-        x={fx}
-        y={fy}
-        width={fw}
-        height={fh}
-        style={{ maskType: "luminance" }}
-      >
-        <rect x={fx} y={fy} width={fw} height={fh} fill="black" />
-        <g filter={`url(#${maskFid})`}>{alphaSource}</g>
-      </mask>
-      <rect
-        x={fx}
-        y={fy}
-        width={fw}
-        height={fh}
-        fill={`url(#${glowGradId})`}
-        mask={`url(#${mid})`}
-        style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, og.opacity)}
-      />
-      {children}
-      {overlays}
-    </>
-  );
+  return wrapPdfFxBakeGroup(objId, x, y, w, h, pdfFxBakePad(effects), body);
 }
 
 /** Estilos de capa (fx) aplicados al composite de un segmento del stack (capa de ajuste). */
@@ -6128,6 +6177,16 @@ function wrapWithSelectedLayerEffect(
   }
   if (toneActive) {
     wrapped = <g filter={`url(#${adjustmentLayerFilterId(layerFx.id)}`}>{wrapped}</g>;
+    // Estilos ya hornean en VectorShape; el filtro de tono queda fuera y necesita bake propio.
+    wrapped = wrapPdfFxBakeGroup(
+      layerFx.id,
+      bounds.x,
+      bounds.y,
+      bounds.w,
+      bounds.h,
+      pdfFxBakePad(layerFx.layerEffects),
+      wrapped,
+    );
   }
   return wrapped;
 }
@@ -6193,6 +6252,24 @@ export function renderDesignerPageObjectStack(
           <g key={`adj-tone-${seg.layer.id}`} filter={`url(#${adjustmentLayerFilterId(seg.layer.id)})`}>
             {inner}
           </g>
+        );
+      }
+      // El filtro de tono queda fuera del bake de estilos; hay que hornear el composite.
+      if (seg.toneActive) {
+        const contentBounds = getGroupBounds(seg.children);
+        const bounds = resolveEffectLayerFxBounds(
+          seg.layer as AdjustmentLayerObject,
+          contentBounds,
+          undefined,
+        );
+        inner = wrapPdfFxBakeGroup(
+          seg.layer.id,
+          bounds.x,
+          bounds.y,
+          bounds.w,
+          bounds.h,
+          pdfFxBakePad(seg.layer.layerEffects),
+          inner,
         );
       }
       return <React.Fragment key={`adj-seg-${seg.layer.id}`}>{inner}</React.Fragment>;
@@ -6266,106 +6343,109 @@ function RasterBitmapWithLayerEffects(props: {
     </>
   );
 
+  let body: React.ReactNode;
   if (!ogOn || !og) {
-    return (
+    body = (
       <>
         {imageEl}
         {overlays}
       </>
     );
-  }
+  } else {
+    const sid = fhFxSanitizeId(objId);
+    const { primitives: ringFilterPrimitives, fx, fy, fw, fh } = fhOuterGlowRingFilterPrimitives(og, x, y, w, h);
 
-  const sid = fhFxSanitizeId(objId);
-  const { primitives: ringFilterPrimitives, fx, fy, fw, fh } = fhOuterGlowRingFilterPrimitives(og, x, y, w, h);
+    if (og.fill === "color") {
+      const fid = `fh-og-solid-${sid}`;
+      body = (
+        <>
+          <defs>
+            <filter
+              id={fid}
+              colorInterpolationFilters="sRGB"
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              x={fx}
+              y={fy}
+              width={fw}
+              height={fh}
+            >
+              {ringFilterPrimitives}
+              <feFlood floodColor={og.color} floodOpacity={clamp(og.opacity, 0, 1)} result="fl" />
+              <feComposite in="fl" in2="ringLuma" operator="in" result="glowPainted" />
+              <feMerge>
+                <feMergeNode in="glowPainted" />
+              </feMerge>
+            </filter>
+          </defs>
+          <g filter={`url(#${fid})`} style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, 1)}>
+            <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
+          </g>
+          {imageEl}
+          {overlays}
+        </>
+      );
+    } else {
+      const glowGradId = `fh-og-grad-${sid}`;
+      const maskFid = `fh-og-maskf-${sid}`;
+      const mid = `fh-og-mask-${sid}`;
+      const gradDef = fhLayerGradientDefinition(glowGradId, x, y, w, h, og.gradient);
 
-  if (og.fill === "color") {
-    const fid = `fh-og-solid-${sid}`;
-    return (
-      <>
-        <defs>
-          <filter
-            id={fid}
-            colorInterpolationFilters="sRGB"
-            filterUnits="userSpaceOnUse"
-            primitiveUnits="userSpaceOnUse"
+      body = (
+        <>
+          <defs>
+            {gradDef}
+            <filter
+              id={maskFid}
+              colorInterpolationFilters="sRGB"
+              filterUnits="userSpaceOnUse"
+              primitiveUnits="userSpaceOnUse"
+              x={fx}
+              y={fy}
+              width={fw}
+              height={fh}
+            >
+              {ringFilterPrimitives}
+            </filter>
+          </defs>
+          <mask
+            id={mid}
+            maskUnits="userSpaceOnUse"
+            maskContentUnits="userSpaceOnUse"
             x={fx}
             y={fy}
             width={fw}
             height={fh}
+            style={{ maskType: "luminance" }}
           >
-            {ringFilterPrimitives}
-            <feFlood floodColor={og.color} floodOpacity={clamp(og.opacity, 0, 1)} result="fl" />
-            <feComposite in="fl" in2="ringLuma" operator="in" result="glowPainted" />
-            <feMerge>
-              <feMergeNode in="glowPainted" />
-            </feMerge>
-          </filter>
-        </defs>
-        <g filter={`url(#${fid})`} style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, 1)}>
-          <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
-        </g>
-        {imageEl}
-        {overlays}
-      </>
-    );
+            <rect x={fx} y={fy} width={fw} height={fh} fill="black" />
+            <image
+              href={href}
+              x={x}
+              y={y}
+              width={w}
+              height={h}
+              preserveAspectRatio={preserveAspectRatio}
+              filter={`url(#${maskFid})`}
+            />
+          </mask>
+          <rect
+            x={fx}
+            y={fy}
+            width={fw}
+            height={fh}
+            fill={`url(#${glowGradId})`}
+            mask={`url(#${mid})`}
+            style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, og.opacity)}
+          />
+          {imageEl}
+          {overlays}
+        </>
+      );
+    }
   }
 
-  const glowGradId = `fh-og-grad-${sid}`;
-  const maskFid = `fh-og-maskf-${sid}`;
-  const mid = `fh-og-mask-${sid}`;
-  const gradDef = fhLayerGradientDefinition(glowGradId, x, y, w, h, og.gradient);
-
-  return (
-    <>
-      <defs>
-        {gradDef}
-        <filter
-          id={maskFid}
-          colorInterpolationFilters="sRGB"
-          filterUnits="userSpaceOnUse"
-          primitiveUnits="userSpaceOnUse"
-          x={fx}
-          y={fy}
-          width={fw}
-          height={fh}
-        >
-          {ringFilterPrimitives}
-        </filter>
-      </defs>
-      <mask
-        id={mid}
-        maskUnits="userSpaceOnUse"
-        maskContentUnits="userSpaceOnUse"
-        x={fx}
-        y={fy}
-        width={fw}
-        height={fh}
-        style={{ maskType: "luminance" }}
-      >
-        <rect x={fx} y={fy} width={fw} height={fh} fill="black" />
-        <image
-          href={href}
-          x={x}
-          y={y}
-          width={w}
-          height={h}
-          preserveAspectRatio={preserveAspectRatio}
-          filter={`url(#${maskFid})`}
-        />
-      </mask>
-      <rect
-        x={fx}
-        y={fy}
-        width={fw}
-        height={fh}
-        fill={`url(#${glowGradId})`}
-        mask={`url(#${mid})`}
-        style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, og.opacity)}
-      />
-      {imageEl}
-      {overlays}
-    </>
-  );
+  return wrapPdfFxBakeGroup(objId, x, y, w, h, pdfFxBakePad(effects), body);
 }
 
 /** Envuelve raster (imagen + overlays opcionales) con `<mask>` SVG según `layerMask`. */
@@ -6383,7 +6463,13 @@ function wrapRasterChildrenWithLayerMask(
   const m = lm!;
   const mid = `fh-lym-${fhFxSanitizeId(objId)}`;
   const finv = `${mid}-finv`;
-  return (
+  return wrapPdfFxBakeGroup(
+    objId,
+    x,
+    y,
+    w,
+    h,
+    4,
     <>
       <defs>
         <filter id={finv} colorInterpolationFilters="sRGB" x="0" y="0" width="100%" height="100%">
@@ -6413,7 +6499,7 @@ function wrapRasterChildrenWithLayerMask(
         </mask>
       </defs>
       <g mask={`url(#${mid})`}>{children}</g>
-    </>
+    </>,
   );
 }
 
@@ -7143,8 +7229,8 @@ export function renderObj(
           {inner}
         </foreignObject>
       );
-      return (
-        <g key={obj.id} data-fh-text={t.id} transform={textT}>
+      const textFxBody = (
+        <>
           {pfTextDefs}
           {t.isTextFrame && !opts?.canvasZenMode && (
             <rect
@@ -7168,6 +7254,15 @@ export function renderObj(
               maskShape={<rect x={t.x} y={t.y} width={foW} height={foH} fill="white" />}
             />
           ) : null}
+        </>
+      );
+      const needsTextFxBake =
+        !!pfTextCss || hasMaskText || hasActiveLayerEffects(leText);
+      return (
+        <g key={obj.id} data-fh-text={t.id} transform={textT}>
+          {needsTextFxBake && !hasMaskText
+            ? wrapPdfFxBakeGroup(t.id, t.x, t.y, foW, foH, pdfFxBakePad(leText), textFxBody)
+            : textFxBody}
           {/* Text frame ports rendered in overlay layer above selection box */}
         </g>
       );
@@ -7290,12 +7385,23 @@ export function renderObj(
       const cid = `clip-cc-${cc.id}`;
       const innerT = `translate(${cc.x} ${cc.y}) rotate(${cc.rotation} ${cc.width / 2} ${cc.height / 2})`;
       const clippedComposite = (
-        <g transform={innerT}>
-          {/* clipPath fuera de <defs>: dentro de <defs> bajo un <g transform> algunos motores aplican mal el sistema de coordenadas al recorte. */}
-          <clipPath id={cid} clipPathUnits="userSpaceOnUse">
-            {renderMaskShapeClipInner(cc.mask)}
-          </clipPath>
-          <g clipPath={`url(#${cid})`}>
+        <g
+          transform={innerT}
+          data-fh-clip-composite={cc.id}
+          data-fh-clip-w={cc.width}
+          data-fh-clip-h={cc.height}
+        >
+          {/*
+            clipPath en <defs> local + geometría en path (como imageFrame):
+            el browser pinta bien; svg2pdf no recorta bien <image> bajo <g clip-path>,
+            así que el PDF rasteriza este compuesto (ver normalize-svg-clips-for-pdf).
+          */}
+          <defs>
+            <clipPath id={cid} clipPathUnits="userSpaceOnUse">
+              {renderMaskShapeClipInner(cc.mask)}
+            </clipPath>
+          </defs>
+          <g clipPath={`url(#${cid})`} data-fh-clip-content="">
             {cc.content.map((ch, idx) => (
               <g key={`${cc.id}-clipc-${idx}-${ch.id}`}>
                 {wrapWithSelectedLayerEffect(
@@ -7336,15 +7442,27 @@ export function renderObj(
           ) : null}
         </>
       );
+      const needsCcFxBake = pfCcOn || fxActive;
+      const ccPainted = hasMaskCc
+        ? wrapRasterChildrenWithLayerMask(cc.id, cc.x, cc.y, cc.width, cc.height, "none", lmaskCc, clipInner)
+        : needsCcFxBake
+          ? wrapPdfFxBakeGroup(
+              cc.id,
+              maskEffectBounds.x,
+              maskEffectBounds.y,
+              maskEffectBounds.w,
+              maskEffectBounds.h,
+              pdfFxBakePad(leCc),
+              clipInner,
+            )
+          : clipInner;
       return (
         <g
           key={cc.id}
           opacity={cc.opacity}
           style={blendStyle ? { ...blendStyle, isolation: "isolate" } : undefined}
         >
-          {hasMaskCc
-            ? wrapRasterChildrenWithLayerMask(cc.id, cc.x, cc.y, cc.width, cc.height, "none", lmaskCc, clipInner)
-            : clipInner}
+          {ccPainted}
         </g>
       );
     }
@@ -7427,15 +7545,32 @@ export function renderObj(
           ) : null}
         </>
       );
+      // Estilos de capa ya van en StackSegment (bake interno); el tono/look del folder sí necesitan bake exterior.
+      const folderToneNeedsBake =
+        !!folderFx &&
+        isEffectLayerActive(folderFx) &&
+        !isAdjustmentLayerSettingsNeutral(folderFx.adjustment);
+      const needsGcFxBake = pfGcOn || folderToneNeedsBake;
+      const gcPainted = hasMaskGc
+        ? wrapRasterChildrenWithLayerMask(gc.id, gc.x, gc.y, gc.width, gc.height, "none", lmaskGc, groupInner)
+        : needsGcFxBake
+          ? wrapPdfFxBakeGroup(
+              gc.id,
+              gc.x,
+              gc.y,
+              gc.width,
+              gc.height,
+              pdfFxBakePad(folderFx?.layerEffects ?? leGc),
+              groupInner,
+            )
+          : groupInner;
       return (
         <g
           key={gc.id}
           opacity={gc.opacity}
           style={blendStyle ? { ...blendStyle, isolation: "isolate" } : undefined}
         >
-          {hasMaskGc
-            ? wrapRasterChildrenWithLayerMask(gc.id, gc.x, gc.y, gc.width, gc.height, "none", lmaskGc, groupInner)
-            : groupInner}
+          {gcPainted}
         </g>
       );
     }
@@ -7499,9 +7634,15 @@ export function renderClipDef(clipObj: FreehandObject): React.ReactNode {
     case "rect":
       shape = <path d={roundedRectPathDataFromRectObject(rectObjectWithNormalizedCorners(clipObj as RectObject))} />;
       break;
-    case "ellipse":
-      shape = <ellipse cx={clipObj.x + clipObj.width / 2} cy={clipObj.y + clipObj.height / 2} rx={clipObj.width / 2} ry={clipObj.height / 2} />;
+    case "ellipse": {
+      const e = clipObj as EllipseObject;
+      shape = (
+        <path
+          d={ellipseToPathDForClip(e.x + e.width / 2, e.y + e.height / 2, e.width / 2, e.height / 2)}
+        />
+      );
       break;
+    }
     case "path": {
       const p = clipObj as PathObject;
       shape = <path d={bezierToSvgD(p.points, p.closed)} />;

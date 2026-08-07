@@ -607,6 +607,10 @@ export default function DesignerStudio({
           const patch: Record<string, unknown> = {};
           if (to.fontFamily != null && to.fontFamily !== typo.fontFamily) patch.fontFamily = to.fontFamily;
           if (to.fontSize != null && String(to.fontSize) !== String(typo.fontSize)) patch.fontSize = to.fontSize;
+          if (to.fontWeight != null && String(to.fontWeight) !== String(typo.fontWeight)) {
+            patch.fontWeight = String(to.fontWeight);
+          }
+          if (to.fontStyle != null && to.fontStyle !== typo.fontStyle) patch.fontStyle = to.fontStyle;
           if (to.lineHeight != null && to.lineHeight !== typo.lineHeight) patch.lineHeight = to.lineHeight;
           if (to.letterSpacing != null && to.letterSpacing !== typo.letterSpacing) patch.letterSpacing = to.letterSpacing;
           if (to.textAlign != null && to.textAlign !== typo.align) patch.align = to.textAlign;
@@ -1539,7 +1543,7 @@ export default function DesignerStudio({
           height: newFrame.height,
           fontFamily: typo.fontFamily,
           fontSize: typo.fontSize,
-          fontWeight: 400,
+          fontWeight: Number(typo.fontWeight) || Number(DEFAULT_TYPOGRAPHY.fontWeight) || 400,
           lineHeight: typo.lineHeight,
           letterSpacing: typo.letterSpacing,
           fontKerning: typo.fontKerning as "auto" | "none",

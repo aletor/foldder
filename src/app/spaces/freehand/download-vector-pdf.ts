@@ -3,6 +3,8 @@
 import { jsPDF } from "jspdf";
 import { svg2pdf } from "svg2pdf.js";
 import { sanitizeSvgNamedEntitiesForXml } from "./freehand-export";
+import { normalizeSvgClipsForVectorPdf } from "./normalize-svg-clips-for-pdf";
+import { bakeLayerEffectsForVectorPdf } from "./bake-layer-effects-for-pdf";
 import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
 
 /** 1×1 transparente: último recurso si no podemos incrustar una imagen remota (evita que svg2pdf falle por XHR/CORS). */
@@ -391,8 +393,12 @@ async function prepareSvgMarkupForVectorPdf(
   opts?: VectorPdfPipelineOptions,
 ): Promise<{ markup: string; cleanup: () => void }> {
   let m = sanitizeSvgNamedEntitiesForXml(svgMarkup);
-  m = expandSvgMarkersToPathsForPdf(m);
+  /** Inline antes de normalizar clips: «pegar dentro» con fotos se rasteriza y necesita data URLs. */
   m = await inlineRemoteSvgImagesForPdf(m);
+  m = await normalizeSvgClipsForVectorPdf(m);
+  /** Hornea looks / glow / máscaras / filtros de capa (svg2pdf no aplica CSS/SVG filter). */
+  m = await bakeLayerEffectsForVectorPdf(m);
+  m = expandSvgMarkersToPathsForPdf(m);
   if (opts?.optimizeImages) {
     m = await recompressRasterImagesForPdf(m, PDF_OPTIMIZE_JPEG_QUALITY);
   }
