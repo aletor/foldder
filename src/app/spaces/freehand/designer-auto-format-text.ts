@@ -235,7 +235,7 @@ export function buildFormatBlocks(raw: string): FormatBlock[] {
           if (nextType === "heading" || nextType === "prose" || nextType === "numbered") {
             pushSpacer(blocks);
           }
-        } else if (prev.kind === "paragraph" || prev.kind === "title") {
+        } else if (prev.kind === "paragraph") {
           pushSpacer(blocks);
         }
       }
