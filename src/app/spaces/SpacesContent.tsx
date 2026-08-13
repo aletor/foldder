@@ -5799,7 +5799,7 @@ export function SpacesContent() {
     const sourceNode = resolveNode(connection.source);
     const targetNode = resolveNode(connection.target);
     if (!sourceNode || !targetNode) return false;
-    if (!areNodesConnectable(sourceNode, targetNode, connection, nodes, { spacesMap })) return false;
+    if (!areNodesConnectable(sourceNode, targetNode, connection, nodes, { spacesMap, edges })) return false;
     if (targetNode.type === "populate" && connection.targetHandle === "template") {
       const duplicate = edges.some(
         (e) =>

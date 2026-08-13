@@ -425,7 +425,16 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
     }));
 
     const bindings = nodeData.templateBindings ?? template.bindings ?? {};
-    const analysis = analyzeLoopPipeline(id, executorNodes, pipelineEdges, bindings);
+    const templatePromptForRun = nodeData.templatePrompt ?? template.promptTemplate;
+    const listFieldKeys = activeList?.schema.map((f) => f.key) ?? [];
+    const manualTokenValues = nodeData.templateManualTokens;
+
+    // Análisis preliminar (bindings + tokens del prompt) para coste / multi-canal.
+    let analysis = analyzeLoopPipeline(id, executorNodes, pipelineEdges, bindings, {
+      templatePrompt: templatePromptForRun,
+      listFieldKeys,
+      manualTokenValues,
+    });
     if (!analysis.validation.ok) {
       setError(analysis.validation.errors.join(" "));
       return;
@@ -467,7 +476,6 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
           })
         : [];
     const runMultiChannel = channelInputs.length > 1;
-    const templatePromptForRun = nodeData.templatePrompt ?? template.promptTemplate;
     const promptTemplatesByNodeId = runMultiChannel
       ? buildMultiChannelPipelinePromptTemplates({
           channels: channelInputs,
@@ -481,6 +489,21 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
           templatePrompt: templatePromptForRun,
           nodeById,
         });
+
+    // Re-análisis con plantillas por nodo (p. ej. prompts de canal con tokens de listado).
+    if (promptTemplatesByNodeId && Object.keys(promptTemplatesByNodeId).length > 0) {
+      analysis = analyzeLoopPipeline(id, executorNodes, pipelineEdges, adaptedBindings, {
+        templatePrompt: templatePromptForRun,
+        promptTemplatesByNodeId,
+        listFieldKeys,
+        manualTokenValues,
+      });
+      if (!analysis.validation.ok) {
+        setError(analysis.validation.errors.join(" "));
+        return;
+      }
+    }
+
     const cost = estimatePipelineCost({
       order: analysis.order,
       iterated: analysis.iterated,

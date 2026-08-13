@@ -20,6 +20,7 @@ import type { MaterializedRow, PipelineMaterializeStep } from "./loop-materializ
 import { analyzePipeline, type PipelineAnalysis, type PipelineEdge } from "./pipeline/discover-pipeline";
 import { estimatePipelineCost } from "./pipeline/estimate-pipeline-cost";
 import { executorNodeMap } from "./pipeline/pipeline-adapter";
+import { computeDatasetBoundNodeIds } from "./loop-dataset-bound";
 import {
   datasetBoundNodeIdsFromBindings,
 } from "./pipeline/pipeline-bindings";
@@ -250,6 +251,12 @@ export function analyzeLoopPipeline(
   nodes: ExecutorNode[],
   edges: readonly PipelineEdge[],
   bindings?: Record<string, LoopInputBinding>,
+  opts?: {
+    templatePrompt?: string;
+    promptTemplatesByNodeId?: Record<string, string>;
+    listFieldKeys?: readonly string[];
+    manualTokenValues?: Record<string, string>;
+  },
 ): PipelineAnalysis {
   ensureLoopPipelineExecutors();
   const expanded = expandSpacePortalTemplateForPipeline(
@@ -262,10 +269,21 @@ export function analyzeLoopPipeline(
     edges: expanded.edges,
     datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(bindings),
   });
+  const nodeById = executorNodeMap(expanded.nodes as ExecutorNode[]);
+  const promptTargetNodeId = findPromptTemplateTargetNodeId(pre, nodeById);
+  const datasetBoundNodeIds = computeDatasetBoundNodeIds({
+    bindings,
+    legacySinkNodeId: pre.sinkId ?? undefined,
+    promptTargetNodeId,
+    templatePrompt: opts?.templatePrompt,
+    promptTemplatesByNodeId: opts?.promptTemplatesByNodeId,
+    listFieldKeys: opts?.listFieldKeys ?? [],
+    manualTokenValues: opts?.manualTokenValues,
+  });
   return analyzePipeline({
     loopId,
     nodes: expanded.nodes,
     edges: expanded.edges,
-    datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(bindings, pre.sinkId ?? undefined),
+    datasetBoundNodeIds,
   });
 }

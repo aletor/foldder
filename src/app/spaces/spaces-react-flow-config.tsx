@@ -42,7 +42,7 @@ import { DatasetNode } from "./dataset/DatasetNode";
 import { LoopNode } from "./loop/LoopNode";
 import { PopulateNode } from "./populate/PopulateNode";
 import { BrandKitNode } from "./brandKit/BrandKitNode";
-import { SiteNode } from "./site/SiteNode";
+import { SiteCreatorNode } from "./site-creator/SiteCreatorNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -72,7 +72,6 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   loop: LoopNode,
   populate: PopulateNode,
   brandKit: BrandKitNode,
-  site: SiteNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,
   urlImage: UrlImageNode,
@@ -87,6 +86,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   designer: DesignerNode,
   projectAssets: ProjectAssetsNode,
   presenter: PresenterNode,
+  siteCreator: SiteCreatorNode,
   canvasGroup: CanvasGroupNode,
 };
 

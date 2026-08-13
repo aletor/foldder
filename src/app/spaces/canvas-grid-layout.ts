@@ -42,7 +42,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   painter: { cols: 5, rows: 3 },
   lightroom: { cols: 5, rows: 3 },
   presenter: { cols: 5, rows: 3 },
-  site: { cols: 5, rows: 3 },
+  siteCreator: { cols: 5, rows: 3 },
 
   // Tier 2b — 4×4 · datasets de proyecto
   dataset: { cols: 4, rows: 4 },

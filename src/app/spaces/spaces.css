@@ -8977,6 +8977,188 @@
 .presenter-transition-preview--slideDown { animation-name: presenter-transition-preview-slide-down; }
 .presenter-transition-preview--none { opacity: 0.85; animation: none; }
 
+/* ── Site Creator ── */
+.custom-node.site-creator-node.foldder-node--frameless.node--media {
+  background: #22d3ee !important;
+  background-image: none !important;
+}
+
+.custom-node.site-creator-node .site-creator-node-main,
+.custom-node.foldder-studio-node--siteCreator .site-creator-node-main {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.custom-node.site-creator-node.site-creator-node--empty .site-creator-node-main {
+  background: #22d3ee !important;
+}
+
+.custom-node.site-creator-node.site-creator-node--has-content .site-creator-node-main.foldder-node-content-main--with-dock {
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) auto !important;
+  gap: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.custom-node.site-creator-node.site-creator-node--has-content .site-creator-node-preview-area {
+  min-height: 140px;
+}
+
+.custom-node.site-creator-node.site-creator-node--has-preview .site-creator-node-preview-area {
+  background: #fafafa;
+}
+
+.custom-node.site-creator-node .site-creator-node-page-preview {
+  pointer-events: none;
+}
+
+.custom-node.site-creator-node .site-creator-node-dock-wrap {
+  position: relative;
+  z-index: 12;
+  grid-row: 2;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.custom-node.site-creator-node .site-creator-node-preview-area,
+.custom-node.site-creator-node .site-creator-node-preview-area.foldder-node-content-preview-area {
+  position: relative;
+  grid-row: 1;
+  flex: unset !important;
+  min-height: 0;
+  overflow: hidden;
+  background: #22d3ee;
+}
+
+.custom-node.site-creator-node.site-creator-node--empty .site-creator-node-preview-area {
+  flex: 1 1 auto !important;
+  min-height: 100%;
+}
+
+.custom-node.site-creator-node .site-creator-node-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  pointer-events: none;
+  user-select: none;
+  background: #22d3ee;
+}
+
+.custom-node.site-creator-node .site-creator-node-empty-hint {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.custom-node.site-creator-node .site-creator-node-empty-hint__title {
+  margin: 0;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(20, 24, 31, 0.72);
+}
+
+.custom-node.site-creator-node .site-creator-node-empty-hint__body {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(20, 24, 31, 0.55);
+}
+
+.custom-node.site-creator-node.site-creator-node--has-content .site-creator-node-dock-wrap,
+.custom-node.site-creator-node.site-creator-node--has-content .foldder-node-content-dock {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+}
+
+.custom-node.site-creator-node .site-creator-node-dock-actions {
+  flex-direction: column;
+  gap: 6px;
+}
+
+.custom-node.site-creator-node .foldder-node-content-dock,
+.custom-node.site-creator-node .foldder-node-content-dock .foldder-node-content-meta,
+.custom-node.site-creator-node .foldder-node-content-dock .foldder-node-content-meta span,
+.custom-node.site-creator-node .foldder-node-content-dock-text {
+  color: rgba(20, 24, 31, 0.92) !important;
+}
+
+.custom-node.site-creator-node .foldder-node-content-meta-label {
+  color: rgba(20, 24, 31, 0.52) !important;
+}
+
+.custom-node.site-creator-node .foldder-node-content-dock-text--placeholder {
+  color: rgba(20, 24, 31, 0.62) !important;
+}
+
+.custom-node.site-creator-node .foldder-node-content-meta-row--status {
+  border-top-color: rgba(20, 24, 31, 0.12);
+}
+
+.custom-node.site-creator-node .foldder-frameless-main {
+  background: transparent !important;
+}
+
+.custom-node.site-creator-node,
+.custom-node.foldder-studio-node--siteCreator {
+  --foldder-frameless-accent: #22d3ee;
+}
+
+.site-creator-studio__body {
+  min-height: 0;
+}
+
+.site-creator-preview-viewport {
+  background: #171b22;
+}
+
+.site-creator-preview-scroll {
+  background: linear-gradient(180deg, #171b22 0%, #12161c 100%);
+}
+
+.site-creator-preview-stage {
+  background: #fafafa;
+  overflow: hidden;
+}
+
+.site-creator-preview-stage__inner {
+  position: relative;
+  display: block;
+}
+
+.site-creator-selection-surface {
+  z-index: 2;
+}
+
+.site-creator-preview-stage__inner svg {
+  display: block;
+}
+
+.site-creator-studio__footer button {
+  cursor: pointer;
+}
+
 .custom-node.gemini-video-node.gemini-video-node--empty,
 .custom-node.foldder-studio-node--geminiVideo.gemini-video-node--empty {
   background: #3239ba !important;
@@ -11714,6 +11896,7 @@
 .react-flow__handle:not(.foldder-data-handle).handle-emerald{ border-color: #10b981 !important; }
 .react-flow__handle:not(.foldder-data-handle).handle-dataset { border-color: #14b8a6 !important; }
 .react-flow__handle:not(.foldder-data-handle).handle-template { border-color: #FD52EB !important; }
+.react-flow__handle:not(.foldder-data-handle).handle-site-template { border-color: #22d3ee !important; }
 
 /* Conectores con icono: cuadrado redondeado; anillo de color solo si está conectado.
    border-radius compensado como ancho/alto para radio ~constante en pantalla al hacer zoom */
@@ -11778,6 +11961,7 @@
 .foldder-data-handle--connected.handle-emerald{ box-shadow: 0 0 0 2.8px rgba(16, 185, 129, 0.55) !important; }
 .foldder-data-handle--connected.handle-dataset { box-shadow: 0 0 0 2.8px rgba(20, 184, 166, 0.55) !important; }
 .foldder-data-handle--connected.handle-template { box-shadow: 0 0 0 2.8px rgba(253, 82, 235, 0.6) !important; }
+.foldder-data-handle--connected.handle-site-template { box-shadow: 0 0 0 2.8px rgba(34, 211, 238, 0.6) !important; }
 .foldder-data-handle--connected.handle-generic { box-shadow: 0 0 0 2.8px rgba(148, 163, 184, 0.5) !important; }
 
 /* Misma composición que @xyflow/react/style.css: si falta el eje Y/X, los bounds del handle fallan y las aristas no se dibujan (getEdgePosition → null). */

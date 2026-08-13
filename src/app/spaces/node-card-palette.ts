@@ -26,7 +26,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   populate: "#33FFCC",
   vfxGenerator: "#6B597F",
   presenter: "#f5b91b",
-  site: "#6ec4a8",
+  siteCreator: "#22d3ee",
   painter: "#890AF3",
   notes: "#55606B",
   concatenator: "#FADC93",

@@ -118,4 +118,42 @@ describe("PoC: Image Creation → Image Describer → Loop", () => {
     expect(result.cost.totalUsd).toBeCloseTo(0.16, 2); // (0.07+0.01)×2
     expect(result.cost.missingExecutorTypes).toEqual([]);
   });
+
+  it("itera por tokens del prompt sin binding de columna (solo templatePrompt)", async () => {
+    const registry = createExecutorRegistry();
+    registry.register(stubNanoBanana).register(stubMediaDescriber);
+
+    const simpleNodes: ExecutorNode[] = [
+      { id: "pop", type: "loop" },
+      { id: "ds", type: "dataset" },
+      {
+        id: "img",
+        type: "nanoBanana",
+        data: { modelKey: "flash31", aspect_ratio: "16:9", resolution: "2k" },
+      },
+    ];
+    const simpleEdges: PipelineEdge[] = [
+      { source: "ds", target: "pop", targetHandle: "dataset" },
+      { source: "img", target: "pop", sourceHandle: "image", targetHandle: "template" },
+    ];
+
+    const result = await runLoopPipeline({
+      loopId: "pop",
+      nodes: simpleNodes,
+      edges: simpleEdges,
+      dataset: makeDataset(),
+      listId: "l1",
+      bindings: {},
+      templatePrompt: "foto de {nombre}",
+      promptTemplatesByNodeId: { img: "foto de {nombre}" },
+      registry,
+      ownerEmail: "test@foldder.com",
+    });
+
+    expect(result.analysis.iterated).toEqual(new Set(["img"]));
+    expect(result.analysis.constant.size).toBe(0);
+    expect(result.okCount).toBe(2);
+    expect(result.rows[0]!.final?.url).toContain("foto%20de%20Luna");
+    expect(result.rows[1]!.final?.url).toContain("foto%20de%20Sol");
+  });
 });

@@ -12,9 +12,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isSpaces =
     pathname === "/spaces" || pathname?.startsWith("/spaces/");
   const isLab = pathname === "/lab" || pathname?.startsWith("/lab/");
-  const isSiteLab = pathname === "/site_lab" || pathname?.startsWith("/site_lab/");
   const isPublicForm = pathname === "/f" || pathname?.startsWith("/f/");
-  const isFullViewport = isSpaces || isLab || isSiteLab || isPublicForm;
+  const isFullViewport = isSpaces || isLab || isPublicForm;
 
   useEffect(() => {
     cleanupLegacyUnscopedBrainSuggestionStorageOnce();
@@ -34,7 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
       {!isFullViewport && pathname !== "/" && !isPublicForm ? <LanguageSwitcher /> : null}
-      {pathname !== "/" && !isLab && !isSiteLab && !isPublicForm ? <BackgroundRadioPlayer /> : null}
+      {pathname !== "/" && !isLab && !isPublicForm ? <BackgroundRadioPlayer /> : null}
     </LanguageProvider>
   );
 }

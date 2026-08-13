@@ -9,6 +9,11 @@ import {
   resolveOpenAiImageQuality,
 } from "@/lib/pricing-config";
 import type { ActiveImageRef } from "./loop-active-refs";
+import {
+  estimateExpectedImageGenerations,
+  listColumnTokensInPrompt,
+  loopWillIteratePerRow,
+} from "./loop-dataset-bound";
 import type { LoopTemplateModel } from "./loop-generate";
 import { extractPromptTokens } from "./loop-tokens";
 import type { LoopBindings } from "./loop-types";
@@ -34,6 +39,10 @@ export interface LoopStudioSummary {
   templateLabel: string;
   listName: string;
   rowCount: number;
+  /** Generaciones de imagen esperadas (API), no solo filas del listado. */
+  expectedImageCount: number;
+  /** True si el lote itera por filas (tokens de listado o bindings de columna). */
+  willIterate: boolean;
   tokenCount: number;
   activeRefCount: number;
   dynamicRefCount: number;
@@ -74,11 +83,23 @@ export function buildLoopStudioSlots(args: {
   schema: FieldDef[];
   constantFields: FieldDef[];
   promptLabel?: string;
+  manualTokenValues?: Record<string, string>;
 }): LoopStudioSlot[] {
-  const { promptText, bindings, activeImageRefs, schema, constantFields, promptLabel = "Prompt" } =
-    args;
+  const {
+    promptText,
+    bindings,
+    activeImageRefs,
+    schema,
+    constantFields,
+    promptLabel = "Prompt",
+    manualTokenValues,
+  } = args;
   const labelByFieldId = new Map(schema.map((f) => [f.id, f.label]));
   const tokens = extractPromptTokens(promptText);
+  const listKeys = schema.map((f) => f.key);
+  const iteratingTokens = new Set(
+    listColumnTokensInPrompt(promptText, listKeys, manualTokenValues),
+  );
   const slots: LoopStudioSlot[] = [
     {
       id: "prompt",
@@ -91,11 +112,20 @@ export function buildLoopStudioSlots(args: {
 
   for (const fieldKey of tokens) {
     const valid = fieldExists(schema, constantFields, fieldKey);
+    const isListIterating = iteratingTokens.has(fieldKey);
+    const isConst = constantFields.some((f) => f.key === fieldKey);
+    const manual = manualTokenValues?.[fieldKey];
+    const isManual = typeof manual === "string" && manual.trim() !== "";
+    let status = `{${fieldKey}}`;
+    if (!valid) status = "Columna no encontrada";
+    else if (isManual) status = `{${fieldKey}} · manual (fijo)`;
+    else if (isListIterating) status = `{${fieldKey}} · itera por fila`;
+    else if (isConst) status = `{${fieldKey}} · constante`;
     slots.push({
       id: `token:${fieldKey}`,
       kind: "token",
       label: fieldLabel(schema, constantFields, fieldKey),
-      status: valid ? `{${fieldKey}}` : "Columna no encontrada",
+      status,
       ok: valid,
       fieldKey,
     });
@@ -140,6 +170,7 @@ export function buildLoopStudioSummary(args: {
   model: LoopTemplateModel;
   datasetConnected: boolean;
   hasTemplate: boolean;
+  manualTokenValues?: Record<string, string>;
 }): LoopStudioSummary {
   const {
     templateLabel,
@@ -153,13 +184,27 @@ export function buildLoopStudioSummary(args: {
     model,
     datasetConnected,
     hasTemplate,
+    manualTokenValues,
   } = args;
 
   const tokens = extractPromptTokens(promptText);
+  const listFieldKeys = schema.map((f) => f.key);
+  const listTokens = listColumnTokensInPrompt(promptText, listFieldKeys, manualTokenValues);
   const labelByFieldId = new Map(schema.map((f) => [f.id, f.label]));
   const dynamicRefs = activeImageRefs.filter((r) => bindings[r.inputId]?.source === "column");
+  const willIterate = loopWillIteratePerRow({
+    promptText,
+    bindings,
+    listFieldKeys,
+    manualTokenValues,
+  });
+  const expectedImageCount = estimateExpectedImageGenerations({
+    rowCount,
+    willIterate,
+    hasTemplate,
+  });
   const costPerImageUsd = estimateLoopImageCostUsd(model);
-  const costTotalUsd = costPerImageUsd * Math.max(0, rowCount);
+  const costTotalUsd = costPerImageUsd * Math.max(0, expectedImageCount);
 
   const blockers: string[] = [];
   if (!datasetConnected) blockers.push("Conecta un Dataset al nodo Loop.");
@@ -171,6 +216,13 @@ export function buildLoopStudioSummary(args: {
     if (!fieldExists(schema, constantFields, key)) {
       blockers.push(`Variable «${key}» no existe en el Dataset.`);
     }
+  }
+
+  // Defensa: tokens de listado sin plantilla creativa no pueden iterar (ya bloqueado arriba).
+  if (listTokens.length > 0 && !hasTemplate) {
+    blockers.push(
+      "El prompt usa columnas del listado: conecta Image Creation para generar una imagen por fila.",
+    );
   }
 
   for (const ref of activeImageRefs) {
@@ -198,21 +250,32 @@ export function buildLoopStudioSummary(args: {
     }
   }
 
+  const promptLine =
+    listTokens.length > 0
+      ? `Prompt: ${listTokens.length} variable${listTokens.length === 1 ? "" : "s"} del listado (itera)`
+      : tokens.length > 0
+        ? `Prompt: ${tokens.length} variable${tokens.length === 1 ? "" : "s"} (fijas / constantes)`
+        : "Prompt: texto fijo (sin variables)";
+
+  const resultsLine = willIterate
+    ? `Resultados esperados: ${expectedImageCount} imagen${expectedImageCount === 1 ? "" : "es"} (1 por fila)`
+    : `Resultados esperados: ${expectedImageCount} imagen${expectedImageCount === 1 ? "" : "es"} (plantilla fija)`;
+
   const lines = [
     `Nodo: ${templateLabel}`,
     `Listado: ${listName} · ${rowCount} fila${rowCount === 1 ? "" : "s"}`,
-    tokens.length > 0
-      ? `Prompt: ${tokens.length} variable${tokens.length === 1 ? "" : "s"} del Dataset`
-      : "Prompt: texto fijo (sin variables)",
+    promptLine,
     `Referencias: ${refParts.join(" · ")}`,
-    `Resultados esperados: ${rowCount} imagen${rowCount === 1 ? "" : "es"}`,
-    `Coste estimado: ~$${costTotalUsd.toFixed(2)} (${rowCount} × ~$${costPerImageUsd.toFixed(3)})`,
+    resultsLine,
+    `Coste estimado: ~$${costTotalUsd.toFixed(2)} (${expectedImageCount} × ~$${costPerImageUsd.toFixed(3)})`,
   ];
 
   return {
     templateLabel,
     listName,
     rowCount,
+    expectedImageCount,
+    willIterate,
     tokenCount: tokens.length,
     activeRefCount: activeImageRefs.length,
     dynamicRefCount: dynamicRefs.length,

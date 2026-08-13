@@ -4,7 +4,7 @@ import { normalizeDatasetNodesForPersistence } from "./dataset/dataset-project";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import { stripEphemeralNodeClassNames, stripFoldderCanvasIntroFromNodeData } from "./spaces-canvas-intro";
 
-const LEGACY_REMOVED_CANVAS_NODE_TYPES = new Set(["background", "imageComposer", "bezierMask", "textOverlay"]);
+const LEGACY_REMOVED_CANVAS_NODE_TYPES = new Set(["background", "imageComposer", "bezierMask", "textOverlay", "site"]);
 
 function parseStylePx(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;

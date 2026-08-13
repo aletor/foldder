@@ -52,6 +52,56 @@ describe("loop-studio-summary", () => {
     expect(summary.blockers.some((b) => b.includes("Image Creation"))).toBe(true);
   });
 
+  it("cuenta 5 imágenes cuando el prompt usa columna del listado", () => {
+    const summary = buildLoopStudioSummary({
+      templateLabel: "Image Creation",
+      listName: "Prompts",
+      rowCount: 5,
+      promptText: "{titulo}",
+      bindings: {},
+      activeImageRefs: [],
+      schema,
+      constantFields: [],
+      model: { modelKey: "flash31", aspectRatio: "16:9", resolution: "2k", provider: "gemini" },
+      datasetConnected: true,
+      hasTemplate: true,
+    });
+    expect(summary.willIterate).toBe(true);
+    expect(summary.expectedImageCount).toBe(5);
+    expect(summary.canGenerate).toBe(true);
+    expect(summary.lines.some((l) => l.includes("1 por fila"))).toBe(true);
+  });
+
+  it("cuenta 1 imagen cuando el prompt es fijo sin bindings", () => {
+    const summary = buildLoopStudioSummary({
+      templateLabel: "Image Creation",
+      listName: "Prompts",
+      rowCount: 5,
+      promptText: "logo corporativo",
+      bindings: {},
+      activeImageRefs: [],
+      schema,
+      constantFields: [],
+      model: { modelKey: "flash31", aspectRatio: "16:9", resolution: "2k", provider: "gemini" },
+      datasetConnected: true,
+      hasTemplate: true,
+    });
+    expect(summary.willIterate).toBe(false);
+    expect(summary.expectedImageCount).toBe(1);
+    expect(summary.lines.some((l) => l.includes("plantilla fija"))).toBe(true);
+  });
+
+  it("marca tokens de listado como itera por fila", () => {
+    const slots = buildLoopStudioSlots({
+      promptText: "Hola {titulo}",
+      bindings: {},
+      activeImageRefs: [],
+      schema,
+      constantFields: [],
+    });
+    expect(slots.find((s) => s.kind === "token")?.status).toContain("itera por fila");
+  });
+
   it("estimates gemini batch cost", () => {
     const per = estimateLoopImageCostUsd({
       modelKey: "flash31",

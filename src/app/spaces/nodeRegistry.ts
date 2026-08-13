@@ -1,4 +1,4 @@
-export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout' | 'dataset' | 'template';
+export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout' | 'dataset' | 'template' | 'site_template';
 
 export interface NodeMetadata {
   type: string;
@@ -622,6 +622,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       transitionsByPageId: 'Record<pageId, SlideTransitionId>',
     },
   },
+  siteCreator: {
+    type: 'siteCreator',
+    label: 'Site Creator',
+    description:
+      'Transforma un documento Designer de una sola página en una landing web responsive mediante un Site Blueprint separado que referencia capas por ID, sin modificar el documento Designer.',
+    inputs: [{ id: 'document', label: 'Designer document', type: 'json' as HandleType, required: true }],
+    outputs: [{ id: 'template', label: 'Site template', type: 'site_template' as HandleType }],
+    dataSchema: {
+      schemaVersion: '1',
+      blueprint: 'SiteBlueprintV1 { schemaVersion, rootChildIds, nodes }',
+      studioState: '{ lastOpenedAt? }',
+      label: 'string',
+    },
+  },
   dataset: {
     type: 'dataset',
     label: 'Dataset',
@@ -705,26 +719,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       brandKit: 'BrandKitDocument (slots, sources, compiled en node.data.brandKit)',
     },
   },
-  site: {
-    type: 'site',
-    label: 'Site',
-    description:
-      'Compilador de marca a web: páginas con bloques (texto, media, botón, collection), tema global y publish en /site/{slug}. Conecta BrandKit (ADN), Dataset, Populate o Designer (media_list).',
-    inputs: [
-      { id: 'adn', label: 'ADN', type: 'brain' as HandleType },
-      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
-      { id: 'content', label: 'Contenido', type: 'json' as HandleType },
-      { id: 'media', label: 'Media', type: 'image' as HandleType },
-    ],
-    outputs: [{ id: 'leads', label: 'Leads', type: 'json' as HandleType }],
-    dataSchema: {
-      label: 'string (título opcional)',
-      project: 'SiteProject { pages[], activePageId, theme, publish, ledger, autoGraphSync, sectionLibrary }',
-      sectionLabels: 'Record<sectionId, string>',
-      leadsOutput: 'SiteLeadsOutput (json) — capturas del formulario publicado',
-      status: 'empty | draft | published | stale',
-    },
-  },
 };
 
 /**
@@ -764,15 +758,15 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   pdfScan:
     "sin auto-scan al drop (status staged); mode texts|document; source en S3; texts=raster limpio+textSpans; document=paths+texto+imágenes (pdf_document_layout); fidelity; mediaListOutput; sin LLM en núcleo",
   brandKit:
-    "label (título opcional); brandKit (BrandKitDocument en node.data); salida brand (tipo brain → Site adn, Designer, generadores); abre BrandKit Studio",
-  site:
-    "label (título opcional); project (SiteProject: pages[], activePageId, theme, publish con publicUrl/stale/customDomain, ledger, sectionLibrary); entradas adn (BrandKit brand), dataset, content (Populate out/media_list o Designer media_list), media (imagen); salida leads (json); export ZIP + publish /site/{slug}; abre Site Studio",
+    "label (título opcional); brandKit (BrandKitDocument en node.data); salida brand (tipo brain → Designer, generadores); abre BrandKit Studio",
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:
     "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization, pageThumbnails (raster por p\u00e1gina); salida document (json) conecta a presenter; salida media_list conecta a Export Multimedia (thumbnails en vivo + descarga full-res por p\u00e1gina)",
   presenter:
     "label; conectar entrada document desde designer; transitionsByPageId; imageVideoPlacements; el UI lee pages del Designer vía grafo (slides / Presenter / share)",
+  siteCreator:
+    "schemaVersion 1; blueprint SiteBlueprintV1; sourceSnapshot DesignerSourceSnapshotV1 (page congelada); studioState; entrada document solo Designer 1 página; salida template site_template",
   populate:
     "label, listId, templateBindings[] (1..8 Designers), activeTemplateNodeId, publicShareToken; salida value + mediaListOutput; formulario público /f/{token}; NO iterar Dataset (distinto de loop)",
   canvasGroup:

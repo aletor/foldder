@@ -14,7 +14,7 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   geminiVideo: "/assets/nodes/gemini-video-empty-blue.png",
   nanoBanana: "/assets/nodes/nano-banana-empty-pink.png",
   presenter: "/assets/nodes/presenter-empty-yellow.jpg",
-  site: "/assets/nodes/presenter-empty-yellow.jpg",
+  siteCreator: "/assets/nodes/presenter-empty-yellow.jpg",
   video_editor: "/assets/nodes/video-editor-empty.jpg",
   videoEditor: "/assets/nodes/video-editor-empty.jpg",
   imageCreationAdvanced: "/assets/nodes/nano-banana-empty-pink.png",

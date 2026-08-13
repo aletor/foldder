@@ -102,14 +102,6 @@ export const STUDIO_NODE_MANIFESTS = {
     ownsPortal: true,
     description: "ADN de marca editable con procedencia y confirmación por slot.",
   },
-  site: {
-    nodeType: "site",
-    label: "Site",
-    chrome: "editorial",
-    modulePath: "src/app/spaces/site/SiteStudio.tsx",
-    ownsPortal: true,
-    description: "Compilador de marca a web: bloques, tema y publish SSG.",
-  },
   nanoBanana: {
     nodeType: "nanoBanana",
     appId: "nanoBanana",

@@ -338,18 +338,6 @@ export function estimateWalletCostForRoute(
     });
   }
 
-  if (route === "/api/spaces/site/generate-copy") {
-    return estimateTextRoute({
-      label: "Site · copy IA",
-      route,
-      body,
-      inputChars: textLengthFromFields(body, ["currentText", "action"], 900),
-      model: "gpt-4o-mini",
-      outputTokens: 1200,
-      multiplier: 1.6,
-    });
-  }
-
   if (route === "/api/spaces/brandKit/crawl") {
     if (body.enableLlm === false) return null;
     const model = "gemini-2.5-flash";

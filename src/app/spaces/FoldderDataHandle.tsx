@@ -24,6 +24,7 @@ export type FoldderHandleDataType =
   | "rose"
   | "dataset"
   | "template"
+  | "site_template"
   | "generic";
 
 const TYPE_CLASS: Record<FoldderHandleDataType, string> = {
@@ -40,6 +41,7 @@ const TYPE_CLASS: Record<FoldderHandleDataType, string> = {
   rose: "handle-rose",
   dataset: "handle-dataset",
   template: "handle-template",
+  site_template: "handle-site-template",
   generic: "handle-generic",
 };
 
@@ -58,6 +60,7 @@ const DATA_TYPE_TO_ICON: Record<FoldderHandleDataType, FoldderIconKey> = {
   rose: "output",
   dataset: "dataset",
   template: "layout",
+  site_template: "web",
   generic: "grok",
 };
 

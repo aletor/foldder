@@ -194,6 +194,13 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "PDFScan", status: "empty" as const };
     case "presenter":
       return { label: "Presenter" };
+    case "siteCreator":
+      return {
+        label: "Site Creator",
+        schemaVersion: 1,
+        blueprint: { schemaVersion: 1, rootChildIds: [], nodes: {} },
+        studioState: {},
+      };
     case "dataset":
       return { label: "Dataset", _datasetShowChooser: true };
     case "loop":
@@ -210,8 +217,6 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "Video Editor" };
     case "brandKit":
       return { label: "BrandKit", status: "empty" as const };
-    case "site":
-      return { label: "Site", status: "empty" as const };
     case "projectAssets":
       return { label: "Assets" };
     case "notes":

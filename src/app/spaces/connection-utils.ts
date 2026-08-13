@@ -14,6 +14,7 @@ import {
   isLoopSpacePortalConnection,
   type SpaceMapEntryLike,
 } from './space-portal-loop-link';
+import { isValidSiteCreatorDocumentConnection } from './site-creator/site-creator-connection';
 
 /**
  * Tipos de nodo creativo que Loop puede orquestar (plantilla).
@@ -96,6 +97,7 @@ export function designerModeConflictReason(
  */
 export type AreNodesConnectableOptions = {
   spacesMap?: Record<string, SpaceMapEntryLike | undefined>;
+  edges?: Pick<Edge, 'source' | 'target' | 'targetHandle' | 'sourceHandle' | 'id'>[];
 };
 
 export function areNodesConnectable(
@@ -185,35 +187,9 @@ export function areNodesConnectable(
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'image') return true;
   if (connection.sourceHandle === 'rgba' && targetHandleType === 'url') return true;
 
-  // BrandKit brand → brain inputs (Designer, Site ADN, etc.).
+  // BrandKit brand → brain inputs (Designer, generadores, etc.).
   if (sourceNode.type === "brandKit" && connection.sourceHandle === "brand" && targetHandleType === "brain") {
     return true;
-  }
-
-  // Site puertos dedicados.
-  if (targetNode.type === "site") {
-    if (connection.targetHandle === "adn") {
-      return sourceNode.type === "brandKit" && connection.sourceHandle === "brand";
-    }
-    if (connection.targetHandle === "dataset") {
-      return sourceHandleType === "dataset";
-    }
-    if (connection.targetHandle === "content") {
-      if (sourceNode.type === "populate") {
-        return connection.sourceHandle === "out" || connection.sourceHandle === "media_list";
-      }
-      if (sourceNode.type === "designer") {
-        return connection.sourceHandle === "media_list";
-      }
-      return false;
-    }
-    if (connection.targetHandle === "media") {
-      return sourceHandleType === "image";
-    }
-  }
-
-  if (sourceNode.type === "site" && connection.sourceHandle === "leads") {
-    return targetHandleType === "json" || (targetHandleType as string) === "generic";
   }
 
   // Brain handle should only connect to brain-compatible inputs.
@@ -255,12 +231,44 @@ export function areNodesConnectable(
 
   // Populate plantilla: Designer directo (Document → template) o Space (out → template).
   if (targetNode.type === "populate" && connection.targetHandle === "template") {
+    if (sourceNode.type === "siteCreator") return false;
     if (sourceNode.type === "space") {
       const sh = connection.sourceHandle ?? "out";
       return sh === "out" || sh === "media_list";
     }
     const sh = connection.sourceHandle ?? "document";
     return sourceNode.type === "designer" && (sh === "document" || sh === "template");
+  }
+
+  // Site Creator document: solo Designer.document con exactamente 1 página y un origen.
+  if (
+    targetNode.type === "siteCreator" &&
+    (connection.targetHandle === "document" || connection.targetHandle == null)
+  ) {
+    return isValidSiteCreatorDocumentConnection(
+      sourceNode,
+      targetNode,
+      connection,
+      options?.edges,
+    );
+  }
+
+  // Site template aún no conectable con Populate ni Loop.
+  if (
+    sourceNode.type === "siteCreator" &&
+    connection.sourceHandle === "template" &&
+    (targetNode.type === "populate" || targetNode.type === "loop") &&
+    connection.targetHandle === "template"
+  ) {
+    return false;
+  }
+
+  if (
+    targetNode.type === "loop" &&
+    connection.targetHandle === "template" &&
+    sourceNode.type === "siteCreator"
+  ) {
+    return false;
   }
 
   // Space interno: varios Designers (Document) → spaceOutput en paralelo (Populate / colección).

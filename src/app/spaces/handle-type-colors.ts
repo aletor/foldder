@@ -21,6 +21,7 @@ export const HANDLE_COLORS: Record<string, string> = {
   txt: "#f59e0b",
   url: "#10b981",
   template: "#FD52EB",
+  site_template: "#22d3ee",
   rose: "#f43f5e",
   emerald: "#10b981",
 };
@@ -56,6 +57,7 @@ function pickPrimaryOutputType(outputs: { type: HandleType }[]): HandleType | un
 function handleTypeToBorderColor(t: HandleType): string {
   if (t === "audio") return HANDLE_COLORS.sound;
   if (t === "json") return HANDLE_COLORS.txt;
+  if (t === "site_template") return HANDLE_COLORS.site_template;
   return HANDLE_COLORS[t as keyof typeof HANDLE_COLORS] ?? DEFAULT_EDGE_COLOR;
 }
 

@@ -108,9 +108,9 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Presenter',
     line: 'Conecta Document del Designer: cada página es un slide con animaciones, transiciones y vídeos en imágenes',
   },
-  site: {
-    title: 'Site',
-    line: 'Compila tu marca en web: bloques + tema. Conecta BrandKit (ADN), Dataset, Populate o Designer',
+  siteCreator: {
+    title: 'Site Creator',
+    line: 'Conecta Document de un Designer de una sola página para preparar una landing web con Site Blueprint',
   },
   video_editor: {
     title: 'Video Editor',

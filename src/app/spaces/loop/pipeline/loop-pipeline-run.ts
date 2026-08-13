@@ -4,6 +4,8 @@
  */
 
 import type { Dataset } from "@/app/spaces/dataset/dataset-types";
+import { computeDatasetBoundNodeIds } from "../loop-dataset-bound";
+import { findPromptTemplateTargetNodeId } from "../loop-pipeline-prompt-target";
 import type { LoopInputBinding } from "../loop-types";
 import { analyzePipeline } from "./discover-pipeline";
 import type { PipelineEdge } from "./discover-pipeline";
@@ -52,7 +54,11 @@ export interface RunLoopPipelineResult {
 export async function runLoopPipeline(
   input: RunLoopPipelineInput,
 ): Promise<RunLoopPipelineResult> {
-  // Pasada previa para resolver sinkId (bindings legacy sin namespace).
+  const list = input.dataset.lists.find((l) => l.id === input.listId);
+  const listFieldKeys = list?.schema.map((f) => f.key) ?? [];
+  const nodeById = executorNodeMap(input.nodes);
+
+  // Pasada previa para resolver sinkId (bindings legacy sin namespace) y el target del prompt.
   const pre = analyzePipeline({
     loopId: input.loopId,
     nodes: input.nodes,
@@ -60,21 +66,28 @@ export async function runLoopPipeline(
     datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(input.bindings),
   });
 
+  const promptTargetNodeId = findPromptTemplateTargetNodeId(pre, nodeById);
+  const datasetBoundNodeIds = computeDatasetBoundNodeIds({
+    bindings: input.bindings,
+    legacySinkNodeId: pre.sinkId ?? undefined,
+    promptTargetNodeId,
+    templatePrompt: input.templatePrompt,
+    promptTemplatesByNodeId: input.promptTemplatesByNodeId,
+    listFieldKeys,
+    manualTokenValues: input.manualTokenValues,
+  });
+
   const analysis = analyzePipeline({
     loopId: input.loopId,
     nodes: input.nodes,
     edges: input.edges,
-    datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(
-      input.bindings,
-      pre.sinkId ?? undefined,
-    ),
+    datasetBoundNodeIds,
   });
 
   if (!analysis.validation.ok) {
     throw new Error(analysis.validation.errors.join(" "));
   }
 
-  const list = input.dataset.lists.find((l) => l.id === input.listId);
   const listRowCount = list?.cards.length ?? 0;
   // Regla de filas: si no hay lista que iterar pero hay campos manuales rellenos, una sola pasada
   // (modo formulario). Los valores manuales son constantes para esa única generación.
@@ -82,8 +95,6 @@ export async function runLoopPipeline(
     (b) => b.source === "manual" && (b.manualValue ?? "").trim() !== "",
   );
   const rowCount = listRowCount > 0 ? listRowCount : hasFilledManual ? 1 : 0;
-
-  const nodeById = executorNodeMap(input.nodes);
   const adapterCtx: PipelineAdapterContext = {
     nodes: input.nodes,
     edges: input.edges,

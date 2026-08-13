@@ -59,7 +59,6 @@ const SIDEBAR_RASTER_ICON_SRC: Record<string, string> = {
   nanoBanana: '/image_icon.svg',
   geminiVideo: '/video_icon.svg',
   presenter: '/presenter_icon.svg',
-  site: '/presenter_icon.svg',
   video_editor: '/video_edition_icon.svg',
   videoEditor: '/video_edition_icon.svg',
 };
@@ -89,8 +88,6 @@ function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: numb
         <SidebarRasterIcon src={rasterSrc} size={size} />
       ) : type === 'brandKit' ? (
         <TopbarGlyphBrain size={size} className="shrink-0 text-[#FFBD1B]" />
-      ) : type === 'site' ? (
-        <NodeIcon type="site" size={size} colorOverride="#6ec4a8" />
       ) : (
         <NodeIcon type={type} size={size} colorOverride="#ffffff" />
       )}
@@ -108,7 +105,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'geminiVideo') return 'border-[#ed9ae0] group-hover/tile:border-[#ed9ae0]';
   if (type === 'video_editor' || type === 'videoEditor') return 'border-[#5ec4cc] group-hover/tile:border-[#7dd8df]';
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
-  if (type === 'site') return 'border-[#6ec4a8]/80 group-hover/tile:border-[#6ec4a8]';
+  if (type === 'siteCreator') return 'border-[#22d3ee]/80 group-hover/tile:border-[#22d3ee]';
   if (type === 'dataset') return 'border-[#37b7df] group-hover/tile:border-[#37b7df]';
   if (type === 'loop') return 'border-[#fd52eb] group-hover/tile:border-[#fd52eb]';
   if (type === 'populate') return 'border-[#33ffcc] group-hover/tile:border-[#33ffcc]';
@@ -124,7 +121,7 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'nanoBanana', label: 'Image Creation' },
   { type: 'geminiVideo', label: 'Video Creation' },
   { type: 'presenter', label: 'Presenter' },
-  { type: 'site', label: 'Site' },
+  { type: 'siteCreator', label: 'Site Creator' },
   { type: 'video_editor', label: 'Video Editor' },
 ];
 

@@ -7,13 +7,35 @@ type LiveStudioNodeData = Record<string, unknown>;
 
 const liveStudioNodeData = new Map<string, LiveStudioNodeData>();
 
+const liveStudioListeners = new Set<() => void>();
+let liveStudioEpoch = 0;
+
+function emitLiveStudioChange() {
+  liveStudioEpoch += 1;
+  liveStudioListeners.forEach((listener) => listener());
+}
+
+export function subscribeLiveStudioDocuments(onStoreChange: () => void): () => void {
+  liveStudioListeners.add(onStoreChange);
+  return () => {
+    liveStudioListeners.delete(onStoreChange);
+  };
+}
+
+export function getLiveStudioDocumentsEpoch(): number {
+  return liveStudioEpoch;
+}
+
 export function setLiveStudioNodeData(nodeId: string, patch: LiveStudioNodeData) {
   const prev = liveStudioNodeData.get(nodeId) ?? {};
   liveStudioNodeData.set(nodeId, { ...prev, ...patch });
+  emitLiveStudioChange();
 }
 
 export function clearLiveStudioNodeData(nodeId: string) {
+  if (!liveStudioNodeData.has(nodeId)) return;
   liveStudioNodeData.delete(nodeId);
+  emitLiveStudioChange();
 }
 
 export function getLiveStudioNodePatch(nodeId: string): LiveStudioNodeData | undefined {

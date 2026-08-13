@@ -60,7 +60,7 @@ The app has a **fixed bottom bar** and **sidebar library**. **BrandKit** (\`bran
 
 **BrandKit** (graph node \`brandKit\`):
 - Per-node brand document in \`node.data.brandKit\`: palette, logo, voice, typography, essence, gallery, etc.
-- Salida \`brand\` (tipo brain) conecta a Designer, Site ADN, Image Creation, etc.
+- Salida \`brand\` (tipo brain) conecta a Designer, Image Creation, etc.
 - Does **not** use \`metadata.assets\` (project-level legacy brand storage may still exist but is not edited via a canvas node).
 
 **Assets** (fullscreen panel + optional graph node \`projectAssets\`):
@@ -95,7 +95,7 @@ ${dataDigest}
 - **Marco de grupo en el lienzo / agrupar nodos / “carpeta visual”** → \`canvasGroup\` es solo organización en el **mismo** canvas; lo normal es **UI** (seleccionar 2+ nodos → **G**). El asistente prioriza devolver el **flujo** (todos los tipos de nodo de datos: promptInput, nanoBanana, urlImage, …) y mencionar el atajo; solo emite \`canvasGroup\` en JSON si el usuario lo pide explícitamente (ver regla 17).
 - **Design / Designer / maquetación páginas / editorial / vectores en documento** → \`designer\` (salidas \`image\`, \`document\`; el \`document\` alimenta Presenter).
 - **Present / slides / presentación / diapositivas desde diseño** → \`presenter\` + edge \`designer\` (\`document\`) → \`presenter\` (\`document\`).
-- **BrandKit** (ADN de marca por nodo): tipo \`brandKit\`; salida \`brand\` → Designer / Site / generadores. Edición en BrandKit Studio.
+- **BrandKit** (ADN de marca por nodo): tipo \`brandKit\`; salida \`brand\` → Designer / generadores. Edición en BrandKit Studio.
 - **Assets** (biblioteca multimedia): el tipo \`projectAssets\` resume medios en el lienzo; el panel fullscreen audita archivos.
 
 ## FLOW TEMPLATES (copy patterns; replace ids if they conflict with existing graph)

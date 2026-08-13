@@ -197,9 +197,11 @@ function SummaryRow({
 
 function StudioSummaryPanel({ summary }: { summary: LoopStudioSummary }) {
   const promptValue =
-    summary.tokenCount > 0
-      ? `${summary.tokenCount} variable${summary.tokenCount === 1 ? "" : "s"} del Dataset`
-      : "Texto fijo";
+    summary.willIterate && summary.tokenCount > 0
+      ? `${summary.tokenCount} variable${summary.tokenCount === 1 ? "" : "s"} · itera por fila`
+      : summary.tokenCount > 0
+        ? `${summary.tokenCount} variable${summary.tokenCount === 1 ? "" : "s"} (fijas)`
+        : "Texto fijo";
 
   let refsValue = "Sin referencias conectadas";
   if (summary.activeRefCount > 0) {
@@ -208,6 +210,11 @@ function StudioSummaryPanel({ summary }: { summary: LoopStudioSummary }) {
         ? `${summary.activeRefCount} conectada${summary.activeRefCount === 1 ? "" : "s"} · ${summary.dynamicRefCount} dinámica${summary.dynamicRefCount === 1 ? "" : "s"}`
         : `${summary.activeRefCount} fija${summary.activeRefCount === 1 ? "" : "s"}`;
   }
+
+  const n = summary.expectedImageCount;
+  const resultsValue = summary.willIterate
+    ? `${n} imagen${n === 1 ? "" : "es"} (1 por fila)`
+    : `${n} imagen${n === 1 ? "" : "es"} (plantilla fija)`;
 
   return (
     <div className="loop-studio-summary">
@@ -219,15 +226,11 @@ function StudioSummaryPanel({ summary }: { summary: LoopStudioSummary }) {
       />
       <SummaryRow icon={Type} label="Prompt" value={promptValue} />
       <SummaryRow icon={ImageIcon} label="Referencias" value={refsValue} />
-      <SummaryRow
-        icon={Layers}
-        label="Resultados"
-        value={`${summary.rowCount} imagen${summary.rowCount === 1 ? "" : "es"}`}
-      />
+      <SummaryRow icon={Layers} label="Resultados" value={resultsValue} />
       <SummaryRow
         icon={CircleDollarSign}
         label="Coste estimado"
-        value={`~$${summary.costTotalUsd.toFixed(2)} (${summary.rowCount} × ~$${summary.costPerImageUsd.toFixed(3)})`}
+        value={`~$${summary.costTotalUsd.toFixed(2)} (${n} × ~$${summary.costPerImageUsd.toFixed(3)})`}
       />
     </div>
   );
@@ -509,8 +512,9 @@ export function LoopStudio(props: LoopStudioProps) {
         schema,
         constantFields,
         promptLabel,
+        manualTokenValues: manualTokens,
       }),
-    [promptText, bindings, activeImageRefs, schema, constantFields, promptLabel],
+    [promptText, bindings, activeImageRefs, schema, constantFields, promptLabel, manualTokens],
   );
 
   const summary = useMemo(
@@ -527,6 +531,7 @@ export function LoopStudio(props: LoopStudioProps) {
         model,
         datasetConnected,
         hasTemplate: Boolean(templateLabel),
+        manualTokenValues: manualTokens,
       }),
     [
       templateLabel,
@@ -539,6 +544,7 @@ export function LoopStudio(props: LoopStudioProps) {
       constantFields,
       model,
       datasetConnected,
+      manualTokens,
     ],
   );
 
