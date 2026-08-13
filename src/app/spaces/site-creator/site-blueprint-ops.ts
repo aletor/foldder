@@ -316,7 +316,7 @@ export function createSectionFromSelection(args: {
   const partial = findPartiallyCoveredSemanticNodes(args.blueprint, selectedLayerIds, index);
   if (partial.length > 0) {
     const node = args.blueprint.nodes[partial[0]!];
-    const kindLabel = node && isSiteButtonNode(node) ? "Button" : node?.label ?? "componente";
+    const kindLabel = node && isSiteButtonNode(node) ? "Botón" : node?.label ?? "componente";
     return fail(
       "partial_semantic",
       `La selección contiene solo una parte de ${kindLabel}. Inclúyelo completo o retíralo de la selección.`,

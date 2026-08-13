@@ -183,13 +183,23 @@ export function assertValidBlueprint(
 }
 
 export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
-  return {
+  const next: SiteBlueprintV1 = {
     schemaVersion: blueprint.schemaVersion,
     rootChildIds: [...blueprint.rootChildIds],
     nodes: Object.fromEntries(
       Object.entries(blueprint.nodes).map(([id, node]) => [id, cloneNode(node)]),
     ),
   };
+  if (blueprint.responsive) {
+    next.responsive = {
+      version: 1,
+      rules: blueprint.responsive.rules.map((rule) => ({
+        target: { ...rule.target },
+        byBand: { ...rule.byBand },
+      })),
+    };
+  }
+  return next;
 }
 
 function cloneNode(node: SiteBlueprintNode): SiteBlueprintNode {

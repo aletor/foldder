@@ -3,7 +3,32 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPageDimensions } from "../indesign/page-formats";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
-import { SiteCreatorPreview, type SiteCreatorPreviewZoomMode } from "./SiteCreatorPreview";
+import { SiteCreatorPreview } from "./SiteCreatorPreview";
+import { SiteCreatorWidthField } from "./SiteCreatorWidthField";
+import {
+  SITE_CREATOR_MOBILE_WIDTH,
+  SITE_CREATOR_TABLET_WIDTH,
+  computeFitPreviewZoom,
+  detectViewportPreset,
+} from "./site-creator-viewport";
+import { resolveSiteCreatorResponsiveDisplay, bandForViewportWidth } from "./site-creator-responsive";
+import {
+  SiteCreatorAdaptationControl,
+  adaptationButtonLabel,
+} from "./SiteCreatorAdaptationControl";
+import { resolveAdaptationCapability } from "./site-creator-adaptation-capability";
+import {
+  bandToEditable,
+  isAdaptationEligibleUnit,
+  isResponsiveTargetBroken,
+  resolveEffectiveResponsiveMode,
+  resolveResponsiveTarget,
+  setResponsiveOverride,
+  treeOverrideDotState,
+  treeOverrideTooltip,
+  listBrokenResponsiveTargets,
+} from "./site-creator-responsive-overrides";
+import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
 import { SiteCreatorSyncDialog } from "./SiteCreatorSyncDialog";
 import { SiteCreatorOutlinePanel, expandPathForUnit } from "./SiteCreatorOutlinePanel";
@@ -201,8 +226,18 @@ export function SiteCreatorStudio({
   onDismissSyncError,
   onBlueprintChange,
 }: SiteCreatorStudioProps) {
-  const [zoomMode, setZoomMode] = useState<SiteCreatorPreviewZoomMode>("fit");
-  const [zoomPercent, setZoomPercent] = useState(100);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [floatingHostEl, setFloatingHostEl] = useState<HTMLElement | null>(null);
+  const setFloatingHostRef = useCallback((el: HTMLElement | null) => {
+    setFloatingHostEl((prev) => (prev === el ? prev : el));
+  }, []);
+  const [, setZoomPercent] = useState(100);
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
+  const [availablePreviewSize, setAvailablePreviewSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const initialFitDoneRef = useRef(false);
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
 
@@ -249,12 +284,67 @@ export function SiteCreatorStudio({
   const page = previewPage ?? snapshot?.page ?? null;
   const committedPage = snapshot?.page ?? null;
   const pageDimensions = page ? getPageDimensions(page) : null;
+  const referenceWidth = pageDimensions?.width ?? 1920;
+  const referenceHeight = pageDimensions?.height ?? 1080;
+  const effectiveViewportWidth = viewportWidth ?? referenceWidth;
+  const viewportPreset = detectViewportPreset(effectiveViewportWidth, referenceWidth);
+  const responsiveBand = bandForViewportWidth(effectiveViewportWidth, referenceWidth);
   const showPreview = Boolean(page);
-  const selectionIndex = useMemo(() => (page ? buildSiteSelectionIndex(page) : null), [page]);
+
+  const referenceIndex = useMemo(() => (page ? buildSiteSelectionIndex(page) : null), [page]);
   const committedIndex = useMemo(
     () => (committedPage ? buildSiteSelectionIndex(committedPage) : null),
     [committedPage],
   );
+
+  const responsive = useMemo(() => {
+    if (!page || !referenceIndex) return null;
+    return resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint,
+      referenceIndex,
+      viewportWidth: effectiveViewportWidth,
+    });
+  }, [blueprint, effectiveViewportWidth, page, referenceIndex]);
+
+  const displayPage = responsive?.displayPage ?? page;
+  const objectClipById = responsive?.resolvedLayout?.objectClipById;
+  const selectionIndex = useMemo(
+    () => (displayPage ? buildSiteSelectionIndex(displayPage) : null),
+    [displayPage],
+  );
+  const layoutWidth = responsive?.layout.layoutWidth ?? referenceWidth;
+  const layoutHeight = responsive?.layout.layoutHeight ?? referenceHeight;
+
+  useEffect(() => {
+    if (!pageDimensions) return;
+    setViewportWidth(pageDimensions.width);
+    initialFitDoneRef.current = false;
+  }, [pageDimensions?.width, pageDimensions?.height, snapshot?.contentHash]);
+
+  useEffect(() => {
+    if (!pageDimensions || initialFitDoneRef.current || !availablePreviewSize) return;
+    if (availablePreviewSize.width < 80 || availablePreviewSize.height < 80) return;
+    const z = computeFitPreviewZoom({
+      layoutWidth: pageDimensions.width,
+      layoutHeight: pageDimensions.height,
+      availableWidth: availablePreviewSize.width,
+      availableHeight: availablePreviewSize.height,
+    });
+    setPreviewZoom(z);
+    initialFitDoneRef.current = true;
+  }, [availablePreviewSize, pageDimensions]);
+
+  const applyFitZoom = useCallback(() => {
+    if (!availablePreviewSize) return;
+    const z = computeFitPreviewZoom({
+      layoutWidth,
+      layoutHeight,
+      availableWidth: availablePreviewSize.width,
+      availableHeight: availablePreviewSize.height,
+    });
+    setPreviewZoom(z);
+  }, [availablePreviewSize, layoutHeight, layoutWidth]);
 
   const displayShadow = useMemo(() => {
     if (!selectionIndex) return EMPTY_SITE_CREATOR_SELECTION;
@@ -283,12 +373,12 @@ export function SiteCreatorStudio({
   const presentationTree = useMemo(
     () =>
       buildSiteCreatorPresentationTree({
-        page,
+        page: displayPage,
         blueprint,
         selectionIndex,
         snapshot,
       }),
-    [blueprint, page, selectionIndex, snapshot],
+    [blueprint, displayPage, selectionIndex, snapshot],
   );
 
   /** Scope de acciones “dentro de”: solo si la selección es un hijo, no el contenedor. */
@@ -1075,6 +1165,134 @@ export function SiteCreatorStudio({
     return [];
   }, []);
 
+  const adaptationModel = useMemo(() => {
+    if (displayUnits.length !== 1 || !selectionIndex) return null;
+    if (!isAdaptationEligibleUnit(displayUnits[0]!, blueprint, selectionIndex, responsiveBand)) {
+      return null;
+    }
+    const target = resolveResponsiveTarget(displayUnits[0]!, blueprint, selectionIndex);
+    if (!target) return null;
+    const editable = bandToEditable(responsiveBand);
+    if (!editable) return null;
+
+    const analysisIndex = referenceIndex ?? committedIndex ?? selectionIndex;
+    let sectionAnalysis = null as ReturnType<typeof analyzeSectionVisualPresentation>;
+    if (target.kind === "blueprintNode") {
+      const node = blueprint.nodes[target.nodeId];
+      if (node && isSiteSectionNode(node) && analysisIndex) {
+        sectionAnalysis = analyzeSectionVisualPresentation({
+          blueprint,
+          sectionId: node.id,
+          index: analysisIndex,
+        });
+      }
+    }
+
+    const syncBlocked = !persistGate.allowed || originState === "update_available";
+    const capability = resolveAdaptationCapability({
+      target,
+      band: responsiveBand,
+      blueprint,
+      index: analysisIndex,
+      resolvedContainer: { sectionAnalysis },
+      syncBlocked,
+    });
+
+    if (capability.status === "hidden") return null;
+
+    const effective = resolveEffectiveResponsiveMode({
+      blueprint,
+      target,
+      band: responsiveBand,
+      index: selectionIndex,
+    });
+
+    if (capability.status === "readonly") {
+      if (capability.reason === "controlled-by-ancestor") {
+        return {
+          band: editable,
+          effective,
+          buttonLabel: adaptationButtonLabel(effective.mode),
+          controlledByLabel: capability.ownerLabel ?? "contenedor",
+          controller: effective.controller,
+        };
+      }
+      return {
+        band: editable,
+        effective,
+        buttonLabel: adaptationButtonLabel(effective.mode),
+        locked: true,
+        lockedReason: "Actualiza el diseño para cambiar la adaptación",
+      };
+    }
+
+    if (capability.status === "reset-only") {
+      return {
+        band: editable,
+        effective,
+        buttonLabel: "Adaptación sin efecto · Restablecer",
+        target,
+        resetOnly: true,
+      };
+    }
+
+    if (isResponsiveTargetBroken(blueprint, target, selectionIndex)) {
+      return {
+        band: editable,
+        effective,
+        buttonLabel: adaptationButtonLabel(effective.mode),
+        locked: true,
+        lockedReason: "Actualiza el diseño para cambiar la adaptación",
+      };
+    }
+
+    return {
+      band: editable,
+      effective,
+      buttonLabel: adaptationButtonLabel(effective.mode),
+      target,
+    };
+  }, [
+    blueprint,
+    committedIndex,
+    displayUnits,
+    originState,
+    persistGate.allowed,
+    referenceIndex,
+    responsiveBand,
+    selectionIndex,
+  ]);
+
+  const onAdaptationSelectMode = useCallback(
+    (mode: "auto" | "preserve" | "stack") => {
+      if (!adaptationModel || !("target" in adaptationModel) || !adaptationModel.target) return;
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      const result = setResponsiveOverride({
+        blueprint,
+        target: adaptationModel.target,
+        band: adaptationModel.band,
+        mode,
+      });
+      if (!result.changed) return;
+      commitBlueprint(result.blueprint);
+    },
+    [adaptationModel, blueprint, commitBlueprint, persistGate],
+  );
+
+  const onAdaptationFocusController = useCallback(() => {
+    if (!adaptationModel?.controller) return;
+    const c = adaptationModel.controller;
+    if (c.kind === "blueprintNode") {
+      selectCreatedNode(c.nodeId);
+    } else {
+      setUnits([{ kind: "layer", layerId: c.layerId }]);
+      setInteractionPath([]);
+    }
+  }, [adaptationModel, selectCreatedNode]);
+
   const microbarModel = useMemo((): SiteCreatorMicrobarModel | null => {
     if (!selectionIndex) return null;
 
@@ -1109,17 +1327,22 @@ export function SiteCreatorStudio({
       const segments = buildBreadcrumbSegments(unit, blueprint, selectionIndex, snapshot).map(
         (s) => ({ unit: s.unit, label: s.label, current: s.current }),
       );
-      // Si hay hover de hijo distinto, la etiqueta de hover va aparte (hoverOnly abajo)
       return {
         bounds,
         segments,
         actions: contextualModel.primaryActions,
         summary: contextualModel.summary,
         hoverOnly: false,
+        adaptationSlot: adaptationModel ? (
+          <SiteCreatorAdaptationControl
+            model={adaptationModel}
+            onSelectMode={onAdaptationSelectMode}
+            onFocusController={onAdaptationFocusController}
+          />
+        ) : null,
       };
     }
 
-    // Solo hover
     if (hoverUnit) {
       const bounds =
         presentationBoundsForUnit(hoverUnit, presentationTree, selectionIndex) ??
@@ -1140,11 +1363,14 @@ export function SiteCreatorStudio({
     }
     return null;
   }, [
+    adaptationModel,
     blueprint,
     contextualModel.primaryActions,
     contextualModel.summary,
     displayUnits,
     hoverUnit,
+    onAdaptationFocusController,
+    onAdaptationSelectMode,
     presentationTree,
     selectionIndex,
     snapshot,
@@ -1205,7 +1431,31 @@ export function SiteCreatorStudio({
     () => resolveSiteBlueprintReferenceState(blueprint, snapshot ?? undefined),
     [blueprint, snapshot],
   );
-  const reviewCount = referenceState.missingLayerIds.length;
+  const reviewCount = useMemo(() => {
+    const brokenNodes = listBrokenResponsiveTargets(blueprint, selectionIndex).filter(
+      (t) => t.kind === "blueprintNode",
+    ).length;
+    return referenceState.missingLayerIds.length + brokenNodes;
+  }, [blueprint, referenceState.missingLayerIds.length, selectionIndex]);
+
+  const resolveOutlineOverride = useCallback(
+    (node: SiteCreatorPresentationNode) => {
+      if (!node.unit || responsiveBand === "wide") return null;
+      const target = resolveResponsiveTarget(node.unit, blueprint, selectionIndex);
+      if (!target) return null;
+      const dot = treeOverrideDotState({
+        blueprint,
+        target,
+        currentBand: responsiveBand,
+      });
+      if (!dot) return null;
+      return {
+        dot,
+        title: treeOverrideTooltip({ blueprint, target }) ?? "",
+      };
+    },
+    [blueprint, responsiveBand, selectionIndex],
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1245,9 +1495,6 @@ export function SiteCreatorStudio({
 
   const originLabel = siteCreatorOriginStateLabel(originState);
   const designerLine = designerLabel?.trim() || snapshot?.designerNodeId || "—";
-  const dimensionsLine = pageDimensions
-    ? `${pageDimensions.width} × ${pageDimensions.height} px`
-    : "—";
 
   const textOptions =
     committedIndex && buttonPrompt
@@ -1299,6 +1546,12 @@ export function SiteCreatorStudio({
       className="site-creator-studio fixed inset-0 z-[100010] flex flex-col bg-[#0b0f14] text-white"
       data-foldder-studio-root
     >
+      <div
+        ref={setFloatingHostRef}
+        data-site-creator-floating-ui="true"
+        className="pointer-events-none fixed inset-0 z-[100025]"
+        aria-hidden
+      />
       <FoldderStudioHeader
         nodeType="siteCreator"
         nodeLabel={nodeLabel}
@@ -1378,14 +1631,19 @@ export function SiteCreatorStudio({
           }}
           visualLayerCount={visualLayerCount}
           reviewCount={reviewCount}
+          resolveOverride={resolveOutlineOverride}
           emptyHint={!showPreview ? emptyStateMessage(originState) : null}
         />
 
         <main className="site-creator-studio__canvas flex min-h-0 min-w-0 flex-1 flex-col bg-[#171b22]">
-          {showPreview && page ? (
+          {showPreview && displayPage ? (
             <SiteCreatorPreview
-              page={page}
-              zoomMode={zoomMode}
+              page={displayPage}
+              viewportWidth={effectiveViewportWidth}
+              referenceWidth={referenceWidth}
+              previewZoom={previewZoom}
+              onViewportWidthChange={setViewportWidth}
+              onAvailableSizeChange={setAvailablePreviewSize}
               onZoomPercentChange={setZoomPercent}
               selection={displayShadow}
               selectionIndex={selectionIndex ?? undefined}
@@ -1399,6 +1657,8 @@ export function SiteCreatorStudio({
               onMicrobarNavigate={onMicrobarNavigate}
               onMicrobarAction={handleMicrobarAction}
               onCanvasInteraction={() => undefined}
+              objectClipById={objectClipById}
+              floatingPortalHost={floatingHostEl}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-8">
@@ -1406,30 +1666,96 @@ export function SiteCreatorStudio({
             </div>
           )}
 
-          <footer className="site-creator-studio__footer flex h-10 shrink-0 items-center justify-between gap-4 border-t border-white/10 bg-[#101820] px-4 text-[11px] text-white/65">
-            <span>{zoomPercent}%</span>
-            <div className="flex items-center gap-2">
-              {(["fit", 0.5, 1] as const).map((mode) => {
-                const label = mode === "fit" ? "Ajustar" : mode === 0.5 ? "50%" : "100%";
-                const active = zoomMode === mode;
+          <footer className="site-creator-studio__footer flex h-11 shrink-0 items-center gap-3 border-t border-white/10 bg-[#101820] px-4 text-[11px] text-white/65">
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  {
+                    id: "original" as const,
+                    label: `Original ${Math.round(referenceWidth)}`,
+                    width: referenceWidth,
+                  },
+                  {
+                    id: "tablet" as const,
+                    label: `Tablet ${SITE_CREATOR_TABLET_WIDTH}`,
+                    width: SITE_CREATOR_TABLET_WIDTH,
+                  },
+                  {
+                    id: "mobile" as const,
+                    label: `Móvil ${SITE_CREATOR_MOBILE_WIDTH}`,
+                    width: SITE_CREATOR_MOBILE_WIDTH,
+                  },
+                ] as const
+              ).map((preset) => {
+                const active = viewportPreset === preset.id;
                 return (
                   <button
-                    key={String(mode)}
+                    key={preset.id}
                     type="button"
-                    className={`rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition ${
+                    data-testid={`site-creator-preset-${preset.id}`}
+                    className={`rounded px-2.5 py-1 text-[10px] font-semibold tracking-wide transition ${
                       active
-                        ? "border-[#22d3ee] bg-[#22d3ee]/15 text-[#22d3ee]"
-                        : "border-white/15 text-white/55 hover:border-white/30 hover:text-white/80"
+                        ? "bg-white/12 text-white"
+                        : "text-white/50 hover:bg-white/6 hover:text-white/80"
                     }`}
-                    onClick={() => setZoomMode(mode)}
+                    onClick={() => setViewportWidth(preset.width)}
                   >
-                    {label}
+                    {preset.label}
                   </button>
                 );
               })}
             </div>
-            <span>{dimensionsLine}</span>
-            <span className="text-emerald-400/90">{showPreview ? "Sin errores" : "—"}</span>
+
+            <span className="h-4 w-px shrink-0 bg-white/10" aria-hidden />
+
+            <SiteCreatorWidthField
+              width={effectiveViewportWidth}
+              referenceWidth={referenceWidth}
+              onCommit={setViewportWidth}
+            />
+
+            <span className="h-4 w-px shrink-0 bg-white/10" aria-hidden />
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="site-creator-zoom-fit"
+                className="rounded border border-white/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/55 hover:border-white/25 hover:text-white/80"
+                onClick={applyFitZoom}
+              >
+                Ajustar
+              </button>
+              {(
+                [
+                  { label: "50%", value: 0.5 },
+                  { label: "100%", value: 1 },
+                ] as const
+              ).map((z) => {
+                const active = Math.abs(previewZoom - z.value) < 0.001;
+                return (
+                  <button
+                    key={z.label}
+                    type="button"
+                    data-testid={`site-creator-zoom-${z.label}`}
+                    className={`rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition ${
+                      active
+                        ? "border-white/25 bg-white/10 text-white"
+                        : "border-white/12 text-white/55 hover:border-white/25 hover:text-white/80"
+                    }`}
+                    onClick={() => setPreviewZoom(z.value)}
+                  >
+                    {z.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="ml-auto flex items-center gap-3">
+              <span className="tabular-nums text-white/40">
+                {Math.round(layoutWidth)} × {Math.round(layoutHeight)} px
+              </span>
+              <span className="text-emerald-400/90">{showPreview ? "Sin errores" : "—"}</span>
+            </div>
           </footer>
         </main>
       </div>

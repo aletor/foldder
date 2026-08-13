@@ -20,8 +20,8 @@ export interface PageRect {
 }
 
 /**
- * `stage` es el wrapper ya escalado (getBoundingClientRect).
- * `scale` es el zoom CSS del preview (fit / 0.5 / 1).
+ * `stage` es el wrapper ya escalado en pantalla (getBoundingClientRect).
+ * `scale` es la escala total página → pantalla: layoutScale × previewZoom (6A).
  * El scroll queda incluido en `stage.left/top`.
  */
 export function clientPointToPagePoint(

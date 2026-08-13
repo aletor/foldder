@@ -49,7 +49,26 @@ export interface SiteBlueprintV1 {
   schemaVersion: typeof SITE_BLUEPRINT_SCHEMA_VERSION;
   rootChildIds: string[];
   nodes: Record<string, SiteBlueprintNode>;
+  /** Excepciones responsive por contenedor (6B.2). Ausente = todo Automático. */
+  responsive?: SiteResponsiveV1;
 }
+
+export type ResponsiveEditableBand = "tablet" | "mobile";
+export type ResponsiveOverrideMode = "preserve" | "stack";
+
+export type ResponsiveTargetRef =
+  | { kind: "blueprintNode"; nodeId: string }
+  | { kind: "designerGroup"; layerId: string };
+
+export type ResponsiveContainerRuleV1 = {
+  target: ResponsiveTargetRef;
+  byBand: Partial<Record<ResponsiveEditableBand, ResponsiveOverrideMode>>;
+};
+
+export type SiteResponsiveV1 = {
+  version: 1;
+  rules: ResponsiveContainerRuleV1[];
+};
 
 export interface DesignerSourceSnapshotV1 {
   schemaVersion: typeof DESIGNER_SOURCE_SNAPSHOT_SCHEMA_VERSION;

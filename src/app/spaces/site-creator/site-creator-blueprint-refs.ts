@@ -34,6 +34,14 @@ export function resolveSiteBlueprintReferenceState(
   snapshot: DesignerSourceSnapshotV1 | undefined,
 ): SiteBlueprintReferenceState {
   const referenced = collectSiteBlueprintLayerReferences(blueprint);
+  // Referencias responsive a grupos Designer: mismo canal POR REVISAR si la capa desapareció.
+  for (const rule of blueprint.responsive?.rules ?? []) {
+    if (rule.target.kind === "designerGroup" && !referenced.includes(rule.target.layerId)) {
+      referenced.push(rule.target.layerId);
+    }
+  }
+  referenced.sort((a, b) => a.localeCompare(b));
+
   const snapshotIds = snapshot ? collectSnapshotLayerIds(snapshot.page.objects) : [];
   const validSet = new Set(snapshotIds);
 

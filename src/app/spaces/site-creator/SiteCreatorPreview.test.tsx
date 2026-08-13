@@ -51,7 +51,14 @@ describe("SiteCreatorPreview", () => {
       ],
     };
 
-    render(<SiteCreatorPreview page={snapshotPage} />);
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={540}
+        referenceWidth={540}
+        previewZoom={1}
+      />,
+    );
 
     const canvas = screen.getByTestId("designer-page-canvas-view");
     expect(canvas.getAttribute("data-object-count")).toBe("1");

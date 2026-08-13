@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="656" height="700" viewBox="0 0 390 416">
+  <rect width="100%" height="100%" fill="#0e131a"/>
+  <rect x="0" y="0" width="390" height="280" fill="#6b7c8a" stroke="none" stroke-width="0" opacity="0.9"/>
+<rect x="20" y="20" width="350" height="139.33333333333334" fill="#1e4fd6" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="36" y="36" width="318" height="35.333333333333336" fill="transparent" stroke="#ffffff" stroke-width="1" opacity="1"/><text x="44" y="60.733333333333334" fill="#ffffff" font-size="10" font-family="system-ui">HOLAAAAa</text>
+<rect x="36" y="87.33333333333334" width="220" height="56" fill="#0b1b3a" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="56" y="97.33333333333334" width="180" height="36" fill="transparent" stroke="#ffffff" stroke-width="1" opacity="1"/><text x="64" y="122.53333333333335" fill="#ffffff" font-size="10" font-family="system-ui">BOTOM</text>
+<rect x="0" y="308" width="390" height="80" fill="#c8c8c8" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="20" y="328" width="350" height="28" fill="transparent" stroke="#ffffff" stroke-width="1" opacity="1"/><text x="28" y="347.6" fill="#222222" font-size="10" font-family="system-ui">Sección</text>
+  <text x="16" y="28" fill="#fff" font-size="18" font-family="system-ui">Móvil · 390px · Ajustar 168%</text>
+  <text x="16" y="52" fill="#9fb" font-size="12" font-family="system-ui">390×416</text>
+</svg>

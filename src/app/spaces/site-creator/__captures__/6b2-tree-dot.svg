@@ -1,0 +1,10 @@
+<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="280" height="120" viewBox="0 0 280 120">
+<rect width="100%" height="100%" fill="#101820"/>
+<text x="12" y="28" fill="#fff" font-size="10" font-family="system-ui" font-weight="700">PÁGINA</text>
+<rect x="8" y="40" width="260" height="28" rx="4" fill="rgba(168,255,50,0.15)"/>
+<text x="20" y="58" fill="#A8FF32" font-size="12" font-family="system-ui" font-weight="600">Tarjetas · 3</text>
+<circle cx="100" cy="54" r="2" fill="#A8FF32"/>
+<text x="112" y="58" fill="rgba(255,255,255,0.45)" font-size="9" font-family="system-ui">Móvil: Apilar</text>
+<rect x="8" y="74" width="260" height="28" rx="4"/>
+<text x="20" y="92" fill="rgba(255,255,255,0.8)" font-size="12" font-family="system-ui" font-weight="600">Sección · 1</text>
+</svg>

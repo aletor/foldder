@@ -316,6 +316,7 @@ export function DesignerPageCanvasView({
   allowPickDuringReveal = false,
   presenterImageVideo = null,
   stackWrapRenderedObject = undefined,
+  objectClipById,
 }: {
   objects: FreehandObject[];
   pageWidth: number;
@@ -333,11 +334,17 @@ export function DesignerPageCanvasView({
   presenterImageVideo?: PresenterImageVideoCanvasBinding | null;
   /** Envoltorio opcional por objeto en el stack (p. ej. pulso Populate). */
   stackWrapRenderedObject?: (obj: FreehandObject, node: React.ReactNode) => React.ReactNode;
+  /**
+   * Clip por objeto (Site Creator responsive): cada capa se pinta dentro de su región.
+   * No modifica Freehand/Designer; solo el render del lienzo.
+   */
+  objectClipById?: Record<string, { x: number; y: number; width: number; height: number }>;
 }) {
   const pw = Math.max(1, pageWidth);
   const ph = Math.max(1, pageHeight);
   /** Cada instancia del lienzo necesita un clipPath único: si no, `url(#…)` resuelve al primer SVG de la página (miniaturas + stage). */
   const pageClipPathId = `presenter-page-clip-${useId().replace(/:/g, "")}`;
+  const objectClipDefsId = `sc-obj-clip-${useId().replace(/:/g, "")}`;
   const svgRef = useRef<SVGSVGElement | null>(null);
   const marqueeSessionRef = useRef<{
     startSvg: { x: number; y: number };
@@ -432,6 +439,21 @@ export function DesignerPageCanvasView({
   const stackPaintFilter = useCallback(
     (obj: FreehandObject) => shouldPaintObject(obj, playReveal, playProTiming),
     [playReveal, playProTiming],
+  );
+
+  const wrapObjectWithRegionClip = useCallback(
+    (obj: FreehandObject, node: React.ReactNode): React.ReactNode => {
+      const inner = stackWrapRenderedObject ? stackWrapRenderedObject(obj, node) : node;
+      const clip = objectClipById?.[obj.id];
+      if (!clip) return inner;
+      const safeId = obj.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      return (
+        <g key={`sc-clip-${obj.id}`} clipPath={`url(#${objectClipDefsId}-${safeId})`}>
+          {inner}
+        </g>
+      );
+    },
+    [objectClipById, objectClipDefsId, stackWrapRenderedObject],
   );
 
   const adjustmentLayersForDefs = useMemo(
@@ -593,6 +615,20 @@ export function DesignerPageCanvasView({
         <clipPath id={pageClipPathId} clipPathUnits="userSpaceOnUse">
           <rect x={0} y={0} width={pw} height={ph} />
         </clipPath>
+        {objectClipById
+          ? Object.entries(objectClipById).map(([layerId, rect]) => {
+              const safeId = layerId.replace(/[^a-zA-Z0-9_-]/g, "_");
+              return (
+                <clipPath
+                  key={`obj-clip-${safeId}`}
+                  id={`${objectClipDefsId}-${safeId}`}
+                  clipPathUnits="userSpaceOnUse"
+                >
+                  <rect x={rect.x} y={rect.y} width={rect.width} height={rect.height} />
+                </clipPath>
+              );
+            })
+          : null}
       </defs>
       <rect
         width={pw}
@@ -610,7 +646,7 @@ export function DesignerPageCanvasView({
         <g clipPath={pageClipUrl} style={{ pointerEvents: "none" }}>
           {renderDesignerPageObjectStack(objects, presenterRenderOpts, new Set(), {
             shouldPaint: stackPaintFilter,
-            wrapRenderedObject: stackWrapRenderedObject,
+            wrapRenderedObject: wrapObjectWithRegionClip,
           })}
         </g>
       ) : null}
@@ -644,7 +680,10 @@ export function DesignerPageCanvasView({
                 style={pickStyle}
                 onPointerDownCapture={onPickCap}
               >
-                {renderObj(obj, objects, new Set(), presenterRenderOpts)}
+                {wrapObjectWithRegionClip(
+                  obj,
+                  renderObj(obj, objects, new Set(), presenterRenderOpts),
+                )}
               </g>
             </g>
           </Fragment>

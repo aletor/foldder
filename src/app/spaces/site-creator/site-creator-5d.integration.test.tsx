@@ -181,7 +181,7 @@ describe("5D presentation tree", () => {
       { kind: "blueprintNode", nodeId: btn.createdNodeId! },
       tree,
     );
-    expect(btnKids.map((c) => c.label).join(",")).toMatch(/Forma/);
+    expect(btnKids.map((c) => c.label).join(",")).toMatch(/Forma|Rectángulo/);
     expect(btnKids.map((c) => c.label).join(",")).toMatch(/Texto|BOTOM/);
   });
 

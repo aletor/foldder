@@ -532,7 +532,7 @@ describe("site creator UX display labels", () => {
     const p = makeButtonPage();
     const index = buildSiteSelectionIndex(p);
     expect(deriveLayerDisplayLabel("btn_text", index)).toBe("Texto “BOTOM”");
-    expect(deriveLayerDisplayLabel("btn_shape", index)).toBe("Forma");
+    expect(deriveLayerDisplayLabel("btn_shape", index)).toBe("Rectángulo");
   });
 
   it("outline hierarchy Hero → Button and no Landing Root", () => {

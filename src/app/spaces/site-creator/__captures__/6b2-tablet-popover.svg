@@ -1,0 +1,13 @@
+<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="280" height="200" viewBox="0 0 280 200">
+<rect width="100%" height="100%" fill="#101820"/>
+<rect x="16" y="16" width="160" height="24" rx="4" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)"/>
+<text x="28" y="32" fill="#e8e8e8" font-size="11" font-family="system-ui">Adaptación · Composición</text>
+<rect x="16" y="48" width="240" height="140" rx="6" fill="#1a222c" stroke="rgba(255,255,255,0.12)"/>
+<text x="28" y="68" fill="#9aa" font-size="9" font-family="system-ui" font-weight="700">ADAPTACIÓN EN TABLET</text>
+<text x="28" y="92" fill="#A8FF32" font-size="11" font-family="system-ui">✓ Automática</text>
+<text x="40" y="108" fill="#888" font-size="10" font-family="system-ui">Foldder decide la mejor distribución.</text>
+<text x="40" y="132" fill="#eee" font-size="11" font-family="system-ui">Mantener composición</text>
+<text x="40" y="148" fill="#888" font-size="10" font-family="system-ui">Escala el diseño sin reorganizarlo.</text>
+<text x="40" y="172" fill="#eee" font-size="11" font-family="system-ui">Apilar</text>
+<text x="40" y="188" fill="#888" font-size="10" font-family="system-ui">Ordena el contenido verticalmente.</text>
+</svg>

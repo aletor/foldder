@@ -34,12 +34,63 @@ export function deriveLayerDisplayLabel(
       }
       return truncateLabel(text, 28);
     }
-    if (typeof obj.name === "string" && obj.name.trim() && !looksTechnicalName(obj.name, obj.type)) {
-      return obj.name.trim();
+    if (typeof obj.name === "string" && obj.name.trim()) {
+      const localized = localizeEnglishTypeName(obj.name.trim());
+      if (localized) return localized;
+      if (!looksTechnicalName(obj.name, obj.type)) {
+        return obj.name.trim();
+      }
+    }
+    if (obj.type === "clippingContainer") {
+      return labelClippingContainer(obj, index, snapshot);
     }
     return humanLayerFallback(obj.type);
   }
   return "Capa";
+}
+
+/** Nombres genéricos en inglés del Designer → español. */
+function localizeEnglishTypeName(name: string): string | null {
+  const n = name.trim().toLowerCase();
+  if (n === "text" || n === "texto") return "Texto";
+  if (n === "shape" || n === "forma") return "Forma";
+  if (n === "rect" || n === "rectangle" || n === "rectángulo" || n === "rectangulo") {
+    return "Rectángulo";
+  }
+  if (n === "image" || n === "imagen" || n === "picture") return "Imagen";
+  if (n === "photo" || n === "foto") return "Foto";
+  if (n === "element" || n === "elemento" || n === "layer" || n === "capa") return null;
+  return null;
+}
+
+function labelClippingContainer(
+  obj: FreehandObject,
+  index: SiteCreatorSelectionIndex,
+  snapshot?: DesignerSourceSnapshotV1 | null,
+): string {
+  const content = (obj as { content?: FreehandObject[] }).content ?? [];
+  const mask = (obj as { mask?: FreehandObject }).mask;
+  const first =
+    content.find((c) => c.type === "image" || c.type === "text" || c.type === "rect") ??
+    content[0] ??
+    mask;
+  if (first) {
+    if (first.type === "image") return "Imagen";
+    if (first.type === "text" || first.type === "textOnPath") {
+      const t = readObjectText(first);
+      return t ? `Texto “${truncateLabel(t, 24)}”` : "Texto";
+    }
+    if (first.type === "rect" || first.type === "ellipse" || first.type === "path") {
+      return humanLayerFallback(first.type);
+    }
+    if (typeof first.name === "string" && first.name.trim() && !looksTechnicalName(first.name, first.type)) {
+      return first.name.trim();
+    }
+    return humanLayerFallback(first.type);
+  }
+  void index;
+  void snapshot;
+  return "Imagen";
 }
 
 function readObjectText(obj: FreehandObject): string | null {
@@ -56,7 +107,9 @@ function readObjectText(obj: FreehandObject): string | null {
 function looksTechnicalName(name: string, type: string): boolean {
   const n = name.trim().toLowerCase();
   if (n === type.toLowerCase()) return true;
-  if (/^(rect|ellipse|path|image|text|group|clip)\s*\d*$/i.test(name.trim())) return true;
+  if (/^(rect|ellipse|path|image|text|group|clip|shape|photo|picture|element)\s*\d*$/i.test(name.trim())) {
+    return true;
+  }
   if (/^clip(ping)?(\s*container)?\s*\d*$/i.test(name.trim())) return true;
   if (/^[A-Z]{2,}_[A-Z0-9_]+$/.test(name.trim())) return true;
   // ids internos estilo btn_shape / layer_12
@@ -68,24 +121,23 @@ export { looksTechnicalName };
 
 function humanLayerFallback(type: string): string {
   switch (type) {
-    case "text":
-    case "textOnPath":
-      return "Texto";
-    case "image":
-      return "Imagen";
     case "rect":
-      return "Forma";
+      return "Rectángulo";
     case "ellipse":
       return "Elipse";
     case "path":
       return "Trazado";
+    case "image":
+      return "Imagen";
+    case "text":
+    case "textOnPath":
+      return "Texto";
     case "groupContainer":
       return "Grupo de capas";
     case "booleanGroup":
       return "Composición";
     case "clippingContainer":
-      // 5D: no exponer wrappers; el árbol de presentación los omite.
-      return "Elemento";
+      return "Imagen";
     default:
       return "Elemento";
   }

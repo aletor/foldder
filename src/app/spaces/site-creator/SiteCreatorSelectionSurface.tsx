@@ -26,6 +26,16 @@ import type {
 
 const MARQUEE_THRESHOLD_PX = 4;
 
+function isEventFromFloatingUi(event: { composedPath?: () => EventTarget[] }): boolean {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  for (const n of path) {
+    if (n instanceof HTMLElement && n.dataset?.siteCreatorFloatingUi === "true") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function clientToPage(
   svg: SVGSVGElement | null,
   stage: HTMLElement | null,
@@ -175,6 +185,7 @@ export function SiteCreatorSelectionSurface({
   const onPointerDown = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
       if (event.button === 2) return;
+      if (isEventFromFloatingUi(event)) return;
       onCanvasInteraction?.();
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;

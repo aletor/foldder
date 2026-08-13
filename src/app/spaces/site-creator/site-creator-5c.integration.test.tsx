@@ -166,7 +166,7 @@ describe("5C visual grammar", () => {
       } as Partial<FreehandObject> & { id: string; type: "clippingContainer" }),
     ]);
     const index = buildSiteSelectionIndex(p);
-    expect(deriveLayerDisplayLabel("clip", index)).toBe("Elemento");
+    expect(deriveLayerDisplayLabel("clip", index)).toBe("Rectángulo");
   });
 
   it("strokes declare non-scaling-stroke", () => {

@@ -46,6 +46,7 @@ function OutlineTreeRow({
   onDropOn,
   onDragOverTarget,
   dragOverId,
+  resolveOverride,
 }: {
   node: SiteCreatorPresentationNode;
   depth: number;
@@ -59,6 +60,9 @@ function OutlineTreeRow({
   onDropOn?: (target: SiteCreatorPresentationNode) => void;
   onDragOverTarget?: (id: string | null) => void;
   dragOverId: string | null;
+  resolveOverride?: (
+    node: SiteCreatorPresentationNode,
+  ) => { dot: "current" | "other"; title: string } | null;
 }) {
   const hasChildren = node.children.length > 0;
   const isOpen = expanded[node.id] === true || (expanded[node.id] !== false && node.kind === "unorganized" && Object.keys(expanded).length === 0);
@@ -71,6 +75,7 @@ function OutlineTreeRow({
   const hovered = hoveredKey === node.id;
   const dropTarget = dragOverId === node.id && node.kind === "semantic";
   const closedCount = !open && hasChildren ? node.childCount : null;
+  const overrideInfo = resolveOverride?.(node) ?? null;
 
   return (
     <div>
@@ -140,6 +145,17 @@ function OutlineTreeRow({
               ? "Contenido sin organizar"
               : node.label}
         </span>
+        {overrideInfo ? (
+          <span
+            data-testid={`outline-override-dot-${node.id}`}
+            title={overrideInfo.title}
+            className="ml-1 inline-block h-1 w-1 shrink-0 rounded-full"
+            style={{
+              background: overrideInfo.dot === "current" ? "#A8FF32" : "rgba(255,255,255,0.28)",
+            }}
+            aria-hidden
+          />
+        ) : null}
         {dropTarget ? (
           <span className="ml-auto shrink-0 text-[9px] text-[#A8FF32]/80">
             {`Añadir a ${node.label.split(" · ")[0]}`}
@@ -162,6 +178,7 @@ function OutlineTreeRow({
               onDropOn={onDropOn}
               onDragOverTarget={onDragOverTarget}
               dragOverId={dragOverId}
+              resolveOverride={resolveOverride}
             />
           ))
         : null}
@@ -181,6 +198,9 @@ export interface SiteCreatorOutlinePanelProps {
   emptyHint?: string | null;
   visualLayerCount: number;
   reviewCount: number;
+  resolveOverride?: (
+    node: SiteCreatorPresentationNode,
+  ) => { dot: "current" | "other"; title: string } | null;
 }
 
 function ancestorSemanticIds(
@@ -219,6 +239,7 @@ export function SiteCreatorOutlinePanel({
   emptyHint,
   visualLayerCount,
   reviewCount,
+  resolveOverride,
 }: SiteCreatorOutlinePanelProps) {
   const [dragSource, setDragSource] = useState<SiteCreatorPresentationNode | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -265,6 +286,7 @@ export function SiteCreatorOutlinePanel({
               }}
               onDragOverTarget={setDragOverId}
               dragOverId={dragOverId}
+              resolveOverride={resolveOverride}
             />
           ))
         )}
