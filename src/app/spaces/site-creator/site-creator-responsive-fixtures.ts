@@ -417,3 +417,135 @@ export function fixtureAmbiguousOverlap(): {
   if (!section.ok) throw new Error(section.message);
   return { page, blueprint: section.blueprint, sectionId: section.createdNodeId! };
 }
+
+/** Hotfix 6B — documento real: 1920×2027, 8 capas raíz sin Hero/Section/Grupo. */
+export function fixtureRealEightLayersPage(): {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  layerIds: string[];
+} {
+  const page = makePage(
+    [
+      makeLayer({
+        id: "hero_image",
+        type: "image",
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 900,
+        name: "Imagen hero",
+      }),
+      makeLayer({
+        id: "white_card",
+        type: "rect",
+        x: 120,
+        y: 720,
+        width: 1680,
+        height: 420,
+        fill: "#ffffff",
+        name: "Tarjeta blanca",
+      }),
+      makeLayer({
+        id: "hero_claim",
+        type: "text",
+        x: 200,
+        y: 820,
+        width: 900,
+        height: 120,
+        text: "HERO CLAIM",
+        fontSize: 96,
+        fill: "#111827",
+      }),
+      makeLayer({
+        id: "blue_panel",
+        type: "rect",
+        x: 200,
+        y: 980,
+        width: 1520,
+        height: 280,
+        fill: "#1e4fd6",
+        name: "Panel azul",
+      }),
+      makeLayer({
+        id: "web_title",
+        type: "text",
+        x: 280,
+        y: 1060,
+        width: 1200,
+        height: 100,
+        text: "Titular de la Web",
+        fontSize: 72,
+        fill: "#ffffff",
+      }),
+      makeLayer({
+        id: "gray_bg",
+        type: "rect",
+        x: 0,
+        y: 1180,
+        width: 1920,
+        height: 847,
+        fill: "#e5e7eb",
+        name: "Fondo gris",
+      }),
+      makeLayer({
+        id: "btn_shape",
+        type: "rect",
+        x: 760,
+        y: 1680,
+        width: 400,
+        height: 120,
+        fill: "#7c3aed",
+        name: "Forma botón",
+      }),
+      makeLayer({
+        id: "btn_label",
+        type: "text",
+        x: 820,
+        y: 1710,
+        width: 280,
+        height: 60,
+        text: "BOTÓN",
+        fontSize: 48,
+        fill: "#ffffff",
+      }),
+    ],
+    { w: 1920, h: 2027 },
+  );
+  const layerIds = [
+    "hero_image",
+    "white_card",
+    "hero_claim",
+    "blue_panel",
+    "web_title",
+    "gray_bg",
+    "btn_shape",
+    "btn_label",
+  ];
+  return { page, blueprint: createEmptySiteBlueprintV1(), layerIds };
+}
+
+/** Las 8 capas agrupadas en layoutGroup (composition-group). */
+export function fixtureRealEightLayersGrouped(): {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  groupId: string;
+  layerIds: string[];
+} {
+  const base = fixtureRealEightLayersPage();
+  const index = buildSiteSelectionIndex(base.page);
+  const snap = buildDesignerSourceSnapshot("d1", base.page);
+  const group = createLayoutGroupFromSelection({
+    blueprint: base.blueprint,
+    selectedLayerIds: base.layerIds,
+    index,
+    committedPage: snap.page,
+    label: "Composición libre",
+  });
+  if (!group.ok) throw new Error(group.message);
+  return {
+    page: base.page,
+    blueprint: group.blueprint,
+    groupId: group.createdNodeId!,
+    layerIds: base.layerIds,
+  };
+}

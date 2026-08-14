@@ -2,7 +2,7 @@
  * Fase 6B.1 — layout responsive por contenedores + clusters visuales.
  * No modifica Designer ni persiste reglas responsive.
  */
-import type { FreehandObject } from "../FreehandStudio";
+import type { FreehandObject, PathObject } from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { getPageDimensions } from "../indesign/page-formats";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
@@ -18,12 +18,40 @@ import {
 } from "./site-creator-viewport";
 import {
   deriveImageFocalFromSourceGeometry,
+  resolveBackgroundContainTransform,
   resolveBackgroundCoverTransform,
+  resolveBackgroundPreserveTransform,
   type NormalizedFocalPoint,
 } from "./site-creator-background-cover";
 import { clampNumber } from "./site-creator-responsive-math";
+import {
+  buildResolvedSceneFromIndex,
+  collectVisibleLayerIdsFromPage,
+  preservePageWithUniformMatrix,
+  scalePathPointsUniform,
+  transformPathObjectRelative,
+  uniformScaleMatrix,
+  type ResolvedResponsiveScene,
+} from "./site-creator-responsive-matrix";
+import {
+  classifyLayoutGroupKind,
+  classifyPageResponsiveKind,
+} from "./site-creator-responsive-target-kind";
 import { resolveEffectiveResponsiveMode } from "./site-creator-responsive-overrides";
 import type { EffectiveResponsiveMode } from "./site-creator-responsive-overrides";
+import {
+  contentBoxX,
+  contentBoxY,
+  itemRefForCluster,
+  resolveContainerTune,
+  resolveMediaTune,
+} from "./site-creator-responsive-tunes";
+import {
+  applyResponsiveContainerTunes,
+  applyResponsiveItemTunes,
+  applyResponsiveMediaTunes,
+  sortClustersByItemOrder,
+} from "./site-creator-responsive-apply";
 import {
   analyzeSectionVisualPresentation,
   buildResponsiveVisualClusters,
@@ -76,12 +104,17 @@ export type SiteCreatorResponsiveDebug = {
 
 export type SiteCreatorResponsiveResolveResult = {
   band: ResponsiveBand;
-  strategy: "identity" | "auto";
+  strategy: "identity" | "auto" | "uniform-preserve";
   displayPage: DesignerPageState;
   layout: SiteCreatorResolvedLayout;
   resolvedLayout: ResolvedResponsiveSiteLayout | null;
+  /** Escena canónica — misma matriz para render y selección. */
+  resolvedScene?: ResolvedResponsiveScene | null;
   debug?: SiteCreatorResponsiveDebug;
 };
+
+export type { Matrix2D, ResolvedLayerInstance, ResolvedResponsiveScene } from "./site-creator-responsive-matrix";
+export type { ResponsiveTargetKind } from "./site-creator-responsive-target-kind";
 
 /** Gap entre regiones de primer nivel: 0 en 6B.1 (flujo contiguo). */
 export const TOP_LEVEL_REGION_GAP = 0;
@@ -139,6 +172,67 @@ function gapForBand(band: ResponsiveBand): number {
   return band === "mobile" ? 16 : 20;
 }
 
+type SectionLayoutMetrics = {
+  inset: number;
+  gap: number;
+  contentWidth: number;
+  contentLeft: number;
+  contentAlignX: "start" | "center" | "end" | null;
+  contentAlignY: "start" | "center" | "end" | null;
+  contentWidthMode: "content" | "container" | "full" | null;
+  minHeight: number;
+  autoHeight: boolean;
+};
+
+function resolveSectionLayoutMetrics(args: {
+  blueprint: SiteBlueprintV1;
+  sectionId: string;
+  band: ResponsiveBand;
+  viewportWidth: number;
+  sectionType: "hero" | "generic";
+}): SectionLayoutMetrics {
+  const editable = args.band === "tablet" || args.band === "mobile" ? args.band : null;
+  const tune = editable
+    ? resolveContainerTune(args.blueprint, { kind: "blueprintNode", nodeId: args.sectionId }, editable)
+    : null;
+  const inset = typeof tune?.padding === "number" ? tune.padding : insetForBand(args.band);
+  const gap = typeof tune?.gap === "number" ? tune.gap : gapForBand(args.band);
+  const widthMode = tune?.contentWidthMode ?? null;
+  const horizInset = widthMode === "full" ? 0 : inset;
+  const padded = Math.max(80, args.viewportWidth - horizInset * 2);
+  let contentWidth =
+    typeof tune?.maxContentWidth === "number"
+      ? Math.max(80, Math.min(padded, tune.maxContentWidth))
+      : padded;
+  if (widthMode === "full") contentWidth = args.viewportWidth;
+  const contentAlignX = tune?.contentAlignX ?? null;
+  const contentLeft = contentBoxX({
+    align: contentAlignX ?? "center",
+    contentLeft: horizInset,
+    contentWidth: padded,
+    boxWidth: Math.min(contentWidth, padded),
+  });
+  const editorial =
+    args.sectionType === "hero" ? resolveAutomaticHeroMinHeight(args.viewportWidth, args.band) : 80;
+  const minHeight = Math.max(editorial, tune?.minHeight ?? 0);
+  return {
+    inset,
+    gap,
+    contentWidth,
+    contentLeft: widthMode === "full" ? 0 : contentLeft,
+    contentAlignX,
+    contentAlignY: tune?.contentAlignY ?? null,
+    contentWidthMode: widthMode,
+    minHeight,
+    autoHeight: tune?.autoHeight !== false,
+  };
+}
+
+function resolveSectionHeight(metrics: SectionLayoutMetrics, contentHeight: number): number {
+  if (!metrics.autoHeight) return Math.max(1, metrics.minHeight);
+  return Math.max(metrics.minHeight, contentHeight);
+}
+
 function cloneObj(obj: FreehandObject): FreehandObject {
   return structuredClone(obj);
 }
@@ -160,6 +254,13 @@ function setTextFontSize(obj: FreehandObject, fontSize: number): void {
 }
 
 function scaleSubtreeLocal(obj: FreehandObject, scale: number, minFont: number): void {
+  if (obj.type === "path") {
+    scalePathPointsUniform((obj as PathObject).points, scale);
+    if (typeof (obj as { strokeWidth?: number }).strokeWidth === "number") {
+      (obj as { strokeWidth: number }).strokeWidth *= scale;
+    }
+    return;
+  }
   if (obj.type === "text" || obj.type === "textOnPath") {
     setTextFontSize(obj, Math.max(minFont, getObjectFontSize(obj) * scale));
   }
@@ -238,6 +339,9 @@ function transformLayersRelative(
       width: Math.max(1, b.width * target.scaleX),
       height: Math.max(1, b.height * target.scaleY),
     };
+    if (obj.type === "path") {
+      transformPathObjectRelative(obj as PathObject, origin, target);
+    }
     writeWorldRect(byId, index, id, world, set);
     const uniform = Math.min(target.scaleX, target.scaleY);
     if (
@@ -319,8 +423,11 @@ function placeBackgroundLayers(args: {
   layoutRect: PageRect;
   sourceRegion: PageRect;
   index: SiteCreatorSelectionIndex;
+  blueprint?: SiteBlueprintV1;
+  band?: ResponsiveBand;
 }): Record<string, NormalizedFocalPoint> {
   const focals: Record<string, NormalizedFocalPoint> = {};
+  const editable = args.band === "tablet" || args.band === "mobile" ? args.band : null;
   for (const bgId of args.backgroundLayerIds) {
     const obj = args.byId.get(bgId);
     const entry = args.index.byId[bgId];
@@ -328,22 +435,38 @@ function placeBackgroundLayers(args: {
     const sourceRect = entry.visualBounds;
 
     if (obj.type === "image") {
-      const focal = deriveImageFocalFromSourceGeometry({
-        imageRect: sourceRect,
-        regionRect: args.sourceRegion,
-      });
-      const cover = resolveBackgroundCoverTransform({
-        sourceRect,
-        targetRect: args.layoutRect,
-        focalPoint: focal,
-      });
-      obj.x = cover.x;
-      obj.y = cover.y;
-      obj.width = cover.width;
-      obj.height = cover.height;
-      // Aspecto del elemento = aspecto fuente (escala uniforme); el clip de región hace el cover.
+      const media = editable && args.blueprint ? resolveMediaTune(args.blueprint, bgId, editable) : null;
+      const focal =
+        media?.focal ??
+        deriveImageFocalFromSourceGeometry({
+          imageRect: sourceRect,
+          regionRect: args.sourceRegion,
+        });
+      const fit = media?.fit ?? "cover";
+      const placed =
+        fit === "contain"
+          ? resolveBackgroundContainTransform({
+              sourceRect,
+              targetRect: args.layoutRect,
+              focalPoint: focal,
+            })
+          : fit === "preserve"
+            ? resolveBackgroundPreserveTransform({
+                sourceRect,
+                sourceRegion: args.sourceRegion,
+                targetRect: args.layoutRect,
+              })
+            : resolveBackgroundCoverTransform({
+                sourceRect,
+                targetRect: args.layoutRect,
+                focalPoint: focal,
+              });
+      obj.x = placed.x;
+      obj.y = placed.y;
+      obj.width = placed.width;
+      obj.height = placed.height;
       (obj as { imagePreserveAspectRatio?: string }).imagePreserveAspectRatio = "none";
-      focals[bgId] = cover.focalPoint;
+      focals[bgId] = placed.focalPoint;
       continue;
     }
 
@@ -453,7 +576,9 @@ function directStackUnitsForLayoutGroup(args: {
     units.push({
       layerIds,
       bounds,
-      z: Math.min(...layerIds.map((id) => args.index.byId[id]?.zOrderPath ?? 0)),
+      z: Math.min(
+        ...layerIds.map((id) => args.index.byId[id]?.zOrderPath.at(-1) ?? 0),
+      ),
     });
   }
   for (const layerId of group.layerIds) {
@@ -464,7 +589,7 @@ function directStackUnitsForLayoutGroup(args: {
     units.push({
       layerIds: [layerId],
       bounds: entry.visualBounds,
-      z: entry.zOrderPath,
+      z: entry.zOrderPath.at(-1) ?? 0,
     });
   }
   units.sort((a, b) => {
@@ -538,12 +663,23 @@ function nestedOverrideForCluster(
 ): EffectiveResponsiveMode | null {
   if (cluster.kind !== "solo") return null;
   if (cluster.unit.kind === "layoutGroup" && cluster.unit.nodeId) {
-    return resolveEffectiveResponsiveMode({
+    const effective = resolveEffectiveResponsiveMode({
       blueprint,
       target: { kind: "blueprintNode", nodeId: cluster.unit.nodeId },
       band,
       index,
     });
+    if (effective.mode === "auto") {
+      const kind = classifyLayoutGroupKind({
+        blueprint,
+        groupId: cluster.unit.nodeId,
+        index,
+      });
+      if (kind === "composition-group") {
+        return { mode: "preserve", source: "default" };
+      }
+    }
+    return effective;
   }
   if (cluster.unit.kind === "designerGroup") {
     const rootId = cluster.unit.layerIds[0];
@@ -772,12 +908,19 @@ function layoutSectionPreserveMode(args: {
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
-  const inset = insetForBand(band);
-  const contentWidth = Math.max(80, viewportWidth - inset * 2);
-  const sectionTop = args.yCursor;
   const sectionNode = args.blueprint.nodes[analysis.sectionId];
   const sectionType: "hero" | "generic" =
     isSiteSectionNode(sectionNode) && sectionNode.sectionType === "hero" ? "hero" : "generic";
+  const metrics = resolveSectionLayoutMetrics({
+    blueprint: args.blueprint,
+    sectionId: analysis.sectionId,
+    band,
+    viewportWidth,
+    sectionType,
+  });
+  const inset = metrics.inset;
+  const contentWidth = metrics.contentWidth;
+  const sectionTop = args.yCursor;
 
   const bgSet = new Set(analysis.background.backgroundLayerIds);
   const foregroundIds = collectSemanticCoverageLayerIds(args.blueprint, analysis.sectionId).filter(
@@ -791,9 +934,7 @@ function layoutSectionPreserveMode(args: {
   const compH = origin.height * scale;
   const anchor = clusterNormalizedAnchor(origin, analysis.containerBounds);
 
-  const editorialMin =
-    sectionType === "hero" ? resolveAutomaticHeroMinHeight(viewportWidth, band) : 80;
-  const sectionHeight = Math.max(editorialMin, compH + inset * 2);
+  const sectionHeight = resolveSectionHeight(metrics, compH + inset * 2);
   const layoutRect: PageRect = {
     x: 0,
     y: sectionTop,
@@ -807,14 +948,37 @@ function layoutSectionPreserveMode(args: {
     layoutRect,
     sourceRegion: analysis.containerBounds,
     index,
+    blueprint: args.blueprint,
+    band,
   });
 
-  const placedBox = placeClusterByAnchor({
+  const placedBoxRaw = placeClusterByAnchor({
     clusterSize: { width: compW, height: compH },
     anchor,
     regionRect: layoutRect,
     padding: inset,
   });
+  const placedBox = {
+    ...placedBoxRaw,
+    x:
+      metrics.contentAlignX != null
+        ? contentBoxX({
+            align: metrics.contentAlignX,
+            contentLeft: metrics.contentLeft,
+            contentWidth: metrics.contentWidth,
+            boxWidth: placedBoxRaw.width,
+          })
+        : placedBoxRaw.x,
+    y:
+      metrics.contentAlignY != null
+        ? contentBoxY({
+            align: metrics.contentAlignY,
+            contentTop: layoutRect.y + inset,
+            contentHeight: Math.max(1, layoutRect.height - inset * 2),
+            boxHeight: placedBoxRaw.height,
+          })
+        : placedBoxRaw.y,
+  };
   const placed = layoutPreserveComposition({
     byId: args.byId,
     layerIds: foregroundIds,
@@ -857,13 +1021,21 @@ function layoutSectionStackMode(args: {
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
-  const inset = insetForBand(band);
-  const gap = gapForBand(band);
-  const contentWidth = Math.max(80, viewportWidth - inset * 2);
-  const sectionTop = args.yCursor;
   const sectionNode = args.blueprint.nodes[analysis.sectionId];
   const sectionType: "hero" | "generic" =
     isSiteSectionNode(sectionNode) && sectionNode.sectionType === "hero" ? "hero" : "generic";
+  const metrics = resolveSectionLayoutMetrics({
+    blueprint: args.blueprint,
+    sectionId: analysis.sectionId,
+    band,
+    viewportWidth,
+    sectionType,
+  });
+  const inset = metrics.inset;
+  const gap = metrics.gap;
+  let contentWidth = metrics.contentWidth;
+  let contentLeft = metrics.contentLeft;
+  const sectionTop = args.yCursor;
 
   // Unidades = clusters (surfaces intactas); forzar reflow interno si no cabe.
   type Measured = {
@@ -876,7 +1048,7 @@ function layoutSectionStackMode(args: {
     nestedScales?: number[];
     enforceMinFont?: boolean;
   };
-  const measured: Measured[] = [...analysis.clusters]
+  let measured: Measured[] = [...analysis.clusters]
     .sort((a, b) => {
       const dy = a.bounds.y - b.bounds.y;
       if (Math.abs(dy) > 0.5) return dy;
@@ -956,15 +1128,36 @@ function layoutSectionStackMode(args: {
       };
     });
 
+  const editableBand = band === "tablet" || band === "mobile" ? band : null;
+  if (editableBand) {
+    measured = sortClustersByItemOrder(measured, args.blueprint, editableBand, (item) =>
+      itemRefForCluster(item.cluster),
+    );
+  }
+
+  if (metrics.contentWidthMode === "content") {
+    const hug = Math.max(
+      80,
+      ...measured.map((item) => item.width),
+      0,
+    );
+    contentWidth = Math.min(contentWidth, hug);
+    const padded = Math.max(80, viewportWidth - inset * 2);
+    contentLeft = contentBoxX({
+      align: metrics.contentAlignX ?? "center",
+      contentLeft: inset,
+      contentWidth: padded,
+      boxWidth: contentWidth,
+    });
+  }
+
   let stackH = inset;
   for (const item of measured) {
     stackH += item.height + gap;
   }
   stackH += inset - (measured.length ? gap : 0);
 
-  const editorialMin =
-    sectionType === "hero" ? resolveAutomaticHeroMinHeight(viewportWidth, band) : 80;
-  const sectionHeight = Math.max(editorialMin, stackH);
+  const sectionHeight = resolveSectionHeight(metrics, stackH);
   const layoutRect: PageRect = {
     x: 0,
     y: sectionTop,
@@ -978,15 +1171,31 @@ function layoutSectionStackMode(args: {
     layoutRect,
     sourceRegion: analysis.containerBounds,
     index,
+    blueprint: args.blueprint,
+    band,
   });
 
+  const extraY = Math.max(0, sectionHeight - stackH);
+  const yAlign = metrics.contentAlignY ?? "start";
+  const yShift =
+    yAlign === "end" ? extraY : yAlign === "center" ? extraY / 2 : 0;
+
   const ephemeralClusters: ResolvedResponsiveRegion["ephemeralClusters"] = [];
-  let y = sectionTop + inset;
+  let y = sectionTop + inset + yShift;
   for (const item of measured) {
+    const boxW = Math.min(item.width, contentWidth);
     const placedBox: PageRect = {
-      x: inset + (contentWidth - Math.min(item.width, contentWidth)) / 2,
+      x:
+        metrics.contentAlignX != null
+          ? contentBoxX({
+              align: metrics.contentAlignX,
+              contentLeft,
+              contentWidth,
+              boxWidth: boxW,
+            })
+          : contentLeft + (contentWidth - boxW) / 2,
       y,
-      width: Math.min(item.width, contentWidth),
+      width: boxW,
       height: item.height,
     };
     if (item.nestedStack && item.nestedScales) {
@@ -1094,14 +1303,20 @@ function layoutSectionAutoMode(args: {
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
-  const inset = insetForBand(band);
-  const gap = gapForBand(band);
-  const contentWidth = Math.max(80, viewportWidth - inset * 2);
-  const sectionTop = args.yCursor;
-
   const sectionNode = args.blueprint.nodes[analysis.sectionId];
   const sectionType: "hero" | "generic" =
     isSiteSectionNode(sectionNode) && sectionNode.sectionType === "hero" ? "hero" : "generic";
+  const metrics = resolveSectionLayoutMetrics({
+    blueprint: args.blueprint,
+    sectionId: analysis.sectionId,
+    band,
+    viewportWidth,
+    sectionType,
+  });
+  const inset = metrics.inset;
+  const gap = metrics.gap;
+  const contentWidth = metrics.contentWidth;
+  const sectionTop = args.yCursor;
 
   type Measured = {
     cluster: ResponsiveVisualCluster;
@@ -1196,10 +1411,17 @@ function layoutSectionAutoMode(args: {
     });
   }
 
-  const editorialMin =
-    sectionType === "hero" ? resolveAutomaticHeroMinHeight(viewportWidth, band) : 80;
+  const autoEditable = band === "tablet" || band === "mobile" ? band : null;
+  if (autoEditable) {
+    const ordered = sortClustersByItemOrder(measured, args.blueprint, autoEditable, (item) =>
+      itemRefForCluster(item.cluster),
+    );
+    measured.length = 0;
+    measured.push(...ordered);
+  }
+
   const tallestCluster = measured.reduce((m, c) => Math.max(m, c.height), 0);
-  const sectionHeight = Math.max(editorialMin, tallestCluster + inset * 2);
+  const sectionHeight = resolveSectionHeight(metrics, tallestCluster + inset * 2);
   const layoutRect: PageRect = {
     x: 0,
     y: sectionTop,
@@ -1213,17 +1435,31 @@ function layoutSectionAutoMode(args: {
     layoutRect,
     sourceRegion: analysis.containerBounds,
     index,
+    blueprint: args.blueprint,
+    band,
   });
 
   const ephemeralClusters: ResolvedResponsiveRegion["ephemeralClusters"] = [];
 
   for (const item of measured) {
-    const placedBox = placeClusterByAnchor({
+    const placedBoxRaw = placeClusterByAnchor({
       clusterSize: { width: item.width, height: item.height },
       anchor: item.anchor,
       regionRect: layoutRect,
       padding: inset,
     });
+    const placedBox =
+      metrics.contentAlignX != null
+        ? {
+            ...placedBoxRaw,
+            x: contentBoxX({
+              align: metrics.contentAlignX,
+              contentLeft: metrics.contentLeft,
+              contentWidth,
+              boxWidth: placedBoxRaw.width,
+            }),
+          }
+        : placedBoxRaw;
 
     if (item.nestedStack && item.nestedScales) {
       const placed = layoutStackUnitsAt({
@@ -1323,6 +1559,32 @@ function layoutSectionAutoMode(args: {
   };
 }
 
+function layoutUniformMatrixPreserve(args: {
+  byId: Map<string, FreehandObject>;
+  layerIds: string[];
+  index: SiteCreatorSelectionIndex;
+  sourceWidth: number;
+  sourceHeight: number;
+  viewportWidth: number;
+  targetY: number;
+  band: ResponsiveBand;
+}): number {
+  const scale = args.viewportWidth / Math.max(1, args.sourceWidth);
+  layoutPreserveComposition({
+    byId: args.byId,
+    layerIds: args.layerIds,
+    origin: { x: 0, y: 0, width: args.sourceWidth, height: args.sourceHeight },
+    index: args.index,
+    band: args.band,
+    targetX: 0,
+    targetY: args.targetY,
+    scale,
+    enforceMinFont: false,
+  });
+  return args.targetY + args.sourceHeight * scale;
+}
+
+/** @deprecated Hotfix: sustituido por layoutUniformMatrixPreserve (matriz única). */
 function layoutUnorganizedPreserve(args: {
   byId: Map<string, FreehandObject>;
   layerIds: string[];
@@ -1506,6 +1768,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
 
   if (band === "wide") {
     const displayPage = deepCloneDesignerPageState(args.page);
+    const sourceIds = collectVisibleLayerIdsFromPage(args.page);
     return {
       band,
       strategy: "identity",
@@ -1519,8 +1782,17 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         layoutScale: 1,
       },
       resolvedLayout: null,
+      resolvedScene: buildResolvedSceneFromIndex({
+        index: args.referenceIndex,
+        matrix: uniformScaleMatrix(1),
+        width: reference.width,
+        height: reference.height,
+        layerIds: sourceIds,
+      }),
     };
   }
+
+  const pageKind = classifyPageResponsiveKind(args.blueprint);
 
   const displayPage = deepCloneDesignerPageState(args.page);
   displayPage.objects = (displayPage.objects ?? []).map((o) => cloneObj(o));
@@ -1528,6 +1800,89 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   walkObjects(displayPage.objects, byId);
 
   const index = args.referenceIndex;
+
+  // Página sin Hero/Section: una sola matriz proporcional para todo.
+  if (pageKind === "page-unstructured") {
+    const sourceIds = collectVisibleLayerIdsFromPage(args.page);
+    const preserved = preservePageWithUniformMatrix({
+      displayPage,
+      sourceWidth: reference.width,
+      sourceHeight: reference.height,
+      viewportWidth,
+    });
+    const syntheticRegion: ResolvedResponsiveRegion = {
+      sectionId: "__page__",
+      sectionType: "generic",
+      layoutRect: { x: 0, y: 0, width: viewportWidth, height: preserved.layoutHeight },
+      clipRect: { x: 0, y: 0, width: viewportWidth, height: preserved.layoutHeight },
+      backgroundLayerIds: [],
+      backgroundFocals: {},
+      ephemeralClusters: [],
+    };
+    if (band === "tablet" || band === "mobile") {
+      applyResponsiveContainerTunes({
+        byId,
+        blueprint: args.blueprint,
+        index,
+        band,
+        regions: [syntheticRegion],
+        viewportWidth,
+      });
+      applyResponsiveItemTunes({
+        byId,
+        blueprint: args.blueprint,
+        index,
+        band,
+        regions: [syntheticRegion],
+        viewportWidth,
+      });
+      applyResponsiveMediaTunes({
+        byId,
+        blueprint: args.blueprint,
+        index,
+        band,
+        backgroundLayerIds: new Set(),
+      });
+    }
+    const layoutHeight = Math.max(1, syntheticRegion.layoutRect.height);
+    displayPage.customWidth = viewportWidth;
+    displayPage.customHeight = layoutHeight;
+    const resolvedScene = buildResolvedSceneFromIndex({
+      index,
+      matrix: preserved.matrix,
+      width: viewportWidth,
+      height: layoutHeight,
+      layerIds: sourceIds,
+    });
+    const resolvedLayout: ResolvedResponsiveSiteLayout = {
+      band,
+      viewportWidth,
+      pageRect: { x: 0, y: 0, width: viewportWidth, height: layoutHeight },
+      regions: [syntheticRegion],
+      objectClipById: {},
+    };
+    return {
+      band,
+      strategy: "uniform-preserve",
+      displayPage,
+      layout: {
+        referenceWidth: reference.width,
+        referenceHeight: reference.height,
+        viewportWidth,
+        layoutWidth: viewportWidth,
+        layoutHeight,
+        layoutScale: 1,
+      },
+      resolvedLayout,
+      resolvedScene,
+      debug: {
+        sectionAnalyses: [],
+        fallbackReasons: ["page-unstructured-matrix"],
+        resolved: resolvedLayout,
+      },
+    };
+  }
+
   const owned = new Set<string>();
   const sections = args.blueprint.rootChildIds
     .map((id) => args.blueprint.nodes[id])
@@ -1565,6 +1920,16 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       viewportWidth,
       yCursor,
     });
+    if (band === "tablet" || band === "mobile") {
+      applyResponsiveContainerTunes({
+        byId,
+        blueprint: args.blueprint,
+        index,
+        band,
+        regions: [region],
+        viewportWidth,
+      });
+    }
     regions.push(region);
 
     // Clip de render: fondos + capas de cobertura de la región
@@ -1577,6 +1942,32 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
 
     yCursor = region.layoutRect.y + region.layoutRect.height;
     if (i < sections.length - 1) yCursor += TOP_LEVEL_REGION_GAP;
+  }
+
+  if (band === "tablet" || band === "mobile") {
+    applyResponsiveItemTunes({
+      byId,
+      blueprint: args.blueprint,
+      index,
+      band,
+      regions: regions.map((r) => ({
+        sectionId: r.sectionId,
+        layoutRect: r.layoutRect,
+        clipRect: r.clipRect,
+      })),
+      viewportWidth,
+    });
+    const backgroundLayerIds = new Set<string>();
+    for (const region of regions) {
+      for (const id of region.backgroundLayerIds) backgroundLayerIds.add(id);
+    }
+    applyResponsiveMediaTunes({
+      byId,
+      blueprint: args.blueprint,
+      index,
+      band,
+      backgroundLayerIds,
+    });
   }
 
   const unorganized = index.entries
@@ -1592,20 +1983,32 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     .map((e) => e.layerId);
 
   if (unorganized.length > 0) {
-    fallbackReasons.push("unorganized-preserve");
-    yCursor = layoutUnorganizedPreserve({
+    fallbackReasons.push("unorganized-uniform-matrix");
+    yCursor = layoutUniformMatrixPreserve({
       byId,
       layerIds: unorganized,
       index,
-      band,
+      sourceWidth: reference.width,
+      sourceHeight: reference.height,
       viewportWidth,
-      yCursor,
+      targetY: yCursor,
+      band,
     });
   }
 
   const layoutHeight = Math.max(1, yCursor);
   displayPage.customWidth = viewportWidth;
   displayPage.customHeight = layoutHeight;
+
+  const scale = viewportWidth / Math.max(1, reference.width);
+  const sourceIds = collectVisibleLayerIdsFromPage(args.page);
+  const resolvedScene = buildResolvedSceneFromIndex({
+    index,
+    matrix: uniformScaleMatrix(scale, 0, 0),
+    width: viewportWidth,
+    height: layoutHeight,
+    layerIds: sourceIds,
+  });
 
   const resolvedLayout: ResolvedResponsiveSiteLayout = {
     band,
@@ -1628,6 +2031,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       layoutScale: 1,
     },
     resolvedLayout,
+    resolvedScene,
     debug: { sectionAnalyses, fallbackReasons, resolved: resolvedLayout },
   };
 }

@@ -62,7 +62,7 @@ function OutlineTreeRow({
   dragOverId: string | null;
   resolveOverride?: (
     node: SiteCreatorPresentationNode,
-  ) => { dot: "current" | "other"; title: string } | null;
+  ) => { dot: "current" | "other"; title: string; hidden?: boolean } | null;
 }) {
   const hasChildren = node.children.length > 0;
   const isOpen = expanded[node.id] === true || (expanded[node.id] !== false && node.kind === "unorganized" && Object.keys(expanded).length === 0);
@@ -136,7 +136,9 @@ function OutlineTreeRow({
           <span className="inline-block h-4 w-4 shrink-0" />
         )}
         <Glyph node={node} />
-        <span className="min-w-0 truncate font-semibold">
+        <span
+          className={`min-w-0 truncate font-semibold ${overrideInfo?.hidden ? "opacity-45" : ""}`}
+        >
           {closedCount != null && node.kind !== "unorganized"
             ? node.label.includes("·")
               ? node.label
@@ -145,6 +147,15 @@ function OutlineTreeRow({
               ? "Contenido sin organizar"
               : node.label}
         </span>
+        {overrideInfo?.hidden ? (
+          <span
+            data-testid={`outline-hidden-${node.id}`}
+            title="Oculto en esta vista. Sigue visible en Original."
+            className="ml-1 shrink-0 text-[9px] font-semibold uppercase tracking-wide text-white/35"
+          >
+            oculto
+          </span>
+        ) : null}
         {overrideInfo ? (
           <span
             data-testid={`outline-override-dot-${node.id}`}
@@ -200,7 +211,7 @@ export interface SiteCreatorOutlinePanelProps {
   reviewCount: number;
   resolveOverride?: (
     node: SiteCreatorPresentationNode,
-  ) => { dot: "current" | "other"; title: string } | null;
+  ) => { dot: "current" | "other"; title: string; hidden?: boolean } | null;
 }
 
 function ancestorSemanticIds(

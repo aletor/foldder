@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
@@ -67,5 +67,84 @@ describe("SiteCreatorPreview", () => {
 
     expect(livePage.objects[0]!.id).toBe("live_layer");
     expect(snapshotPage.objects[0]!.id).toBe("snap_layer");
+  });
+
+  it("click on dark preview chrome clears selection", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 400,
+      customHeight: 300,
+      objects: [],
+    };
+    const onSelectionAction = vi.fn();
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={400}
+        referenceWidth={400}
+        previewZoom={0.5}
+        selection={{ selectedIds: ["x"], hoverId: null, isolationIds: [], cycleState: null }}
+        selectionIndex={{ entries: [], byId: {} }}
+        onSelectionAction={onSelectionAction}
+      />,
+    );
+
+    const scroll = document.querySelector(".site-creator-preview-scroll");
+    expect(scroll).toBeTruthy();
+    fireEvent.click(scroll!);
+    expect(onSelectionAction).toHaveBeenCalledWith({ type: "clear" });
+  });
+
+  it("double click on dark preview chrome triggers fit callback", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 400,
+      customHeight: 300,
+      objects: [],
+    };
+    const onCanvasBackgroundDoubleClick = vi.fn();
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={400}
+        referenceWidth={400}
+        previewZoom={0.5}
+        onCanvasBackgroundDoubleClick={onCanvasBackgroundDoubleClick}
+      />,
+    );
+
+    const scroll = document.querySelector(".site-creator-preview-scroll");
+    expect(scroll).toBeTruthy();
+    fireEvent.doubleClick(scroll!);
+    expect(onCanvasBackgroundDoubleClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("device frame uses internal scroll", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 390,
+      customHeight: 2000,
+      objects: [],
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 844 }}
+      />,
+    );
+
+    expect(screen.getByTestId("site-creator-device-scroll")).toBeTruthy();
+    const stage = screen.getByTestId("site-creator-preview-stage");
+    expect(stage.getAttribute("style")).toContain("width: 390px");
+    expect(stage.getAttribute("style")).toContain("height: 844px");
   });
 });

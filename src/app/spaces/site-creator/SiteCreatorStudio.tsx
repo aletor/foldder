@@ -4,30 +4,56 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getPageDimensions } from "../indesign/page-formats";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
-import { SiteCreatorWidthField } from "./SiteCreatorWidthField";
 import {
-  SITE_CREATOR_MOBILE_WIDTH,
-  SITE_CREATOR_TABLET_WIDTH,
+  SiteCreatorDeviceSelector,
+  SiteCreatorOrientationToggle,
+} from "./SiteCreatorDeviceSelector";
+import {
   computeFitPreviewZoom,
-  detectViewportPreset,
+  defaultDeviceConfig,
+  resolveDeviceDimensions,
+  type SiteCreatorDeviceConfig,
+  type SiteCreatorViewportBand,
 } from "./site-creator-viewport";
 import { resolveSiteCreatorResponsiveDisplay, bandForViewportWidth } from "./site-creator-responsive";
+import { countContainerReflowUnits } from "./site-creator-responsive-apply";
 import {
   SiteCreatorAdaptationControl,
   adaptationButtonLabel,
 } from "./SiteCreatorAdaptationControl";
+import { SiteCreatorRefineControl } from "./SiteCreatorRefineControl";
 import { resolveAdaptationCapability } from "./site-creator-adaptation-capability";
 import {
   bandToEditable,
   isAdaptationEligibleUnit,
   isResponsiveTargetBroken,
   resolveEffectiveResponsiveMode,
+  resolveResponsiveOverride,
   resolveResponsiveTarget,
   setResponsiveOverride,
   treeOverrideDotState,
   treeOverrideTooltip,
   listBrokenResponsiveTargets,
 } from "./site-creator-responsive-overrides";
+import {
+  bandHasCustomizations,
+  clearContainerTuneField,
+  patchContainerTune,
+  patchItemTune,
+  patchMediaTune,
+  reorderSiblingItems,
+  resetItemToAuto,
+  resetMediaToAuto,
+  resetResponsiveBand,
+  resolveContainerTune,
+  isHiddenItemTune,
+  isLayerHiddenInBand,
+  resolveItemRef,
+  resolveItemTune,
+  resolveMediaTune,
+  unitCustomizationDotState,
+  unitCustomizationTooltip,
+} from "./site-creator-responsive-tunes";
 import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
 import { SiteCreatorSyncDialog } from "./SiteCreatorSyncDialog";
@@ -59,15 +85,17 @@ import {
 import {
   EMPTY_SITE_CREATOR_SELECTION,
   type SiteCreatorSelectionAction,
+  type SiteCreatorSelectionIndex,
   type SiteCreatorSelectionState,
 } from "./site-creator-selection-types";
 import {
   siteCreatorOriginStateLabel,
   type SiteCreatorOriginState,
 } from "./site-creator-origin";
-import type { DesignerSourceSnapshotV1, SiteBlueprintV1 } from "./site-creator-types";
+import type { DesignerSourceSnapshotV1, ResponsiveEditableBand, ResponsiveItemRef, SiteBlueprintV1 } from "./site-creator-types";
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import { FOLDDER_STUDIO_BODY_CLASS } from "../studio-node/studio-node-architecture";
 import {
   canPersistSiteStructure,
   createBlueprintHistory,
@@ -210,6 +238,76 @@ function parentChoiceLabel(
   return `En ${deriveBlueprintNodeDisplayLabel(node, snapshot, index)}`;
 }
 
+function siblingItemRefs(
+  unit: SiteCreatorSelectionUnit,
+  tree: import("./site-creator-presentation-tree").SiteCreatorPresentationTree,
+  blueprint: SiteBlueprintV1,
+): ResponsiveItemRef[] {
+  const walk = (
+    nodes: import("./site-creator-presentation-tree").SiteCreatorPresentationNode[],
+  ): import("./site-creator-presentation-tree").SiteCreatorPresentationNode[] | null => {
+    for (const n of nodes) {
+      if (n.unit && sameSelectionUnit(n.unit, unit)) return nodes;
+      const inner = walk(n.children);
+      if (inner) return inner;
+    }
+    return null;
+  };
+  const siblings = walk(tree.roots);
+  if (!siblings) return [];
+  const refs: ResponsiveItemRef[] = [];
+  for (const n of siblings) {
+    if (!n.unit) continue;
+    const ref = resolveItemRef(n.unit, blueprint);
+    if (ref) refs.push(ref);
+  }
+  return refs;
+}
+
+function selectionParentIsStacked(
+  unit: SiteCreatorSelectionUnit,
+  blueprint: SiteBlueprintV1,
+  band: ResponsiveEditableBand,
+  index: SiteCreatorSelectionIndex | null,
+): boolean {
+  if (unit.kind === "blueprintNode") {
+    const parentId = blueprint.nodes[unit.nodeId]?.parentId;
+    if (!parentId) return false;
+    return (
+      resolveEffectiveResponsiveMode({
+        blueprint,
+        target: { kind: "blueprintNode", nodeId: parentId },
+        band,
+        index,
+      }).mode === "stack"
+    );
+  }
+  for (const node of Object.values(blueprint.nodes)) {
+    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup") continue;
+    if (!node.layerIds.includes(unit.layerId)) continue;
+    return (
+      resolveEffectiveResponsiveMode({
+        blueprint,
+        target: { kind: "blueprintNode", nodeId: node.id },
+        band,
+        index,
+      }).mode === "stack"
+    );
+  }
+  return false;
+}
+
+function unitHiddenInCurrentBand(
+  unit: SiteCreatorSelectionUnit,
+  blueprint: SiteBlueprintV1,
+  band: ResponsiveEditableBand,
+): boolean {
+  if (unit.kind === "blueprintNode") {
+    return isHiddenItemTune(blueprint, { kind: "blueprintNode", nodeId: unit.nodeId }, band);
+  }
+  return isLayerHiddenInBand({ blueprint, layerId: unit.layerId, band });
+}
+
 export function SiteCreatorStudio({
   nodeLabel,
   designerLabel,
@@ -226,18 +324,30 @@ export function SiteCreatorStudio({
   onDismissSyncError,
   onBlueprintChange,
 }: SiteCreatorStudioProps) {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.classList.add(FOLDDER_STUDIO_BODY_CLASS);
+    return () => document.body.classList.remove(FOLDDER_STUDIO_BODY_CLASS);
+  }, []);
+
   const [previewZoom, setPreviewZoom] = useState(1);
   const [floatingHostEl, setFloatingHostEl] = useState<HTMLElement | null>(null);
   const setFloatingHostRef = useCallback((el: HTMLElement | null) => {
     setFloatingHostEl((prev) => (prev === el ? prev : el));
   }, []);
-  const [, setZoomPercent] = useState(100);
-  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
+  const [viewportBand, setViewportBand] = useState<SiteCreatorViewportBand>("original");
+  const [originalViewportWidth, setOriginalViewportWidth] = useState<number | null>(null);
+  const [tabletDevice, setTabletDevice] = useState<SiteCreatorDeviceConfig>(() =>
+    defaultDeviceConfig("tablet"),
+  );
+  const [mobileDevice, setMobileDevice] = useState<SiteCreatorDeviceConfig>(() =>
+    defaultDeviceConfig("mobile"),
+  );
+  const [focalLayerId, setFocalLayerId] = useState<string | null>(null);
   const [availablePreviewSize, setAvailablePreviewSize] = useState<{
     width: number;
     height: number;
   } | null>(null);
-  const initialFitDoneRef = useRef(false);
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
 
@@ -286,8 +396,24 @@ export function SiteCreatorStudio({
   const pageDimensions = page ? getPageDimensions(page) : null;
   const referenceWidth = pageDimensions?.width ?? 1920;
   const referenceHeight = pageDimensions?.height ?? 1080;
-  const effectiveViewportWidth = viewportWidth ?? referenceWidth;
-  const viewportPreset = detectViewportPreset(effectiveViewportWidth, referenceWidth);
+  const tabletDimensions = useMemo(
+    () => resolveDeviceDimensions({ band: "tablet", config: tabletDevice, referenceWidth }),
+    [referenceWidth, tabletDevice],
+  );
+  const mobileDimensions = useMemo(
+    () => resolveDeviceDimensions({ band: "mobile", config: mobileDevice, referenceWidth }),
+    [mobileDevice, referenceWidth],
+  );
+  const activeDeviceDimensions =
+    viewportBand === "tablet" ? tabletDimensions : viewportBand === "mobile" ? mobileDimensions : null;
+  const effectiveViewportWidth =
+    viewportBand === "original"
+      ? (originalViewportWidth ?? referenceWidth)
+      : activeDeviceDimensions!.width;
+  const deviceFrame =
+    activeDeviceDimensions != null
+      ? { width: activeDeviceDimensions.width, height: activeDeviceDimensions.height }
+      : null;
   const responsiveBand = bandForViewportWidth(effectiveViewportWidth, referenceWidth);
   const showPreview = Boolean(page);
 
@@ -318,33 +444,28 @@ export function SiteCreatorStudio({
 
   useEffect(() => {
     if (!pageDimensions) return;
-    setViewportWidth(pageDimensions.width);
-    initialFitDoneRef.current = false;
+    setViewportBand("original");
+    setOriginalViewportWidth(pageDimensions.width);
   }, [pageDimensions?.width, pageDimensions?.height, snapshot?.contentHash]);
 
+  const fitTargetWidth = deviceFrame?.width ?? layoutWidth;
+  const fitTargetHeight = deviceFrame?.height ?? layoutHeight;
+
   useEffect(() => {
-    if (!pageDimensions || initialFitDoneRef.current || !availablePreviewSize) return;
+    if (!availablePreviewSize) return;
     if (availablePreviewSize.width < 80 || availablePreviewSize.height < 80) return;
     const z = computeFitPreviewZoom({
-      layoutWidth: pageDimensions.width,
-      layoutHeight: pageDimensions.height,
+      layoutWidth: fitTargetWidth,
+      layoutHeight: fitTargetHeight,
       availableWidth: availablePreviewSize.width,
       availableHeight: availablePreviewSize.height,
     });
     setPreviewZoom(z);
-    initialFitDoneRef.current = true;
-  }, [availablePreviewSize, pageDimensions]);
+  }, [availablePreviewSize, fitTargetHeight, fitTargetWidth]);
 
-  const applyFitZoom = useCallback(() => {
-    if (!availablePreviewSize) return;
-    const z = computeFitPreviewZoom({
-      layoutWidth,
-      layoutHeight,
-      availableWidth: availablePreviewSize.width,
-      availableHeight: availablePreviewSize.height,
-    });
-    setPreviewZoom(z);
-  }, [availablePreviewSize, layoutHeight, layoutWidth]);
+  useEffect(() => {
+    if (responsiveBand === "wide") setFocalLayerId(null);
+  }, [responsiveBand]);
 
   const displayShadow = useMemo(() => {
     if (!selectionIndex) return EMPTY_SITE_CREATOR_SELECTION;
@@ -1293,6 +1414,445 @@ export function SiteCreatorStudio({
     }
   }, [adaptationModel, selectCreatedNode]);
 
+  const editableBand = bandToEditable(responsiveBand);
+
+  const commitTune = useCallback(
+    (result: { blueprint: SiteBlueprintV1; changed: boolean }) => {
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      if (!result.changed) return;
+      commitBlueprint(result.blueprint);
+    },
+    [commitBlueprint, persistGate],
+  );
+
+  const refineModel = useMemo(() => {
+    if (!editableBand || displayUnits.length !== 1 || !selectionIndex) return null;
+    if (!persistGate.allowed) return null;
+    const unit = displayUnits[0]!;
+    const containerTarget = resolveResponsiveTarget(unit, blueprint, selectionIndex);
+    const itemRef = resolveItemRef(unit, blueprint);
+    const layerId = unit.kind === "layer" ? unit.layerId : null;
+    const layerType = layerId ? selectionIndex.byId[layerId]?.type : null;
+    const isMedia = layerType === "image";
+    const kind: "container" | "media" | "item" | null = containerTarget
+      ? "container"
+      : isMedia
+        ? "media"
+        : itemRef
+          ? "item"
+          : null;
+    if (!kind) return null;
+    const siblings = siblingItemRefs(unit, presentationTree, blueprint);
+    const itemTune = itemRef ? resolveItemTune(blueprint, itemRef, editableBand) : null;
+    const containerTune = containerTarget
+      ? resolveContainerTune(blueprint, containerTarget, editableBand)
+      : null;
+    const mediaTune = layerId ? resolveMediaTune(blueprint, layerId, editableBand) : null;
+    const showReset = Boolean(itemTune || containerTune || mediaTune);
+    const hasAdaptationOverride = Boolean(
+      containerTarget && resolveResponsiveOverride(blueprint, containerTarget, editableBand),
+    );
+    return {
+      band: editableBand,
+      kind,
+      itemTune,
+      containerTune,
+      mediaTune,
+      canReorder:
+        (kind === "item" || kind === "media") &&
+        siblings.length > 1 &&
+        selectionParentIsStacked(unit, blueprint, editableBand, selectionIndex),
+      resetLabel: editableBand === "mobile" ? "Restablecer en Móvil" : "Restablecer en Tablet",
+      showReset,
+      hasAdaptationOverride,
+      containerContentCount: containerTarget
+        ? countContainerReflowUnits({
+            blueprint,
+            target: containerTarget,
+            index: selectionIndex,
+            band: editableBand,
+          })
+        : 0,
+      itemRef,
+      containerTarget,
+      layerId,
+      siblings,
+    };
+  }, [
+    blueprint,
+    displayUnits,
+    editableBand,
+    persistGate.allowed,
+    presentationTree,
+    selectionIndex,
+  ]);
+
+  const refineHandlers = useMemo(
+    () => ({
+      onAlignX: (align: "start" | "center" | "end") => {
+        if (!editableBand) return;
+        if (refineModel?.kind !== "container" && refineModel?.itemRef) {
+          commitTune(
+            patchItemTune({
+              blueprint,
+              target: refineModel.itemRef,
+              band: editableBand,
+              patch: { alignX: align },
+            }),
+          );
+          return;
+        }
+        if (refineModel?.containerTarget) {
+          commitTune(
+            patchContainerTune({
+              blueprint,
+              target: refineModel.containerTarget,
+              band: editableBand,
+              patch: { contentAlignX: align },
+            }),
+          );
+        }
+      },
+      onAlignY: (align: "start" | "center" | "end") => {
+        if (!editableBand) return;
+        if (refineModel?.kind !== "container" && refineModel?.itemRef) {
+          commitTune(
+            patchItemTune({
+              blueprint,
+              target: refineModel.itemRef,
+              band: editableBand,
+              patch: { alignY: align },
+            }),
+          );
+          return;
+        }
+        if (refineModel?.containerTarget) {
+          commitTune(
+            patchContainerTune({
+              blueprint,
+              target: refineModel.containerTarget,
+              band: editableBand,
+              patch: { contentAlignY: align },
+            }),
+          );
+        }
+      },
+      onWidthMode: (mode: "content" | "container" | "full") => {
+        if (!editableBand) return;
+        if (refineModel?.kind !== "container" && refineModel?.itemRef) {
+          commitTune(
+            patchItemTune({
+              blueprint,
+              target: refineModel.itemRef,
+              band: editableBand,
+              patch: { widthMode: mode, size: undefined },
+            }),
+          );
+          return;
+        }
+        if (refineModel?.containerTarget) {
+          commitTune(
+            patchContainerTune({
+              blueprint,
+              target: refineModel.containerTarget,
+              band: editableBand,
+              patch: { contentWidthMode: mode },
+            }),
+          );
+        }
+      },
+      onHide: (hidden: boolean) => {
+        if (!refineModel?.itemRef || !editableBand) return;
+        commitTune(
+          patchItemTune({
+            blueprint,
+            target: refineModel.itemRef,
+            band: editableBand,
+            patch: { hidden },
+          }),
+        );
+      },
+      onReorder: (delta: -1 | 1) => {
+        if (!refineModel?.itemRef || !editableBand) return;
+        commitTune(
+          reorderSiblingItems({
+            blueprint,
+            target: refineModel.itemRef,
+            siblings: refineModel.siblings,
+            band: editableBand,
+            delta,
+          }),
+        );
+      },
+      onResetItem: () => {
+        if (!editableBand) return;
+        if (refineModel?.kind === "media" && refineModel.layerId) {
+          let next = resetMediaToAuto({
+            blueprint,
+            layerId: refineModel.layerId,
+            band: editableBand,
+          }).blueprint;
+          if (refineModel.itemRef) {
+            next = resetItemToAuto({ blueprint: next, target: refineModel.itemRef, band: editableBand }).blueprint;
+          }
+          if (next !== blueprint) commitBlueprint(next);
+          return;
+        }
+        if (refineModel?.itemRef) {
+          commitTune(resetItemToAuto({ blueprint, target: refineModel.itemRef, band: editableBand }));
+        }
+      },
+      onResetContainer: () => {
+        if (!editableBand || !refineModel?.containerTarget) return;
+        let next = patchContainerTune({
+          blueprint,
+          target: refineModel.containerTarget,
+          band: editableBand,
+          patch: null,
+        }).blueprint;
+        next = setResponsiveOverride({
+          blueprint: next,
+          target: refineModel.containerTarget,
+          band: editableBand,
+          mode: "auto",
+        }).blueprint;
+        if (next !== blueprint) commitBlueprint(next);
+      },
+      onResetAdaptation: () => {
+        if (!editableBand || !refineModel?.containerTarget) return;
+        commitTune(
+          setResponsiveOverride({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            mode: "auto",
+          }),
+        );
+      },
+      onResetBand: () => {
+        if (!editableBand) return;
+        commitTune(resetResponsiveBand({ blueprint, band: editableBand }));
+      },
+      onContainerPadding: (value: number) => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { padding: value },
+          }),
+        );
+      },
+      onContainerPaddingAuto: () => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          clearContainerTuneField({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            field: "padding",
+          }),
+        );
+      },
+      onContainerGap: (value: number) => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { gap: value },
+          }),
+        );
+      },
+      onContainerGapAuto: () => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          clearContainerTuneField({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            field: "gap",
+          }),
+        );
+      },
+      onContainerAlign: (align: "start" | "center" | "end") => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { contentAlignX: align },
+          }),
+        );
+      },
+      onContainerAlignY: (align: "start" | "center" | "end") => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { contentAlignY: align },
+          }),
+        );
+      },
+      onContainerAlignAuto: () => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          clearContainerTuneField({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            field: "contentAlignX",
+          }),
+        );
+      },
+      onContainerAlignYAuto: () => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          clearContainerTuneField({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            field: "contentAlignY",
+          }),
+        );
+      },
+      onContainerWidthMode: (mode: "content" | "container" | "full") => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { contentWidthMode: mode },
+          }),
+        );
+      },
+      onContainerMaxWidth: (value: number | null) => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        if (value == null) {
+          commitTune(
+            clearContainerTuneField({
+              blueprint,
+              target: refineModel.containerTarget,
+              band: editableBand,
+              field: "maxContentWidth",
+            }),
+          );
+          return;
+        }
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { maxContentWidth: value },
+          }),
+        );
+      },
+      onContainerMaxWidthAuto: () => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          clearContainerTuneField({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            field: "maxContentWidth",
+          }),
+        );
+      },
+      onContainerMinHeight: (value: number | null) => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        if (value == null) {
+          commitTune(
+            clearContainerTuneField({
+              blueprint,
+              target: refineModel.containerTarget,
+              band: editableBand,
+              field: "minHeight",
+            }),
+          );
+          return;
+        }
+        commitTune(
+          patchContainerTune({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            patch: { minHeight: value },
+          }),
+        );
+      },
+      onContainerMinHeightAuto: () => {
+        if (!refineModel?.containerTarget || !editableBand) return;
+        commitTune(
+          clearContainerTuneField({
+            blueprint,
+            target: refineModel.containerTarget,
+            band: editableBand,
+            field: "minHeight",
+          }),
+        );
+      },
+      onMediaFit: (fit: "cover" | "contain" | "preserve") => {
+        if (!refineModel?.layerId || !editableBand) return;
+        commitTune(
+          patchMediaTune({
+            blueprint,
+            layerId: refineModel.layerId,
+            band: editableBand,
+            patch: { fit },
+          }),
+        );
+      },
+      onEnterFocal: () => {
+        if (refineModel?.layerId) setFocalLayerId(refineModel.layerId);
+      },
+    }),
+    [blueprint, commitBlueprint, commitTune, editableBand, refineModel],
+  );
+
+  const onTransformCommit = useCallback(
+    (delta: { dx: number; dy: number; dw?: number; dh?: number }) => {
+      if (!editableBand || !refineModel?.itemRef) return;
+      const current = resolveItemTune(blueprint, refineModel.itemRef, editableBand);
+      const bounds = unitOutlines[0]?.bounds;
+      const patch: {
+        offset?: { x: number; y: number };
+        size?: { width?: number; height?: number };
+      } = {};
+      if (delta.dx || delta.dy) {
+        patch.offset = {
+          x: (current?.offset?.x ?? 0) + delta.dx,
+          y: (current?.offset?.y ?? 0) + delta.dy,
+        };
+      }
+      if ((delta.dw || delta.dh) && bounds) {
+        patch.size = {
+          width: Math.max(8, bounds.width + (delta.dw ?? 0)),
+          height: Math.max(8, bounds.height + (delta.dh ?? 0)),
+        };
+      }
+      if (!patch.offset && !patch.size) return;
+      commitTune(
+        patchItemTune({
+          blueprint,
+          target: refineModel.itemRef,
+          band: editableBand,
+          patch,
+        }),
+      );
+    },
+    [blueprint, commitTune, editableBand, refineModel, unitOutlines],
+  );
+
   const microbarModel = useMemo((): SiteCreatorMicrobarModel | null => {
     if (!selectionIndex) return null;
 
@@ -1340,6 +1900,9 @@ export function SiteCreatorStudio({
             onFocusController={onAdaptationFocusController}
           />
         ) : null,
+        refineSlot: refineModel ? (
+          <SiteCreatorRefineControl model={refineModel} handlers={refineHandlers} />
+        ) : null,
       };
     }
 
@@ -1372,6 +1935,8 @@ export function SiteCreatorStudio({
     onAdaptationFocusController,
     onAdaptationSelectMode,
     presentationTree,
+    refineHandlers,
+    refineModel,
     selectionIndex,
     snapshot,
     unitOutlines,
@@ -1441,29 +2006,81 @@ export function SiteCreatorStudio({
   const resolveOutlineOverride = useCallback(
     (node: SiteCreatorPresentationNode) => {
       if (!node.unit || responsiveBand === "wide") return null;
+      const editable = bandToEditable(responsiveBand);
+      const hidden =
+        editable && node.unit ? unitHiddenInCurrentBand(node.unit, blueprint, editable) : false;
+      const custom = unitCustomizationDotState({
+        blueprint,
+        unit: node.unit,
+        currentBand: responsiveBand,
+        index: selectionIndex,
+      });
+      if (custom) {
+        return {
+          dot: custom,
+          title: unitCustomizationTooltip({
+            blueprint,
+            unit: node.unit,
+            index: selectionIndex,
+          }) ?? "",
+          hidden,
+        };
+      }
       const target = resolveResponsiveTarget(node.unit, blueprint, selectionIndex);
-      if (!target) return null;
+      if (!target) {
+        return hidden ? { dot: "current" as const, title: "Oculto en esta vista", hidden: true } : null;
+      }
       const dot = treeOverrideDotState({
         blueprint,
         target,
         currentBand: responsiveBand,
       });
-      if (!dot) return null;
+      if (!dot) {
+        return hidden ? { dot: "current" as const, title: "Oculto en esta vista", hidden: true } : null;
+      }
       return {
         dot,
         title: treeOverrideTooltip({ blueprint, target }) ?? "",
+        hidden,
       };
     },
     [blueprint, responsiveBand, selectionIndex],
   );
 
   useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      return (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable ||
+        Boolean(target.closest('[contenteditable="true"], input, textarea, select'))
+      );
+    };
+
     const onKey = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
+
       const meta = event.metaKey || event.ctrlKey;
-      if (!meta) return;
       const key = event.key.toLowerCase();
-      if (key === "z" && event.shiftKey) {
+
+      // Undo / Redo del blueprint — captura para no disparar el lienzo general.
+      if (meta && key === "z") {
         event.preventDefault();
+        event.stopPropagation();
+        const next = event.shiftKey
+          ? redoBlueprintHistory(historyRef.current)
+          : undoBlueprintHistory(historyRef.current);
+        if (!next) return;
+        historyRef.current = next;
+        writeCountRef.current += 1;
+        onBlueprintChange(next.present);
+        return;
+      }
+      if (meta && key === "y") {
+        event.preventDefault();
+        event.stopPropagation();
         const next = redoBlueprintHistory(historyRef.current);
         if (!next) return;
         historyRef.current = next;
@@ -1471,27 +2088,17 @@ export function SiteCreatorStudio({
         onBlueprintChange(next.present);
         return;
       }
-      if (key === "y") {
+
+      // Suprimir / Retroceso: estructura interna, nunca el nodo del lienzo.
+      if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
-        const next = redoBlueprintHistory(historyRef.current);
-        if (!next) return;
-        historyRef.current = next;
-        writeCountRef.current += 1;
-        onBlueprintChange(next.present);
-        return;
-      }
-      if (key === "z") {
-        event.preventDefault();
-        const next = undoBlueprintHistory(historyRef.current);
-        if (!next) return;
-        historyRef.current = next;
-        writeCountRef.current += 1;
-        onBlueprintChange(next.present);
+        event.stopPropagation();
+        removeSelectedStructure();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onBlueprintChange]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onBlueprintChange, removeSelectedStructure]);
 
   const originLabel = siteCreatorOriginStateLabel(originState);
   const designerLine = designerLabel?.trim() || snapshot?.designerNodeId || "—";
@@ -1545,11 +2152,14 @@ export function SiteCreatorStudio({
     <div
       className="site-creator-studio fixed inset-0 z-[100010] flex flex-col bg-[#0b0f14] text-white"
       data-foldder-studio-root
+      data-foldder-studio-canvas=""
+      data-foldder-site-creator-studio=""
+      role="dialog"
+      aria-modal="true"
     >
       <div
         ref={setFloatingHostRef}
-        data-site-creator-floating-ui="true"
-        className="pointer-events-none fixed inset-0 z-[100025]"
+        className="site-creator-floating-layer pointer-events-none fixed inset-0 z-[100050]"
         aria-hidden
       />
       <FoldderStudioHeader
@@ -1642,9 +2252,9 @@ export function SiteCreatorStudio({
               viewportWidth={effectiveViewportWidth}
               referenceWidth={referenceWidth}
               previewZoom={previewZoom}
-              onViewportWidthChange={setViewportWidth}
+              deviceFrame={deviceFrame}
+              onViewportWidthChange={setOriginalViewportWidth}
               onAvailableSizeChange={setAvailablePreviewSize}
-              onZoomPercentChange={setZoomPercent}
               selection={displayShadow}
               selectionIndex={selectionIndex ?? undefined}
               onSelectionAction={dispatchSelection}
@@ -1659,6 +2269,25 @@ export function SiteCreatorStudio({
               onCanvasInteraction={() => undefined}
               objectClipById={objectClipById}
               floatingPortalHost={floatingHostEl}
+              transformEnabled={Boolean(editableBand && refineModel?.kind === "item")}
+              transformBounds={
+                editableBand && refineModel?.kind === "item" ? unitOutlines[0]?.bounds ?? null : null
+              }
+              onTransformCommit={onTransformCommit}
+              focalLayerId={focalLayerId}
+              onFocalPoint={(focal) => {
+                if (!editableBand || !focalLayerId) return;
+                commitTune(
+                  patchMediaTune({
+                    blueprint,
+                    layerId: focalLayerId,
+                    band: editableBand,
+                    patch: { focal },
+                  }),
+                );
+                setFocalLayerId(null);
+              }}
+              onCancelFocal={() => setFocalLayerId(null)}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-8">
@@ -1667,92 +2296,92 @@ export function SiteCreatorStudio({
           )}
 
           <footer className="site-creator-studio__footer flex h-11 shrink-0 items-center gap-3 border-t border-white/10 bg-[#101820] px-4 text-[11px] text-white/65">
-            <div className="flex items-center gap-1">
-              {(
-                [
-                  {
-                    id: "original" as const,
-                    label: `Original ${Math.round(referenceWidth)}`,
-                    width: referenceWidth,
-                  },
-                  {
-                    id: "tablet" as const,
-                    label: `Tablet ${SITE_CREATOR_TABLET_WIDTH}`,
-                    width: SITE_CREATOR_TABLET_WIDTH,
-                  },
-                  {
-                    id: "mobile" as const,
-                    label: `Móvil ${SITE_CREATOR_MOBILE_WIDTH}`,
-                    width: SITE_CREATOR_MOBILE_WIDTH,
-                  },
-                ] as const
-              ).map((preset) => {
-                const active = viewportPreset === preset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    data-testid={`site-creator-preset-${preset.id}`}
-                    className={`rounded px-2.5 py-1 text-[10px] font-semibold tracking-wide transition ${
-                      active
-                        ? "bg-white/12 text-white"
-                        : "text-white/50 hover:bg-white/6 hover:text-white/80"
-                    }`}
-                    onClick={() => setViewportWidth(preset.width)}
-                  >
-                    {preset.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <span className="h-4 w-px shrink-0 bg-white/10" aria-hidden />
-
-            <SiteCreatorWidthField
-              width={effectiveViewportWidth}
-              referenceWidth={referenceWidth}
-              onCommit={setViewportWidth}
-            />
-
-            <span className="h-4 w-px shrink-0 bg-white/10" aria-hidden />
-
-            <div className="flex items-center gap-1.5">
+            <div className="flex min-w-0 items-center gap-1">
               <button
                 type="button"
-                data-testid="site-creator-zoom-fit"
-                className="rounded border border-white/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/55 hover:border-white/25 hover:text-white/80"
-                onClick={applyFitZoom}
+                data-testid="site-creator-preset-original"
+                className={`shrink-0 rounded px-2.5 py-1 text-[10px] font-semibold tracking-wide transition ${
+                  viewportBand === "original"
+                    ? "bg-white/12 text-white"
+                    : "text-white/50 hover:bg-white/6 hover:text-white/80"
+                }`}
+                onClick={() => {
+                  setViewportBand("original");
+                  setOriginalViewportWidth(referenceWidth);
+                }}
               >
-                Ajustar
+                Original {Math.round(referenceWidth)}
               </button>
-              {(
-                [
-                  { label: "50%", value: 0.5 },
-                  { label: "100%", value: 1 },
-                ] as const
-              ).map((z) => {
-                const active = Math.abs(previewZoom - z.value) < 0.001;
-                return (
-                  <button
-                    key={z.label}
-                    type="button"
-                    data-testid={`site-creator-zoom-${z.label}`}
-                    className={`rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition ${
-                      active
-                        ? "border-white/25 bg-white/10 text-white"
-                        : "border-white/12 text-white/55 hover:border-white/25 hover:text-white/80"
-                    }`}
-                    onClick={() => setPreviewZoom(z.value)}
-                  >
-                    {z.label}
-                  </button>
-                );
-              })}
+              <SiteCreatorDeviceSelector
+                band="tablet"
+                bandLabel="Tablet"
+                active={viewportBand === "tablet"}
+                config={tabletDevice}
+                referenceWidth={referenceWidth}
+                resolvedWidth={tabletDimensions.width}
+                resolvedHeight={tabletDimensions.height}
+                sizeLabel={tabletDimensions.sizeLabel}
+                portalHost={floatingHostEl}
+                onActivate={() => {
+                  setViewportBand("tablet");
+                }}
+                onConfigChange={(config) => {
+                  setTabletDevice(config);
+                  setViewportBand("tablet");
+                }}
+              />
+              <SiteCreatorDeviceSelector
+                band="mobile"
+                bandLabel="Móvil"
+                active={viewportBand === "mobile"}
+                config={mobileDevice}
+                referenceWidth={referenceWidth}
+                resolvedWidth={mobileDimensions.width}
+                resolvedHeight={mobileDimensions.height}
+                sizeLabel={mobileDimensions.sizeLabel}
+                portalHost={floatingHostEl}
+                onActivate={() => {
+                  setViewportBand("mobile");
+                }}
+                onConfigChange={(config) => {
+                  setMobileDevice(config);
+                  setViewportBand("mobile");
+                }}
+              />
             </div>
 
+            <SiteCreatorOrientationToggle
+              visible={viewportBand === "tablet" || viewportBand === "mobile"}
+              orientation={
+                viewportBand === "tablet" ? tabletDevice.orientation : mobileDevice.orientation
+              }
+              onChange={(orientation) => {
+                if (viewportBand === "tablet") {
+                  setTabletDevice((prev) => ({ ...prev, orientation }));
+                } else if (viewportBand === "mobile") {
+                  setMobileDevice((prev) => ({ ...prev, orientation }));
+                }
+              }}
+            />
+
             <div className="ml-auto flex items-center gap-3">
+              {editableBand && bandHasCustomizations(blueprint, editableBand) ? (
+                <button
+                  type="button"
+                  data-testid="site-creator-reset-band"
+                  className="rounded border border-white/12 px-2 py-0.5 text-[10px] font-semibold text-white/70 hover:border-white/25 hover:text-white"
+                  title={`Quita todas las personalizaciones de ${editableBand === "mobile" ? "Móvil" : "Tablet"} (alineación, anchura, separación, visibilidad y adaptación). No cambia la otra vista ni Original.`}
+                  onClick={() =>
+                    commitTune(resetResponsiveBand({ blueprint, band: editableBand }))
+                  }
+                >
+                  {editableBand === "mobile" ? "Restablecer en Móvil" : "Restablecer en Tablet"}
+                </button>
+              ) : null}
               <span className="tabular-nums text-white/40">
-                {Math.round(layoutWidth)} × {Math.round(layoutHeight)} px
+                {deviceFrame
+                  ? `${Math.round(deviceFrame.width)} × ${Math.round(deviceFrame.height)} px`
+                  : `${Math.round(layoutWidth)} × ${Math.round(layoutHeight)} px`}
               </span>
               <span className="text-emerald-400/90">{showPreview ? "Sin errores" : "—"}</span>
             </div>

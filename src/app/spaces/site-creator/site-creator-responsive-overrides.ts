@@ -125,6 +125,7 @@ function sortRules(rules: ResponsiveContainerRuleV1[]): ResponsiveContainerRuleV
 
 function normalizeResponsive(
   rules: ResponsiveContainerRuleV1[],
+  extras?: Pick<SiteResponsiveV1, "items" | "containerTunes" | "media">,
 ): SiteResponsiveV1 | undefined {
   const cleaned: ResponsiveContainerRuleV1[] = [];
   for (const rule of sortRules(rules)) {
@@ -138,8 +139,18 @@ function normalizeResponsive(
     if (Object.keys(byBand).length === 0) continue;
     cleaned.push({ target: rule.target, byBand });
   }
-  if (cleaned.length === 0) return undefined;
-  return { version: 1, rules: cleaned };
+  const items = extras?.items && extras.items.length > 0 ? extras.items : undefined;
+  const containerTunes =
+    extras?.containerTunes && extras.containerTunes.length > 0 ? extras.containerTunes : undefined;
+  const media = extras?.media && extras.media.length > 0 ? extras.media : undefined;
+  if (cleaned.length === 0 && !items && !containerTunes && !media) return undefined;
+  return {
+    version: 1,
+    rules: cleaned,
+    ...(items ? { items } : {}),
+    ...(containerTunes ? { containerTunes } : {}),
+    ...(media ? { media } : {}),
+  };
 }
 
 /**
@@ -175,7 +186,7 @@ export function setResponsiveOverride(args: {
   if (idx >= 0) rules[idx] = rule;
   else rules.push(rule);
 
-  const responsive = normalizeResponsive(rules);
+  const responsive = normalizeResponsive(rules, next.responsive);
   if (responsive) next.responsive = responsive;
   else delete next.responsive;
 

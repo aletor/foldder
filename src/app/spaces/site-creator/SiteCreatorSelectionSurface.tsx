@@ -78,6 +78,14 @@ export interface SiteCreatorSelectionSurfaceProps {
   sectionOutlines?: SiteCreatorUnitOutline[];
   ghostOutlines?: import("./SiteCreatorSelectionOverlay").SiteCreatorGhostOutline[];
   onCanvasInteraction?: () => void;
+  /** Doble clic en vacío del lienzo (sin capa bajo el puntero). */
+  onCanvasBackgroundDoubleClick?: () => void;
+  transformEnabled?: boolean;
+  transformBounds?: { x: number; y: number; width: number; height: number } | null;
+  onTransformCommit?: (delta: { dx: number; dy: number; dw?: number; dh?: number }) => void;
+  focalLayerId?: string | null;
+  onFocalPoint?: (focal: { x: number; y: number }) => void;
+  onCancelFocal?: () => void;
 }
 
 export function SiteCreatorSelectionSurface({
@@ -93,6 +101,13 @@ export function SiteCreatorSelectionSurface({
   sectionOutlines = [],
   ghostOutlines = [],
   onCanvasInteraction,
+  onCanvasBackgroundDoubleClick,
+  transformEnabled = false,
+  transformBounds = null,
+  onTransformCommit,
+  focalLayerId = null,
+  onFocalPoint,
+  onCancelFocal,
 }: SiteCreatorSelectionSurfaceProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -105,6 +120,13 @@ export function SiteCreatorSelectionSurface({
     x: number;
     y: number;
     entries: ReturnType<typeof layerPickerHitsAtPoint>;
+  } | null>(null);
+  const transformDragRef = useRef<{
+    kind: "move" | "resize";
+    pointerId: number;
+    start: PagePoint;
+    startBounds: { x: number; y: number; width: number; height: number };
+    handle: "se" | "e" | "s";
   } | null>(null);
 
   const marqueeRect =
@@ -120,6 +142,10 @@ export function SiteCreatorSelectionSurface({
 
   const onPointerMove = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
+      const drag = transformDragRef.current;
+      if (drag && event.pointerId === drag.pointerId) {
+        return;
+      }
       if (marqueeStart) {
         const point = toPage(event.clientX, event.clientY);
         if (point) setMarqueeNow(point);
@@ -158,6 +184,24 @@ export function SiteCreatorSelectionSurface({
 
   const finishMarquee = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
+      const drag = transformDragRef.current;
+      if (drag && event.pointerId === drag.pointerId) {
+        const end = toPage(event.clientX, event.clientY);
+        transformDragRef.current = null;
+        if (!end || !onTransformCommit) return;
+        const dx = end.x - drag.start.x;
+        const dy = end.y - drag.start.y;
+        if (drag.kind === "move") {
+          if (Math.hypot(dx, dy) < MARQUEE_THRESHOLD_PX) return;
+          onTransformCommit({ dx, dy });
+          return;
+        }
+        const dw = drag.handle.includes("e") ? dx : 0;
+        const dh = drag.handle.includes("s") ? dy : 0;
+        if (Math.hypot(dw, dh) < MARQUEE_THRESHOLD_PX) return;
+        onTransformCommit({ dx: 0, dy: 0, dw, dh });
+        return;
+      }
       if (!marqueeStart) return;
       const end = toPage(event.clientX, event.clientY) ?? marqueeNow ?? marqueeStart;
       const dx = (end.x - marqueeStart.x) * scale;
@@ -167,9 +211,6 @@ export function SiteCreatorSelectionSurface({
       setMarqueeNow(null);
       const additive = event.ctrlKey || event.metaKey;
       if (Math.hypot(dx, dy) < MARQUEE_THRESHOLD_PX) {
-        if (!additive) {
-          dispatch({ type: "click", layerId: null, additive: false });
-        }
         return;
       }
       const hits = marqueeHits(index, selection.isolationIds, rect);
@@ -179,7 +220,7 @@ export function SiteCreatorSelectionSurface({
         additive,
       });
     },
-    [dispatch, index, marqueeNow, marqueeStart, scale, selection.isolationIds, toPage],
+    [dispatch, index, marqueeNow, marqueeStart, onTransformCommit, scale, selection.isolationIds, toPage],
   );
 
   const onPointerDown = useCallback(
@@ -207,11 +248,29 @@ export function SiteCreatorSelectionSurface({
       }
 
       const front = resolveFrontmostHit(directHits);
+
+      if (focalLayerId) {
+        event.preventDefault();
+        const bounds = index.byId[focalLayerId]?.visualBounds;
+        if (bounds && onFocalPoint) {
+          const x = (point.x - bounds.x) / Math.max(1, bounds.width);
+          const y = (point.y - bounds.y) / Math.max(1, bounds.height);
+          onFocalPoint({
+            x: Math.min(1, Math.max(0, x)),
+            y: Math.min(1, Math.max(0, y)),
+          });
+        } else {
+          onCancelFocal?.();
+        }
+        return;
+      }
+
       if (!front) {
         if (additive) {
           // Ctrl/Cmd+clic en vacío: conservar selección
           return;
         }
+        dispatch({ type: "click", layerId: null, additive: false });
         (event.target as SVGSVGElement).setPointerCapture(event.pointerId);
         setMarqueeStart(point);
         setMarqueeNow(point);
@@ -219,17 +278,40 @@ export function SiteCreatorSelectionSurface({
       }
 
       if (additive) event.preventDefault();
+      if (
+        transformEnabled &&
+        transformBounds &&
+        onTransformCommit &&
+        !additive &&
+        selection.selectedIds.includes(front.layerId)
+      ) {
+        transformDragRef.current = {
+          kind: "move",
+          pointerId: event.pointerId,
+          start: point,
+          startBounds: transformBounds,
+          handle: "se",
+        };
+        (event.target as SVGSVGElement).setPointerCapture(event.pointerId);
+        return;
+      }
       dispatch({ type: "click", layerId: front.layerId, additive });
     },
-    [dispatch, index, onCanvasInteraction, selection.isolationIds, toPage],
+    [dispatch, focalLayerId, index, onCancelFocal, onCanvasInteraction, onFocalPoint, onTransformCommit, selection.isolationIds, selection.selectedIds, toPage, transformBounds, transformEnabled],
   );
 
   const onDoubleClick = useCallback(
     (event: React.MouseEvent<SVGSVGElement>) => {
+      if (isEventFromFloatingUi(event)) return;
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
       const hit = frontmostDirectHit(index, selection.isolationIds, point);
-      if (!hit) return;
+      if (!hit) {
+        event.preventDefault();
+        event.stopPropagation();
+        onCanvasBackgroundDoubleClick?.();
+        return;
+      }
       // Designer groupContainer dive OR Studio handles blueprint inspect via special action
       if (canEnterContainer(hit)) {
         const childHit = frontmostDirectHit(index, [...selection.isolationIds, hit.layerId], point);
@@ -245,11 +327,12 @@ export function SiteCreatorSelectionSurface({
       }
       dispatch({ type: "doubleClickLayer", layerId: hit.layerId });
     },
-    [dispatch, index, selection.isolationIds, toPage],
+    [dispatch, index, onCanvasBackgroundDoubleClick, selection.isolationIds, toPage],
   );
 
   const onContextMenu = useCallback(
     (event: React.MouseEvent<SVGSVGElement>) => {
+      if (isEventFromFloatingUi(event)) return;
       // Ctrl+clic primario en macOS dispara contextmenu: no abrir picker.
       if (event.ctrlKey) {
         event.preventDefault();
@@ -271,6 +354,10 @@ export function SiteCreatorSelectionSurface({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (focalLayerId) {
+          onCancelFocal?.();
+          return;
+        }
         if (picker) {
           setPicker(null);
           return;
@@ -286,7 +373,7 @@ export function SiteCreatorSelectionSurface({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dispatch, picker]);
+  }, [dispatch, focalLayerId, onCancelFocal, picker]);
 
   useEffect(() => {
     if (!picker) return;
@@ -328,6 +415,48 @@ export function SiteCreatorSelectionSurface({
         sectionOutlines={sectionOutlines}
         ghostOutlines={ghostOutlines}
       />
+      {focalLayerId ? (
+        <div
+          className="pointer-events-none absolute left-1/2 top-3 z-[5] -translate-x-1/2 rounded border border-white/15 bg-[#101820]/90 px-2 py-1 text-[10px] font-semibold text-white/80"
+          data-testid="site-creator-focal-hint"
+        >
+          Clic en la imagen para el punto focal · Esc cancela
+        </div>
+      ) : null}
+      {transformEnabled && transformBounds ? (
+        <div className="pointer-events-none absolute inset-0 z-[4]" data-testid="site-creator-transform">
+          {(["se", "e", "s"] as const).map((handle) => {
+            const b = transformBounds;
+            const left = handle === "s" ? b.x + b.width / 2 - 5 : b.x + b.width - 5;
+            const top = handle === "e" ? b.y + b.height / 2 - 5 : b.y + b.height - 5;
+            return (
+              <div
+                key={handle}
+                data-testid={`site-creator-transform-${handle}`}
+                className="pointer-events-auto absolute h-2.5 w-2.5 rounded-sm border border-[#A8FF32] bg-[#101820]"
+                style={{ left, top, cursor: handle === "se" ? "nwse-resize" : handle === "e" ? "ew-resize" : "ns-resize" }}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const point = toPage(event.clientX, event.clientY);
+                  if (!point) return;
+                  transformDragRef.current = {
+                    kind: "resize",
+                    pointerId: event.pointerId,
+                    start: point,
+                    startBounds: b,
+                    handle,
+                  };
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                }}
+                onPointerUp={(event) => {
+                  finishMarquee(event as unknown as React.PointerEvent<SVGSVGElement>);
+                }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
       {selection.isolationIds.length > 0 ? (
         <div className="pointer-events-none absolute left-0 right-0 top-0 z-[3]">
           <SiteCreatorIsolationBreadcrumb

@@ -28,6 +28,7 @@ import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorPrimaryAction } from "./site-creator-contextual-actions";
 import {
   clampViewportWidth,
+  isSiteCreatorPreviewChromeBackgroundTarget,
   viewportWidthDeltaFromCenteredEdgeDrag,
 } from "./site-creator-viewport";
 
@@ -48,11 +49,12 @@ export interface SiteCreatorPreviewProps {
   referenceWidth: number;
   /** Zoom de edición numérico (no modo reactivo). */
   previewZoom: number;
+  /** Frame de dispositivo (tablet/móvil). Null = vista Original. */
+  deviceFrame?: { width: number; height: number } | null;
   onViewportWidthChange?: (width: number) => void;
   onAvailableSizeChange?: (size: { width: number; height: number }) => void;
   /** @deprecated Ignorado en 6A; el zoom lo controla el Studio. */
   zoomMode?: SiteCreatorPreviewZoomMode;
-  onZoomPercentChange?: (percent: number) => void;
   selection?: SiteCreatorSelectionState;
   selectionIndex?: SiteCreatorSelectionIndex;
   onSelectionAction?: (action: SiteCreatorSelectionAction) => void;
@@ -65,10 +67,18 @@ export interface SiteCreatorPreviewProps {
   onMicrobarNavigate?: (unit: SiteCreatorSelectionUnit) => void;
   onMicrobarAction?: (action: SiteCreatorPrimaryAction) => void;
   onCanvasInteraction?: () => void;
+  /** Doble clic en fondo del lienzo → Ajustar. */
+  onCanvasBackgroundDoubleClick?: () => void;
   /** Clips por capa del layout responsive resuelto (6B.1). */
   objectClipById?: Record<string, { x: number; y: number; width: number; height: number }>;
   /** Host para portal de microbarra / popover (capa Studio sin clip). */
   floatingPortalHost?: HTMLElement | null;
+  transformEnabled?: boolean;
+  transformBounds?: { x: number; y: number; width: number; height: number } | null;
+  onTransformCommit?: (delta: { dx: number; dy: number; dw?: number; dh?: number }) => void;
+  focalLayerId?: string | null;
+  onFocalPoint?: (focal: { x: number; y: number }) => void;
+  onCancelFocal?: () => void;
 }
 
 function ResizeHandle({
@@ -106,9 +116,9 @@ export function SiteCreatorPreview({
   viewportWidth,
   referenceWidth,
   previewZoom,
+  deviceFrame = null,
   onViewportWidthChange,
   onAvailableSizeChange,
-  onZoomPercentChange,
   selection,
   selectionIndex,
   onSelectionAction,
@@ -121,10 +131,18 @@ export function SiteCreatorPreview({
   onMicrobarNavigate,
   onMicrobarAction,
   onCanvasInteraction,
+  onCanvasBackgroundDoubleClick,
   objectClipById,
   floatingPortalHost = null,
+  transformEnabled = false,
+  transformBounds = null,
+  onTransformCommit,
+  focalLayerId = null,
+  onFocalPoint,
+  onCancelFocal,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const deviceScrollRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
@@ -140,15 +158,19 @@ export function SiteCreatorPreview({
   const { width: pageWidth, height: pageHeight } = getPageDimensions(page);
   const objects = page.objects ?? [];
 
-  // 6B: la página de display ya viene resuelta al ancho de vista (layoutScale = 1).
-  // Solo el previewZoom escala la representación en el Studio.
   const zoom = previewZoom > 0 ? previewZoom : 1;
+  const deviceMode = deviceFrame != null;
   const layoutWidth = pageWidth;
   const layoutHeight = pageHeight;
   const screenScale = zoom;
-  const displayWidth = Math.max(1, Math.round(layoutWidth * zoom));
-  const displayHeight = Math.max(1, Math.round(layoutHeight * zoom));
-  const zoomPercent = Math.round(zoom * 100);
+  const contentDisplayWidth = Math.max(1, Math.round(layoutWidth * zoom));
+  const contentDisplayHeight = Math.max(1, Math.round(layoutHeight * zoom));
+  const displayWidth = deviceMode
+    ? Math.max(1, Math.round(deviceFrame.width * zoom))
+    : contentDisplayWidth;
+  const displayHeight = deviceMode
+    ? Math.max(1, Math.round(deviceFrame.height * zoom))
+    : contentDisplayHeight;
 
   const fontFamilies = useMemo(() => collectDesignerPageFontFamilies(page), [page]);
 
@@ -172,12 +194,16 @@ export function SiteCreatorPreview({
   }, [onAvailableSizeChange]);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => setScrollTick((n) => n + 1);
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+    const bump = () => setScrollTick((n) => n + 1);
+    const outer = scrollRef.current;
+    const inner = deviceScrollRef.current;
+    outer?.addEventListener("scroll", bump, { passive: true });
+    inner?.addEventListener("scroll", bump, { passive: true });
+    return () => {
+      outer?.removeEventListener("scroll", bump);
+      inner?.removeEventListener("scroll", bump);
+    };
+  }, [deviceMode]);
 
   useEffect(() => {
     const onWin = () => setFrameTick((n) => n + 1);
@@ -193,13 +219,10 @@ export function SiteCreatorPreview({
     const ro = new ResizeObserver(bump);
     ro.observe(stage);
     ro.observe(studio);
+    if (deviceScrollRef.current) ro.observe(deviceScrollRef.current);
     bump();
     return () => ro.disconnect();
-  }, [displayWidth, displayHeight, viewportWidth, zoom]);
-
-  useEffect(() => {
-    onZoomPercentChange?.(zoomPercent);
-  }, [onZoomPercentChange, zoomPercent]);
+  }, [contentDisplayHeight, contentDisplayWidth, deviceMode, displayHeight, displayWidth, viewportWidth, zoom]);
 
   const floatingGeometry = useMemo((): FloatingChromeGeometry | null => {
     void scrollTick;
@@ -243,10 +266,8 @@ export function SiteCreatorPreview({
       selectionClientRect,
       relevantContentClientRects,
     };
-    // Deps por valores de bounds, no por identidad del model (evita bucles).
   }, [
     frameTick,
-    // Identidad de bounds (no del model completo) para no reentrar en cada render del Studio.
     microbar ? 1 : 0,
     microbar?.bounds.x,
     microbar?.bounds.y,
@@ -314,6 +335,74 @@ export function SiteCreatorPreview({
     }
   }, []);
 
+  const onPreviewChromeClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
+      onSelectionAction?.({ type: "clear" });
+    },
+    [onSelectionAction],
+  );
+
+  const onPreviewChromeDoubleClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCanvasBackgroundDoubleClick?.();
+    },
+    [onCanvasBackgroundDoubleClick],
+  );
+
+  const pageContent = (
+    <div
+      className="site-creator-preview-layout origin-top-left overflow-hidden"
+      style={{
+        width: layoutWidth,
+        height: layoutHeight,
+        transform: `scale(${zoom})`,
+      }}
+    >
+      <div
+        className="site-creator-preview-page origin-top-left overflow-x-hidden"
+        style={{
+          width: pageWidth,
+          height: pageHeight,
+        }}
+      >
+        <DesignerPageCanvasView
+          objects={objects}
+          pageWidth={pageWidth}
+          pageHeight={pageHeight}
+          background={pageBackground(page)}
+          objectClipById={objectClipById}
+        />
+        {selection && selectionIndex && onSelectionAction ? (
+          <SiteCreatorSelectionSurface
+            pageWidth={pageWidth}
+            pageHeight={pageHeight}
+            scale={screenScale}
+            index={selectionIndex}
+            selection={selection}
+            dispatch={onSelectionAction}
+            unitOutlines={unitOutlines}
+            hoverOutline={hoverOutline}
+            contextOutlines={contextOutlines}
+            sectionOutlines={sectionOutlines}
+            ghostOutlines={ghostOutlines}
+            onCanvasInteraction={onCanvasInteraction}
+            onCanvasBackgroundDoubleClick={onCanvasBackgroundDoubleClick}
+            transformEnabled={transformEnabled}
+            transformBounds={transformBounds}
+            onTransformCommit={onTransformCommit}
+            focalLayerId={focalLayerId}
+            onFocalPoint={onFocalPoint}
+            onCancelFocal={onCancelFocal}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+
   return (
     <div
       ref={viewportRef}
@@ -321,6 +410,7 @@ export function SiteCreatorPreview({
       data-site-creator-viewport-width={viewportWidth}
       data-site-creator-preview-zoom={zoom}
       data-site-creator-layout-scale={1}
+      data-site-creator-device-mode={deviceMode ? "1" : "0"}
     >
       {selection && selectionIndex && onSelectionAction && selection.isolationIds.length > 0 ? (
         <div className="site-creator-isolation-bar shrink-0 border-b border-white/10 bg-[#101820]">
@@ -331,67 +421,54 @@ export function SiteCreatorPreview({
           />
         </div>
       ) : null}
-      <div ref={scrollRef} className="site-creator-preview-scroll min-h-0 flex-1 overflow-auto">
+      <div
+        ref={scrollRef}
+        className="site-creator-preview-scroll min-h-0 flex-1 overflow-auto"
+        onClick={onPreviewChromeClick}
+        onDoubleClick={onPreviewChromeDoubleClick}
+      >
         <div className="site-creator-preview-scroll-inner flex min-h-full items-start justify-center px-8 py-8">
           <div
-            ref={stageRef}
             className="site-creator-preview-stage relative border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
             style={{ width: displayWidth, height: displayHeight }}
             data-site-creator-preview-scale={screenScale}
             data-testid="site-creator-preview-stage"
           >
-            <ResizeHandle
-              side="left"
-              onPointerDown={onResizePointerDown}
-              onPointerMove={onResizePointerMove}
-              onPointerUp={endResize}
-            />
-            <ResizeHandle
-              side="right"
-              onPointerDown={onResizePointerDown}
-              onPointerMove={onResizePointerMove}
-              onPointerUp={endResize}
-            />
-            <div
-              className="site-creator-preview-layout origin-top-left overflow-hidden"
-              style={{
-                width: layoutWidth,
-                height: layoutHeight,
-                transform: `scale(${zoom})`,
-              }}
-            >
-              <div
-                className="site-creator-preview-page origin-top-left"
-                style={{
-                  width: pageWidth,
-                  height: pageHeight,
-                }}
-              >
-                <DesignerPageCanvasView
-                  objects={objects}
-                  pageWidth={pageWidth}
-                  pageHeight={pageHeight}
-                  background={pageBackground(page)}
-                  objectClipById={objectClipById}
+            {!deviceMode ? (
+              <>
+                <ResizeHandle
+                  side="left"
+                  onPointerDown={onResizePointerDown}
+                  onPointerMove={onResizePointerMove}
+                  onPointerUp={endResize}
                 />
-                {selection && selectionIndex && onSelectionAction ? (
-                  <SiteCreatorSelectionSurface
-                    pageWidth={pageWidth}
-                    pageHeight={pageHeight}
-                    scale={screenScale}
-                    index={selectionIndex}
-                    selection={selection}
-                    dispatch={onSelectionAction}
-                    unitOutlines={unitOutlines}
-                    hoverOutline={hoverOutline}
-                    contextOutlines={contextOutlines}
-                    sectionOutlines={sectionOutlines}
-                    ghostOutlines={ghostOutlines}
-                    onCanvasInteraction={onCanvasInteraction}
-                  />
-                ) : null}
+                <ResizeHandle
+                  side="right"
+                  onPointerDown={onResizePointerDown}
+                  onPointerMove={onResizePointerMove}
+                  onPointerUp={endResize}
+                />
+              </>
+            ) : null}
+            {deviceMode ? (
+              <div
+                ref={deviceScrollRef}
+                className="site-creator-device-scroll h-full w-full overflow-x-hidden overflow-y-auto [scrollbar-width:thin]"
+                data-testid="site-creator-device-scroll"
+              >
+                <div
+                  ref={stageRef}
+                  className="site-creator-preview-page-host relative"
+                  style={{ width: contentDisplayWidth, height: contentDisplayHeight }}
+                >
+                  {pageContent}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div ref={stageRef} className="relative h-full w-full">
+                {pageContent}
+              </div>
+            )}
             <SiteCreatorObjectMicrobar
               scale={screenScale}
               stageWidth={displayWidth}

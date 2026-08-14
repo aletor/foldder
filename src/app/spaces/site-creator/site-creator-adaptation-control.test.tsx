@@ -46,8 +46,28 @@ describe("SiteCreatorAdaptationControl", () => {
       />,
     );
     fireEvent.click(screen.getByTestId("site-creator-adaptation-trigger"));
+    const popover = screen.getByTestId("site-creator-adaptation-popover");
+    expect(popover.className).toContain("site-creator-floating-panel");
     fireEvent.click(screen.getByTestId("site-creator-adaptation-option-preserve"));
     expect(onSelect).toHaveBeenCalledWith("preserve");
+  });
+
+  it("pointerdown on Apilar llama onSelectMode", () => {
+    const onSelect = vi.fn();
+    render(
+      <SiteCreatorAdaptationControl
+        model={{
+          band: "tablet",
+          effective: { mode: "auto", source: "default" },
+          buttonLabel: adaptationButtonLabel("auto"),
+          target: { kind: "blueprintNode", nodeId: "sec-1" },
+        }}
+        onSelectMode={onSelect}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("site-creator-adaptation-trigger"));
+    fireEvent.pointerDown(screen.getByTestId("site-creator-adaptation-option-stack"));
+    expect(onSelect).toHaveBeenCalledWith("stack");
   });
 
   it("controlado por ancestro no abre opciones", () => {

@@ -191,13 +191,7 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
     ),
   };
   if (blueprint.responsive) {
-    next.responsive = {
-      version: 1,
-      rules: blueprint.responsive.rules.map((rule) => ({
-        target: { ...rule.target },
-        byBand: { ...rule.byBand },
-      })),
-    };
+    next.responsive = structuredClone(blueprint.responsive);
   }
   return next;
 }

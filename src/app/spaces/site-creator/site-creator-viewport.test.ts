@@ -5,11 +5,16 @@ import { describe, expect, it } from "vitest";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
+  SITE_CREATOR_PREVIEW_ZOOM_MAX,
+  SITE_CREATOR_PREVIEW_ZOOM_MIN,
   buildViewportState,
+  clampPreviewZoom,
   clampViewportWidth,
   computeFitPreviewZoom,
+  defaultDeviceConfig,
   detectViewportPreset,
   pageToScreenScale,
+  resolveDeviceDimensions,
   resolveSiteCreatorLayout,
   viewportWidthDeltaFromCenteredEdgeDrag,
 } from "./site-creator-viewport";
@@ -80,6 +85,12 @@ describe("site-creator-viewport", () => {
     ).toBe(10);
   });
 
+  it("clamps manual preview zoom", () => {
+    expect(clampPreviewZoom(0.01)).toBe(SITE_CREATOR_PREVIEW_ZOOM_MIN);
+    expect(clampPreviewZoom(99)).toBe(SITE_CREATOR_PREVIEW_ZOOM_MAX);
+    expect(clampPreviewZoom(1.25)).toBe(1.25);
+  });
+
   it("buildViewportState rounds and labels preset", () => {
     const state = buildViewportState({
       width: 390.4,
@@ -89,5 +100,34 @@ describe("site-creator-viewport", () => {
     expect(state.width).toBe(390);
     expect(state.preset).toBe("mobile");
     expect(state.previewZoom).toBe(1.25);
+  });
+
+  it("resolves device dimensions with orientation swap", () => {
+    const portrait = resolveDeviceDimensions({
+      band: "mobile",
+      config: defaultDeviceConfig("mobile"),
+      referenceWidth: 1920,
+    });
+    expect(portrait.width).toBe(390);
+    expect(portrait.height).toBe(844);
+    expect(portrait.sizeLabel).toBe("Estándar");
+
+    const landscape = resolveDeviceDimensions({
+      band: "mobile",
+      config: { ...defaultDeviceConfig("mobile"), orientation: "landscape" },
+      referenceWidth: 1920,
+    });
+    expect(landscape.width).toBe(844);
+    expect(landscape.height).toBe(390);
+  });
+
+  it("defaults tablet standard to 820 × 1180", () => {
+    const dims = resolveDeviceDimensions({
+      band: "tablet",
+      config: defaultDeviceConfig("tablet"),
+      referenceWidth: 1920,
+    });
+    expect(dims.width).toBe(820);
+    expect(dims.height).toBe(1180);
   });
 });

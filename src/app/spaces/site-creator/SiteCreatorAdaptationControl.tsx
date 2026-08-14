@@ -11,6 +11,7 @@ import {
   type EffectiveResponsiveMode,
 } from "./site-creator-responsive-overrides";
 import { resolveAdaptationPopoverPlacement } from "./site-creator-floating-placement";
+import { floatingPressHandlers, isNodeInsideRefs } from "./site-creator-floating-press";
 import type { PageRect } from "./site-creator-coordinate-space";
 import type { FloatingChromeGeometry } from "./SiteCreatorObjectMicrobar";
 
@@ -51,32 +52,20 @@ export function SiteCreatorAdaptationControl({
 
   useEffect(() => {
     if (!open) return;
-    const isInsideFloatingUi = (e: Event) => {
-      const path = typeof e.composedPath === "function" ? e.composedPath() : [];
-      for (const n of path) {
-        if (!(n instanceof HTMLElement)) continue;
-        if (n.dataset?.siteCreatorFloatingUi === "true") return true;
-        if (n === triggerRef.current || n === popoverRef.current) return true;
-        if (triggerRef.current?.contains(n) || popoverRef.current?.contains(n)) return true;
-      }
-      return false;
-    };
-    // Fuera: cerrar en click (no en pointerdown) para no adelantarse a la opción.
-    const onDocClick = (e: MouseEvent) => {
-      if (isInsideFloatingUi(e)) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      if (isNodeInsideRefs(e.target, [triggerRef, popoverRef])) return;
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // 1.º Escape: cierra popover; el 2.º sigue a la navegación de selección.
       e.stopPropagation();
       e.preventDefault();
       setOpen(false);
     };
-    document.addEventListener("click", onDocClick, true);
+    document.addEventListener("pointerdown", onDocPointerDown);
     window.addEventListener("keydown", onKey, true);
     return () => {
-      document.removeEventListener("click", onDocClick, true);
+      document.removeEventListener("pointerdown", onDocPointerDown);
       window.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
@@ -139,11 +128,7 @@ export function SiteCreatorAdaptationControl({
           border: "1px solid rgba(255,255,255,0.12)",
         }}
         title="Esta excepción ya no tiene efecto. Restablecer la elimina."
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onSelectMode("auto");
-        }}
+        {...floatingPressHandlers(() => onSelectMode("auto"))}
       >
         Adaptación sin efecto · Restablecer
       </button>
@@ -162,11 +147,7 @@ export function SiteCreatorAdaptationControl({
           border: "1px solid rgba(255,255,255,0.1)",
         }}
         title={`Adaptación controlada por ${model.controlledByLabel}`}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onFocusController?.();
-        }}
+        {...floatingPressHandlers(() => onFocusController?.())}
       >
         Adaptación · Controlada por {model.controlledByLabel}
       </button>
@@ -189,7 +170,7 @@ export function SiteCreatorAdaptationControl({
   const active = model.effective.mode;
   const host = portalHost ?? (typeof document !== "undefined" ? document.body : null);
 
-  const stopFloating = (e: React.SyntheticEvent) => {
+  const stopFloatingCapture = (e: React.SyntheticEvent) => {
     e.stopPropagation();
   };
 
@@ -200,7 +181,7 @@ export function SiteCreatorAdaptationControl({
             ref={popoverRef}
             data-testid="site-creator-adaptation-popover"
             data-site-creator-floating-ui="true"
-            className="fixed z-[100040] w-[240px] rounded-md border p-2 shadow-xl"
+            className="site-creator-floating-panel pointer-events-auto fixed z-[100060] w-[240px] rounded-md border p-2 shadow-xl"
             style={{
               left: popoverPos?.left ?? 16,
               top: popoverPos?.top ?? 16,
@@ -208,9 +189,9 @@ export function SiteCreatorAdaptationControl({
               borderColor: SC_VISUAL.chipBorder,
               color: SC_VISUAL.chipFg,
             }}
-            onPointerDown={stopFloating}
-            onMouseDown={stopFloating}
-            onClick={stopFloating}
+            onPointerDown={stopFloatingCapture}
+            onMouseDown={stopFloatingCapture}
+            onClick={stopFloatingCapture}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -230,14 +211,10 @@ export function SiteCreatorAdaptationControl({
                   type="button"
                   data-testid={`site-creator-adaptation-option-${mode}`}
                   className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left transition hover:bg-white/6"
-                  onPointerDown={stopFloating}
-                  onMouseDown={stopFloating}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
+                  {...floatingPressHandlers(() => {
                     setOpen(false);
                     onSelectMode(mode);
-                  }}
+                  })}
                 >
                   <span className="flex items-center gap-1.5 text-[11px] font-semibold">
                     <span className="inline-block w-3 text-center" style={{ color: SC_VISUAL.selection }}>
@@ -260,7 +237,11 @@ export function SiteCreatorAdaptationControl({
       : null;
 
   return (
-    <div className="relative shrink-0" data-testid="site-creator-adaptation">
+    <div
+      className="site-creator-floating-panel relative shrink-0 pointer-events-auto"
+      data-testid="site-creator-adaptation"
+      data-site-creator-floating-ui="true"
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -271,13 +252,7 @@ export function SiteCreatorAdaptationControl({
           color: "rgba(255,255,255,0.88)",
           border: "1px solid rgba(255,255,255,0.12)",
         }}
-        onPointerDown={stopFloating}
-        onMouseDown={stopFloating}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
+        {...floatingPressHandlers(() => setOpen((v) => !v))}
       >
         {model.buttonLabel}
       </button>

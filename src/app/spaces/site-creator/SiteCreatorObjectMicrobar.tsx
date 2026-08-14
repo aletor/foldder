@@ -24,6 +24,8 @@ export type SiteCreatorMicrobarModel = {
   avoidBounds?: PageRect[];
   /** Slot 6B.2 — control de adaptación (ReactNode). */
   adaptationSlot?: React.ReactNode;
+  /** Slot 6C — ajustes contextuales de la vista. */
+  refineSlot?: React.ReactNode;
 };
 
 export type FloatingChromeGeometry = {
@@ -96,6 +98,7 @@ export function SiteCreatorObjectMicrobar({
     model.segments.length === 0 &&
     !model.summary &&
     !model.adaptationSlot &&
+    !model.refineSlot &&
     (model.hoverOnly || model.actions.length === 0)
   ) {
     return null;
@@ -128,6 +131,22 @@ export function SiteCreatorObjectMicrobar({
           },
         )
       : model.adaptationSlot;
+
+  const refineSlot =
+    model.refineSlot && React.isValidElement(model.refineSlot)
+      ? React.cloneElement(
+          model.refineSlot as React.ReactElement<{
+            floatingGeometry?: FloatingChromeGeometry | null;
+            microbarClientRect?: PageRect | null;
+            portalHost?: HTMLElement | null;
+          }>,
+          {
+            floatingGeometry: floatingGeometry ?? null,
+            microbarClientRect,
+            portalHost: portalHost ?? null,
+          },
+        )
+      : model.refineSlot;
 
   const barInner = (
     <>
@@ -175,6 +194,13 @@ export function SiteCreatorObjectMicrobar({
         <>
           <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
           {adaptationSlot}
+        </>
+      ) : null}
+
+      {refineSlot && !model.hoverOnly ? (
+        <>
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
+          {refineSlot}
         </>
       ) : null}
 
@@ -265,7 +291,7 @@ export function SiteCreatorObjectMicrobar({
       data-site-creator-floating-ui="true"
       data-hover-only={model.hoverOnly ? "true" : "false"}
       title={title}
-      className="pointer-events-auto fixed z-[100030] flex max-w-[min(420px,94vw)] items-center gap-1.5 rounded-md border px-2 shadow-lg"
+      className="site-creator-floating-panel pointer-events-auto fixed z-[100055] flex max-w-[min(420px,94vw)] items-center gap-1.5 rounded-md border px-2 shadow-lg"
       style={{
         left: pos?.left ?? -9999,
         top: pos?.top ?? -9999,

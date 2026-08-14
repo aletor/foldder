@@ -62,6 +62,63 @@ export function resolveBackgroundCoverTransform(args: {
   };
 }
 
+/**
+ * Encajar: escala para caber en `targetRect` (puede dejar bandas).
+ * El focal desplaza dentro del espacio sobrante.
+ */
+export function resolveBackgroundContainTransform(args: {
+  sourceRect: PageRect;
+  targetRect: PageRect;
+  focalPoint?: NormalizedFocalPoint | null;
+}): BackgroundCoverTransform {
+  const srcW = Math.max(1, args.sourceRect.width);
+  const srcH = Math.max(1, args.sourceRect.height);
+  const tw = Math.max(1, args.targetRect.width);
+  const th = Math.max(1, args.targetRect.height);
+  const focal = normalizeFocal(args.focalPoint);
+
+  const scale = Math.min(tw / srcW, th / srcH);
+  const scaledWidth = srcW * scale;
+  const scaledHeight = srcH * scale;
+
+  const slackX = tw - scaledWidth;
+  const slackY = th - scaledHeight;
+  const tx = args.targetRect.x + slackX * focal.x;
+  const ty = args.targetRect.y + slackY * focal.y;
+
+  return {
+    x: tx,
+    y: ty,
+    width: scaledWidth,
+    height: scaledHeight,
+    scale,
+    focalPoint: focal,
+  };
+}
+
+/**
+ * Mantener composición: escala uniforme la imagen con la misma matriz que la región fuente.
+ */
+export function resolveBackgroundPreserveTransform(args: {
+  sourceRect: PageRect;
+  sourceRegion: PageRect;
+  targetRect: PageRect;
+}): BackgroundCoverTransform {
+  const rw = Math.max(1, args.sourceRegion.width);
+  const rh = Math.max(1, args.sourceRegion.height);
+  const scale = Math.min(args.targetRect.width / rw, args.targetRect.height / rh);
+  const x = args.targetRect.x + (args.sourceRect.x - args.sourceRegion.x) * scale;
+  const y = args.targetRect.y + (args.sourceRect.y - args.sourceRegion.y) * scale;
+  return {
+    x,
+    y,
+    width: Math.max(1, args.sourceRect.width * scale),
+    height: Math.max(1, args.sourceRect.height * scale),
+    scale,
+    focalPoint: { ...DEFAULT_FOCAL },
+  };
+}
+
 function normalizeFocal(focal?: NormalizedFocalPoint | null): NormalizedFocalPoint {
   if (!focal) return { ...DEFAULT_FOCAL };
   return {

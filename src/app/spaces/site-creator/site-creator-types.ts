@@ -55,19 +55,73 @@ export interface SiteBlueprintV1 {
 
 export type ResponsiveEditableBand = "tablet" | "mobile";
 export type ResponsiveOverrideMode = "preserve" | "stack";
+export type ResponsiveAlignX = "start" | "center" | "end";
+export type ResponsiveAlignY = "start" | "center" | "end";
+export type ResponsiveWidthMode = "content" | "container" | "full";
+export type ResponsiveMediaFit = "cover" | "contain" | "preserve";
 
 export type ResponsiveTargetRef =
   | { kind: "blueprintNode"; nodeId: string }
   | { kind: "designerGroup"; layerId: string };
+
+export type ResponsiveItemRef =
+  | { kind: "blueprintNode"; nodeId: string }
+  | { kind: "layer"; layerId: string };
 
 export type ResponsiveContainerRuleV1 = {
   target: ResponsiveTargetRef;
   byBand: Partial<Record<ResponsiveEditableBand, ResponsiveOverrideMode>>;
 };
 
+/** Ajustes 6C de un elemento (hijo) en una vista. Ausente = automático. */
+export type ResponsiveItemTuneV1 = {
+  hidden?: boolean;
+  alignX?: ResponsiveAlignX;
+  alignY?: ResponsiveAlignY;
+  widthMode?: ResponsiveWidthMode;
+  order?: number;
+  offset?: { x: number; y: number };
+  size?: { width?: number; height?: number };
+};
+
+export type ResponsiveItemRuleV1 = {
+  target: ResponsiveItemRef;
+  byBand: Partial<Record<ResponsiveEditableBand, ResponsiveItemTuneV1>>;
+};
+
+/** Ajustes 6C de un contenedor (Hero / Sección / Grupo). */
+export type ResponsiveContainerTuneV1 = {
+  padding?: number;
+  gap?: number;
+  contentAlignX?: ResponsiveAlignX;
+  contentAlignY?: ResponsiveAlignY;
+  contentWidthMode?: ResponsiveWidthMode;
+  maxContentWidth?: number;
+  minHeight?: number;
+  autoHeight?: boolean;
+};
+
+export type ResponsiveContainerTuneRuleV1 = {
+  target: ResponsiveTargetRef;
+  byBand: Partial<Record<ResponsiveEditableBand, ResponsiveContainerTuneV1>>;
+};
+
+export type ResponsiveMediaTuneV1 = {
+  fit?: ResponsiveMediaFit;
+  focal?: { x: number; y: number };
+};
+
+export type ResponsiveMediaRuleV1 = {
+  layerId: string;
+  byBand: Partial<Record<ResponsiveEditableBand, ResponsiveMediaTuneV1>>;
+};
+
 export type SiteResponsiveV1 = {
   version: 1;
   rules: ResponsiveContainerRuleV1[];
+  items?: ResponsiveItemRuleV1[];
+  containerTunes?: ResponsiveContainerTuneRuleV1[];
+  media?: ResponsiveMediaRuleV1[];
 };
 
 export interface DesignerSourceSnapshotV1 {
