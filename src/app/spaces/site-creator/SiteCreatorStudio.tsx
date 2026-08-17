@@ -712,8 +712,8 @@ export function SiteCreatorStudio({
         committedPage,
         sectionType,
       });
-      if (!result.ok) {
-        setStructureError(result.message);
+      if (!result.ok || !result.createdNodeId) {
+        setStructureError(result.ok ? "No se pudo crear la sección." : result.message);
         return;
       }
       const blueprintWithDefaults = applyNewSectionResponsiveDefaults(

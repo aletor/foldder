@@ -2,7 +2,7 @@
  * 6B.2 — capacidad explícita del control Adaptación (puro).
  */
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
-import type { SiteBlueprintV1 } from "./site-creator-types";
+import type { ResponsiveTargetRef, SiteBlueprintV1 } from "./site-creator-types";
 import { isSiteSectionNode } from "./site-creator-types";
 import type { SectionVisualAnalysis } from "./site-creator-responsive-visual";
 import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
@@ -13,7 +13,6 @@ import {
   resolveEffectiveResponsiveMode,
   resolveResponsiveOverride,
   type ResponsiveBandLike,
-  type ResponsiveTargetRef,
 } from "./site-creator-responsive-overrides";
 
 export type AdaptationCapability =

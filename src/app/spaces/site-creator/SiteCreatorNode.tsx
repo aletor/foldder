@@ -436,7 +436,7 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
           const updated = applySnapshotWithDesignerGroupMirrors(current, snapshot);
           return {
             ...node,
-            data: updated,
+            data: updated as unknown as typeof node.data,
           };
         }),
       );

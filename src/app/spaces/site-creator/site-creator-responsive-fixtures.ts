@@ -533,12 +533,10 @@ export function fixtureRealEightLayersGrouped(): {
 } {
   const base = fixtureRealEightLayersPage();
   const index = buildSiteSelectionIndex(base.page);
-  const snap = buildDesignerSourceSnapshot("d1", base.page);
   const group = createLayoutGroupFromSelection({
     blueprint: base.blueprint,
     selectedLayerIds: base.layerIds,
     index,
-    committedPage: snap.page,
     label: "Composición libre",
   });
   if (!group.ok) throw new Error(group.message);

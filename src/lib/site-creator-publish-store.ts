@@ -325,7 +325,7 @@ export function extensionForContentType(contentType: string, fallbackPath = ""):
 }
 
 export function decodeDataUrl(src: string): { body: Buffer; contentType: string } | null {
-  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(src);
+  const match = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(src);
   if (!match) return null;
   const contentType = match[1] || "application/octet-stream";
   const body = match[2] ? Buffer.from(match[3], "base64") : Buffer.from(decodeURIComponent(match[3]));

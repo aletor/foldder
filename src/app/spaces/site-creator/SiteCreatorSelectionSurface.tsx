@@ -39,10 +39,12 @@ type PointerLike = {
   altKey: boolean;
   target: EventTarget | null;
   preventDefault(): void;
+  composedPath?: () => EventTarget[];
 };
 
-function isEventFromFloatingUi(event: { composedPath?: () => EventTarget[] }): boolean {
-  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+function isEventFromFloatingUi(event: { target: EventTarget | null }): boolean {
+  const withPath = event as { composedPath?: () => EventTarget[] };
+  const path = typeof withPath.composedPath === "function" ? withPath.composedPath() : [];
   for (const n of path) {
     if (n instanceof HTMLElement && n.dataset?.siteCreatorFloatingUi === "true") {
       return true;
@@ -339,7 +341,7 @@ export function SiteCreatorSelectionSurface({
   );
 
   const beginPointerSession = useCallback(
-    (event: PointerLike, captureEl: HTMLElement, frontLayerId: string | null, fromChrome: boolean) => {
+    (event: PointerLike, captureEl: Element, frontLayerId: string | null, fromChrome: boolean) => {
       const point = toPage(event.clientX, event.clientY);
       if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
       chromePointerRef.current = fromChrome;
@@ -359,7 +361,7 @@ export function SiteCreatorSelectionSurface({
   );
 
   const handlePointerDown = useCallback(
-    (event: PointerLike, captureEl: HTMLElement, opts?: { chromeOnly?: boolean }) => {
+    (event: PointerLike, captureEl: Element, opts?: { chromeOnly?: boolean }) => {
       if (event.button === 2) return;
       if (isEventFromFloatingUi(event)) return;
       if (opts?.chromeOnly) {

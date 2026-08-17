@@ -38,7 +38,7 @@ export type ResolvedRegionBox = {
 function collectButtonLayerIds(blueprint: SiteBlueprintV1): Set<string> {
   const ids = new Set<string>();
   for (const node of Object.values(blueprint.nodes)) {
-    if (node.kind !== "button") continue;
+    if (!isSiteButtonNode(node)) continue;
     for (const id of node.layerIds ?? []) ids.add(id);
   }
   return ids;
@@ -103,8 +103,9 @@ export function countContainerReflowUnits(args: {
   index: SiteCreatorSelectionIndex;
   band: ResponsiveEditableBand;
 }): number {
-  if (args.target.kind === "blueprintNode") {
-    const node = args.blueprint.nodes[args.target.nodeId];
+  const target = args.target;
+  if (target.kind === "blueprintNode") {
+    const node = args.blueprint.nodes[target.nodeId];
     if (node?.kind === "layoutGroup") {
       let count = 0;
       for (const childId of node.childIds) {
@@ -121,14 +122,14 @@ export function countContainerReflowUnits(args: {
     }
     if (isSiteSectionNode(node)) return node.childIds.length;
   }
-  if (args.target.kind === "designerGroup") {
+  if (target.kind === "designerGroup") {
     const bg = backgroundLayerIdsForDesignerGroup({
       blueprint: args.blueprint,
-      groupLayerId: args.target.layerId,
+      groupLayerId: target.layerId,
       index: args.index,
     });
     const childIds = args.index.entries
-      .filter((e) => e.parentLayerId === args.target.layerId)
+      .filter((e) => e.parentLayerId === target.layerId)
       .map((e) => e.layerId)
       .filter(
         (id) =>

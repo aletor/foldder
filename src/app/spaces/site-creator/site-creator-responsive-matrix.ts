@@ -139,19 +139,19 @@ export function transformPathObjectRelative(
 }
 
 function scaleRectCornerFields(rect: RectObject, scale: number): void {
-  if (typeof rect.cornerRadius === "number") {
-    rect.cornerRadius *= scale;
+  const legacyRadius = (rect as { cornerRadius?: unknown }).cornerRadius;
+  if (typeof legacyRadius === "number") {
+    (rect as unknown as { cornerRadius: number }).cornerRadius = legacyRadius * scale;
   } else if (rect.cornerRadius && typeof rect.cornerRadius === "object") {
     const c = rect.cornerRadius;
     rect.cornerRadius = {
-      topLeft: c.topLeft * scale,
-      topRight: c.topRight * scale,
-      bottomRight: c.bottomRight * scale,
-      bottomLeft: c.bottomLeft * scale,
+      topLeft: (c.topLeft ?? 0) * scale,
+      topRight: (c.topRight ?? 0) * scale,
+      bottomRight: (c.bottomRight ?? 0) * scale,
+      bottomLeft: (c.bottomLeft ?? 0) * scale,
     };
   }
   if (typeof rect.rx === "number") rect.rx *= scale;
-  if (typeof rect.ry === "number") rect.ry *= scale;
 }
 
 function scaleStyleFields(obj: FreehandObject, scale: number): void {
