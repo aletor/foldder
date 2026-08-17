@@ -16,6 +16,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const MAX_TEXT_FILE_CHARS = 2_000_000;
 const MAX_IMAGE_REFS = 200;

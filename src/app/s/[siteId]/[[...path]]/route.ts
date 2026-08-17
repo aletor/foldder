@@ -9,6 +9,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function relativePathFromParts(parts: string[] | undefined): string {
   if (!parts?.length) return "index.html";
