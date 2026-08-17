@@ -29,7 +29,7 @@ export type AdaptationCapability =
   | {
       status: "editable";
       foregroundUnitCount: number;
-      supportedModes: Array<"auto" | "preserve" | "stack">;
+      supportedModes: Array<"preserve" | "stack">;
     }
   | {
       status: "reset-only";
@@ -167,7 +167,7 @@ export function resolveAdaptationCapability(args: {
   return {
     status: "editable",
     foregroundUnitCount,
-    supportedModes: ["auto", "preserve", "stack"],
+    supportedModes: ["preserve", "stack"],
   };
 }
 

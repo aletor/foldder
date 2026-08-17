@@ -171,6 +171,32 @@ export function computeFitPreviewZoom(args: {
 }
 
 /**
+ * Zoom para llenar el ancho del área (Preview de página).
+ * No encaja también en alto: la página reflowea al ancho real y puede hacer scroll vertical.
+ */
+export function computeFillWidthPreviewZoom(args: {
+  layoutWidth: number;
+  availableWidth: number;
+}): number {
+  const lw = Math.max(1, args.layoutWidth);
+  const aw = Math.max(1, args.availableWidth);
+  return Math.max(0.05, aw / lw);
+}
+
+/** Área útil del preview: en edición resta el padding del lienzo; en Preview de página usa el ancho real. */
+export function measureSiteCreatorPreviewAvailableSize(args: {
+  clientWidth: number;
+  clientHeight: number;
+  fillViewport: boolean;
+}): { width: number; height: number } {
+  const pad = args.fillViewport ? 0 : 48;
+  return {
+    width: Math.max(240, args.clientWidth - pad),
+    height: Math.max(180, args.clientHeight - pad),
+  };
+}
+
+/**
  * Resize centrado: el lateral sigue al puntero.
  * deltaClientAlongOutward > 0 = alejar el borde del centro (ensanchar).
  */

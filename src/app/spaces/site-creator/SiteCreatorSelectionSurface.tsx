@@ -1,14 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { isolationUnits } from "./build-site-selection-index";
-import {
-  clientPointToPagePoint,
-  normalizePageRect,
-  type PagePoint,
-} from "./site-creator-coordinate-space";
 import {
   canEnterContainer,
+  canvasHitTestUnits,
   entriesUnderPoint,
   frontmostDirectHit,
   layerPickerHitsAtPoint,
@@ -23,8 +18,28 @@ import type {
   SiteCreatorSelectionIndex,
   SiteCreatorSelectionState,
 } from "./site-creator-selection-types";
+import type { SiteBlueprintV1 } from "./site-creator-types";
+import { isolationUnits } from "./build-site-selection-index";
+import {
+  clientPointToPagePoint,
+  normalizePageRect,
+  type PagePoint,
+} from "./site-creator-coordinate-space";
+import { isSiteCreatorPreviewChromeBackgroundTarget } from "./site-creator-viewport";
 
 const MARQUEE_THRESHOLD_PX = 4;
+
+type PointerLike = {
+  button: number;
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  target: EventTarget | null;
+  preventDefault(): void;
+};
 
 function isEventFromFloatingUi(event: { composedPath?: () => EventTarget[] }): boolean {
   const path = typeof event.composedPath === "function" ? event.composedPath() : [];
@@ -36,13 +51,28 @@ function isEventFromFloatingUi(event: { composedPath?: () => EventTarget[] }): b
   return false;
 }
 
+function shouldIgnoreCaptureTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true;
+  if (target.closest("[data-site-creator-floating-ui]")) return true;
+  if (target.closest(".site-creator-viewport-resize")) return true;
+  if (target.closest(".site-creator-selection-surface")) return true;
+  if (target.closest("[data-testid^='site-creator-transform-']")) return true;
+  return false;
+}
+
 function clientToPage(
   svg: SVGSVGElement | null,
   stage: HTMLElement | null,
+  pageAnchor: HTMLElement | null,
   scale: number,
   clientX: number,
   clientY: number,
 ): PagePoint | null {
+  const anchor = pageAnchor ?? stage;
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    return clientPointToPagePoint(clientX, clientY, rect, scale);
+  }
   if (svg) {
     const ctm = svg.getScreenCTM();
     if (ctm) {
@@ -53,9 +83,11 @@ function clientToPage(
       return { x: mapped.x, y: mapped.y };
     }
   }
-  if (!stage) return null;
-  const rect = stage.getBoundingClientRect();
-  return clientPointToPagePoint(clientX, clientY, rect, scale);
+  return null;
+}
+
+function isPointOnPage(point: PagePoint, pageWidth: number, pageHeight: number): boolean {
+  return point.x >= 0 && point.y >= 0 && point.x <= pageWidth && point.y <= pageHeight;
 }
 
 export interface SiteCreatorUnitOutline {
@@ -69,6 +101,8 @@ export interface SiteCreatorSelectionSurfaceProps {
   pageHeight: number;
   scale: number;
   index: SiteCreatorSelectionIndex;
+  /** Para promover hijos de carpetas desagrupadas en hit-test del lienzo. */
+  blueprint?: SiteBlueprintV1 | null;
   /** Solo para aislamiento Designer (groupContainer) y hover de capa cruda. */
   selection: SiteCreatorSelectionState;
   dispatch: (action: SiteCreatorSelectionAction) => void;
@@ -86,6 +120,10 @@ export interface SiteCreatorSelectionSurfaceProps {
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
+  /** Ancla de coordenadas de página (preview-page). */
+  pageAnchorRef?: React.RefObject<HTMLElement | null>;
+  /** Área scroll del preview; permite marquee desde fuera de la página. */
+  captureRootRef?: React.RefObject<HTMLElement | null>;
 }
 
 export function SiteCreatorSelectionSurface({
@@ -93,6 +131,7 @@ export function SiteCreatorSelectionSurface({
   pageHeight,
   scale,
   index,
+  blueprint = null,
   selection,
   dispatch,
   unitOutlines = [],
@@ -108,6 +147,8 @@ export function SiteCreatorSelectionSurface({
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
+  pageAnchorRef,
+  captureRootRef,
 }: SiteCreatorSelectionSurfaceProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -128,6 +169,14 @@ export function SiteCreatorSelectionSurface({
     startBounds: { x: number; y: number; width: number; height: number };
     handle: "se" | "e" | "s";
   } | null>(null);
+  const pointerSessionRef = useRef<{
+    pointerId: number;
+    start: PagePoint;
+    additive: boolean;
+    frontLayerId: string | null;
+    fromChrome: boolean;
+  } | null>(null);
+  const chromePointerRef = useRef(false);
 
   const marqueeRect =
     marqueeStart && marqueeNow
@@ -136,15 +185,45 @@ export function SiteCreatorSelectionSurface({
 
   const toPage = useCallback(
     (clientX: number, clientY: number) =>
-      clientToPage(svgRef.current, stageRef.current, scale, clientX, clientY),
-    [scale],
+      clientToPage(
+        svgRef.current,
+        stageRef.current,
+        pageAnchorRef?.current ?? null,
+        scale,
+        clientX,
+        clientY,
+      ),
+    [pageAnchorRef, scale],
   );
 
-  const onPointerMove = useCallback(
-    (event: React.PointerEvent<SVGSVGElement>) => {
+  const resolveFrontHit = useCallback(
+    (point: PagePoint) => {
+      if (!isPointOnPage(point, pageWidth, pageHeight)) return null;
+      const units = canvasHitTestUnits(index, selection.isolationIds, blueprint);
+      const directHits = entriesUnderPoint(units, point, { directClickOnly: true });
+      return resolveFrontmostHit(directHits);
+    },
+    [blueprint, index, pageHeight, pageWidth, selection.isolationIds],
+  );
+
+  const handlePointerMove = useCallback(
+    (event: PointerLike) => {
       const drag = transformDragRef.current;
       if (drag && event.pointerId === drag.pointerId) {
         return;
+      }
+      const session = pointerSessionRef.current;
+      if (session && session.pointerId === event.pointerId && !marqueeStart) {
+        const point = toPage(event.clientX, event.clientY);
+        if (point) {
+          const dx = (point.x - session.start.x) * scale;
+          const dy = (point.y - session.start.y) * scale;
+          if (Math.hypot(dx, dy) >= MARQUEE_THRESHOLD_PX) {
+            setMarqueeStart(session.start);
+            setMarqueeNow(point);
+            return;
+          }
+        }
       }
       if (marqueeStart) {
         const point = toPage(event.clientX, event.clientY);
@@ -152,8 +231,14 @@ export function SiteCreatorSelectionSurface({
         return;
       }
       const point = toPage(event.clientX, event.clientY);
-      if (!point) return;
-      const hit = frontmostDirectHit(index, selection.isolationIds, point);
+      if (!point || !isPointOnPage(point, pageWidth, pageHeight)) {
+        if (lastHoverRef.current != null) {
+          lastHoverRef.current = null;
+          dispatch({ type: "hover", layerId: null });
+        }
+        return;
+      }
+      const hit = frontmostDirectHit(index, selection.isolationIds, point, blueprint);
       const nextHover = hit?.layerId ?? null;
       if (nextHover === lastHoverRef.current) return;
       pendingHoverRef.current = nextHover;
@@ -167,7 +252,14 @@ export function SiteCreatorSelectionSurface({
         dispatch({ type: "hover", layerId: pending });
       });
     },
-    [dispatch, index, marqueeStart, selection.isolationIds, toPage],
+    [blueprint, dispatch, index, marqueeStart, pageHeight, pageWidth, scale, selection.isolationIds, toPage],
+  );
+
+  const onPointerMove = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      handlePointerMove(event);
+    },
+    [handlePointerMove],
   );
 
   useEffect(() => {
@@ -182,8 +274,8 @@ export function SiteCreatorSelectionSurface({
     };
   }, []);
 
-  const finishMarquee = useCallback(
-    (event: React.PointerEvent<SVGSVGElement>) => {
+  const finishPointer = useCallback(
+    (event: PointerLike) => {
       const drag = transformDragRef.current;
       if (drag && event.pointerId === drag.pointerId) {
         const end = toPage(event.clientX, event.clientY);
@@ -202,40 +294,88 @@ export function SiteCreatorSelectionSurface({
         onTransformCommit({ dx: 0, dy: 0, dw, dh });
         return;
       }
-      if (!marqueeStart) return;
-      const end = toPage(event.clientX, event.clientY) ?? marqueeNow ?? marqueeStart;
-      const dx = (end.x - marqueeStart.x) * scale;
-      const dy = (end.y - marqueeStart.y) * scale;
-      const rect = normalizePageRect(marqueeStart.x, marqueeStart.y, end.x, end.y);
+      if (!marqueeStart && !pointerSessionRef.current) return;
+      const end = toPage(event.clientX, event.clientY) ?? marqueeNow ?? marqueeStart!;
+      const session = pointerSessionRef.current;
+      const start = marqueeStart ?? session?.start;
+      if (!start) return;
+
+      pointerSessionRef.current = null;
+      chromePointerRef.current = false;
+      const dx = (end.x - start.x) * scale;
+      const dy = (end.y - start.y) * scale;
+      const rect = normalizePageRect(start.x, start.y, end.x, end.y);
       setMarqueeStart(null);
       setMarqueeNow(null);
-      const additive = event.ctrlKey || event.metaKey;
-      if (Math.hypot(dx, dy) < MARQUEE_THRESHOLD_PX) {
+      const additive = event.ctrlKey || event.metaKey || Boolean(session?.additive);
+
+      if (Math.hypot(dx, dy) >= MARQUEE_THRESHOLD_PX) {
+        const hits = marqueeHits(index, selection.isolationIds, rect, blueprint);
+        dispatch({
+          type: "marquee",
+          layerIds: hits.map((entry) => entry.layerId),
+          additive,
+        });
         return;
       }
-      const hits = marqueeHits(index, selection.isolationIds, rect);
-      dispatch({
-        type: "marquee",
-        layerIds: hits.map((entry) => entry.layerId),
-        additive,
-      });
+
+      if (!session) return;
+      if (session.frontLayerId) {
+        dispatch({ type: "click", layerId: session.frontLayerId, additive: session.additive });
+        return;
+      }
+      if (!session.additive) {
+        dispatch({ type: "click", layerId: null, additive: false });
+      }
     },
-    [dispatch, index, marqueeNow, marqueeStart, onTransformCommit, scale, selection.isolationIds, toPage],
+    [blueprint, dispatch, index, marqueeNow, marqueeStart, onTransformCommit, scale, selection.isolationIds, toPage],
   );
 
-  const onPointerDown = useCallback(
+  const finishMarquee = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
+      finishPointer(event);
+    },
+    [finishPointer],
+  );
+
+  const beginPointerSession = useCallback(
+    (event: PointerLike, captureEl: HTMLElement, frontLayerId: string | null, fromChrome: boolean) => {
+      const point = toPage(event.clientX, event.clientY);
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+      chromePointerRef.current = fromChrome;
+      pointerSessionRef.current = {
+        pointerId: event.pointerId,
+        start: point,
+        additive: event.ctrlKey || event.metaKey,
+        frontLayerId,
+        fromChrome,
+      };
+      if (typeof captureEl.setPointerCapture === "function") {
+        captureEl.setPointerCapture(event.pointerId);
+      }
+      if (event.ctrlKey || event.metaKey) event.preventDefault();
+    },
+    [toPage],
+  );
+
+  const handlePointerDown = useCallback(
+    (event: PointerLike, captureEl: HTMLElement, opts?: { chromeOnly?: boolean }) => {
       if (event.button === 2) return;
       if (isEventFromFloatingUi(event)) return;
+      if (opts?.chromeOnly) {
+        if (shouldIgnoreCaptureTarget(event.target)) return;
+        if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
+      }
+
       onCanvasInteraction?.();
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
-      const units = isolationUnits(index, selection.isolationIds);
-      const directHits = entriesUnderPoint(units, point, { directClickOnly: true });
-      const cycleHits = entriesUnderPoint(units, point, { directClickOnly: false });
+      const units = canvasHitTestUnits(index, selection.isolationIds, blueprint);
+      const cycleHits = isPointOnPage(point, pageWidth, pageHeight)
+        ? entriesUnderPoint(units, point, { directClickOnly: false })
+        : [];
       const additive = event.ctrlKey || event.metaKey;
 
-      // Alt/Option: recorrer solapes (ya no Ctrl/Cmd).
       if (event.altKey) {
         event.preventDefault();
         dispatch({
@@ -247,12 +387,12 @@ export function SiteCreatorSelectionSurface({
         return;
       }
 
-      const front = resolveFrontmostHit(directHits);
+      const front = resolveFrontHit(point);
 
       if (focalLayerId) {
         event.preventDefault();
         const bounds = index.byId[focalLayerId]?.visualBounds;
-        if (bounds && onFocalPoint) {
+        if (bounds && onFocalPoint && isPointOnPage(point, pageWidth, pageHeight)) {
           const x = (point.x - bounds.x) / Math.max(1, bounds.width);
           const y = (point.y - bounds.y) / Math.max(1, bounds.height);
           onFocalPoint({
@@ -265,24 +405,12 @@ export function SiteCreatorSelectionSurface({
         return;
       }
 
-      if (!front) {
-        if (additive) {
-          // Ctrl/Cmd+clic en vacío: conservar selección
-          return;
-        }
-        dispatch({ type: "click", layerId: null, additive: false });
-        (event.target as SVGSVGElement).setPointerCapture(event.pointerId);
-        setMarqueeStart(point);
-        setMarqueeNow(point);
-        return;
-      }
-
-      if (additive) event.preventDefault();
       if (
         transformEnabled &&
         transformBounds &&
         onTransformCommit &&
         !additive &&
+        front &&
         selection.selectedIds.includes(front.layerId)
       ) {
         transformDragRef.current = {
@@ -292,12 +420,40 @@ export function SiteCreatorSelectionSurface({
           startBounds: transformBounds,
           handle: "se",
         };
-        (event.target as SVGSVGElement).setPointerCapture(event.pointerId);
+        if (typeof captureEl.setPointerCapture === "function") {
+          captureEl.setPointerCapture(event.pointerId);
+        }
         return;
       }
-      dispatch({ type: "click", layerId: front.layerId, additive });
+
+      beginPointerSession(event, captureEl, front?.layerId ?? null, Boolean(opts?.chromeOnly));
     },
-    [dispatch, focalLayerId, index, onCancelFocal, onCanvasInteraction, onFocalPoint, onTransformCommit, selection.isolationIds, selection.selectedIds, toPage, transformBounds, transformEnabled],
+    [
+      beginPointerSession,
+      blueprint,
+      dispatch,
+      focalLayerId,
+      index,
+      onCancelFocal,
+      onCanvasInteraction,
+      onFocalPoint,
+      onTransformCommit,
+      pageHeight,
+      pageWidth,
+      resolveFrontHit,
+      selection.isolationIds,
+      selection.selectedIds,
+      toPage,
+      transformBounds,
+      transformEnabled,
+    ],
+  );
+
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent<SVGSVGElement>) => {
+      handlePointerDown(event, event.currentTarget);
+    },
+    [handlePointerDown],
   );
 
   const onDoubleClick = useCallback(
@@ -305,7 +461,7 @@ export function SiteCreatorSelectionSurface({
       if (isEventFromFloatingUi(event)) return;
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
-      const hit = frontmostDirectHit(index, selection.isolationIds, point);
+      const hit = frontmostDirectHit(index, selection.isolationIds, point, blueprint);
       if (!hit) {
         event.preventDefault();
         event.stopPropagation();
@@ -313,8 +469,8 @@ export function SiteCreatorSelectionSurface({
         return;
       }
       // Designer groupContainer dive OR Studio handles blueprint inspect via special action
-      if (canEnterContainer(hit)) {
-        const childHit = frontmostDirectHit(index, [...selection.isolationIds, hit.layerId], point);
+      if (canEnterContainer(hit, blueprint)) {
+        const childHit = frontmostDirectHit(index, [...selection.isolationIds, hit.layerId], point, blueprint);
         dispatch({
           type: "doubleClickEnter",
           containerId: hit.layerId,
@@ -327,7 +483,7 @@ export function SiteCreatorSelectionSurface({
       }
       dispatch({ type: "doubleClickLayer", layerId: hit.layerId });
     },
-    [dispatch, index, onCanvasBackgroundDoubleClick, selection.isolationIds, toPage],
+    [blueprint, dispatch, index, onCanvasBackgroundDoubleClick, selection.isolationIds, toPage],
   );
 
   const onContextMenu = useCallback(
@@ -341,15 +497,49 @@ export function SiteCreatorSelectionSurface({
       event.preventDefault();
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
-      const entries = layerPickerHitsAtPoint(index, selection.isolationIds, point);
+      const entries = layerPickerHitsAtPoint(index, selection.isolationIds, point, blueprint);
       if (entries.length === 0) {
         setPicker(null);
         return;
       }
       setPicker({ x: event.clientX, y: event.clientY, entries });
     },
-    [index, selection.isolationIds, toPage],
+    [blueprint, index, selection.isolationIds, toPage],
   );
+
+  useEffect(() => {
+    const root = captureRootRef?.current;
+    if (!root) return;
+
+    const onDown = (event: PointerEvent) => {
+      handlePointerDown(event, root, { chromeOnly: true });
+    };
+    const onMove = (event: PointerEvent) => {
+      if (!chromePointerRef.current) return;
+      handlePointerMove(event);
+    };
+    const onUp = (event: PointerEvent) => {
+      if (!chromePointerRef.current) return;
+      finishPointer(event);
+    };
+
+    root.addEventListener("pointerdown", onDown);
+    root.addEventListener("pointermove", onMove);
+    root.addEventListener("pointerup", onUp);
+    root.addEventListener("pointercancel", onUp);
+
+    return () => {
+      root.removeEventListener("pointerdown", onDown);
+      root.removeEventListener("pointermove", onMove);
+      root.removeEventListener("pointerup", onUp);
+      root.removeEventListener("pointercancel", onUp);
+    };
+  }, [
+    captureRootRef,
+    finishPointer,
+    handlePointerDown,
+    handlePointerMove,
+  ]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

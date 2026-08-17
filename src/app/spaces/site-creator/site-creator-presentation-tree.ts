@@ -20,6 +20,15 @@ import {
   type SiteCreatorSelectionUnit,
 } from "./site-creator-display-labels";
 import { looksTechnicalName } from "./site-creator-display-labels";
+import {
+  collectDesignerGroupIdClusters,
+  designerGroupIdClusterLabel,
+  designerGroupIdMirrorNodeId,
+} from "./site-creator-designer-group-id";
+import {
+  isDesignerContainerMirrorDismissed,
+  isDesignerGroupIdMirrorDismissed,
+} from "./site-creator-designer-group-dismiss";
 
 export type SiteCreatorPresentationNode =
   | {
@@ -152,6 +161,124 @@ function expandTechnicalLayer(
   return out;
 }
 
+function buildDesignerContainerDirectChildren(
+  containerLayerId: string,
+  parentBlueprintNodeId: string,
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+  snapshot: DesignerSourceSnapshotV1 | null,
+): SiteCreatorPresentationNode[] {
+  const directChildren = index.entries
+    .filter((e) => e.parentLayerId === containerLayerId && e.visible)
+    .sort((a, b) => a.siblingIndex - b.siblingIndex);
+
+  const clusters = collectDesignerGroupIdClusters(index).filter(
+    (c) => c.parentLayerId === containerLayerId,
+  );
+  const memberToCluster = new Map<string, (typeof clusters)[number]>();
+  for (const cluster of clusters) {
+    for (const id of cluster.memberIds) memberToCluster.set(id, cluster);
+  }
+  const processedClusters = new Set<string>();
+  const parentNode = blueprint.nodes[parentBlueprintNodeId];
+  const out: SiteCreatorPresentationNode[] = [];
+
+  for (const child of directChildren) {
+    if (!child.selectableFromCanvas && child.type !== "groupContainer") continue;
+    if (isTechnicalWrapper(child.object, child.name) || child.type === "adjustmentLayer") {
+      out.push(...expandTechnicalLayer(child.layerId, index, new Set(), snapshot));
+      continue;
+    }
+
+    const cluster = memberToCluster.get(child.layerId);
+    if (cluster) {
+      if (isDesignerGroupIdMirrorDismissed(blueprint, cluster.designerGroupId)) {
+        if (!child.selectableFromCanvas) continue;
+        out.push({
+          kind: "layer",
+          id: `layer:${child.layerId}`,
+          layerId: child.layerId,
+          label: presentationLayerLabel(child.layerId, index, snapshot),
+          childCount: 0,
+          children: [],
+          unit: { kind: "layer", layerId: child.layerId },
+          isContainer: false,
+        });
+        continue;
+      }
+      if (processedClusters.has(cluster.designerGroupId)) continue;
+      processedClusters.add(cluster.designerGroupId);
+
+      const mirrorId = designerGroupIdMirrorNodeId(cluster.designerGroupId);
+      if (parentNode?.childIds.includes(mirrorId)) {
+        const mirrorNode = buildSemanticSubtree(mirrorId, blueprint, index, snapshot);
+        if (mirrorNode) out.push(mirrorNode);
+        continue;
+      }
+
+      const memberNodes: SiteCreatorPresentationNode[] = [];
+      for (const layerId of cluster.memberIds) {
+        const entry = index.byId[layerId];
+        if (!entry?.selectableFromCanvas) continue;
+        memberNodes.push({
+          kind: "layer",
+          id: `layer:${layerId}`,
+          layerId,
+          label: presentationLayerLabel(layerId, index, snapshot),
+          childCount: 0,
+          children: [],
+          unit: { kind: "layer", layerId },
+          isContainer: entry.type === "groupContainer",
+        });
+      }
+      if (memberNodes.length === 0) continue;
+      out.push({
+        kind: "layer",
+        id: `gid:${cluster.designerGroupId}`,
+        layerId: cluster.memberIds[0]!,
+        label: designerGroupIdClusterLabel(cluster.memberIds, index),
+        childCount: memberNodes.length,
+        children: memberNodes,
+        unit: { kind: "layer", layerId: cluster.memberIds[0]! },
+        isContainer: true,
+      });
+      continue;
+    }
+
+    if (child.type === "groupContainer") {
+      out.push({
+        kind: "layer",
+        id: `layer:${child.layerId}`,
+        layerId: child.layerId,
+        label: presentationLayerLabel(child.layerId, index, snapshot),
+        childCount: 0,
+        children: buildDesignerContainerDirectChildren(
+          child.layerId,
+          parentBlueprintNodeId,
+          blueprint,
+          index,
+          snapshot,
+        ),
+        unit: { kind: "layer", layerId: child.layerId },
+        isContainer: isUsefulDesignerGroup(child.object, child.name),
+      });
+      continue;
+    }
+
+    out.push({
+      kind: "layer",
+      id: `layer:${child.layerId}`,
+      layerId: child.layerId,
+      label: presentationLayerLabel(child.layerId, index, snapshot),
+      childCount: 0,
+      children: [],
+      unit: { kind: "layer", layerId: child.layerId },
+      isContainer: false,
+    });
+  }
+  return out;
+}
+
 function buildSemanticSubtree(
   nodeId: string,
   blueprint: SiteBlueprintV1,
@@ -168,6 +295,12 @@ function buildSemanticSubtree(
   for (const layerId of node.layerIds) {
     const entry = index.byId[layerId];
     if (!entry) continue;
+    if (entry.type === "groupContainer") {
+      children.push(
+        ...buildDesignerContainerDirectChildren(layerId, nodeId, blueprint, index, snapshot),
+      );
+      continue;
+    }
     if (isTechnicalWrapper(entry.object, entry.name)) {
       children.push(...expandTechnicalLayer(layerId, index, new Set(), snapshot));
       continue;
@@ -298,6 +431,31 @@ export function buildSiteCreatorPresentationTree(args: {
             boundsByKey[`layer:${p.layerId}`] = childEntry.visualBounds;
             unorganizedChildren.push(p);
           }
+        }
+      }
+      seen.add(entry.layerId);
+      continue;
+    }
+    if (
+      entry.type === "groupContainer" &&
+      isDesignerContainerMirrorDismissed(blueprint, entry.layerId)
+    ) {
+      const promoted = buildDesignerContainerDirectChildren(
+        entry.layerId,
+        "",
+        blueprint,
+        index,
+        snapshot,
+      );
+      for (const p of promoted) {
+        if (p.kind === "layer" && seen.has(p.layerId)) continue;
+        if (p.kind === "layer") {
+          seen.add(p.layerId);
+          const childEntry = index.byId[p.layerId];
+          if (childEntry) boundsByKey[`layer:${p.layerId}`] = childEntry.visualBounds;
+          unorganizedChildren.push(p);
+        } else if (p.kind === "semantic") {
+          unorganizedChildren.push(p);
         }
       }
       seen.add(entry.layerId);

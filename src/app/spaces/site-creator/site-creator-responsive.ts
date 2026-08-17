@@ -7,6 +7,7 @@ import type { DesignerPageState } from "../designer/DesignerNode";
 import { getPageDimensions } from "../indesign/page-formats";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
+import { sourceWorldBoundsOfIds, sourceWorldVisualBounds } from "./site-creator-layer-world-bounds";
 import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteBlueprintV1 } from "./site-creator-types";
@@ -241,10 +242,7 @@ function boundsOfIds(
   ids: string[],
   index: SiteCreatorSelectionIndex,
 ): PageRect | null {
-  const rects = ids
-    .map((id) => index.byId[id]?.visualBounds)
-    .filter((r): r is PageRect => Boolean(r));
-  return unionPageRects(rects);
+  return sourceWorldBoundsOfIds(ids, index);
 }
 
 function setTextFontSize(obj: FreehandObject, fontSize: number): void {
@@ -286,6 +284,13 @@ function scaleSubtreeLocal(obj: FreehandObject, scale: number, minFont: number):
   }
 }
 
+function parentUsesWorldSpaceChildren(
+  parentId: string,
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  return index.byId[parentId]?.type === "groupContainer";
+}
+
 function writeWorldRect(
   byId: Map<string, FreehandObject>,
   index: SiteCreatorSelectionIndex,
@@ -297,7 +302,11 @@ function writeWorldRect(
   const entry = index.byId[id];
   if (!obj || !entry) return;
   const parentId = entry.parentLayerId;
-  if (parentId && !transformSet.has(parentId)) {
+  if (
+    parentId &&
+    !transformSet.has(parentId) &&
+    !parentUsesWorldSpaceChildren(parentId, index)
+  ) {
     const parent = byId.get(parentId);
     if (parent) {
       obj.x = world.x - parent.x;
@@ -311,6 +320,50 @@ function writeWorldRect(
   obj.y = world.y;
   obj.width = Math.max(1, world.width);
   obj.height = Math.max(1, world.height);
+}
+
+function mapSourceRectToTarget(
+  source: PageRect,
+  origin: PageRect,
+  target: { x: number; y: number; scaleX: number; scaleY: number },
+): PageRect {
+  return {
+    x: target.x + (source.x - origin.x) * target.scaleX,
+    y: target.y + (source.y - origin.y) * target.scaleY,
+    width: Math.max(1, source.width * target.scaleX),
+    height: Math.max(1, source.height * target.scaleY),
+  };
+}
+
+/** Hijos de carpeta Designer están en espacio de página, no locales al padre. */
+function transformWorldSpaceGroupTree(
+  obj: FreehandObject,
+  index: SiteCreatorSelectionIndex,
+  origin: PageRect,
+  target: { x: number; y: number; scaleX: number; scaleY: number; minFont: number },
+): void {
+  const children = (obj as { children?: FreehandObject[] }).children ?? [];
+  const uniform = Math.min(target.scaleX, target.scaleY);
+  for (const ch of children) {
+    const b = sourceWorldVisualBounds(ch.id, index);
+    if (b) {
+      const world = mapSourceRectToTarget(b, origin, target);
+      ch.x = world.x;
+      ch.y = world.y;
+      ch.width = world.width;
+      ch.height = world.height;
+      if (ch.type === "path") {
+        transformPathObjectRelative(ch as PathObject, origin, target);
+      } else if (ch.type === "text" || ch.type === "textOnPath") {
+        setTextFontSize(ch, Math.max(target.minFont, getObjectFontSize(ch) * uniform));
+      }
+    }
+    if (ch.type === "groupContainer" || ch.type === "booleanGroup") {
+      transformWorldSpaceGroupTree(ch, index, origin, target);
+    } else if (ch.type === "clippingContainer") {
+      scaleSubtreeLocal(ch, uniform, target.minFont);
+    }
+  }
 }
 
 /** Escala uniforme relativa a un origen (preserva composición). */
@@ -332,7 +385,8 @@ function transformLayersRelative(
     const obj = byId.get(id);
     const entry = index.byId[id];
     if (!obj || !entry) continue;
-    const b = entry.visualBounds;
+    const b = sourceWorldVisualBounds(id, index);
+    if (!b) continue;
     const world: PageRect = {
       x: target.x + (b.x - origin.x) * target.scaleX,
       y: target.y + (b.y - origin.y) * target.scaleY,
@@ -344,11 +398,9 @@ function transformLayersRelative(
     }
     writeWorldRect(byId, index, id, world, set);
     const uniform = Math.min(target.scaleX, target.scaleY);
-    if (
-      obj.type === "groupContainer" ||
-      obj.type === "booleanGroup" ||
-      obj.type === "clippingContainer"
-    ) {
+    if (obj.type === "groupContainer") {
+      transformWorldSpaceGroupTree(obj, index, origin, target);
+    } else if (obj.type === "booleanGroup" || obj.type === "clippingContainer") {
       scaleSubtreeLocal(obj, uniform, target.minFont);
     } else if (obj.type === "text" || obj.type === "textOnPath") {
       setTextFontSize(obj, Math.max(target.minFont, getObjectFontSize(obj) * uniform));
@@ -432,7 +484,8 @@ function placeBackgroundLayers(args: {
     const obj = args.byId.get(bgId);
     const entry = args.index.byId[bgId];
     if (!obj || !entry) continue;
-    const sourceRect = entry.visualBounds;
+    const sourceRect =
+      sourceWorldVisualBounds(bgId, args.index) ?? entry.visualBounds;
 
     if (obj.type === "image") {
       const media = editable && args.blueprint ? resolveMediaTune(args.blueprint, bgId, editable) : null;
@@ -932,10 +985,18 @@ function layoutSectionPreserveMode(args: {
   const scale = Math.min(1, contentWidth / Math.max(1, origin.width));
   const compW = origin.width * scale;
   const compH = origin.height * scale;
+  const containerH = analysis.containerBounds.height * scale;
   const anchor = clusterNormalizedAnchor(origin, analysis.containerBounds);
 
-  const sectionHeight = resolveSectionHeight(metrics, compH + inset * 2);
-  const layoutRect: PageRect = {
+  const editableBand = band === "tablet" || band === "mobile" ? band : null;
+  const tune = editableBand
+    ? resolveContainerTune(args.blueprint, { kind: "blueprintNode", nodeId: analysis.sectionId }, editableBand)
+    : null;
+  const tuneMin = typeof tune?.minHeight === "number" ? tune.minHeight : 0;
+  const sectionHeight = metrics.autoHeight
+    ? Math.max(tuneMin, containerH + inset * 2, compH + inset * 2)
+    : Math.max(1, metrics.minHeight);
+  let layoutRect: PageRect = {
     x: 0,
     y: sectionTop,
     width: viewportWidth,
@@ -990,6 +1051,17 @@ function layoutSectionPreserveMode(args: {
     scale,
     enforceMinFont: false,
   });
+
+  if (placed) {
+    const neededBottom = Math.max(
+      layoutRect.y + layoutRect.height,
+      placed.y + placed.height + inset,
+    );
+    const neededHeight = neededBottom - layoutRect.y;
+    if (neededHeight > layoutRect.height + 0.5) {
+      layoutRect = { ...layoutRect, height: neededHeight };
+    }
+  }
 
   return {
     sectionId: analysis.sectionId,
@@ -1897,6 +1969,9 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   for (const section of sections) {
     for (const id of collectSemanticCoverageLayerIds(args.blueprint, section.id)) {
       owned.add(id);
+      for (const ancestorId of index.byId[id]?.ancestorIds ?? []) {
+        owned.add(ancestorId);
+      }
     }
   }
 
@@ -1921,14 +1996,22 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       yCursor,
     });
     if (band === "tablet" || band === "mobile") {
-      applyResponsiveContainerTunes({
-        byId,
+      const sectionMode = resolveEffectiveResponsiveMode({
         blueprint: args.blueprint,
-        index,
+        target: { kind: "blueprintNode", nodeId: section.id },
         band,
-        regions: [region],
-        viewportWidth,
-      });
+        index,
+      }).mode;
+      if (sectionMode !== "preserve") {
+        applyResponsiveContainerTunes({
+          byId,
+          blueprint: args.blueprint,
+          index,
+          band,
+          regions: [region],
+          viewportWidth,
+        });
+      }
     }
     regions.push(region);
 

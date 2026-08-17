@@ -3,6 +3,8 @@ import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { getVisualAABB } from "@/app/spaces/FreehandStudio";
 import { buildSiteSelectionIndex, isolationUnits, sortFrontToBack } from "./build-site-selection-index";
+import { reconcileDesignerGroupMirrors } from "./site-creator-designer-group-bootstrap";
+import { dismissDesignerContainerMirror, dismissDesignerGroupIdMirror } from "./site-creator-designer-group-dismiss";
 import {
   clientPointToPagePoint,
   pagePointToClientPoint,
@@ -23,6 +25,7 @@ import { reduceSiteCreatorSelection, reconcileSelectionToIndex } from "./site-cr
 import { buildDesignerSourceSnapshot } from "./designer-source-snapshot";
 import {
   createDefaultSiteCreatorNodeData,
+  createEmptySiteBlueprintV1,
   parseSiteCreatorNodeData,
   type SiteBlueprintV1,
 } from "./site-creator-types";
@@ -50,11 +53,15 @@ function reduce(
   indexPage: DesignerPageState,
   actions: Parameters<typeof reduceSiteCreatorSelection>[1][],
   initial: SiteCreatorSelectionState = EMPTY_SITE_CREATOR_SELECTION,
+  blueprint?: SiteBlueprintV1,
 ) {
   const index = buildSiteSelectionIndex(indexPage);
   return {
     index,
-    state: actions.reduce((state, action) => reduceSiteCreatorSelection(state, action, index), initial),
+    state: actions.reduce(
+      (state, action) => reduceSiteCreatorSelection(state, action, index, blueprint),
+      initial,
+    ),
   };
 }
 
@@ -153,6 +160,33 @@ describe("site creator hit testing", () => {
       ]),
     );
     expect(frontmostDirectHit(index, [], { x: 30, y: 30 })?.layerId).toBe("folder");
+  });
+
+  it("hits children on canvas after a folder mirror was dismissed", () => {
+    const indexPage = page([
+      layer({
+        id: "folder",
+        type: "groupContainer",
+        x: 10,
+        y: 10,
+        width: 120,
+        height: 100,
+        children: [
+          layer({
+            id: "title",
+            type: "rect",
+            x: 20,
+            y: 20,
+            width: 80,
+            height: 24,
+          }),
+        ],
+      }),
+    ]);
+    const index = buildSiteSelectionIndex(indexPage);
+    const withMirror = reconcileDesignerGroupMirrors(createEmptySiteBlueprintV1(), index);
+    const blueprint = dismissDesignerContainerMirror(withMirror, "folder");
+    expect(frontmostDirectHit(index, [], { x: 30, y: 30 }, blueprint)?.layerId).toBe("title");
   });
 
   it("excludes hidden layers from canvas hits", () => {
@@ -312,14 +346,36 @@ describe("site creator layer picker and marquee", () => {
     ]);
   });
 
-  it("marquee selects fully contained layers", () => {
+  it("marquee selects layers that intersect the selection box", () => {
     const boxes = page([
       layer({ id: "in", type: "rect", x: 10, y: 10, width: 10, height: 10 }),
+      layer({ id: "partial", type: "rect", x: 30, y: 30, width: 20, height: 20 }),
       layer({ id: "out", type: "rect", x: 80, y: 80, width: 40, height: 40 }),
     ]);
     const index = buildSiteSelectionIndex(boxes);
     const hits = marqueeHits(index, [], { x: 0, y: 0, width: 40, height: 40 });
-    expect(hits.map((e) => e.layerId)).toEqual(["in"]);
+    expect(hits.map((e) => e.layerId).sort()).toEqual(["in", "partial"]);
+  });
+
+  it("marquee at root includes layers inside folders", () => {
+    const grouped = page([
+      layer({
+        id: "folder",
+        type: "groupContainer",
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 80,
+        children: [
+          layer({ id: "c1", type: "rect", x: 10, y: 10, width: 10, height: 10 }),
+          layer({ id: "c2", type: "rect", x: 50, y: 10, width: 10, height: 10 }),
+        ],
+      }),
+    ]);
+    const index = buildSiteSelectionIndex(grouped);
+    expect(marqueeHits(index, [], { x: 0, y: 0, width: 30, height: 30 }).map((e) => e.layerId)).toEqual([
+      "c1",
+    ]);
   });
 
   it("marquee respects isolation level", () => {
@@ -338,8 +394,9 @@ describe("site creator layer picker and marquee", () => {
       }),
     ]);
     const index = buildSiteSelectionIndex(grouped);
-    expect(marqueeHits(index, [], { x: 0, y: 0, width: 80, height: 80 }).map((e) => e.layerId)).toEqual([
-      "folder",
+    expect(marqueeHits(index, [], { x: 0, y: 0, width: 80, height: 80 }).map((e) => e.layerId).sort()).toEqual([
+      "c1",
+      "c2",
     ]);
     expect(marqueeHits(index, ["folder"], { x: 0, y: 0, width: 80, height: 80 }).map((e) => e.layerId)).toEqual([
       "c1",
@@ -407,7 +464,7 @@ describe("site creator selection vs live snapshot", () => {
   it("builds an index from a live page", () => {
     const live = page([layer({ id: "live", type: "rect", x: 0, y: 0, width: 12, height: 12 })]);
     const display = resolveSiteCreatorDisplayPage({
-      originState: "update_available",
+      originState: "synced",
       snapshot: buildDesignerSourceSnapshot("d1", page([])),
       livePage: live,
     });
@@ -471,6 +528,41 @@ describe("site creator selection vs live snapshot", () => {
     const parsed = parseSiteCreatorNodeData(JSON.parse(JSON.stringify(nodeData)));
     expect("selectedIds" in parsed).toBe(false);
     expect("selection" in parsed).toBe(false);
+  });
+
+  it("expands Ctrl+G groupId selection to all members when mirror is active", () => {
+    const gid = "g1";
+    const indexPage = page([
+      layer({ id: "a", type: "rect", groupId: gid }),
+      layer({ id: "b", type: "rect", groupId: gid, x: 20 }),
+    ]);
+    const index = buildSiteSelectionIndex(indexPage);
+    const blueprint = reconcileDesignerGroupMirrors(createEmptySiteBlueprintV1(), index);
+    const { state } = reduce(
+      indexPage,
+      [{ type: "click", layerId: "a", additive: false }],
+      EMPTY_SITE_CREATOR_SELECTION,
+      blueprint,
+    );
+    expect(state.selectedIds.sort()).toEqual(["a", "b"]);
+  });
+
+  it("selects a single layer after Ctrl+G mirror was dismissed", () => {
+    const gid = "g1";
+    const indexPage = page([
+      layer({ id: "a", type: "rect", groupId: gid }),
+      layer({ id: "b", type: "rect", groupId: gid, x: 20 }),
+    ]);
+    const index = buildSiteSelectionIndex(indexPage);
+    const withMirror = reconcileDesignerGroupMirrors(createEmptySiteBlueprintV1(), index);
+    const blueprint = dismissDesignerGroupIdMirror(withMirror, gid);
+    const { state } = reduce(
+      indexPage,
+      [{ type: "click", layerId: "a", additive: false }],
+      EMPTY_SITE_CREATOR_SELECTION,
+      blueprint,
+    );
+    expect(state.selectedIds).toEqual(["a"]);
   });
 
   it("does not restore selection after serialize/reload", () => {

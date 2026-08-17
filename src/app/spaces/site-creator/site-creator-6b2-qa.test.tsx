@@ -150,7 +150,7 @@ describe("6B.2 capability statuses", () => {
     expect(cap.status).toBe("editable");
     if (cap.status === "editable") {
       expect(cap.foregroundUnitCount).toBeGreaterThanOrEqual(2);
-      expect(cap.supportedModes).toEqual(["auto", "preserve", "stack"]);
+      expect(cap.supportedModes).toEqual(["preserve", "stack"]);
     }
   });
 
@@ -466,7 +466,8 @@ describe("6B.2 labels ES", () => {
     const text = container.ownerDocument?.body.textContent ?? "";
     expect(text).not.toMatch(/\b(Text|Shape|Undo|Image|Photo)\b/);
     expect(text).toMatch(/Adaptación/);
-    expect(text).toMatch(/Automática|Mantener|Apilar/);
+    expect(text).toMatch(/Mantener|Apilar/);
+    expect(text).not.toMatch(/Automática/);
 
     const page = makePage([
       makeLayer({ id: "s", type: "rect", name: "Shape" }),

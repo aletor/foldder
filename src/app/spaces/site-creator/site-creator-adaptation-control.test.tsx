@@ -11,14 +11,14 @@ import {
 } from "./SiteCreatorAdaptationControl";
 
 describe("SiteCreatorAdaptationControl", () => {
-  it("muestra tres opciones con check en activa; Escape cierra", () => {
+  it("muestra solo Composición y Apilar; Escape cierra", () => {
     const onSelect = vi.fn();
     render(
       <SiteCreatorAdaptationControl
         model={{
           band: "mobile",
-          effective: { mode: "auto", source: "default" },
-          buttonLabel: adaptationButtonLabel("auto"),
+          effective: { mode: "preserve", source: "explicit" },
+          buttonLabel: adaptationButtonLabel("preserve"),
           target: { kind: "blueprintNode", nodeId: "hero-1" },
         }}
         onSelectMode={onSelect}
@@ -27,7 +27,9 @@ describe("SiteCreatorAdaptationControl", () => {
     fireEvent.click(screen.getByTestId("site-creator-adaptation-trigger"));
     expect(screen.getByTestId("site-creator-adaptation-popover")).toBeTruthy();
     expect(screen.getByText(/Adaptación en móvil/i)).toBeTruthy();
-    expect(screen.getByTestId("site-creator-adaptation-option-auto").textContent).toContain("✓");
+    expect(screen.getByTestId("site-creator-adaptation-option-preserve").textContent).toContain("✓");
+    expect(screen.getByTestId("site-creator-adaptation-option-stack")).toBeTruthy();
+    expect(screen.queryByTestId("site-creator-adaptation-option-auto")).toBeNull();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTestId("site-creator-adaptation-popover")).toBeNull();
   });

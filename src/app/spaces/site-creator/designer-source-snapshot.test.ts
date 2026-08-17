@@ -271,18 +271,13 @@ describe("snapshot persistence and blueprint integrity", () => {
 describe("site creator origin states", () => {
   const snapshot = buildDesignerSourceSnapshot("d1", basePage());
 
-  it("detects update available when live hash differs", () => {
-    const livePage = {
-      ...basePage(),
-      objects: [{ id: "live", type: "rect", x: 0, y: 0, width: 1, height: 1 } as FreehandObject],
-    };
+  it("detects live drift as synced (snapshot auto-syncs in node)", () => {
     const state = resolveSiteCreatorOriginState({
       snapshot,
       documentEdge: { source: "d1" },
       liveDesignerPageCount: 1,
-      livePageContentHash: computeDesignerPageContentHash(livePage),
     });
-    expect(state).toBe("update_available");
+    expect(state).toBe("synced");
   });
 
   it("keeps preview source when origin is disconnected", () => {
@@ -290,7 +285,6 @@ describe("site creator origin states", () => {
       snapshot,
       documentEdge: null,
       liveDesignerPageCount: 0,
-      livePageContentHash: null,
     });
     expect(state).toBe("source_disconnected");
     expect(snapshot.page.id).toBe("pg_root");
@@ -301,7 +295,6 @@ describe("site creator origin states", () => {
       snapshot,
       documentEdge: { source: "d_other" },
       liveDesignerPageCount: 1,
-      livePageContentHash: computeDesignerPageContentHash(basePage()),
     });
     expect(state).toBe("different_source");
   });
@@ -311,19 +304,17 @@ describe("site creator origin states", () => {
       snapshot: undefined,
       documentEdge: { source: "d1" },
       liveDesignerPageCount: 2,
-      livePageContentHash: null,
     });
     expect(state).toBe("incompatible_document");
   });
 
-  it("marks synced when hash matches", () => {
+  it("marks synced when same designer connected", () => {
     const page = basePage();
     const snap = buildDesignerSourceSnapshot("d1", page);
     const state = resolveSiteCreatorOriginState({
       snapshot: snap,
       documentEdge: { source: "d1" },
       liveDesignerPageCount: 1,
-      livePageContentHash: computeDesignerPageContentHash(deepCloneDesignerPageState(page)),
     });
     expect(state).toBe("synced");
   });

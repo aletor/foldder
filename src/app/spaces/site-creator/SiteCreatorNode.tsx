@@ -50,8 +50,7 @@ import {
   siteCreatorOriginStateLabel,
 } from "./site-creator-origin";
 import {
-  applyConfirmedOriginChange,
-  applyConfirmedSnapshotUpdate,
+  applySnapshotWithDesignerGroupMirrors,
   deriveCandidateSnapshotFromDesigner,
   resolveLiveDesignerPage,
   validateCandidateForSync,
@@ -64,11 +63,13 @@ import {
   parseSiteCreatorNodeData,
   type SiteBlueprintV1,
   type DesignerSourceSnapshotV1,
+  type SiteCreatorPublishStateV1,
 } from "./site-creator-types";
 import { isValidDesignerSourceSnapshotV1 } from "./designer-source-snapshot";
 import { SiteCreatorStudio } from "./SiteCreatorStudio";
 
 const STALE_SYNC_MESSAGE = "Designer volvió a cambiar. Revisa la actualización de nuevo.";
+const AUTO_SYNC_DEBOUNCE_MS = 300;
 
 function syncValidationErrorMessage(reason: "stale" | "invalid_designer" | "invalid_pages"): string {
   switch (reason) {
@@ -252,14 +253,13 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
     snapshot: sourceSnapshot,
     documentEdge: graph.designerNodeId ? { source: graph.designerNodeId } : null,
     liveDesignerPageCount: graph.designerPageCount,
-    livePageContentHash,
     isCapturing,
   });
 
   const candidateSnapshot = useMemo(() => {
     void liveStudioEpoch;
     if (!studioOpen) return null;
-    if (originState !== "update_available" && originState !== "different_source") return null;
+    if (originState !== "different_source") return null;
     if (!graph.designerNodeId || graph.designerNodeData == null) return null;
     const designerNode = getNodes().find((node) => node.id === graph.designerNodeId);
     if (!designerNode) return null;
@@ -277,42 +277,45 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
 
   const dismissSyncError = useCallback(() => setSyncErrorMessage(null), []);
 
-  const onConfirmSnapshotSync = useCallback(
-    (reviewedCandidateHash: string) => {
-      if (syncBusy || !sourceSnapshot) return;
-      const expectedDesignerNodeId = sourceSnapshot.designerNodeId;
-      const liveDesignerNode = graph.designerNodeId
-        ? getNodes().find((node) => node.id === graph.designerNodeId)
-        : undefined;
-      setSyncBusy(true);
-      setSyncErrorMessage(null);
+  useEffect(() => {
+    if (!sourceSnapshot || !graph.designerNodeId) return;
+    if (sourceSnapshot.designerNodeId !== graph.designerNodeId) return;
+    if (livePageContentHash == null) return;
+    if (livePageContentHash === sourceSnapshot.contentHash) return;
+    if (sourceStateStatus !== "valid") return;
 
-      const validation = validateCandidateForSync({
-        reviewedCandidateHash,
-        expectedDesignerNodeId,
-        liveDesignerNode,
-      });
+    const designerNodeId = graph.designerNodeId;
+    const expectedHash = livePageContentHash;
 
-      if (!validation.ok) {
-        setSyncErrorMessage(syncValidationErrorMessage(validation.reason));
-        setSyncBusy(false);
-        return;
-      }
+    const timer = window.setTimeout(() => {
+      const designerNode = getNodes().find((node) => node.id === designerNodeId);
+      if (!designerNode) return;
+      const candidate = deriveCandidateSnapshotFromDesigner(designerNode);
+      if (!candidate || candidate.contentHash !== expectedHash) return;
 
       setNodes((nodes) =>
         nodes.map((node) => {
           if (node.id !== id) return node;
           const current = parseSiteCreatorNodeData(node.data);
           if (!current.sourceSnapshot) return node;
-          const updated = applyConfirmedSnapshotUpdate(current, validation.candidate);
+          if (current.sourceSnapshot.contentHash === candidate.contentHash) return node;
+          if (current.sourceSnapshot.designerNodeId !== designerNodeId) return node;
+          const updated = applySnapshotWithDesignerGroupMirrors(current, candidate);
           return { ...node, data: { ...updated } };
         }),
       );
-      setSyncBusy(false);
-      setSyncErrorMessage(null);
-    },
-    [getNodes, graph.designerNodeId, id, setNodes, sourceSnapshot, syncBusy],
-  );
+    }, AUTO_SYNC_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    getNodes,
+    graph.designerNodeId,
+    id,
+    livePageContentHash,
+    setNodes,
+    sourceSnapshot,
+    sourceStateStatus,
+  ]);
 
   const onConfirmOriginChange = useCallback(
     (reviewedCandidateHash: string) => {
@@ -339,7 +342,7 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
         nodes.map((node) => {
           if (node.id !== id) return node;
           const current = parseSiteCreatorNodeData(node.data);
-          const updated = applyConfirmedOriginChange(current, validation.candidate);
+          const updated = applySnapshotWithDesignerGroupMirrors(current, validation.candidate);
           return { ...node, data: { ...updated } };
         }),
       );
@@ -347,6 +350,25 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
       setSyncErrorMessage(null);
     },
     [blueprint, getNodes, graph.designerNodeId, id, setNodes, sourceSnapshot, syncBusy],
+  );
+
+  const onPublishChange = useCallback(
+    (nextPublish: SiteCreatorPublishStateV1 | null) => {
+      setNodes((nodes) =>
+        nodes.map((node) => {
+          if (node.id !== id) return node;
+          const current = parseSiteCreatorNodeData(node.data);
+          return {
+            ...node,
+            data: {
+              ...current,
+              publish: nextPublish,
+            },
+          };
+        }),
+      );
+    },
+    [id, setNodes],
   );
 
   const onBlueprintChange = useCallback(
@@ -411,12 +433,10 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
           if (node.id !== id) return node;
           const current = parseSiteCreatorNodeData(node.data);
           if (current.sourceSnapshot) return node;
+          const updated = applySnapshotWithDesignerGroupMirrors(current, snapshot);
           return {
             ...node,
-            data: {
-              ...current,
-              sourceSnapshot: snapshot,
-            },
+            data: updated,
           };
         }),
       );
@@ -655,10 +675,11 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
               syncBusy={syncBusy}
               syncErrorMessage={syncErrorMessage}
               onClose={() => setStudioOpen(false)}
-              onConfirmSnapshotSync={onConfirmSnapshotSync}
               onConfirmOriginChange={onConfirmOriginChange}
               onDismissSyncError={dismissSyncError}
               onBlueprintChange={onBlueprintChange}
+              publish={parseSiteCreatorNodeData(data).publish ?? null}
+              onPublishChange={onPublishChange}
             />,
             document.body,
           )

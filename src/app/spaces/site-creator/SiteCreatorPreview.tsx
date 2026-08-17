@@ -26,9 +26,11 @@ import type {
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorPrimaryAction } from "./site-creator-contextual-actions";
+import type { SiteBlueprintV1 } from "./site-creator-types";
 import {
   clampViewportWidth,
   isSiteCreatorPreviewChromeBackgroundTarget,
+  measureSiteCreatorPreviewAvailableSize,
   viewportWidthDeltaFromCenteredEdgeDrag,
 } from "./site-creator-viewport";
 
@@ -57,6 +59,7 @@ export interface SiteCreatorPreviewProps {
   zoomMode?: SiteCreatorPreviewZoomMode;
   selection?: SiteCreatorSelectionState;
   selectionIndex?: SiteCreatorSelectionIndex;
+  blueprint?: SiteBlueprintV1 | null;
   onSelectionAction?: (action: SiteCreatorSelectionAction) => void;
   unitOutlines?: SiteCreatorUnitOutline[];
   hoverOutline?: SiteCreatorUnitOutline | null;
@@ -79,6 +82,8 @@ export interface SiteCreatorPreviewProps {
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
+  /** Vista de página: sin selección, edición, ni chrome de diseño. */
+  readOnly?: boolean;
 }
 
 function ResizeHandle({
@@ -121,6 +126,7 @@ export function SiteCreatorPreview({
   onAvailableSizeChange,
   selection,
   selectionIndex,
+  blueprint = null,
   onSelectionAction,
   unitOutlines,
   hoverOutline,
@@ -140,11 +146,13 @@ export function SiteCreatorPreview({
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
+  readOnly = false,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
   const [frameTick, setFrameTick] = useState(0);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
@@ -183,15 +191,20 @@ export function SiteCreatorPreview({
     const el = viewportRef.current;
     if (!el) return;
     const update = () => {
-      const width = Math.max(240, el.clientWidth - 48);
-      const height = Math.max(180, el.clientHeight - 48);
-      onAvailableSizeChange?.({ width, height });
+      const measureEl = readOnly && scrollRef.current ? scrollRef.current : el;
+      const size = measureSiteCreatorPreviewAvailableSize({
+        clientWidth: measureEl.clientWidth,
+        clientHeight: measureEl.clientHeight,
+        fillViewport: readOnly,
+      });
+      onAvailableSizeChange?.(size);
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    if (scrollRef.current) ro.observe(scrollRef.current);
     return () => ro.disconnect();
-  }, [onAvailableSizeChange]);
+  }, [onAvailableSizeChange, readOnly]);
 
   useEffect(() => {
     const bump = () => setScrollTick((n) => n + 1);
@@ -335,24 +348,6 @@ export function SiteCreatorPreview({
     }
   }, []);
 
-  const onPreviewChromeClick = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
-      onSelectionAction?.({ type: "clear" });
-    },
-    [onSelectionAction],
-  );
-
-  const onPreviewChromeDoubleClick = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onCanvasBackgroundDoubleClick?.();
-    },
-    [onCanvasBackgroundDoubleClick],
-  );
-
   const pageContent = (
     <div
       className="site-creator-preview-layout origin-top-left overflow-hidden"
@@ -363,7 +358,10 @@ export function SiteCreatorPreview({
       }}
     >
       <div
-        className="site-creator-preview-page origin-top-left overflow-x-hidden"
+        ref={pageRef}
+        className={`site-creator-preview-page origin-top-left overflow-x-hidden ${
+          readOnly ? "pointer-events-none" : ""
+        }`}
         style={{
           width: pageWidth,
           height: pageHeight,
@@ -376,12 +374,15 @@ export function SiteCreatorPreview({
           background={pageBackground(page)}
           objectClipById={objectClipById}
         />
-        {selection && selectionIndex && onSelectionAction ? (
+        {!readOnly && selection && selectionIndex && onSelectionAction ? (
           <SiteCreatorSelectionSurface
             pageWidth={pageWidth}
             pageHeight={pageHeight}
             scale={screenScale}
             index={selectionIndex}
+            blueprint={blueprint}
+            pageAnchorRef={pageRef}
+            captureRootRef={scrollRef}
             selection={selection}
             dispatch={onSelectionAction}
             unitOutlines={unitOutlines}
@@ -411,8 +412,9 @@ export function SiteCreatorPreview({
       data-site-creator-preview-zoom={zoom}
       data-site-creator-layout-scale={1}
       data-site-creator-device-mode={deviceMode ? "1" : "0"}
+      data-site-creator-page-preview={readOnly ? "1" : undefined}
     >
-      {selection && selectionIndex && onSelectionAction && selection.isolationIds.length > 0 ? (
+      {!readOnly && selection && selectionIndex && onSelectionAction && selection.isolationIds.length > 0 ? (
         <div className="site-creator-isolation-bar shrink-0 border-b border-white/10 bg-[#101820]">
           <SiteCreatorIsolationBreadcrumb
             index={selectionIndex}
@@ -423,18 +425,37 @@ export function SiteCreatorPreview({
       ) : null}
       <div
         ref={scrollRef}
-        className="site-creator-preview-scroll min-h-0 flex-1 overflow-auto"
-        onClick={onPreviewChromeClick}
-        onDoubleClick={onPreviewChromeDoubleClick}
+        className={`site-creator-preview-scroll min-h-0 flex-1 overflow-auto ${
+          readOnly ? "cursor-default overflow-x-hidden [scrollbar-gutter:stable]" : "cursor-crosshair"
+        }`}
+        onDoubleClick={(event) => {
+          if (readOnly) return;
+          if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          onCanvasBackgroundDoubleClick?.();
+        }}
       >
-        <div className="site-creator-preview-scroll-inner flex min-h-full items-start justify-center px-8 py-8">
+        <div
+          className={`site-creator-preview-scroll-inner flex min-h-full ${
+            readOnly ? "items-stretch justify-stretch px-0 py-0" : "items-start justify-center px-8 py-8"
+          }`}
+        >
           <div
-            className="site-creator-preview-stage relative border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
-            style={{ width: displayWidth, height: displayHeight }}
+            className={`site-creator-preview-stage relative ${
+              readOnly
+                ? "overflow-hidden border-0 bg-transparent shadow-none"
+                : "border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
+            }`}
+            style={
+              readOnly
+                ? { width: "100%", height: contentDisplayHeight }
+                : { width: displayWidth, height: displayHeight }
+            }
             data-site-creator-preview-scale={screenScale}
             data-testid="site-creator-preview-stage"
           >
-            {!deviceMode ? (
+            {!readOnly && !deviceMode ? (
               <>
                 <ResizeHandle
                   side="left"
@@ -469,6 +490,7 @@ export function SiteCreatorPreview({
                 {pageContent}
               </div>
             )}
+            {!readOnly ? (
             <SiteCreatorObjectMicrobar
               scale={screenScale}
               stageWidth={displayWidth}
@@ -479,6 +501,7 @@ export function SiteCreatorPreview({
               onNavigate={onMicrobarNavigate}
               onAction={onMicrobarAction}
             />
+            ) : null}
             {dragLabel ? (
               <div
                 data-testid="site-creator-resize-label"

@@ -1,9 +1,11 @@
 import { collapseContainerDescendants } from "./site-creator-hit-test";
+import { expandLayerIdsWithDesignerGroups, designerGroupMemberIds } from "./site-creator-designer-group-id";
 import type {
   SiteCreatorSelectionAction,
   SiteCreatorSelectionIndex,
   SiteCreatorSelectionState,
 } from "./site-creator-selection-types";
+import type { SiteBlueprintV1 } from "./site-creator-types";
 
 const POINT_EPS = 0.75;
 
@@ -18,9 +20,6 @@ function uniqueKeepOrder(ids: string[]): string[] {
   return out;
 }
 
-function toggleId(ids: string[], layerId: string): string[] {
-  return ids.includes(layerId) ? ids.filter((id) => id !== layerId) : [...ids, layerId];
-}
 
 function samePoint(
   cycle: SiteCreatorSelectionState["overlapCycle"],
@@ -38,6 +37,7 @@ export function reduceSiteCreatorSelection(
   state: SiteCreatorSelectionState,
   action: SiteCreatorSelectionAction,
   index: SiteCreatorSelectionIndex,
+  blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionState {
   switch (action.type) {
     case "hover":
@@ -47,14 +47,19 @@ export function reduceSiteCreatorSelection(
       if (!action.layerId) {
         return { ...state, selectedIds: [], hoverId: null, overlapCycle: null };
       }
+      const groupMembers = designerGroupMemberIds(action.layerId, index, blueprint);
       if (action.additive) {
+        const togglingOff = groupMembers.every((id) => state.selectedIds.includes(id));
+        const nextIds = togglingOff
+          ? state.selectedIds.filter((id) => !groupMembers.includes(id))
+          : uniqueKeepOrder([...state.selectedIds, ...groupMembers]);
         return {
           ...state,
-          selectedIds: toggleId(state.selectedIds, action.layerId),
+          selectedIds: nextIds,
           overlapCycle: null,
         };
       }
-      return { ...state, selectedIds: [action.layerId], overlapCycle: null };
+      return { ...state, selectedIds: groupMembers, overlapCycle: null };
     }
 
     case "cycle": {
@@ -102,7 +107,8 @@ export function reduceSiteCreatorSelection(
       return state;
 
     case "marquee": {
-      const merged = action.additive ? [...state.selectedIds, ...action.layerIds] : action.layerIds;
+      const expanded = expandLayerIdsWithDesignerGroups(action.layerIds, index, blueprint);
+      const merged = action.additive ? [...state.selectedIds, ...expanded] : expanded;
       const selectedIds = collapseContainerDescendants(uniqueKeepOrder(merged), index);
       return { ...state, selectedIds, overlapCycle: null };
     }
@@ -150,6 +156,7 @@ export function reduceSiteCreatorSelection(
 export function reconcileSelectionToIndex(
   state: SiteCreatorSelectionState,
   index: SiteCreatorSelectionIndex,
+  blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionState {
   return reduceSiteCreatorSelection(
     state,
@@ -159,5 +166,6 @@ export function reconcileSelectionToIndex(
       containerIds: index.entries.filter((entry) => entry.containerKind).map((entry) => entry.layerId),
     },
     index,
+    blueprint,
   );
 }

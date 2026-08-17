@@ -203,7 +203,7 @@ export function SiteCreatorAdaptationControl({
             >
               Adaptación en {model.band === "mobile" ? "móvil" : "tablet"}
             </p>
-            {(["auto", "preserve", "stack"] as const).map((mode) => {
+            {(["preserve", "stack"] as const).map((mode) => {
               const selected = active === mode;
               return (
                 <button
@@ -262,5 +262,6 @@ export function SiteCreatorAdaptationControl({
 }
 
 export function adaptationButtonLabel(mode: "auto" | "preserve" | "stack"): string {
+  if (mode === "auto") return "Adaptación";
   return `Adaptación · ${modeMicrobarLabel(mode)}`;
 }

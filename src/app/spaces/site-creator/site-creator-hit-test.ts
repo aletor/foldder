@@ -1,13 +1,96 @@
-import { pointInPageRect, type PagePoint, type PageRect, pageRectFullyContains } from "./site-creator-coordinate-space";
+import { pointInPageRect, pageRectsIntersect, type PagePoint, type PageRect } from "./site-creator-coordinate-space";
 import {
   isolationUnits,
   isContainerEntry,
   sortFrontToBack,
 } from "./build-site-selection-index";
+import { isDesignerContainerMirrorDismissed } from "./site-creator-designer-group-dismiss";
 import type {
   SiteCreatorSelectionIndex,
   SiteCreatorSelectionIndexEntry,
 } from "./site-creator-selection-types";
+import type { SiteBlueprintV1 } from "./site-creator-types";
+
+function isClipMaskChild(entry: SiteCreatorSelectionIndexEntry): boolean {
+  return entry.parentContainerType === "clippingContainer" && entry.containerKind == null;
+}
+
+/** Expone hijos de carpetas Designer cuyo espejo fue desagrupado en Site Creator. */
+function collectDismissedFolderPromotedUnits(
+  containerId: string,
+  index: SiteCreatorSelectionIndex,
+  blueprint: SiteBlueprintV1,
+  into: SiteCreatorSelectionIndexEntry[],
+  seen: Set<string>,
+): void {
+  for (const entry of index.entries) {
+    if (entry.parentLayerId !== containerId) continue;
+    if (!entry.selectableFromCanvas) continue;
+    if (isClipMaskChild(entry)) continue;
+
+    if (entry.type === "groupContainer") {
+      if (isDesignerContainerMirrorDismissed(blueprint, entry.layerId)) {
+        collectDismissedFolderPromotedUnits(entry.layerId, index, blueprint, into, seen);
+      } else if (!seen.has(entry.layerId)) {
+        seen.add(entry.layerId);
+        into.push(entry);
+      }
+      continue;
+    }
+
+    if (seen.has(entry.layerId)) continue;
+    seen.add(entry.layerId);
+    into.push(entry);
+  }
+}
+
+/**
+ * Unidades hittables en el lienzo. Cuando una carpeta Designer fue desagrupada
+ * en Site Creator, sus hijos pasan al mismo nivel de hit-test (sin tocar Designer).
+ */
+export function canvasHitTestUnits(
+  index: SiteCreatorSelectionIndex,
+  isolationIds: string[],
+  blueprint?: SiteBlueprintV1 | null,
+): SiteCreatorSelectionIndexEntry[] {
+  const base = isolationUnits(index, isolationIds);
+  if (!blueprint) return base;
+
+  const dismissedAtScope = base.filter(
+    (entry) =>
+      entry.type === "groupContainer" &&
+      isDesignerContainerMirrorDismissed(blueprint, entry.layerId),
+  );
+  if (dismissedAtScope.length === 0) return base;
+
+  const dismissedAtScopeIds = new Set(dismissedAtScope.map((entry) => entry.layerId));
+  const filtered = base.filter((entry) => !dismissedAtScopeIds.has(entry.layerId));
+  const promoted: SiteCreatorSelectionIndexEntry[] = [];
+  const seen = new Set(filtered.map((entry) => entry.layerId));
+
+  for (const container of dismissedAtScope) {
+    collectDismissedFolderPromotedUnits(container.layerId, index, blueprint, promoted, seen);
+  }
+
+  return [...filtered, ...promoted];
+}
+
+/** Capas elegibles para marquee: hojas visibles; en raíz atraviesa carpetas Designer. */
+export function marqueeHitTestUnits(
+  index: SiteCreatorSelectionIndex,
+  isolationIds: string[],
+  blueprint?: SiteBlueprintV1 | null,
+): SiteCreatorSelectionIndexEntry[] {
+  if (isolationIds.length > 0) {
+    return canvasHitTestUnits(index, isolationIds, blueprint);
+  }
+
+  return index.entries.filter((entry) => {
+    if (!entry.selectableFromCanvas) return false;
+    if (entry.type === "groupContainer") return false;
+    return true;
+  });
+}
 
 export function entriesUnderPoint(
   units: SiteCreatorSelectionIndexEntry[],
@@ -49,8 +132,9 @@ export function frontmostDirectHit(
   index: SiteCreatorSelectionIndex,
   isolationIds: string[],
   point: PagePoint,
+  blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionIndexEntry | null {
-  const units = isolationUnits(index, isolationIds);
+  const units = canvasHitTestUnits(index, isolationIds, blueprint);
   const hits = entriesUnderPoint(units, point, { directClickOnly: true });
   return resolveFrontmostHit(hits);
 }
@@ -60,8 +144,9 @@ export function layerPickerHitsAtPoint(
   index: SiteCreatorSelectionIndex,
   isolationIds: string[],
   point: PagePoint,
+  blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionIndexEntry[] {
-  const units = isolationUnits(index, isolationIds);
+  const units = canvasHitTestUnits(index, isolationIds, blueprint);
   const unitHits = entriesUnderPoint(units, point, { directClickOnly: false });
   const seen = new Set(unitHits.map((entry) => entry.layerId));
   const extras: SiteCreatorSelectionIndexEntry[] = [];
@@ -82,10 +167,11 @@ export function marqueeHits(
   index: SiteCreatorSelectionIndex,
   isolationIds: string[],
   rect: PageRect,
+  blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionIndexEntry[] {
-  const units = isolationUnits(index, isolationIds);
+  const units = marqueeHitTestUnits(index, isolationIds, blueprint);
   return units.filter(
-    (entry) => entry.selectableFromCanvas && pageRectFullyContains(rect, entry.visualBounds),
+    (entry) => entry.selectableFromCanvas && pageRectsIntersect(rect, entry.visualBounds),
   );
 }
 
@@ -110,6 +196,17 @@ export function isolationBreadcrumbLabels(
   return items;
 }
 
-export function canEnterContainer(entry: SiteCreatorSelectionIndexEntry | null): boolean {
-  return isContainerEntry(entry ?? undefined);
+export function canEnterContainer(
+  entry: SiteCreatorSelectionIndexEntry | null,
+  blueprint?: SiteBlueprintV1 | null,
+): boolean {
+  if (!isContainerEntry(entry ?? undefined)) return false;
+  if (
+    blueprint &&
+    entry?.type === "groupContainer" &&
+    isDesignerContainerMirrorDismissed(blueprint, entry.layerId)
+  ) {
+    return false;
+  }
+  return true;
 }

@@ -29,7 +29,7 @@ export type SiteCreatorPrimaryAction = {
     | "addToContainer"
     | "removeFromContainer"
     | "chooseAddTarget"
-    | "syncToContinue";
+    | "editContent";
   label: string;
   primary?: boolean;
   /** Destino implícito para addToContainer. */
@@ -164,17 +164,6 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
     return emptyCtx();
   }
 
-  if (!persistGate.allowed && persistGate.reason === "update_available") {
-    return {
-      summary: summarizeUnits(units, blueprint, index, snapshot),
-      primaryActions: [{ id: "syncToContinue", label: "Actualizar diseño para continuar" }],
-      overflowActions: [],
-      canvasLabel: canvasLabelForUnits(units, blueprint, index, snapshot),
-      breadcrumb: breadcrumbForUnits(units, blueprint, index, snapshot),
-      statusMessage: "Actualiza el diseño para continuar",
-    };
-  }
-
   if (units.length === 1 && units[0]!.kind === "blueprintNode") {
     const node = blueprint.nodes[units[0]!.nodeId];
     if (!node) return emptyCtx();
@@ -221,16 +210,14 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
     if (!persistGate.allowed) {
       return {
         ...addModel,
-        primaryActions: persistGate.reason === "update_available"
-          ? [{ id: "syncToContinue", label: "Actualizar diseño para continuar" }]
-          : [],
-        statusMessage: persistGate.allowed ? addModel.statusMessage : persistGate.message,
+        primaryActions: [],
+        statusMessage: persistGate.message,
       };
     }
     return addModel;
   }
 
-  if (!persistGate.allowed && persistGate.reason !== "update_available") {
+  if (!persistGate.allowed) {
     return {
       summary: summarizeUnits(units, blueprint, index, snapshot),
       primaryActions: [],
@@ -421,17 +408,6 @@ function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextual
       overflowActions: [],
       canvasLabel: innerLabel,
       breadcrumb: innerLabel ? `${nodeLabel} › ${innerLabel}` : nodeLabel,
-    };
-  }
-
-  if (!persistGate.allowed && persistGate.reason === "update_available") {
-    return {
-      summary: null,
-      primaryActions: [{ id: "syncToContinue", label: "Actualizar diseño para continuar" }],
-      overflowActions: [],
-      canvasLabel: innerLabel,
-      breadcrumb: innerLabel ? `${nodeLabel} › ${innerLabel}` : nodeLabel,
-      statusMessage: "Actualiza el diseño para continuar",
     };
   }
 

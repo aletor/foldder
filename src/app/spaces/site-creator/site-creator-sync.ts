@@ -1,7 +1,9 @@
 import type { Node } from "@xyflow/react";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { getLiveStudioNodePatch } from "../studio-live-documents";
+import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { captureSnapshotFromDesignerNode } from "./designer-source-snapshot";
+import { reconcileDesignerGroupMirrors } from "./site-creator-designer-group-bootstrap";
 import type { DesignerSourceSnapshotV1, SiteCreatorNodeData } from "./site-creator-types";
 
 export type SyncValidationResult =
@@ -71,6 +73,21 @@ export function applyConfirmedSnapshotUpdate(
     sourceSnapshot: candidate,
     blueprint: nodeData.blueprint,
   };
+}
+
+/** Actualiza snapshot y reconcilia espejos de groupContainer en el blueprint. */
+export function applySnapshotWithDesignerGroupMirrors(
+  nodeData: SiteCreatorNodeData,
+  candidate: DesignerSourceSnapshotV1,
+): SiteCreatorNodeData {
+  const withSnapshot = applyConfirmedSnapshotUpdate(nodeData, candidate);
+  const index = buildSiteSelectionIndex(candidate.page);
+  try {
+    const blueprint = reconcileDesignerGroupMirrors(withSnapshot.blueprint, index);
+    return { ...withSnapshot, blueprint };
+  } catch {
+    return withSnapshot;
+  }
 }
 
 /** Cambio de origen permitido: nuevo snapshot + blueprint vacío intacto. */

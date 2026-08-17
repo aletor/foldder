@@ -902,14 +902,14 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
     expect(b.y).toBe(60);
   });
 
-  it("34. canPersistSiteStructure blocked on update_available", () => {
+  it("34. canPersistSiteStructure allowed when connected and synced", () => {
     const gate = canPersistSiteStructure({
-      originState: "update_available",
+      originState: "synced",
       hasSnapshot: true,
     });
-    expect(gate.allowed).toBe(false);
-    if (gate.allowed) return;
-    expect(gate.reason).toBe("update_available");
+    expect(gate.allowed).toBe(true);
+    if (!gate.allowed) return;
+    expect(gate.mode).toBe("synced");
   });
 
   it("35. canPersistSiteStructure allowed on source_disconnected", () => {

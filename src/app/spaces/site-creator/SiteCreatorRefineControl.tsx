@@ -44,7 +44,6 @@ export type RefineControlModel = {
   canReorder: boolean;
   resetLabel: string;
   showReset: boolean;
-  hasAdaptationOverride?: boolean;
   /** Unidades de contenido del contenedor (sin fondo). */
   containerContentCount?: number;
 };
@@ -57,7 +56,6 @@ export type RefineControlHandlers = {
   onReorder?: (delta: -1 | 1) => void;
   onResetItem?: () => void;
   onResetContainer?: () => void;
-  onResetAdaptation?: () => void;
   onResetBand?: () => void;
   onContainerPadding?: (value: number) => void;
   onContainerPaddingAuto?: () => void;
@@ -450,17 +448,6 @@ export function SiteCreatorRefineControl({
                 hint={`Quita alineación, anchura, separación y el comportamiento de este contenedor en ${Band}.`}
                 onClick={() => {
                   handlers.onResetContainer?.();
-                  setMenu(null);
-                }}
-              />
-            ) : null}
-            {model.hasAdaptationOverride ? (
-              <MenuOption
-                selected={false}
-                label="Volver a Automática"
-                hint={`Recupera la adaptación automática en ${Band}. No cambia la otra vista ni Original.`}
-                onClick={() => {
-                  handlers.onResetAdaptation?.();
                   setMenu(null);
                 }}
               />

@@ -51,7 +51,18 @@ export interface SiteBlueprintV1 {
   nodes: Record<string, SiteBlueprintNode>;
   /** Excepciones responsive por contenedor (6B.2). Ausente = todo Automático. */
   responsive?: SiteResponsiveV1;
+  /**
+   * Espejos automáticos del Designer que el usuario desagrupó en Site Creator.
+   * Persiste aunque Designer siga teniendo groupContainer / groupId.
+   */
+  dismissedDesignerMirrors?: SiteDismissedDesignerMirrorsV1;
 }
+
+/** Agrupaciones Designer ignoradas en Site Creator (solo semántica local). */
+export type SiteDismissedDesignerMirrorsV1 = {
+  containerLayerIds: string[];
+  groupIds: string[];
+};
 
 export type ResponsiveEditableBand = "tablet" | "mobile";
 export type ResponsiveOverrideMode = "preserve" | "stack";
@@ -139,12 +150,21 @@ export interface SiteCreatorStudioState {
   lastOpenedAt?: string;
 }
 
+/** Metadatos de la carpeta pública. El HTML no vive en el nodo. */
+export interface SiteCreatorPublishStateV1 {
+  siteId: string;
+  publishedAt: string;
+  publicPath: string;
+  fileCount: number;
+}
+
 export interface SiteCreatorNodeData {
   label?: string;
   schemaVersion: typeof SITE_CREATOR_SCHEMA_VERSION;
   blueprint: SiteBlueprintV1;
   sourceSnapshot?: DesignerSourceSnapshotV1;
   studioState?: SiteCreatorStudioState;
+  publish?: SiteCreatorPublishStateV1 | null;
 }
 
 export function createEmptySiteBlueprintV1(): SiteBlueprintV1 {
@@ -175,6 +195,20 @@ export function isValidSiteBlueprintV1(value: unknown): value is SiteBlueprintV1
   );
 }
 
+export function parseSiteCreatorPublishState(value: unknown): SiteCreatorPublishStateV1 | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Partial<SiteCreatorPublishStateV1>;
+  if (typeof raw.siteId !== "string" || !/^[a-f0-9]{32}$/.test(raw.siteId)) return undefined;
+  if (typeof raw.publishedAt !== "string" || !raw.publishedAt.trim()) return undefined;
+  if (typeof raw.publicPath !== "string" || !raw.publicPath.startsWith("/s/")) return undefined;
+  return {
+    siteId: raw.siteId,
+    publishedAt: raw.publishedAt,
+    publicPath: raw.publicPath,
+    fileCount: typeof raw.fileCount === "number" && Number.isFinite(raw.fileCount) ? raw.fileCount : 0,
+  };
+}
+
 export function parseSiteCreatorNodeData(data: unknown): SiteCreatorNodeData {
   const raw = (data ?? {}) as Partial<SiteCreatorNodeData>;
   const blueprint = isValidSiteBlueprintV1(raw.blueprint)
@@ -189,6 +223,7 @@ export function parseSiteCreatorNodeData(data: unknown): SiteCreatorNodeData {
     blueprint,
     sourceSnapshot,
     studioState: raw.studioState && typeof raw.studioState === "object" ? raw.studioState : {},
+    publish: parseSiteCreatorPublishState(raw.publish) ?? null,
   };
 }
 

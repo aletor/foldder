@@ -27,6 +27,8 @@ export interface SiteCreatorDeviceSelectorProps {
   onConfigChange: (config: SiteCreatorDeviceConfig) => void;
   /** Capa flotante del Studio (por encima del canvas). */
   portalHost?: HTMLElement | null;
+  /** Solo cambia de vista, sin abrir el menú de dispositivo. */
+  selectOnly?: boolean;
 }
 
 function DeviceSilhouette({ width, height, active }: { width: number; height: number; active?: boolean }) {
@@ -57,6 +59,7 @@ export function SiteCreatorDeviceSelector({
   onActivate,
   onConfigChange,
   portalHost = null,
+  selectOnly = false,
 }: SiteCreatorDeviceSelectorProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -222,7 +225,7 @@ export function SiteCreatorDeviceSelector({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={() => {
           onActivate();
-          setOpen((v) => !v);
+          if (!selectOnly) setOpen((v) => !v);
         }}
       >
         <span className="truncate">
@@ -231,9 +234,11 @@ export function SiteCreatorDeviceSelector({
             {resolvedWidth} × {resolvedHeight}
           </span>
         </span>
+        {selectOnly ? null : (
         <span className="shrink-0 text-white/35" aria-hidden>
           ▾
         </span>
+        )}
       </button>
       {typeof document !== "undefined" && popover
         ? createPortal(popover, portalHost ?? document.body)

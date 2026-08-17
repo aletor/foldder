@@ -276,7 +276,6 @@ describe("site creator UX create Hero from Button + layers", () => {
 
 describe("site creator UX contextual actions", () => {
   const gateOk = canPersistSiteStructure({ originState: "synced", hasSnapshot: true });
-  const gateSync = canPersistSiteStructure({ originState: "update_available", hasSnapshot: true });
 
   it("shape + text shows Crear botón as primary", () => {
     const p = makeButtonPage();
@@ -463,23 +462,6 @@ describe("site creator UX contextual actions", () => {
     expect(model.primaryActions.some((a) => a.id === "createButton")).toBe(false);
     expect(model.primaryActions.some((a) => a.id === "createSection")).toBe(false);
     expect(model.primaryActions.some((a) => a.id === "keepTogether")).toBe(false);
-  });
-
-  it("pending update blocks persistent ops with sync action", () => {
-    const p = makeButtonPage();
-    const index = buildSiteSelectionIndex(p);
-    const model = resolveContextualModel({
-      units: [
-        { kind: "layer", layerId: "btn_shape" },
-        { kind: "layer", layerId: "btn_text" },
-      ],
-      inspectNodeId: null,
-      blueprint: createEmptySiteBlueprintV1(),
-      index,
-      snapshot: null,
-      persistGate: gateSync,
-    });
-    expect(model.primaryActions.map((a) => a.id)).toEqual(["syncToContinue"]);
   });
 });
 

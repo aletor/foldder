@@ -4,6 +4,7 @@
  */
 import type { FreehandObject } from "../FreehandStudio";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
+import { sourceWorldBoundsOfIds, sourceWorldVisualBounds } from "./site-creator-layer-world-bounds";
 import {
   pageRectFullyContains,
   unionPageRects,
@@ -115,10 +116,7 @@ function minZ(ids: string[], index: SiteCreatorSelectionIndex): number[] {
 }
 
 function boundsOfIds(ids: string[], index: SiteCreatorSelectionIndex): PageRect | null {
-  const rects = ids
-    .map((id) => index.byId[id]?.visualBounds)
-    .filter((r): r is PageRect => Boolean(r));
-  return unionPageRects(rects);
+  return sourceWorldBoundsOfIds(ids, index);
 }
 
 function isShapeType(type: string): boolean {
@@ -175,7 +173,8 @@ export function classifyContainerBackground(args: {
   for (const id of contentIds) {
     const entry = index.byId[id];
     if (!entry || !isBackgroundCandidateType(entry.type)) continue;
-    const b = entry.visualBounds;
+    const b = sourceWorldVisualBounds(id, index);
+    if (!b) continue;
     const cover = area(b) / containerA;
     const widthRatio = b.width / Math.max(1, containerBounds.width);
     const heightRatio = b.height / Math.max(1, containerBounds.height);
@@ -230,7 +229,7 @@ export function classifyContainerBackground(args: {
     for (const c of candidates.slice(1)) {
       const e = index.byId[c.id];
       if (!e) continue;
-      const cover = area(e.visualBounds) / containerA;
+      const cover = area(sourceWorldVisualBounds(c.id, index) ?? e.visualBounds) / containerA;
       if (cover < 0.85) continue;
       if (compareZOrderPath(e.zOrderPath, index.byId[candidates[0].id]!.zOrderPath) >= 0) continue;
       backgroundLayerIds.push(c.id);

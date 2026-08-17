@@ -3,11 +3,10 @@ import type { SiteCreatorOriginState } from "./site-creator-origin";
 
 export type PersistentStructureGate =
   | { allowed: true; mode: "synced" | "disconnected" | "different_source_snapshot" }
-  | { allowed: false; reason: "update_available" | "no_snapshot" | "preparing" | "incompatible"; message: string };
+  | { allowed: false; reason: "no_snapshot" | "preparing" | "incompatible"; message: string };
 
 /**
- * Operaciones persistentes solo contra committedPage (sourceSnapshot).
- * Con update_available: bloquear y pedir sincronización.
+ * Operaciones persistentes contra committedPage (sourceSnapshot).
  * Desconectado / different_source: se trabaja sobre el snapshot confirmado.
  */
 export function canPersistSiteStructure(args: {
@@ -22,12 +21,6 @@ export function canPersistSiteStructure(args: {
     };
   }
   switch (args.originState) {
-    case "update_available":
-      return {
-        allowed: false,
-        reason: "update_available",
-        message: "Actualizar diseño para continuar",
-      };
     case "preparing":
       return {
         allowed: false,

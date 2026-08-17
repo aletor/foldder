@@ -95,6 +95,15 @@ export function pageRectFullyContains(outer: PageRect, inner: PageRect): boolean
   );
 }
 
+export function pageRectsIntersect(a: PageRect, b: PageRect): boolean {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
 export function unionPageRects(rects: PageRect[]): PageRect | null {
   if (rects.length === 0) return null;
   let minX = Infinity;

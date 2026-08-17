@@ -10,7 +10,9 @@ import {
   buildViewportState,
   clampPreviewZoom,
   clampViewportWidth,
+  computeFillWidthPreviewZoom,
   computeFitPreviewZoom,
+  measureSiteCreatorPreviewAvailableSize,
   defaultDeviceConfig,
   detectViewportPreset,
   pageToScreenScale,
@@ -62,6 +64,44 @@ describe("site-creator-viewport", () => {
       availableHeight: 600,
     });
     expect(zoomedIn).toBe(2);
+  });
+
+  it("fills preview width without fitting height", () => {
+    expect(
+      computeFillWidthPreviewZoom({
+        layoutWidth: 1920,
+        availableWidth: 1920,
+      }),
+    ).toBe(1);
+    expect(
+      computeFillWidthPreviewZoom({
+        layoutWidth: 1920,
+        availableWidth: 960,
+      }),
+    ).toBeCloseTo(0.5);
+    expect(
+      computeFillWidthPreviewZoom({
+        layoutWidth: 1920,
+        availableWidth: 2560,
+      }),
+    ).toBeCloseTo(2560 / 1920);
+  });
+
+  it("measures full client size in page preview and padded size in edit", () => {
+    expect(
+      measureSiteCreatorPreviewAvailableSize({
+        clientWidth: 800,
+        clientHeight: 600,
+        fillViewport: true,
+      }),
+    ).toEqual({ width: 800, height: 600 });
+    expect(
+      measureSiteCreatorPreviewAvailableSize({
+        clientWidth: 800,
+        clientHeight: 600,
+        fillViewport: false,
+      }),
+    ).toEqual({ width: 752, height: 552 });
   });
 
   it("keeps page→screen scale as layoutScale × previewZoom", () => {

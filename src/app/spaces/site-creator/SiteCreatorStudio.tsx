@@ -1,14 +1,17 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Eye, Globe, Loader2 } from "lucide-react";
 import { getPageDimensions } from "../indesign/page-formats";
-import { FoldderStudioHeader } from "../FoldderStudioHeader";
+import { FoldderStudioHeader, foldderStudioHeaderActionClassName } from "../FoldderStudioHeader";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
 import {
   SiteCreatorDeviceSelector,
   SiteCreatorOrientationToggle,
 } from "./SiteCreatorDeviceSelector";
 import {
+  clampViewportWidth,
+  computeFillWidthPreviewZoom,
   computeFitPreviewZoom,
   defaultDeviceConfig,
   resolveDeviceDimensions,
@@ -28,7 +31,6 @@ import {
   isAdaptationEligibleUnit,
   isResponsiveTargetBroken,
   resolveEffectiveResponsiveMode,
-  resolveResponsiveOverride,
   resolveResponsiveTarget,
   setResponsiveOverride,
   treeOverrideDotState,
@@ -56,7 +58,6 @@ import {
 } from "./site-creator-responsive-tunes";
 import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
-import { SiteCreatorSyncDialog } from "./SiteCreatorSyncDialog";
 import { SiteCreatorOutlinePanel, expandPathForUnit } from "./SiteCreatorOutlinePanel";
 import { SiteCreatorButtonLabelPrompt } from "./SiteCreatorSelectionToolbar";
 import type { SiteCreatorUnitOutline } from "./SiteCreatorSelectionSurface";
@@ -92,8 +93,13 @@ import {
   siteCreatorOriginStateLabel,
   type SiteCreatorOriginState,
 } from "./site-creator-origin";
-import type { DesignerSourceSnapshotV1, ResponsiveEditableBand, ResponsiveItemRef, SiteBlueprintV1 } from "./site-creator-types";
+import type { DesignerSourceSnapshotV1, ResponsiveEditableBand, ResponsiveItemRef, SiteBlueprintV1, SiteCreatorPublishStateV1 } from "./site-creator-types";
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import {
+  collectPublishImageRefs,
+  compilePublishedSite,
+  publishAssetPlaceholder,
+} from "./site-creator-publish-compile";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { FOLDDER_STUDIO_BODY_CLASS } from "../studio-node/studio-node-architecture";
 import {
@@ -119,6 +125,7 @@ import {
   resolveButtonParent,
   semanticNodeBounds,
 } from "./site-blueprint-ops";
+import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import {
   collapseLayersToSelectionUnits,
   deriveBlueprintNodeDisplayLabel,
@@ -135,6 +142,11 @@ import {
   containerDisplayLabel,
   isSemanticContainerNode,
 } from "./site-creator-hierarchy";
+import {
+  dismissDesignerMirrorNode,
+  isAutoDesignerMirrorNode,
+} from "./site-creator-designer-group-dismiss";
+import type { SiteBlueprintLayoutGroupNode } from "./site-creator-types";
 
 const SITE_CREATOR_ACCENT = "#22d3ee";
 const STALE_SYNC_MESSAGE = "Designer volvió a cambiar. Revisa la actualización de nuevo.";
@@ -150,11 +162,12 @@ export interface SiteCreatorStudioProps {
   syncBusy?: boolean;
   syncErrorMessage?: string | null;
   onClose: () => void;
-  onConfirmSnapshotSync: (reviewedCandidateHash: string) => void;
   onConfirmOriginChange: (reviewedCandidateHash: string) => void;
   onDismissSyncError: () => void;
   /** Una sola escritura atómica del Blueprint. */
   onBlueprintChange: (next: SiteBlueprintV1) => void;
+  publish?: SiteCreatorPublishStateV1 | null;
+  onPublishChange?: (next: SiteCreatorPublishStateV1 | null) => void;
 }
 
 function emptyStateMessage(originState: SiteCreatorOriginState): string {
@@ -169,8 +182,6 @@ function emptyStateMessage(originState: SiteCreatorOriginState): string {
       return "Hay un diseño importado de otro Designer. Revisa la conexión antes de continuar.";
     case "source_disconnected":
       return "El Designer ya no está conectado. Se muestra la última versión importada.";
-    case "update_available":
-      return "El documento de origen cambió. Puedes actualizar el diseño guardado.";
     default:
       return "Snapshot no disponible.";
   }
@@ -185,7 +196,7 @@ function selectionLooksEqual(a: SiteCreatorSelectionState, b: SiteCreatorSelecti
 }
 
 function isOriginStatusActionable(originState: SiteCreatorOriginState): boolean {
-  return originState === "update_available" || originState === "different_source";
+  return originState === "different_source";
 }
 
 function reconcileUnits(
@@ -319,10 +330,11 @@ export function SiteCreatorStudio({
   syncBusy = false,
   syncErrorMessage,
   onClose,
-  onConfirmSnapshotSync,
   onConfirmOriginChange,
   onDismissSyncError,
   onBlueprintChange,
+  publish = null,
+  onPublishChange,
 }: SiteCreatorStudioProps) {
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -348,8 +360,10 @@ export function SiteCreatorStudio({
     width: number;
     height: number;
   } | null>(null);
-  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
+  const [pagePreviewMode, setPagePreviewMode] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   const [units, setUnits] = useState<SiteCreatorSelectionUnit[]>([]);
   /** Ancestros semánticos de la selección (no es un “modo” visible). */
@@ -392,7 +406,8 @@ export function SiteCreatorStudio({
   );
 
   const page = previewPage ?? snapshot?.page ?? null;
-  const committedPage = snapshot?.page ?? null;
+  const committedPage =
+    originState === "synced" && page ? page : (snapshot?.page ?? null);
   const pageDimensions = page ? getPageDimensions(page) : null;
   const referenceWidth = pageDimensions?.width ?? 1920;
   const referenceHeight = pageDimensions?.height ?? 1080;
@@ -406,14 +421,20 @@ export function SiteCreatorStudio({
   );
   const activeDeviceDimensions =
     viewportBand === "tablet" ? tabletDimensions : viewportBand === "mobile" ? mobileDimensions : null;
-  const effectiveViewportWidth =
-    viewportBand === "original"
+  const livePreviewWidth = clampViewportWidth(
+    availablePreviewSize?.width ??
+      (typeof window !== "undefined" ? window.innerWidth : referenceWidth),
+    referenceWidth,
+  );
+  const effectiveViewportWidth = pagePreviewMode
+    ? livePreviewWidth
+    : viewportBand === "original"
       ? (originalViewportWidth ?? referenceWidth)
       : activeDeviceDimensions!.width;
   const deviceFrame =
-    activeDeviceDimensions != null
-      ? { width: activeDeviceDimensions.width, height: activeDeviceDimensions.height }
-      : null;
+    pagePreviewMode || activeDeviceDimensions == null
+      ? null
+      : { width: activeDeviceDimensions.width, height: activeDeviceDimensions.height };
   const responsiveBand = bandForViewportWidth(effectiveViewportWidth, referenceWidth);
   const showPreview = Boolean(page);
 
@@ -454,6 +475,15 @@ export function SiteCreatorStudio({
   useEffect(() => {
     if (!availablePreviewSize) return;
     if (availablePreviewSize.width < 80 || availablePreviewSize.height < 80) return;
+    if (pagePreviewMode) {
+      setPreviewZoom(
+        computeFillWidthPreviewZoom({
+          layoutWidth,
+          availableWidth: availablePreviewSize.width,
+        }),
+      );
+      return;
+    }
     const z = computeFitPreviewZoom({
       layoutWidth: fitTargetWidth,
       layoutHeight: fitTargetHeight,
@@ -461,7 +491,13 @@ export function SiteCreatorStudio({
       availableHeight: availablePreviewSize.height,
     });
     setPreviewZoom(z);
-  }, [availablePreviewSize, fitTargetHeight, fitTargetWidth]);
+  }, [
+    availablePreviewSize,
+    fitTargetHeight,
+    fitTargetWidth,
+    layoutWidth,
+    pagePreviewMode,
+  ]);
 
   useEffect(() => {
     if (responsiveBand === "wide") setFocalLayerId(null);
@@ -528,6 +564,99 @@ export function SiteCreatorStudio({
     setPendingParentChoice(null);
   }, []);
 
+  const exitPagePreview = useCallback(() => {
+    setPagePreviewMode(false);
+  }, []);
+
+  const togglePagePreview = useCallback(() => {
+    setPagePreviewMode((open) => {
+      if (open) return false;
+      clearUnitsAndInspect();
+      setDesignerShadow(EMPTY_SITE_CREATOR_SELECTION);
+      setOutlineHoverKey(null);
+      setFocalLayerId(null);
+      return true;
+    });
+  }, [clearUnitsAndInspect]);
+
+  const publishPage = snapshot?.page ?? page;
+  const canPublish = Boolean(publishPage) && !publishing;
+
+  const handlePublish = useCallback(async () => {
+    if (!publishPage || publishing) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const refs = collectPublishImageRefs(publishPage);
+      const imageHrefByLayerId = Object.fromEntries(
+        refs.map((ref) => [ref.layerId, publishAssetPlaceholder(ref.layerId)]),
+      );
+      const compiled = compilePublishedSite({
+        page: publishPage,
+        blueprint,
+        title: nodeLabel,
+        imageHrefByLayerId,
+      });
+      const response = await fetch("/api/site-creator-publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteId: publish?.siteId,
+          html: compiled.html,
+          css: compiled.css,
+          js: compiled.js,
+          imageRefs: refs,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | SiteCreatorPublishStateV1
+        | { error?: string }
+        | null;
+      if (!response.ok || !payload || !("siteId" in payload) || !payload.siteId) {
+        throw new Error(
+          (payload && "error" in payload && payload.error) || "No se pudo publicar el sitio.",
+        );
+      }
+      onPublishChange?.({
+        siteId: payload.siteId,
+        publishedAt: payload.publishedAt,
+        publicPath: payload.publicPath,
+        fileCount: payload.fileCount,
+      });
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "No se pudo publicar el sitio.");
+    } finally {
+      setPublishing(false);
+    }
+  }, [blueprint, nodeLabel, onPublishChange, publish?.siteId, publishPage, publishing]);
+
+  const handleUnpublish = useCallback(async () => {
+    if (!publish?.siteId || publishing) return;
+    const confirmed = window.confirm("¿Quitar la web publicada? Se borra la carpeta pública.");
+    if (!confirmed) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const response = await fetch(
+        `/api/site-creator-publish?siteId=${encodeURIComponent(publish.siteId)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error || "No se pudo despublicar el sitio.");
+      }
+      onPublishChange?.(null);
+    } catch (error) {
+      setPublishError(error instanceof Error ? error.message : "No se pudo despublicar el sitio.");
+    } finally {
+      setPublishing(false);
+    }
+  }, [onPublishChange, publish?.siteId, publishing]);
+
+  const publishedUrl = publish?.publicPath
+    ? `${typeof window !== "undefined" ? window.location.origin : ""}${publish.publicPath}`
+    : null;
+
   const selectCreatedNode = useCallback((nodeId: string | null | undefined) => {
     if (!nodeId) {
       setUnits([]);
@@ -587,7 +716,11 @@ export function SiteCreatorStudio({
         setStructureError(result.message);
         return;
       }
-      commitBlueprint(result.blueprint);
+      const blueprintWithDefaults = applyNewSectionResponsiveDefaults(
+        result.blueprint,
+        result.createdNodeId,
+      );
+      commitBlueprint(blueprintWithDefaults);
       selectCreatedNode(result.createdNodeId);
       setSectionMenuOpen(false);
     },
@@ -766,18 +899,10 @@ export function SiteCreatorStudio({
   const openReviewDialog = useCallback(() => {
     if (syncBusy) return;
     onDismissSyncError();
-    if (originState === "update_available") {
-      setSyncDialogOpen(true);
-    } else if (originState === "different_source") {
+    if (originState === "different_source") {
       setOriginDialogOpen(true);
     }
   }, [onDismissSyncError, originState, syncBusy]);
-
-  const closeSyncDialog = useCallback(() => {
-    if (syncBusy) return;
-    setSyncDialogOpen(false);
-    onDismissSyncError();
-  }, [onDismissSyncError, syncBusy]);
 
   const closeOriginDialog = useCallback(() => {
     if (syncBusy) return;
@@ -797,38 +922,43 @@ export function SiteCreatorStudio({
     ? blueprint.nodes[selectedBlueprintNodeId] ?? null
     : null;
 
+  const removeBlueprintStructureNode = useCallback(
+    (nodeId: string) => {
+      const node = blueprint.nodes[nodeId];
+      if (!node) return;
+      let source = blueprint;
+      if (committedIndex && isAutoDesignerMirrorNode(node, committedIndex)) {
+        source = dismissDesignerMirrorNode(
+          blueprint,
+          node as SiteBlueprintLayoutGroupNode,
+          committedIndex,
+        );
+      }
+      const result = removeBlueprintNodePreservingContent(source, nodeId);
+      if (!result.ok) {
+        setStructureError(result.message);
+        return;
+      }
+      commitBlueprint(result.blueprint);
+      clearUnitsAndInspect();
+    },
+    [blueprint, clearUnitsAndInspect, commitBlueprint, committedIndex],
+  );
+
   const removeSelectedStructure = useCallback(() => {
     if (!selectedBlueprintNode || contextualInspectId) return;
     if (selectedBlueprintNode.childIds.length > 0) {
       setRemoveConfirmId(selectedBlueprintNode.id);
       return;
     }
-    const result = removeBlueprintNodePreservingContent(blueprint, selectedBlueprintNode.id);
-    if (!result.ok) {
-      setStructureError(result.message);
-      return;
-    }
-    commitBlueprint(result.blueprint);
-    clearUnitsAndInspect();
-  }, [
-    blueprint,
-    clearUnitsAndInspect,
-    commitBlueprint,
-    contextualInspectId,
-    selectedBlueprintNode,
-  ]);
+    removeBlueprintStructureNode(selectedBlueprintNode.id);
+  }, [contextualInspectId, removeBlueprintStructureNode, selectedBlueprintNode]);
 
   const confirmRemove = useCallback(() => {
     if (!removeConfirmId) return;
-    const result = removeBlueprintNodePreservingContent(blueprint, removeConfirmId);
+    removeBlueprintStructureNode(removeConfirmId);
     setRemoveConfirmId(null);
-    if (!result.ok) {
-      setStructureError(result.message);
-      return;
-    }
-    commitBlueprint(result.blueprint);
-    clearUnitsAndInspect();
-  }, [blueprint, clearUnitsAndInspect, commitBlueprint, removeConfirmId]);
+  }, [removeBlueprintStructureNode, removeConfirmId]);
 
   const dispatchSelection = useCallback(
     (action: SiteCreatorSelectionAction) => {
@@ -865,11 +995,22 @@ export function SiteCreatorStudio({
             );
             if (!coverage.has(action.layerId)) {
               setInteractionPath([]);
-              const unit = resolveRootClickUnit(action.layerId, blueprint, selectionIndex);
+              const clickUnits = collapseLayersToSelectionUnits(
+                [action.layerId],
+                blueprint,
+                selectionIndex,
+              );
               setUnits(
                 action.additive
-                  ? toggleSelectionUnit(displayUnits, unit, blueprint)
-                  : [unit],
+                  ? collapseLayersToSelectionUnits(
+                      [
+                        ...unitsToStructureLayerIds(displayUnits, blueprint),
+                        ...unitsToStructureLayerIds(clickUnits, blueprint),
+                      ],
+                      blueprint,
+                      selectionIndex,
+                    )
+                  : clickUnits,
               );
               patchShadow({ type: "hover", layerId: action.layerId });
               return;
@@ -898,10 +1039,32 @@ export function SiteCreatorStudio({
             return;
           }
 
-          const unit = resolveRootClickUnit(action.layerId, blueprint, selectionIndex);
+          const clickUnits = collapseLayersToSelectionUnits(
+            [action.layerId],
+            blueprint,
+            selectionIndex,
+          );
           if (action.additive) {
-            setUnits((current) => toggleSelectionUnit(current, unit, blueprint));
+            const allSelected = clickUnits.every((candidate) =>
+              displayUnits.some((existing) => sameSelectionUnit(existing, candidate)),
+            );
+            setUnits(
+              allSelected
+                ? displayUnits.filter(
+                    (existing) =>
+                      !clickUnits.some((candidate) => sameSelectionUnit(existing, candidate)),
+                  )
+                : collapseLayersToSelectionUnits(
+                    [
+                      ...unitsToStructureLayerIds(displayUnits, blueprint),
+                      ...unitsToStructureLayerIds(clickUnits, blueprint),
+                    ],
+                    blueprint,
+                    selectionIndex,
+                  ),
+            );
           } else {
+            const unit = clickUnits[0]!;
             if (unit.kind === "blueprintNode") {
               const path: string[] = [];
               let walk: string | null = blueprint.nodes[unit.nodeId]?.parentId ?? null;
@@ -924,7 +1087,7 @@ export function SiteCreatorStudio({
                 setInteractionPath([]);
               }
             }
-            setUnits([unit]);
+            setUnits(clickUnits);
           }
           setStructureError(null);
           return;
@@ -1136,9 +1299,6 @@ export function SiteCreatorStudio({
         case "chooseAddTarget":
           setAddTargetMenuOpen(true);
           return;
-        case "syncToContinue":
-          openReviewDialog();
-          return;
         case "editContent":
         case "exitInspect":
           return;
@@ -1309,7 +1469,7 @@ export function SiteCreatorStudio({
       }
     }
 
-    const syncBlocked = !persistGate.allowed || originState === "update_available";
+    const syncBlocked = !persistGate.allowed;
     const capability = resolveAdaptationCapability({
       target,
       band: responsiveBand,
@@ -1452,9 +1612,6 @@ export function SiteCreatorStudio({
       : null;
     const mediaTune = layerId ? resolveMediaTune(blueprint, layerId, editableBand) : null;
     const showReset = Boolean(itemTune || containerTune || mediaTune);
-    const hasAdaptationOverride = Boolean(
-      containerTarget && resolveResponsiveOverride(blueprint, containerTarget, editableBand),
-    );
     return {
       band: editableBand,
       kind,
@@ -1467,7 +1624,6 @@ export function SiteCreatorStudio({
         selectionParentIsStacked(unit, blueprint, editableBand, selectionIndex),
       resetLabel: editableBand === "mobile" ? "Restablecer en Móvil" : "Restablecer en Tablet",
       showReset,
-      hasAdaptationOverride,
       containerContentCount: containerTarget
         ? countContainerReflowUnits({
             blueprint,
@@ -1620,17 +1776,6 @@ export function SiteCreatorStudio({
           mode: "auto",
         }).blueprint;
         if (next !== blueprint) commitBlueprint(next);
-      },
-      onResetAdaptation: () => {
-        if (!editableBand || !refineModel?.containerTarget) return;
-        commitTune(
-          setResponsiveOverride({
-            blueprint,
-            target: refineModel.containerTarget,
-            band: editableBand,
-            mode: "auto",
-          }),
-        );
       },
       onResetBand: () => {
         if (!editableBand) return;
@@ -2062,6 +2207,20 @@ export function SiteCreatorStudio({
     const onKey = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
 
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && (event.key === "p" || event.key === "P")) {
+        event.preventDefault();
+        event.stopPropagation();
+        togglePagePreview();
+        return;
+      }
+      if (pagePreviewMode && event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        exitPagePreview();
+        return;
+      }
+      if (pagePreviewMode) return;
+
       const meta = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
 
@@ -2098,7 +2257,7 @@ export function SiteCreatorStudio({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onBlueprintChange, removeSelectedStructure]);
+  }, [exitPagePreview, onBlueprintChange, pagePreviewMode, removeSelectedStructure, togglePagePreview]);
 
   const originLabel = siteCreatorOriginStateLabel(originState);
   const designerLine = designerLabel?.trim() || snapshot?.designerNodeId || "—";
@@ -2133,14 +2292,15 @@ export function SiteCreatorStudio({
         )}
       </div>
       <div className="min-w-0 flex-1" />
-      {structureError ||
+      {publishError ||
+      structureError ||
       (contextualModel.statusMessage &&
         contextualModel.statusMessage !== "Ctrl/Cmd + clic para añadir elementos") ? (
         <span
           className="max-w-[220px] shrink-0 truncate text-[10px] text-rose-300/90"
-          title={structureError ?? contextualModel.statusMessage ?? undefined}
+          title={publishError ?? structureError ?? contextualModel.statusMessage ?? undefined}
         >
-          {structureError ?? contextualModel.statusMessage}
+          {publishError ?? structureError ?? contextualModel.statusMessage}
         </span>
       ) : (
         <span className="w-0 shrink-0" />
@@ -2154,6 +2314,7 @@ export function SiteCreatorStudio({
       data-foldder-studio-root
       data-foldder-studio-canvas=""
       data-foldder-site-creator-studio=""
+      data-site-creator-page-preview={pagePreviewMode ? "1" : undefined}
       role="dialog"
       aria-modal="true"
     >
@@ -2168,9 +2329,68 @@ export function SiteCreatorStudio({
         onClose={onClose}
         iconBackground={SITE_CREATOR_ACCENT}
         titleSlot={headerTitleSlot}
+        actions={
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-testid="site-creator-publish"
+              title={publish ? "Publicar de nuevo" : "Publicar sitio"}
+              disabled={!canPublish}
+              onClick={() => void handlePublish()}
+              className={foldderStudioHeaderActionClassName(
+                publish ? "bg-[#22d3ee]/20 text-[#22d3ee] hover:bg-[#22d3ee]/30" : "",
+              )}
+            >
+              {publishing ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={2.25} aria-hidden />
+              ) : (
+                <Globe className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+              )}
+              {publishing ? "Publicando" : publish ? "Publicar de nuevo" : "Publicar"}
+            </button>
+            {publishedUrl ? (
+              <a
+                data-testid="site-creator-publish-open"
+                href={publishedUrl}
+                target="_blank"
+                rel="noreferrer"
+                title={publishedUrl}
+                className={foldderStudioHeaderActionClassName("")}
+              >
+                Abrir web
+              </a>
+            ) : null}
+            {publish ? (
+              <button
+                type="button"
+                data-testid="site-creator-unpublish"
+                title="Quitar la web publicada"
+                disabled={publishing}
+                onClick={() => void handleUnpublish()}
+                className={foldderStudioHeaderActionClassName("text-white/55")}
+              >
+                Despublicar
+              </button>
+            ) : null}
+            <button
+              type="button"
+              data-testid="site-creator-page-preview-toggle"
+              aria-pressed={pagePreviewMode}
+              title={pagePreviewMode ? "Salir de Preview (P)" : "Preview (P)"}
+              onClick={togglePagePreview}
+              className={foldderStudioHeaderActionClassName(
+                pagePreviewMode ? "bg-[#a3e635]/20 text-[#a3e635] hover:bg-[#a3e635]/30" : "",
+              )}
+            >
+              <Eye className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+              Preview
+            </button>
+          </div>
+        }
       />
 
       <div className="site-creator-studio__body flex min-h-0 flex-1">
+        {pagePreviewMode ? null : (
         <SiteCreatorOutlinePanel
           tree={presentationTree}
           selectedUnits={displayUnits}
@@ -2244,8 +2464,13 @@ export function SiteCreatorStudio({
           resolveOverride={resolveOutlineOverride}
           emptyHint={!showPreview ? emptyStateMessage(originState) : null}
         />
+        )}
 
-        <main className="site-creator-studio__canvas flex min-h-0 min-w-0 flex-1 flex-col bg-[#171b22]">
+        <main
+          className={`site-creator-studio__canvas flex min-h-0 min-w-0 flex-1 flex-col ${
+            pagePreviewMode ? "bg-[#f4f4f5]" : "bg-[#171b22]"
+          }`}
+        >
           {showPreview && displayPage ? (
             <SiteCreatorPreview
               page={displayPage}
@@ -2253,28 +2478,32 @@ export function SiteCreatorStudio({
               referenceWidth={referenceWidth}
               previewZoom={previewZoom}
               deviceFrame={deviceFrame}
-              onViewportWidthChange={setOriginalViewportWidth}
+              readOnly={pagePreviewMode}
+              onViewportWidthChange={pagePreviewMode ? undefined : setOriginalViewportWidth}
               onAvailableSizeChange={setAvailablePreviewSize}
-              selection={displayShadow}
-              selectionIndex={selectionIndex ?? undefined}
-              onSelectionAction={dispatchSelection}
-              unitOutlines={unitOutlines}
-              hoverOutline={hoverOutline}
-              contextOutlines={contextOutlines}
-              sectionOutlines={sectionOutlines}
-              ghostOutlines={ghostOutlines}
-              microbar={microbarModel}
-              onMicrobarNavigate={onMicrobarNavigate}
-              onMicrobarAction={handleMicrobarAction}
+              selection={pagePreviewMode ? undefined : displayShadow}
+              selectionIndex={pagePreviewMode ? undefined : selectionIndex ?? undefined}
+              blueprint={pagePreviewMode ? null : blueprint}
+              onSelectionAction={pagePreviewMode ? undefined : dispatchSelection}
+              unitOutlines={pagePreviewMode ? undefined : unitOutlines}
+              hoverOutline={pagePreviewMode ? undefined : hoverOutline}
+              contextOutlines={pagePreviewMode ? undefined : contextOutlines}
+              sectionOutlines={pagePreviewMode ? undefined : sectionOutlines}
+              ghostOutlines={pagePreviewMode ? undefined : ghostOutlines}
+              microbar={pagePreviewMode ? null : microbarModel}
+              onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
+              onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}
               onCanvasInteraction={() => undefined}
               objectClipById={objectClipById}
-              floatingPortalHost={floatingHostEl}
-              transformEnabled={Boolean(editableBand && refineModel?.kind === "item")}
+              floatingPortalHost={pagePreviewMode ? null : floatingHostEl}
+              transformEnabled={!pagePreviewMode && Boolean(editableBand && refineModel?.kind === "item")}
               transformBounds={
-                editableBand && refineModel?.kind === "item" ? unitOutlines[0]?.bounds ?? null : null
+                !pagePreviewMode && editableBand && refineModel?.kind === "item"
+                  ? unitOutlines[0]?.bounds ?? null
+                  : null
               }
-              onTransformCommit={onTransformCommit}
-              focalLayerId={focalLayerId}
+              onTransformCommit={pagePreviewMode ? undefined : onTransformCommit}
+              focalLayerId={pagePreviewMode ? null : focalLayerId}
               onFocalPoint={(focal) => {
                 if (!editableBand || !focalLayerId) return;
                 commitTune(
@@ -2296,6 +2525,19 @@ export function SiteCreatorStudio({
           )}
 
           <footer className="site-creator-studio__footer flex h-11 shrink-0 items-center gap-3 border-t border-white/10 bg-[#101820] px-4 text-[11px] text-white/65">
+            {pagePreviewMode ? (
+              <span
+                data-testid="site-creator-preview-live-band"
+                className="shrink-0 rounded bg-white/12 px-2.5 py-1 text-[10px] font-semibold tracking-wide text-white"
+              >
+                {responsiveBand === "wide"
+                  ? "Original"
+                  : responsiveBand === "tablet"
+                    ? "Tablet"
+                    : "Móvil"}{" "}
+                {Math.round(effectiveViewportWidth)}
+              </span>
+            ) : (
             <div className="flex min-w-0 items-center gap-1">
               <button
                 type="button"
@@ -2349,7 +2591,9 @@ export function SiteCreatorStudio({
                 }}
               />
             </div>
+            )}
 
+            {pagePreviewMode ? null : (
             <SiteCreatorOrientationToggle
               visible={viewportBand === "tablet" || viewportBand === "mobile"}
               orientation={
@@ -2363,9 +2607,10 @@ export function SiteCreatorStudio({
                 }
               }}
             />
+            )}
 
             <div className="ml-auto flex items-center gap-3">
-              {editableBand && bandHasCustomizations(blueprint, editableBand) ? (
+              {!pagePreviewMode && editableBand && bandHasCustomizations(blueprint, editableBand) ? (
                 <button
                   type="button"
                   data-testid="site-creator-reset-band"
@@ -2383,7 +2628,11 @@ export function SiteCreatorStudio({
                   ? `${Math.round(deviceFrame.width)} × ${Math.round(deviceFrame.height)} px`
                   : `${Math.round(layoutWidth)} × ${Math.round(layoutHeight)} px`}
               </span>
-              <span className="text-emerald-400/90">{showPreview ? "Sin errores" : "—"}</span>
+              {pagePreviewMode ? (
+                <span className="text-white/40">Esc para salir</span>
+              ) : (
+                <span className="text-emerald-400/90">{showPreview ? "Sin errores" : "—"}</span>
+              )}
             </div>
           </footer>
         </main>
@@ -2553,18 +2802,6 @@ export function SiteCreatorStudio({
         </div>
       ) : null}
 
-      {snapshot && candidateSnapshot && syncDialogOpen && originState === "update_available" ? (
-        <SiteCreatorSyncDialog
-          open
-          current={snapshot}
-          candidate={candidateSnapshot}
-          busy={syncBusy}
-          errorMessage={syncErrorMessage}
-          onCancel={closeSyncDialog}
-          onConfirm={onConfirmSnapshotSync}
-        />
-      ) : null}
-
       {snapshot && candidateSnapshot && originDialogOpen && originState === "different_source" ? (
         <SiteCreatorChangeOriginDialog
           open
@@ -2580,7 +2817,7 @@ export function SiteCreatorStudio({
         />
       ) : null}
 
-      {syncErrorMessage && !syncDialogOpen && !originDialogOpen ? (
+      {syncErrorMessage && !originDialogOpen ? (
         <div className="pointer-events-none fixed bottom-14 left-1/2 z-[100040] -translate-x-1/2 rounded border border-rose-400/40 bg-[#101820] px-4 py-2 text-xs text-rose-200 shadow-lg">
           {syncErrorMessage === "stale" ? STALE_SYNC_MESSAGE : syncErrorMessage}
         </div>

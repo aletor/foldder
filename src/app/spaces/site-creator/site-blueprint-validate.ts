@@ -193,6 +193,12 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
   if (blueprint.responsive) {
     next.responsive = structuredClone(blueprint.responsive);
   }
+  if (blueprint.dismissedDesignerMirrors) {
+    next.dismissedDesignerMirrors = {
+      containerLayerIds: [...blueprint.dismissedDesignerMirrors.containerLayerIds],
+      groupIds: [...blueprint.dismissedDesignerMirrors.groupIds],
+    };
+  }
   return next;
 }
 

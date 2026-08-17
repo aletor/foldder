@@ -8,7 +8,6 @@ import {
   resolveSiteBlueprintReferenceState,
 } from "./site-creator-blueprint-refs";
 import { buildDesignerSourceSnapshot, deepCloneDesignerPageState } from "./designer-source-snapshot";
-import { computeDesignerPageContentHash } from "./designer-source-hash";
 import { resolveSiteCreatorOriginState } from "./site-creator-origin";
 import {
   applyConfirmedOriginChange,
@@ -145,7 +144,6 @@ describe("site creator sync and blueprint references", () => {
       snapshot,
       documentEdge: null,
       liveDesignerPageCount: 0,
-      livePageContentHash: null,
     });
     expect(state).toBe("source_disconnected");
     expect(snapshot.page.id).toBe("pg_root");
@@ -158,23 +156,19 @@ describe("site creator sync and blueprint references", () => {
       snapshot,
       documentEdge: { source: "d1" },
       liveDesignerPageCount: 1,
-      livePageContentHash: computeDesignerPageContentHash(deepCloneDesignerPageState(page)),
     });
     expect(state).toBe("synced");
   });
 
-  it("reconnect same origin modified shows update available", () => {
+  it("reconnect same origin modified stays synced (auto-sync handles drift)", () => {
     const page = basePage();
     const snapshot = buildDesignerSourceSnapshot("d1", page);
-    const live = deepCloneDesignerPageState(page);
-    live.objects = [{ id: "new", type: "rect", x: 0, y: 0, width: 1, height: 1 } as FreehandObject];
     const state = resolveSiteCreatorOriginState({
       snapshot,
       documentEdge: { source: "d1" },
       liveDesignerPageCount: 1,
-      livePageContentHash: computeDesignerPageContentHash(live),
     });
-    expect(state).toBe("update_available");
+    expect(state).toBe("synced");
   });
 
   it("different origin does not auto replace snapshot", () => {
@@ -183,7 +177,6 @@ describe("site creator sync and blueprint references", () => {
       snapshot,
       documentEdge: { source: "d_b" },
       liveDesignerPageCount: 1,
-      livePageContentHash: computeDesignerPageContentHash(basePage()),
     });
     expect(state).toBe("different_source");
     expect(snapshot.designerNodeId).toBe("d_a");

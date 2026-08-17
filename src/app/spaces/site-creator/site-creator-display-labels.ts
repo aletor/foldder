@@ -3,6 +3,7 @@ import type { DesignerSourceSnapshotV1, SiteBlueprintNode, SiteBlueprintV1 } fro
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import { collectSemanticCoverageLayerIds, findLayerSemanticOwner } from "./site-blueprint-ownership";
+import { expandLayerIdsWithDesignerGroups } from "./site-creator-designer-group-id";
 import { resolveSnapshotLayerById } from "./designer-source-layers";
 
 /** Unidad de selección orientada al usuario (no se persiste). */
@@ -255,9 +256,10 @@ export function collapseLayersToSelectionUnits(
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
 ): SiteCreatorSelectionUnit[] {
+  const expanded = expandLayerIdsWithDesignerGroups(layerIds, index, blueprint);
   const units: SiteCreatorSelectionUnit[] = [];
   const seen = new Set<string>();
-  for (const layerId of layerIds) {
+  for (const layerId of expanded) {
     const unit = resolveRootClickUnit(layerId, blueprint, index);
     const key = selectionUnitKey(unit);
     if (seen.has(key)) continue;
