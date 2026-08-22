@@ -280,3 +280,33 @@ export function inferSingleContainerForFreeLayers(
   if (common.size === 1) return [...common][0]!;
   return null;
 }
+
+/** Contenedores comunes (sección/grupo) que envuelven geométricamente todas las capas libres. */
+export function commonContainersForFreeLayers(
+  layerIds: string[],
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): string[] {
+  if (layerIds.length === 0) return [];
+  let common: Set<string> | null = null;
+  for (const layerId of layerIds) {
+    const owner = findLayerSemanticOwner(blueprint, layerId, index);
+    if (owner) return [];
+    const hits = containersFullyContainingUnit({ kind: "layer", layerId }, blueprint, index);
+    const hitSet = new Set(hits);
+    if (common === null) common = hitSet;
+    else common = new Set([...common].filter((id) => hitSet.has(id)));
+  }
+  if (!common || common.size === 0) return [];
+  return deepestContainerCandidates([...common], blueprint);
+}
+
+/** De varios contenedores anidados, conserva solo los más profundos (sin ancestros redundantes). */
+export function deepestContainerCandidates(
+  candidates: string[],
+  blueprint: SiteBlueprintV1,
+): string[] {
+  return candidates.filter(
+    (id) => !candidates.some((other) => other !== id && isDescendantOf(blueprint, other, id)),
+  );
+}

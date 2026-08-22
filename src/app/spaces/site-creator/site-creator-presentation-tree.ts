@@ -9,6 +9,7 @@ import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { PageRect } from "./site-creator-coordinate-space";
 import { unionPageRects } from "./site-creator-coordinate-space";
+import { worldVisualBoundsForLayer } from "./site-creator-layer-world-bounds";
 import {
   buildBlueprintOwnershipIndexWithTree,
   collectSemanticCoverageLayerIds,
@@ -366,7 +367,7 @@ function collectPresentationBounds(
       // No debería ser fila; por si acaso union hijos
       return null;
     }
-    const b = entry.visualBounds;
+    const b = worldVisualBoundsForLayer(node.layerId, index) ?? entry.visualBounds;
     into[`layer:${node.layerId}`] = b;
     return b;
   }
@@ -415,7 +416,13 @@ export function buildSiteCreatorPresentationTree(args: {
 
   for (const entry of index.entries) {
     if (!entry.visible || !entry.selectableFromCanvas) continue;
-    if (ownership.ownerByLayerId[entry.layerId] || ownership.coveredByContainerOwner[entry.layerId]) {
+    if (
+      ownership.ownerByLayerId[entry.layerId] ||
+      ownership.coveredByContainerOwner[entry.layerId] ||
+      entry.ancestorIds.some(
+        (id) => ownership.ownerByLayerId[id] || ownership.coveredByContainerOwner[id],
+      )
+    ) {
       continue;
     }
     // Saltar descendientes de unorganized wrappers ya expandidos
@@ -425,10 +432,13 @@ export function buildSiteCreatorPresentationTree(args: {
       for (const p of promoted) {
         if (p.kind === "layer" && seen.has(p.layerId)) continue;
         if (p.kind === "layer") {
+          if (ownership.ownerByLayerId[p.layerId] || ownership.coveredByContainerOwner[p.layerId]) {
+            continue;
+          }
           seen.add(p.layerId);
           const childEntry = index.byId[p.layerId];
           if (childEntry && !isTechnicalWrapper(childEntry.object, childEntry.name)) {
-            boundsByKey[`layer:${p.layerId}`] = childEntry.visualBounds;
+            boundsByKey[`layer:${p.layerId}`] = worldVisualBoundsForLayer(p.layerId, index) ?? childEntry.visualBounds;
             unorganizedChildren.push(p);
           }
         }

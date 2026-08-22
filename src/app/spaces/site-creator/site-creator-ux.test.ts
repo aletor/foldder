@@ -434,7 +434,8 @@ describe("site creator UX contextual actions", () => {
       snapshot: null,
       persistGate: gateOk,
     });
-    expect(model.primaryActions.map((a) => a.id)).toEqual(["separateGroup"]);
+    expect(model.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup"]);
+    expect(model.primaryActions.find((a) => a.id === "groupWidthFull")?.label).toBe("Ancho completo");
     expect(model.primaryActions.find((a) => a.id === "separateGroup")?.label).toBe("Desagrupar");
   });
 

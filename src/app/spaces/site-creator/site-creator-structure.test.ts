@@ -750,10 +750,10 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
 
   it("27. ambiguous parent requires choice", () => {
     const committed = page([
-      layer({ id: "a", type: "rect", x: 0, y: 0, width: 100, height: 400 }),
-      layer({ id: "b", type: "rect", x: 200, y: 100, width: 100, height: 400 }),
-      layer({ id: "free", type: "rect", x: 50, y: 200, width: 40, height: 30 }),
-      layer({ id: "freeTxt", type: "text", x: 52, y: 202, width: 30, height: 20, text: "F" }),
+      layer({ id: "a", type: "rect", x: 0, y: 0, width: 200, height: 400 }),
+      layer({ id: "b", type: "rect", x: 100, y: 0, width: 200, height: 400 }),
+      layer({ id: "free", type: "rect", x: 150, y: 200, width: 40, height: 30 }),
+      layer({ id: "freeTxt", type: "text", x: 152, y: 202, width: 30, height: 20, text: "F" }),
     ]);
     const index = buildSiteSelectionIndex(committed);
     const secA = createSectionFromSelection({

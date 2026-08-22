@@ -3,12 +3,14 @@ import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { PersistentStructureGate } from "./site-blueprint-history";
 import { findLayerSemanticOwner } from "./site-blueprint-ownership";
+import { resolveLayoutGroupFitForBand } from "./site-creator-group-width-layout";
+import type { ResponsiveBandLike } from "./site-creator-responsive-overrides";
 import {
   deriveBlueprintNodeDisplayLabel,
   deriveLayerDisplayLabel,
   type SiteCreatorSelectionUnit,
 } from "./site-creator-display-labels";
-import { extractAccessibleLabelFromLayers, resolveButtonParent } from "./site-blueprint-ops";
+import { extractAccessibleLabelFromLayers, isWrapEligibleSemanticNode, resolveButtonParent } from "./site-blueprint-ops";
 import {
   containerDisplayLabel,
   containersFullyContainingUnit,
@@ -29,7 +31,8 @@ export type SiteCreatorPrimaryAction = {
     | "addToContainer"
     | "removeFromContainer"
     | "chooseAddTarget"
-    | "editContent";
+    | "groupWidthFull"
+    | "groupWidthContent";
   label: string;
   primary?: boolean;
   /** Destino implícito para addToContainer. */
@@ -57,6 +60,8 @@ export interface ResolveContextualArgs {
   index: SiteCreatorSelectionIndex;
   snapshot: DesignerSourceSnapshotV1 | null;
   persistGate: PersistentStructureGate;
+  /** Vista activa: el microbar Ancho completo/natural sigue la banda, no Original. */
+  band?: ResponsiveBandLike;
 }
 
 function isTextLayer(layerId: string, index: SiteCreatorSelectionIndex): boolean {
@@ -194,9 +199,17 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
       };
     }
     if (node.kind === "layoutGroup") {
+      const fitted = resolveLayoutGroupFitForBand(blueprint, node, args.band ?? "wide") != null;
       return {
         summary: label,
-        primaryActions: [{ id: "separateGroup", label: "Desagrupar" }],
+        primaryActions: [
+          {
+            id: fitted ? "groupWidthContent" : "groupWidthFull",
+            label: fitted ? "Ancho natural" : "Ancho completo",
+            primary: true,
+          },
+          { id: "separateGroup", label: "Desagrupar" },
+        ],
         overflowActions: [],
         canvasLabel: label,
         breadcrumb: null,
@@ -284,7 +297,7 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
       overflowActions: [],
       canvasLabel: canvasLabelForUnits(units, blueprint, index, snapshot),
       breadcrumb: null,
-      statusMessage: "Los elementos deben estar en el mismo nivel. Muévelos primero al mismo contenedor.",
+      statusMessage: "Los elementos deben estar en el mismo nivel. Entra al contenedor o arrastra en el outline.",
     };
   }
 
@@ -320,7 +333,7 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
   }
 
   if (n >= 2) {
-    actions.push({ id: "keepTogether", label: "Agrupar" });
+    actions.push({ id: "keepTogether", label: groupActionLabel(units, blueprint) });
   }
 
   return {
@@ -341,6 +354,22 @@ function shortContainerName(node: SiteBlueprintNode): string {
   if (node.kind === "layoutGroup") return "Grupo";
   if (isSiteButtonNode(node)) return "Botón";
   return "contenedor";
+}
+
+export function canWrapSemanticUnits(
+  units: SiteCreatorSelectionUnit[],
+  blueprint: SiteBlueprintV1,
+): boolean {
+  if (units.length < 2) return false;
+  if (!units.every((u) => u.kind === "blueprintNode")) return false;
+  return units.every((u) => isWrapEligibleSemanticNode(blueprint, u.nodeId));
+}
+
+export function groupActionLabel(
+  units: SiteCreatorSelectionUnit[],
+  blueprint: SiteBlueprintV1,
+): string {
+  return canWrapSemanticUnits(units, blueprint) ? "Envolver en grupo" : "Agrupar";
 }
 
 function resolveAddToContainerActions(
@@ -418,7 +447,7 @@ function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextual
       actions.push({ id: "createButton", label: "Crear botón", primary: true });
     }
     if (units.length >= 2) {
-      actions.push({ id: "keepTogether", label: "Agrupar" });
+      actions.push({ id: "keepTogether", label: groupActionLabel(units, blueprint) });
     }
     if (inspectNodeId && (isSiteSectionNode(node!) || node?.kind === "layoutGroup")) {
       const dest = shortContainerName(node!);

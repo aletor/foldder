@@ -24,10 +24,22 @@ export interface SiteBlueprintSectionNode extends SiteBlueprintNodeBase {
   sectionType: SiteSectionType;
   parentId: null;
   sourceRange: { top: number; bottom: number };
+  /** Sección creada al adaptar un grupo de raíz al ancho de página. */
+  promotedFromGroupId?: string;
 }
+
+export type LayoutGroupWidthMode = "content" | "full" | "scale";
+export type LayoutGroupFitOrigin = "start" | "end";
 
 export interface SiteBlueprintLayoutGroupNode extends SiteBlueprintNodeBase {
   kind: "layoutGroup";
+  /**
+   * Ancho del grupo en la vista Original.
+   * Tablet y móvil guardan el ajuste en `responsive.containerTunes` por banda.
+   */
+  widthMode?: LayoutGroupWidthMode;
+  /** Ancla del escalado proporcional: `start` crece a la derecha, `end` a la izquierda. */
+  fitOrigin?: LayoutGroupFitOrigin;
 }
 
 export interface SiteBlueprintComponentNode extends SiteBlueprintNodeBase {
@@ -106,7 +118,8 @@ export type ResponsiveContainerTuneV1 = {
   gap?: number;
   contentAlignX?: ResponsiveAlignX;
   contentAlignY?: ResponsiveAlignY;
-  contentWidthMode?: ResponsiveWidthMode;
+  contentWidthMode?: ResponsiveWidthMode | "scale";
+  fitOrigin?: LayoutGroupFitOrigin;
   maxContentWidth?: number;
   minHeight?: number;
   autoHeight?: boolean;

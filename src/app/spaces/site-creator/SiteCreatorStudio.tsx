@@ -113,10 +113,12 @@ import {
 import {
   collectSemanticCoverageLayerIds,
   countUnstructuredVisualLayers,
+  findLayerSemanticOwner,
 } from "./site-blueprint-ownership";
 import {
   createButtonFromSelection,
   createLayoutGroupFromSelection,
+  createGroupFromSelection,
   createSectionFromSelection,
   extractAccessibleLabelFromLayers,
   removeBlueprintNodePreservingContent,
@@ -125,6 +127,12 @@ import {
   resolveButtonParent,
   semanticNodeBounds,
 } from "./site-blueprint-ops";
+import {
+  applyGroupFitToContainer,
+  describeGroupFitOpportunity,
+  fitLayoutBandFromViewport,
+  resolveLayoutGroupFromHover,
+} from "./site-creator-group-fit";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import {
   collapseLayersToSelectionUnits,
@@ -742,11 +750,13 @@ export function SiteCreatorStudio({
         setStructureError(persistGate.message);
         return;
       }
-      const result = createLayoutGroupFromSelection({
+      const parentId =
+        preferredParentId !== undefined ? preferredParentId : contextualInspectId ?? undefined;
+      const result = createGroupFromSelection({
         blueprint,
-        selectedLayerIds: structureLayerIds,
+        units: displayUnits,
         index: committedIndex,
-        preferredParentId,
+        preferredParentId: parentId,
       });
       if (!result.ok) {
         if (result.code === "ambiguous_parent" && result.candidateParentIds) {
@@ -760,8 +770,20 @@ export function SiteCreatorStudio({
       commitBlueprint(result.blueprint);
       setPendingParentChoice(null);
       selectCreatedNode(result.createdNodeId);
+      const created = result.createdNodeId ? result.blueprint.nodes[result.createdNodeId] : null;
+      if (created?.parentId) {
+        setInteractionPath([created.parentId]);
+      }
     },
-    [blueprint, commitBlueprint, committedIndex, persistGate, selectCreatedNode, structureLayerIds],
+    [
+      blueprint,
+      commitBlueprint,
+      committedIndex,
+      contextualInspectId,
+      displayUnits,
+      persistGate,
+      selectCreatedNode,
+    ],
   );
 
   const applyButton = useCallback(
@@ -1261,6 +1283,7 @@ export function SiteCreatorStudio({
       index: selectionIndex ?? { entries: [], byId: {} },
       snapshot,
       persistGate,
+      band: fitLayoutBandFromViewport(viewportBand),
     });
     return {
       ...model,
@@ -1268,7 +1291,7 @@ export function SiteCreatorStudio({
         .filter((a) => a.id !== "editContent" && a.id !== "exitInspect")
         .slice(0, 3),
     };
-  }, [blueprint, contextualInspectId, displayUnits, persistGate, selectionIndex, snapshot]);
+  }, [blueprint, contextualInspectId, displayUnits, persistGate, selectionIndex, snapshot, viewportBand]);
 
   const handleMicrobarAction = useCallback(
     (action: SiteCreatorPrimaryAction) => {
@@ -1299,6 +1322,30 @@ export function SiteCreatorStudio({
         case "chooseAddTarget":
           setAddTargetMenuOpen(true);
           return;
+        case "groupWidthFull":
+        case "groupWidthContent": {
+          const unit = displayUnits[0];
+          if (!unit || !selectionIndex || !committedPage) return;
+          let groupId: string | null = null;
+          if (unit.kind === "blueprintNode" && blueprint.nodes[unit.nodeId]?.kind === "layoutGroup") {
+            groupId = unit.nodeId;
+          } else if (unit.kind === "layer") {
+            const owner = findLayerSemanticOwner(blueprint, unit.layerId, selectionIndex);
+            if (owner?.kind === "layoutGroup") groupId = owner.id;
+          }
+          if (!groupId) return;
+          const result = applyGroupFitToContainer({
+            blueprint,
+            groupId,
+            mode: id === "groupWidthFull" ? "full" : "content",
+            origin: "start",
+            index: selectionIndex,
+            page: committedPage,
+            band: fitLayoutBandFromViewport(viewportBand),
+          });
+          if (result.ok) commitBlueprint(result.blueprint);
+          return;
+        }
         case "editContent":
         case "exitInspect":
           return;
@@ -1311,8 +1358,14 @@ export function SiteCreatorStudio({
       applyButton,
       applyGroup,
       applyRemoveFromContainer,
+      blueprint,
+      commitBlueprint,
+      committedPage,
+      displayUnits,
       openReviewDialog,
       removeSelectedStructure,
+      selectionIndex,
+      viewportBand,
     ],
   );
 
@@ -1390,6 +1443,76 @@ export function SiteCreatorStudio({
           : containerDisplayLabel(blueprint.nodes[hoverUnit.nodeId]!, snapshot, selectionIndex),
     };
   }, [blueprint, displayUnits, hoverUnit, presentationTree, selectionIndex, snapshot]);
+
+  const groupFitModel = useMemo(() => {
+    if (pagePreviewMode || !selectionIndex || !committedPage) return null;
+    let selectedGroupId: string | null = null;
+    if (displayUnits.length === 1 && displayUnits[0]?.kind === "blueprintNode") {
+      const node = blueprint.nodes[displayUnits[0].nodeId];
+      if (node?.kind === "layoutGroup") selectedGroupId = node.id;
+    }
+    const group = resolveLayoutGroupFromHover({
+      blueprint,
+      index: selectionIndex,
+      hoverLayerId: displayShadow.hoverId,
+      selectedGroupId,
+    });
+    if (!group) return null;
+    const opportunity = describeGroupFitOpportunity({
+      blueprint,
+      groupId: group.id,
+      index: selectionIndex,
+      page: committedPage,
+      band: fitLayoutBandFromViewport(viewportBand),
+      viewportWidth: effectiveViewportWidth,
+    });
+    if (
+      !opportunity ||
+      (!opportunity.showSideLeft &&
+        !opportunity.showSideRight &&
+        !opportunity.showScaleLeft &&
+        !opportunity.showScaleRight &&
+        !opportunity.showRestoreLeft &&
+        !opportunity.showRestoreRight)
+    ) {
+      return null;
+    }
+    if (!displayShadow.hoverId && selectedGroupId !== group.id) return null;
+    const displayBounds =
+      presentationBoundsForUnit(
+        { kind: "blueprintNode", nodeId: group.id },
+        presentationTree,
+        selectionIndex,
+      ) ?? opportunity.bounds;
+    return { opportunity, displayBounds };
+  }, [
+    blueprint,
+    committedPage,
+    displayShadow.hoverId,
+    displayUnits,
+    effectiveViewportWidth,
+    pagePreviewMode,
+    presentationTree,
+    selectionIndex,
+    viewportBand,
+  ]);
+
+  const handleGroupFit = useCallback(
+    (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => {
+      if (!groupFitModel || !selectionIndex || !committedPage) return;
+      const result = applyGroupFitToContainer({
+        blueprint,
+        groupId: groupFitModel.opportunity.groupId,
+        mode: action.mode,
+        origin: action.origin,
+        index: referenceIndex ?? selectionIndex,
+        page: committedPage,
+        band: fitLayoutBandFromViewport(viewportBand),
+      });
+      if (result.ok) commitBlueprint(result.blueprint);
+    },
+    [blueprint, commitBlueprint, committedPage, groupFitModel, referenceIndex, selectionIndex, viewportBand],
+  );
 
   const contextOutlines = useMemo((): SiteCreatorUnitOutline[] => {
     if (!selectionIndex || displayUnits.length === 0) return [];
@@ -2490,6 +2613,8 @@ export function SiteCreatorStudio({
               contextOutlines={pagePreviewMode ? undefined : contextOutlines}
               sectionOutlines={pagePreviewMode ? undefined : sectionOutlines}
               ghostOutlines={pagePreviewMode ? undefined : ghostOutlines}
+              groupFit={pagePreviewMode ? null : groupFitModel}
+              onGroupFit={pagePreviewMode ? undefined : handleGroupFit}
               microbar={pagePreviewMode ? null : microbarModel}
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}

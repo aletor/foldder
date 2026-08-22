@@ -10,6 +10,7 @@ import {
   SiteCreatorSelectionSurface,
   type SiteCreatorUnitOutline,
 } from "./SiteCreatorSelectionSurface";
+import type { GroupFitOpportunity } from "./site-creator-group-fit";
 import {
   SiteCreatorObjectMicrobar,
   type FloatingChromeGeometry,
@@ -84,6 +85,8 @@ export interface SiteCreatorPreviewProps {
   onCancelFocal?: () => void;
   /** Vista de página: sin selección, edición, ni chrome de diseño. */
   readOnly?: boolean;
+  groupFit?: { opportunity: GroupFitOpportunity; displayBounds: PageRect } | null;
+  onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
 }
 
 function ResizeHandle({
@@ -147,6 +150,8 @@ export function SiteCreatorPreview({
   onFocalPoint,
   onCancelFocal,
   readOnly = false,
+  groupFit = null,
+  onGroupFit,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -398,6 +403,8 @@ export function SiteCreatorPreview({
             focalLayerId={focalLayerId}
             onFocalPoint={onFocalPoint}
             onCancelFocal={onCancelFocal}
+            groupFit={groupFit}
+            onGroupFit={onGroupFit}
           />
         ) : null}
       </div>

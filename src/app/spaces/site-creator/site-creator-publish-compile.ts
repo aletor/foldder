@@ -13,6 +13,18 @@ import {
   type SiteBlueprintV1,
 } from "./site-creator-types";
 import {
+  boxFromObject,
+  buildPublishForest,
+  collectObjectMap,
+  toLocalBox,
+  worldBoxForBand,
+  type PublishBand as TreeBand,
+  type PublishBox,
+  type PublishForest,
+  type PublishTreeNode,
+} from "./site-creator-publish-tree";
+import { containerIsFullWidthForBand } from "./site-creator-group-width-layout";
+import {
   SITE_CREATOR_MOBILE_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
 } from "./site-creator-viewport";
@@ -158,44 +170,6 @@ function usableSrc(src: string | undefined): string | undefined {
   return undefined;
 }
 
-function flattenPaintList(objects: FreehandObject[] | undefined): FreehandObject[] {
-  const out: FreehandObject[] = [];
-  const visit = (list: FreehandObject[] | undefined) => {
-    for (const obj of list ?? []) {
-      if (obj.visible === false) continue;
-      if (obj.type === "groupContainer") {
-        visit((obj as { children?: FreehandObject[] }).children);
-        continue;
-      }
-      if (obj.type === "booleanGroup") {
-        visit((obj as { children?: FreehandObject[] }).children);
-        continue;
-      }
-      if (obj.type === "clippingContainer") {
-        const clip = obj as { content?: FreehandObject[] };
-        visit(clip.content);
-        continue;
-      }
-      if (obj.type === "adjustmentLayer") continue;
-      out.push(obj);
-    }
-  };
-  visit(objects);
-  return out;
-}
-
-function boxFromObject(obj: FreehandObject): Box {
-  return {
-    x: obj.x,
-    y: obj.y,
-    width: Math.max(0, obj.width),
-    height: Math.max(0, obj.height),
-    rotation: obj.rotation || 0,
-    opacity: obj.opacity == null ? 1 : obj.opacity,
-    visible: obj.visible !== false,
-  };
-}
-
 function cssPaint(fill: unknown, asText: boolean): string | null {
   if (fill == null) return null;
   if (typeof fill === "string") {
@@ -316,176 +290,291 @@ export function compilePublishedSite(args: {
   });
 
   const layouts: Record<BandName, { width: number; height: number; objects: FreehandObject[] }> = {
-    wide: {
-      width: wide.layout.layoutWidth,
-      height: wide.layout.layoutHeight,
-      objects: flattenPaintList(wide.displayPage.objects),
-    },
-    tablet: {
-      width: tablet.layout.layoutWidth,
-      height: tablet.layout.layoutHeight,
-      objects: flattenPaintList(tablet.displayPage.objects),
-    },
-    mobile: {
-      width: mobile.layout.layoutWidth,
-      height: mobile.layout.layoutHeight,
-      objects: flattenPaintList(mobile.displayPage.objects),
-    },
+    wide: { width: wide.layout.layoutWidth, height: wide.layout.layoutHeight, objects: wide.displayPage.objects ?? [] },
+    tablet: { width: tablet.layout.layoutWidth, height: tablet.layout.layoutHeight, objects: tablet.displayPage.objects ?? [] },
+    mobile: { width: mobile.layout.layoutWidth, height: mobile.layout.layoutHeight, objects: mobile.displayPage.objects ?? [] },
   };
+
+  const forest = buildPublishForest({
+    objectsByBand: {
+      wide: layouts.wide.objects,
+      tablet: layouts.tablet.objects,
+      mobile: layouts.mobile.objects,
+    },
+    blueprint: args.blueprint,
+    index: referenceIndex,
+    pageRect: { x: 0, y: 0, width: reference.width, height: reference.height },
+  });
 
   const buttonLabels = buttonLabelByLayerId(args.blueprint);
   const layers = new Map<string, CompiledLayer>();
-  const order: string[] = [];
-
+  const wideMap = collectObjectMap(layouts.wide.objects);
+  for (const obj of wideMap.values()) {
+    const layer = compilePaintLayer(obj, args.imageHrefByLayerId, buttonLabels);
+    if (!layer) continue;
+    layers.set(obj.id, layer);
+  }
   (["wide", "tablet", "mobile"] as BandName[]).forEach((band) => {
-    layouts[band].objects.forEach((obj, index) => {
-      let layer = layers.get(obj.id);
-      if (!layer) {
-        const kind: CompiledLayer["kind"] =
-          obj.type === "text" || obj.type === "textOnPath"
-            ? "text"
-            : obj.type === "image" || obj.imageFrameContent
-              ? "image"
-              : obj.type === "path"
-                ? "path"
-                : "shape";
-        layer = {
-          id: obj.id,
-          cssId: cssSafeId(obj.id),
-          z: index + 1,
-          kind,
-          boxes: { wide: null, tablet: null, mobile: null },
-          imageHref: args.imageHrefByLayerId[obj.id],
-          alt: buttonLabels.get(obj.id) || (obj.name && obj.name !== obj.id ? obj.name : ""),
-          fontSize: { wide: 16, tablet: 16, mobile: 16 },
-          buttonLabel: buttonLabels.get(obj.id),
-        };
-        if (kind === "text") {
-          const textObj = obj as FreehandObject & {
-            fontFamily?: string;
-            fontWeight?: string | number;
-            fontStyle?: string;
-            letterSpacing?: number;
-            lineHeight?: number;
-            textAlign?: string;
-            fontSize?: number;
-          };
-          layer.textHtml = textInnerHtml(obj);
-          layer.fontFamily = textObj.fontFamily;
-          layer.fontWeight = textObj.fontWeight;
-          layer.fontStyle = textObj.fontStyle;
-          layer.letterSpacing = textObj.letterSpacing;
-          layer.lineHeight = textObj.lineHeight;
-          layer.textAlign = textObj.textAlign;
-          layer.color = cssPaint(obj.fill, true) ?? "#111";
-        } else if (kind === "shape") {
-          layer.background = cssPaint(obj.fill, false) ?? undefined;
-          applyStroke(layer, obj);
-          if (obj.type === "ellipse") layer.borderRadius = "50%";
-          else if (obj.type === "rect") {
-            const rx = (obj as { rx?: number }).rx;
-            if (rx) layer.borderRadius = `${rx}px`;
-          }
-        } else if (kind === "image") {
-          layer.objectFit = objectFitForFrame(obj);
-        } else if (kind === "path") {
-          const path = obj as { svgPathD?: string };
-          layer.pathD = path.svgPathD;
-          layer.background = cssPaint(obj.fill, false) ?? undefined;
-          applyStroke(layer, obj);
-        }
-        layers.set(obj.id, layer);
-        order.push(obj.id);
+    const map = collectObjectMap(layouts[band].objects);
+    for (const [id, layer] of layers) {
+      const obj = map.get(id);
+      if (!obj) {
+        layer.boxes[band] = null;
+        continue;
       }
       layer.boxes[band] = boxFromObject(obj);
       if (layer.kind === "text") {
         const size = (obj as { fontSize?: number }).fontSize;
         if (typeof size === "number") layer.fontSize![band] = size;
       }
-      layer.z = Math.max(layer.z, index + 1);
-    });
+    }
   });
 
   const pageBg =
-    args.page.pageBackground === "black" ? "#000000" : args.page.pageBackground === "transparent" ? "transparent" : "#ffffff";
+    args.page.pageBackground === "black"
+      ? "#000000"
+      : args.page.pageBackground === "transparent"
+        ? "transparent"
+        : "#ffffff";
 
   const css = buildCss({
     pageBg,
     layouts,
-    layers: order.map((id) => layers.get(id)!).filter(Boolean),
+    forest,
+    layers,
     referenceWidth: reference.width,
+    blueprint: args.blueprint,
   });
   const html = buildHtml({
     title: args.title.trim() || "Sitio",
     fontHref: googleFontsHref(collectDesignerPageFontFamilies(args.page)),
-    layers: order.map((id) => layers.get(id)!).filter(Boolean),
+    forest,
+    layers,
   });
-  const js = `"use strict";\n`;
+  return { html, css, js: `"use strict";\n` };
+}
 
-  return { html, css, js };
+function compilePaintLayer(
+  obj: FreehandObject,
+  imageHrefByLayerId: Record<string, string>,
+  buttonLabels: Map<string, string>,
+): CompiledLayer | null {
+  if (obj.visible === false) return null;
+  if (
+    obj.type === "groupContainer" ||
+    obj.type === "booleanGroup" ||
+    obj.type === "clippingContainer" ||
+    obj.type === "adjustmentLayer"
+  ) {
+    return null;
+  }
+  const kind: CompiledLayer["kind"] =
+    obj.type === "text" || obj.type === "textOnPath"
+      ? "text"
+      : obj.type === "image" || obj.imageFrameContent
+        ? "image"
+        : obj.type === "path"
+          ? "path"
+          : "shape";
+  const layer: CompiledLayer = {
+    id: obj.id,
+    cssId: cssSafeId(obj.id),
+    z: 1,
+    kind,
+    boxes: { wide: null, tablet: null, mobile: null },
+    imageHref: imageHrefByLayerId[obj.id],
+    alt: buttonLabels.get(obj.id) || (obj.name && obj.name !== obj.id ? obj.name : ""),
+    fontSize: { wide: 16, tablet: 16, mobile: 16 },
+    buttonLabel: buttonLabels.get(obj.id),
+  };
+  if (kind === "text") {
+    const textObj = obj as FreehandObject & {
+      fontFamily?: string;
+      fontWeight?: string | number;
+      fontStyle?: string;
+      letterSpacing?: number;
+      lineHeight?: number;
+      textAlign?: string;
+    };
+    layer.textHtml = textInnerHtml(obj);
+    layer.fontFamily = textObj.fontFamily;
+    layer.fontWeight = textObj.fontWeight;
+    layer.fontStyle = textObj.fontStyle;
+    layer.letterSpacing = textObj.letterSpacing;
+    layer.lineHeight = textObj.lineHeight;
+    layer.textAlign = textObj.textAlign;
+    layer.color = cssPaint(obj.fill, true) ?? "#111";
+  } else if (kind === "shape") {
+    layer.background = cssPaint(obj.fill, false) ?? undefined;
+    applyStroke(layer, obj);
+    if (obj.type === "ellipse") layer.borderRadius = "50%";
+    else if (obj.type === "rect") {
+      const rx = (obj as { rx?: number }).rx;
+      if (rx) layer.borderRadius = `${rx}px`;
+    }
+  } else if (kind === "image") {
+    layer.objectFit = objectFitForFrame(obj);
+  } else if (kind === "path") {
+    const path = obj as { svgPathD?: string };
+    layer.pathD = path.svgPathD;
+    layer.background = cssPaint(obj.fill, false) ?? undefined;
+    applyStroke(layer, obj);
+  }
+  return layer;
 }
 
 function buildCss(args: {
   pageBg: string;
   layouts: Record<BandName, { width: number; height: number }>;
-  layers: CompiledLayer[];
+  forest: PublishForest;
+  layers: Map<string, CompiledLayer>;
   referenceWidth: number;
+  blueprint: SiteBlueprintV1;
 }): string {
   const tabletMax = Math.max(SITE_CREATOR_TABLET_WIDTH, args.referenceWidth - 1);
+  const flow = args.forest.usesFlow;
   const lines: string[] = [
     "*,*::before,*::after{box-sizing:border-box}",
     "html,body{margin:0;padding:0;width:100%;min-height:100%}",
     `body{background:${args.pageBg};-webkit-font-smoothing:antialiased}`,
-    ".s-page{position:relative;width:100%;overflow:hidden;container-type:inline-size}",
-    ".s-el{position:absolute;display:block;margin:0;border:0;padding:0;max-width:none}",
+    `.s-page{position:relative;width:100%;overflow:${flow ? "visible" : "hidden"};container-type:inline-size}`,
+    ".s-el,.s-group{position:absolute;display:block;margin:0;border:0;padding:0;max-width:none}",
+    ".s-group{container-type:inline-size;overflow:visible}",
+    ".s-row{position:relative;display:flex;flex-wrap:wrap;align-items:flex-start;width:100%;left:auto;top:auto;box-sizing:border-box}",
+    ".s-row>.s-flow-item{position:relative;flex:0 0 auto;top:auto;left:auto}",
+    ".s-row-full>.s-flow-item{flex:0 0 100%;width:100%}",
+    ".s-group.s-has-flow{height:auto}",
+    ".s-page.s-flow{height:auto;overflow:visible}",
+    ".s-page.s-flow>.s-row{position:relative;left:auto;top:auto;width:100%}",
     ".s-btn{background:transparent;cursor:pointer;appearance:none}",
     ".s-el img,.s-image{width:100%;height:100%;object-fit:cover;display:block}",
     ".s-text{white-space:pre-wrap;overflow:visible}",
     ".s-path{width:100%;height:100%;display:block}",
-    bandPageCss("wide", args.layouts.wide, false),
+    bandPageCss(args.layouts.wide, flow),
   ];
 
-  for (const layer of args.layers) {
-    lines.push(layerBoxCss(layer, "wide", args.layouts.wide, false));
-  }
+  collectTreeCss(lines, args.forest.children, "wide", args.layouts.wide, null, args.layers, false, args.blueprint);
 
   lines.push(`@media (max-width:${tabletMax}px) and (min-width:${SITE_CREATOR_TABLET_WIDTH}px){`);
-  lines.push(bandPageCss("tablet", args.layouts.tablet, true));
-  for (const layer of args.layers) lines.push(layerBoxCss(layer, "tablet", args.layouts.tablet, true));
+  lines.push(bandPageCss(args.layouts.tablet, flow));
+  collectTreeCss(lines, args.forest.children, "tablet", args.layouts.tablet, null, args.layers, false, args.blueprint);
   lines.push("}");
 
   lines.push(`@media (max-width:${SITE_CREATOR_TABLET_WIDTH - 1}px){`);
-  lines.push(bandPageCss("mobile", args.layouts.mobile, true));
-  for (const layer of args.layers) lines.push(layerBoxCss(layer, "mobile", args.layouts.mobile, true));
+  lines.push(bandPageCss(args.layouts.mobile, flow));
+  collectTreeCss(lines, args.forest.children, "mobile", args.layouts.mobile, null, args.layers, false, args.blueprint);
   lines.push("}");
 
   return `${lines.filter(Boolean).join("\n")}\n`;
 }
 
-function bandPageCss(_band: BandName, layout: { width: number; height: number }, _nested: boolean): string {
-  return `.s-page{aspect-ratio:${Math.max(1, layout.width)} / ${Math.max(1, layout.height)};min-height:0}`;
+function bandPageCss(layout: { width: number; height: number }, flow: boolean): string {
+  if (!flow) {
+    return `.s-page{aspect-ratio:${Math.max(1, layout.width)} / ${Math.max(1, layout.height)};min-height:0}`;
+  }
+  return `.s-page{min-height:calc(100cqw * ${Math.max(1, layout.height)} / ${Math.max(1, layout.width)});aspect-ratio:auto}`;
+}
+
+function collectTreeCss(
+  lines: string[],
+  nodes: PublishTreeNode[],
+  band: BandName,
+  layout: { width: number; height: number },
+  parent: PublishBox | null,
+  layers: Map<string, CompiledLayer>,
+  inRow = false,
+  blueprint: SiteBlueprintV1,
+): void {
+  const percentParent: PublishBox =
+    parent ?? { x: 0, y: 0, width: layout.width, height: layout.height, rotation: 0, opacity: 1, visible: true };
+  for (const node of nodes) {
+    if (node.kind === "row") {
+      lines.push(rowBoxCss(node, band, percentParent));
+      collectTreeCss(lines, node.children, band, layout, percentParent, layers, true, blueprint);
+      continue;
+    }
+    if (node.kind === "group") {
+      lines.push(groupBoxCss(node, band, percentParent, inRow, blueprint));
+      collectTreeCss(
+        lines,
+        node.children,
+        band,
+        layout,
+        worldBoxForBand(node, band as TreeBand),
+        layers,
+        false,
+        blueprint,
+      );
+      continue;
+    }
+    const layer = layers.get(node.id);
+    if (!layer) continue;
+    lines.push(layerBoxCss(layer, band, percentParent, worldBoxForBand(node, band as TreeBand), inRow));
+  }
+}
+
+function rowBoxCss(
+  node: Extract<PublishTreeNode, { kind: "row" }>,
+  band: BandName,
+  _parent: PublishBox,
+): string {
+  const sel = `.s-row-${cssSafeId(node.id)}`;
+  const box = worldBoxForBand(node, band as TreeBand);
+  if (!box) return `${sel}{display:none}`;
+  return `${sel}{display:flex;width:100%;z-index:${node.z}}`;
+}
+
+function groupBoxCss(
+  node: Extract<PublishTreeNode, { kind: "group" }>,
+  band: BandName,
+  parent: PublishBox,
+  inRow: boolean,
+  blueprint: SiteBlueprintV1,
+): string {
+  const sel = `.s-group-${cssSafeId(node.id)}`;
+  const box = worldBoxForBand(node, band as TreeBand);
+  if (!box) return `${sel}{display:none}`;
+  const local = toLocalBox(box, parent);
+  const full = node.widthMode === "full" || containerIsFullWidthForBand(blueprint, node.id, band);
+  const rules = [
+    inRow ? "left:auto;top:auto" : full ? "left:0" : `left:${pct(local.x, parent.width)}`,
+    inRow || full ? "" : `top:${pct(local.y, parent.height)}`,
+    full ? "width:100%" : `width:${pct(local.width, parent.width)}`,
+    inRow && full ? "flex:0 0 100%" : "",
+    full || inRow
+      ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
+      : `height:${pct(local.height, parent.height)}`,
+    `z-index:${node.z}`,
+    box.opacity < 1 ? `opacity:${box.opacity}` : "",
+    box.rotation ? `transform:rotate(${box.rotation}deg)` : "",
+  ].filter(Boolean);
+  return `${sel}{${rules.join(";")}}`;
 }
 
 function layerBoxCss(
   layer: CompiledLayer,
   band: BandName,
-  layout: { width: number; height: number },
-  _nested: boolean,
+  parent: PublishBox,
+  world: PublishBox | null,
+  inRow = false,
 ): string {
-  const box = layer.boxes[band];
   const sel = `.s-el-${layer.cssId}`;
+  const box = world ?? layer.boxes[band];
   if (!box) return `${sel}{display:none}`;
+  const local = toLocalBox(box, parent);
   const transform = box.rotation ? `transform:rotate(${box.rotation}deg)` : "";
   const font =
     layer.kind === "text"
-      ? `font-size:calc(${layer.fontSize?.[band] ?? 16} * 100cqw / ${Math.max(1, layout.width)})`
+      ? `font-size:calc(${layer.fontSize?.[band] ?? 16} * 100cqw / ${Math.max(1, parent.width)})`
       : "";
   const rules = [
     "display:block",
-    `left:${pct(box.x, layout.width)}`,
-    `top:${pct(box.y, layout.height)}`,
-    `width:${pct(box.width, layout.width)}`,
-    `height:${pct(box.height, layout.height)}`,
+    inRow ? "left:auto;top:auto" : `left:${pct(local.x, parent.width)}`,
+    inRow ? "" : `top:${pct(local.y, parent.height)}`,
+    `width:${pct(local.width, parent.width)}`,
+    inRow
+      ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
+      : `height:${pct(local.height, parent.height)}`,
     `z-index:${layer.z}`,
     box.opacity < 1 ? `opacity:${box.opacity}` : "",
     transform,
@@ -513,39 +602,72 @@ function cssFontFamily(family: string): string {
   return `"${trimmed.replace(/"/g, "")}",sans-serif`;
 }
 
+function serializeTreeHtml(
+  nodes: PublishTreeNode[],
+  layers: Map<string, CompiledLayer>,
+  indent: string,
+  inRow = false,
+): string {
+  return nodes
+    .map((node) => {
+      if (node.kind === "row") {
+        const role = node.role === "full" ? " s-row-full" : " s-row-rest";
+        const inner = serializeTreeHtml(node.children, layers, `${indent}  `, true);
+        return `${indent}<div class="s-row s-row-${cssSafeId(node.id)}${role}">\n${inner}\n${indent}</div>`;
+      }
+      if (node.kind === "group") {
+        const full = node.widthMode === "full" ? " s-full" : "";
+        const hasFlow = node.children.some((c) => c.kind === "row" || (c.kind === "group" && c.widthMode === "full"));
+        const flowHost = hasFlow ? " s-has-flow" : "";
+        const flowItem = inRow ? " s-flow-item" : "";
+        const inner = serializeTreeHtml(node.children, layers, `${indent}  `, false);
+        return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}" data-group="${escapeHtml(node.id)}">\n${inner}\n${indent}</div>`;
+      }
+      const layer = layers.get(node.id);
+      if (!layer) return "";
+      return `${indent}${serializeLayerHtml(layer, inRow)}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function serializeLayerHtml(layer: CompiledLayer, inRow = false): string {
+  const flowItem = inRow ? " s-flow-item" : "";
+  const cls = `s-el s-el-${layer.cssId}${layer.kind === "text" ? " s-text" : ""}${layer.kind === "image" ? " s-image" : ""}${layer.buttonLabel ? " s-btn" : ""}${flowItem}`;
+  const labelAttr = layer.buttonLabel ? ` aria-label="${escapeHtml(layer.buttonLabel)}"` : "";
+  if (layer.kind === "image") {
+    const src = layer.imageHref ? escapeHtml(layer.imageHref) : "";
+    if (layer.buttonLabel) {
+      return src
+        ? `<button type="button" class="${cls}"${labelAttr}><img src="${src}" alt=""></button>`
+        : `<button type="button" class="${cls}"${labelAttr}></button>`;
+    }
+    return src
+      ? `<img class="${cls}" src="${src}" alt="${escapeHtml(layer.alt)}" />`
+      : `<div class="${cls}" aria-hidden="true"></div>`;
+  }
+  if (layer.kind === "text") {
+    const tag = layer.buttonLabel ? "button" : "div";
+    const typeAttr = layer.buttonLabel ? ` type="button"` : "";
+    return `<${tag} class="${cls}"${typeAttr}${labelAttr}>${layer.textHtml ?? ""}</${tag}>`;
+  }
+  if (layer.kind === "path" && layer.pathD) {
+    return `<svg class="${cls} s-path" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true"><path d="${escapeHtml(layer.pathD)}" fill="${escapeHtml(layer.background || "currentColor")}" /></svg>`;
+  }
+  const tag = layer.buttonLabel ? "button" : "div";
+  const typeAttr = layer.buttonLabel ? ` type="button"` : "";
+  const hidden = layer.buttonLabel ? "" : ` aria-hidden="true"`;
+  return `<${tag} class="${cls}"${typeAttr}${labelAttr}${hidden}></${tag}>`;
+}
+
 function buildHtml(args: {
   title: string;
   fontHref: string | null;
-  layers: CompiledLayer[];
+  forest: PublishForest;
+  layers: Map<string, CompiledLayer>;
 }): string {
-  const nodes = args.layers.map((layer) => {
-    const cls = `s-el s-el-${layer.cssId}${layer.kind === "text" ? " s-text" : ""}${layer.kind === "image" ? " s-image" : ""}${layer.buttonLabel ? " s-btn" : ""}`;
-    const labelAttr = layer.buttonLabel ? ` aria-label="${escapeHtml(layer.buttonLabel)}"` : "";
-    if (layer.kind === "image") {
-      const src = layer.imageHref ? escapeHtml(layer.imageHref) : "";
-      if (layer.buttonLabel) {
-        return src
-          ? `<button type="button" class="${cls}"${labelAttr}><img src="${src}" alt=""></button>`
-          : `<button type="button" class="${cls}"${labelAttr}></button>`;
-      }
-      return src
-        ? `<img class="${cls}" src="${src}" alt="${escapeHtml(layer.alt)}" />`
-        : `<div class="${cls}" aria-hidden="true"></div>`;
-    }
-    if (layer.kind === "text") {
-      const tag = layer.buttonLabel ? "button" : "div";
-      const typeAttr = layer.buttonLabel ? ` type="button"` : "";
-      return `<${tag} class="${cls}"${typeAttr}${labelAttr}>${layer.textHtml ?? ""}</${tag}>`;
-    }
-    if (layer.kind === "path" && layer.pathD) {
-      return `<svg class="${cls} s-path" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true"><path d="${escapeHtml(layer.pathD)}" fill="${escapeHtml(layer.background || "currentColor")}" /></svg>`;
-    }
-    const tag = layer.buttonLabel ? "button" : "div";
-    const typeAttr = layer.buttonLabel ? ` type="button"` : "";
-    const hidden = layer.buttonLabel ? "" : ` aria-hidden="true"`;
-    return `<${tag} class="${cls}"${typeAttr}${labelAttr}${hidden}></${tag}>`;
-  });
-
+  const body = serializeTreeHtml(args.forest.children, args.layers, "    ");
+  const pageClass = args.forest.usesFlow ? "s-page s-flow" : "s-page";
   const fontLink = args.fontHref
     ? `  <link rel="preconnect" href="https://fonts.googleapis.com">\n  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n  <link rel="stylesheet" href="${escapeHtml(args.fontHref)}">\n`
     : "";
@@ -559,8 +681,8 @@ function buildHtml(args: {
 ${fontLink}  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="s-page">
-${nodes.map((n) => `    ${n}`).join("\n")}
+  <main class="${pageClass}">
+${body}
   </main>
   <script src="script.js"></script>
 </body>

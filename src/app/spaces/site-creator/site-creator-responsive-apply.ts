@@ -618,9 +618,9 @@ function reflowGroupUnits(args: {
   if (units.length === 0) return region.layoutRect.y + region.layoutRect.height;
 
   const parentPad = defaultBandInset(band);
-  const widthMode = tune.contentWidthMode ?? "container";
+  const widthMode = tune.contentWidthMode === "content" ? "content" : "container";
   const paddedAvail = Math.max(80, region.layoutRect.width - parentPad * 2);
-  let availWidth = widthMode === "full" ? args.viewportWidth : paddedAvail;
+  let availWidth = paddedAvail;
   if (typeof tune.maxContentWidth === "number") {
     availWidth = Math.min(availWidth, tune.maxContentWidth);
   }
@@ -629,9 +629,9 @@ function reflowGroupUnits(args: {
   }
   const availLeft = contentBoxX({
     align: tune.contentAlignX ?? "center",
-    contentLeft: widthMode === "full" ? region.layoutRect.x : region.layoutRect.x + parentPad,
-    contentWidth: widthMode === "full" ? args.viewportWidth : paddedAvail,
-    boxWidth: Math.min(availWidth, widthMode === "full" ? args.viewportWidth : paddedAvail),
+    contentLeft: region.layoutRect.x + parentPad,
+    contentWidth: paddedAvail,
+    boxWidth: Math.min(availWidth, paddedAvail),
   });
   const pad = typeof tune.padding === "number" ? tune.padding : 0;
   const innerLeft = availLeft + pad;
@@ -746,6 +746,7 @@ export function applyResponsiveContainerTunes(args: {
     for (const groupId of groups) {
       const tune = resolveContainerTune(args.blueprint, { kind: "blueprintNode", nodeId: groupId }, args.band);
       if (!tune) continue;
+      if (tune.contentWidthMode === "full" || tune.contentWidthMode === "scale") continue;
       const units = displayChildUnitsForGroup({
         blueprint: args.blueprint,
         groupId,
@@ -777,6 +778,7 @@ export function applyResponsiveContainerTunes(args: {
       if (rule.target.kind !== "designerGroup") continue;
       const tune = rule.byBand[args.band];
       if (!tune) continue;
+      if (tune.contentWidthMode === "full" || tune.contentWidthMode === "scale") continue;
       const groupLayerId = rule.target.layerId;
       const root = args.byId.get(groupLayerId);
       if (!root) continue;

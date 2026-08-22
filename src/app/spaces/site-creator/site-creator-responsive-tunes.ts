@@ -102,6 +102,7 @@ function isEmptyContainerTune(tune: ResponsiveContainerTuneV1 | undefined): bool
   if (tune.contentAlignX) return false;
   if (tune.contentAlignY) return false;
   if (tune.contentWidthMode && tune.contentWidthMode !== "container") return false;
+  if (tune.fitOrigin) return false;
   if (typeof tune.maxContentWidth === "number") return false;
   if (typeof tune.minHeight === "number") return false;
   if (tune.autoHeight === false) return false;
@@ -163,8 +164,11 @@ function cleanContainerTune(tune: ResponsiveContainerTuneV1): ResponsiveContaine
   if (tune.contentAlignY === "start" || tune.contentAlignY === "center" || tune.contentAlignY === "end") {
     next.contentAlignY = tune.contentAlignY;
   }
-  if (tune.contentWidthMode === "content" || tune.contentWidthMode === "full") {
+  if (tune.contentWidthMode === "content" || tune.contentWidthMode === "full" || tune.contentWidthMode === "scale") {
     next.contentWidthMode = tune.contentWidthMode;
+  }
+  if (tune.fitOrigin === "start" || tune.fitOrigin === "end") {
+    next.fitOrigin = tune.fitOrigin;
   }
   if (typeof tune.maxContentWidth === "number" && Number.isFinite(tune.maxContentWidth)) {
     next.maxContentWidth = Math.max(80, Math.round(tune.maxContentWidth));

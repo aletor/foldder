@@ -64,6 +64,7 @@ import {
   type ResponsiveVisualCluster,
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
+import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
 
 export type ResponsiveBand = "wide" | "tablet" | "mobile";
 
@@ -1828,6 +1829,31 @@ function maxRight(page: DesignerPageState): number {
  * Resuelve la página de preview para un ancho dado.
  * `wide` → identidad. `tablet`/`mobile` → Automático con clusters visuales.
  */
+function withLayoutGroupWidthModes(
+  result: SiteCreatorResponsiveResolveResult,
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): SiteCreatorResponsiveResolveResult {
+  const laidOut = applyLayoutGroupWidthModes({
+    page: result.displayPage,
+    blueprint,
+    index,
+    viewportWidth: result.layout.layoutWidth,
+    viewportHeight: result.layout.layoutHeight,
+    band: result.band,
+  });
+  if (laidOut.page === result.displayPage && laidOut.layoutHeight === result.layout.layoutHeight) {
+    return result;
+  }
+  laidOut.page.customWidth = result.layout.layoutWidth;
+  laidOut.page.customHeight = laidOut.layoutHeight;
+  return {
+    ...result,
+    displayPage: laidOut.page,
+    layout: { ...result.layout, layoutHeight: laidOut.layoutHeight },
+  };
+}
+
 export function resolveSiteCreatorResponsiveDisplay(args: {
   page: DesignerPageState;
   blueprint: SiteBlueprintV1;
@@ -1841,27 +1867,31 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   if (band === "wide") {
     const displayPage = deepCloneDesignerPageState(args.page);
     const sourceIds = collectVisibleLayerIdsFromPage(args.page);
-    return {
-      band,
-      strategy: "identity",
-      displayPage,
-      layout: {
-        referenceWidth: reference.width,
-        referenceHeight: reference.height,
-        viewportWidth,
-        layoutWidth: reference.width,
-        layoutHeight: reference.height,
-        layoutScale: 1,
+    return withLayoutGroupWidthModes(
+      {
+        band,
+        strategy: "identity",
+        displayPage,
+        layout: {
+          referenceWidth: reference.width,
+          referenceHeight: reference.height,
+          viewportWidth,
+          layoutWidth: reference.width,
+          layoutHeight: reference.height,
+          layoutScale: 1,
+        },
+        resolvedLayout: null,
+        resolvedScene: buildResolvedSceneFromIndex({
+          index: args.referenceIndex,
+          matrix: uniformScaleMatrix(1),
+          width: reference.width,
+          height: reference.height,
+          layerIds: sourceIds,
+        }),
       },
-      resolvedLayout: null,
-      resolvedScene: buildResolvedSceneFromIndex({
-        index: args.referenceIndex,
-        matrix: uniformScaleMatrix(1),
-        width: reference.width,
-        height: reference.height,
-        layerIds: sourceIds,
-      }),
-    };
+      args.blueprint,
+      args.referenceIndex,
+    );
   }
 
   const pageKind = classifyPageResponsiveKind(args.blueprint);
@@ -1933,26 +1963,30 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       regions: [syntheticRegion],
       objectClipById: {},
     };
-    return {
-      band,
-      strategy: "uniform-preserve",
-      displayPage,
-      layout: {
-        referenceWidth: reference.width,
-        referenceHeight: reference.height,
-        viewportWidth,
-        layoutWidth: viewportWidth,
-        layoutHeight,
-        layoutScale: 1,
+    return withLayoutGroupWidthModes(
+      {
+        band,
+        strategy: "uniform-preserve",
+        displayPage,
+        layout: {
+          referenceWidth: reference.width,
+          referenceHeight: reference.height,
+          viewportWidth,
+          layoutWidth: viewportWidth,
+          layoutHeight,
+          layoutScale: 1,
+        },
+        resolvedLayout,
+        resolvedScene,
+        debug: {
+          sectionAnalyses: [],
+          fallbackReasons: ["page-unstructured-matrix"],
+          resolved: resolvedLayout,
+        },
       },
-      resolvedLayout,
-      resolvedScene,
-      debug: {
-        sectionAnalyses: [],
-        fallbackReasons: ["page-unstructured-matrix"],
-        resolved: resolvedLayout,
-      },
-    };
+      args.blueprint,
+      args.referenceIndex,
+    );
   }
 
   const owned = new Set<string>();
@@ -2101,22 +2135,26 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     objectClipById,
   };
 
-  return {
-    band,
-    strategy: "auto",
-    displayPage,
-    layout: {
-      referenceWidth: reference.width,
-      referenceHeight: reference.height,
-      viewportWidth,
-      layoutWidth: viewportWidth,
-      layoutHeight,
-      layoutScale: 1,
+  return withLayoutGroupWidthModes(
+    {
+      band,
+      strategy: "auto",
+      displayPage,
+      layout: {
+        referenceWidth: reference.width,
+        referenceHeight: reference.height,
+        viewportWidth,
+        layoutWidth: viewportWidth,
+        layoutHeight,
+        layoutScale: 1,
+      },
+      resolvedLayout,
+      resolvedScene,
+      debug: { sectionAnalyses, fallbackReasons, resolved: resolvedLayout },
     },
-    resolvedLayout,
-    resolvedScene,
-    debug: { sectionAnalyses, fallbackReasons, resolved: resolvedLayout },
-  };
+    args.blueprint,
+    args.referenceIndex,
+  );
 }
 
 /** Helpers exportados para tests de geometría. */

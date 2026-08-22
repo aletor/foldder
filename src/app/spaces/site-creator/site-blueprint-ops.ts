@@ -14,6 +14,8 @@ import {
 import { assertValidBlueprint, cloneBlueprint } from "./site-blueprint-validate";
 import type { SiteCreatorSelectionIndex, SiteCreatorSelectionIndexEntry } from "./site-creator-selection-types";
 import type {
+  LayoutGroupFitOrigin,
+  LayoutGroupWidthMode,
   SiteBlueprintComponentNode,
   SiteBlueprintLayoutGroupNode,
   SiteBlueprintNode,
@@ -24,6 +26,9 @@ import type {
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import { getPageDimensions } from "../indesign/page-formats";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import { unitsToStructureLayerIds, type SiteCreatorSelectionUnit } from "./site-creator-display-labels";
+import { commonContainersForFreeLayers } from "./site-creator-hierarchy";
+import { sourceWorldBoundsOfIds } from "./site-creator-layer-world-bounds";
 
 export type BlueprintOpError = {
   ok: false;
@@ -53,11 +58,7 @@ function nodeVisualBounds(
   nodeId: string,
   index: SiteCreatorSelectionIndex,
 ): PageRect | null {
-  const layerIds = collectSemanticCoverageLayerIds(blueprint, nodeId);
-  const rects = layerIds
-    .map((id) => index.byId[id]?.visualBounds)
-    .filter((r): r is NonNullable<typeof r> => Boolean(r));
-  return unionPageRects(rects);
+  return sourceWorldBoundsOfIds(collectSemanticCoverageLayerIds(blueprint, nodeId), index);
 }
 
 /** ¿La cobertura completa del nodo está incluida en selectedLayerIds? */
@@ -221,10 +222,7 @@ function computeSourceRange(
   page: DesignerPageState,
 ): { top: number; bottom: number } {
   const dims = getPageDimensions(page);
-  const rects = layerIds
-    .map((id) => index.byId[id]?.visualBounds)
-    .filter((r): r is NonNullable<typeof r> => Boolean(r));
-  const union = unionPageRects(rects);
+  const union = sourceWorldBoundsOfIds(layerIds, index);
   if (!union) return { top: 0, bottom: dims.height };
   return {
     top: Math.max(0, Math.min(dims.height, union.y)),
@@ -455,7 +453,20 @@ export function resolveButtonParent(args: {
     return { status: "resolved", parentId, reason: parent.label };
   }
 
-  // Free layers: suggest sections whose sourceRange fully contains selection bounds
+  // Capas libres: contenedores geométricos (sección + layoutGroup), luego fallback vertical por sección.
+  const geometricParents = commonContainersForFreeLayers(selectedLayerIds, blueprint, index);
+  if (geometricParents.length === 1) {
+    const node = blueprint.nodes[geometricParents[0]!]!;
+    return { status: "resolved", parentId: geometricParents[0]!, reason: node.label };
+  }
+  if (geometricParents.length > 1) {
+    return {
+      status: "ambiguous",
+      candidateParentIds: geometricParents,
+      message: "Hay varios contenedores candidatos. Elige dónde crear el grupo.",
+    };
+  }
+
   const bounds = entryBounds(
     selectedLayerIds
       .map((id) => index.byId[id])
@@ -487,7 +498,7 @@ export function resolveButtonParent(args: {
     return {
       status: "ambiguous",
       candidateParentIds: candidates.map((c) => c.id),
-      message: "Hay varias secciones candidatas. Elige dónde crear el Button.",
+      message: "Hay varias secciones candidatas. Elige dónde crear el grupo.",
     };
   }
   return { status: "resolved", parentId: null, reason: "Landing Root" };
@@ -674,7 +685,8 @@ export function createLayoutGroupFromSelection(args: {
     const ownerId = ownership.ownerByLayerId[layerId];
     if (ownerId && fullyCovered.includes(ownerId)) continue;
     if (ownerId && ownerId !== parentRes.parentId) continue;
-    if (ownership.coveredByContainerOwner[layerId]) continue;
+    const coveredBy = ownership.coveredByContainerOwner[layerId];
+    if (coveredBy && coveredBy !== parentRes.parentId) continue;
     groupLayers.push(layerId);
   }
 
@@ -704,6 +716,107 @@ export function createLayoutGroupFromSelection(args: {
   } catch (e) {
     return fail("validation", e instanceof Error ? e.message : "Blueprint inválido.");
   }
+}
+
+export function isWrapEligibleSemanticNode(blueprint: SiteBlueprintV1, nodeId: string): boolean {
+  const node = blueprint.nodes[nodeId];
+  if (!node || isSiteSectionNode(node)) return false;
+  return node.kind === "layoutGroup" || isSiteButtonNode(node);
+}
+
+/** Envuelve nodos semánticos hermanos (grupos/botones) en un layoutGroup padre. */
+export function wrapSemanticNodesInGroup(args: {
+  blueprint: SiteBlueprintV1;
+  selectedNodeIds: string[];
+  index: SiteCreatorSelectionIndex;
+  label?: string;
+}): BlueprintOpResult {
+  const { selectedNodeIds, index, label } = args;
+  if (selectedNodeIds.length < 2) {
+    return fail("empty_selection", "Selecciona al menos dos elementos.");
+  }
+  if (!selectedNodeIds.every((id) => isWrapEligibleSemanticNode(args.blueprint, id))) {
+    return fail("invalid_wrap", "Solo se pueden envolver grupos o botones del mismo nivel.");
+  }
+
+  const parentIds = new Set(
+    selectedNodeIds.map((id) => args.blueprint.nodes[id]?.parentId ?? null),
+  );
+  if (parentIds.size !== 1) {
+    return fail("different_level", "Selecciona elementos del mismo nivel para agruparlos.");
+  }
+  const sharedParentId = [...parentIds][0]!;
+
+  let blueprint = cloneBlueprint(args.blueprint);
+  const sortedNodeIds = [...selectedNodeIds].sort((a, b) => {
+    const za = collectSemanticCoverageLayerIds(blueprint, a)
+      .map((id) => index.byId[id]?.zOrderPath ?? [])
+      .flat();
+    const zb = collectSemanticCoverageLayerIds(blueprint, b)
+      .map((id) => index.byId[id]?.zOrderPath ?? [])
+      .flat();
+    return (za[0] ?? 0) - (zb[0] ?? 0);
+  });
+
+  const groupId = createSiteLayoutGroupId();
+  const group: SiteBlueprintLayoutGroupNode = {
+    id: groupId,
+    kind: "layoutGroup",
+    label: label ?? "Grupo",
+    parentId: null,
+    childIds: [],
+    layerIds: [],
+  };
+
+  blueprint = {
+    ...blueprint,
+    nodes: { ...blueprint.nodes, [groupId]: group },
+  };
+  blueprint = attachChild(blueprint, sharedParentId, groupId);
+
+  for (const childId of sortedNodeIds) {
+    blueprint = attachChild(blueprint, groupId, childId);
+  }
+
+  try {
+    return { ok: true, blueprint: assertValidBlueprint(blueprint, index), createdNodeId: groupId };
+  } catch (e) {
+    return fail("validation", e instanceof Error ? e.message : "Blueprint inválido.");
+  }
+}
+
+/** Agrupa capas sueltas o envuelve nodos semánticos hermanos. */
+export function createGroupFromSelection(args: {
+  blueprint: SiteBlueprintV1;
+  units: SiteCreatorSelectionUnit[];
+  index: SiteCreatorSelectionIndex;
+  preferredParentId?: string | null;
+  label?: string;
+}): BlueprintOpResult {
+  const nodeUnits = args.units.filter(
+    (u): u is { kind: "blueprintNode"; nodeId: string } => u.kind === "blueprintNode",
+  );
+  const layerUnits = args.units.filter((u): u is { kind: "layer"; layerId: string } => u.kind === "layer");
+
+  if (nodeUnits.length >= 2 && layerUnits.length === 0) {
+    const nodeIds = nodeUnits.map((u) => u.nodeId);
+    if (nodeIds.every((id) => isWrapEligibleSemanticNode(args.blueprint, id))) {
+      return wrapSemanticNodesInGroup({
+        blueprint: args.blueprint,
+        selectedNodeIds: nodeIds,
+        index: args.index,
+        label: args.label,
+      });
+    }
+  }
+
+  return createLayoutGroupFromSelection({
+    blueprint: args.blueprint,
+    selectedLayerIds: unitsToStructureLayerIds(args.units, args.blueprint),
+    index: args.index,
+    preferredParentId: args.preferredParentId,
+    label: args.label,
+  });
 }
 
 /**
@@ -797,6 +910,34 @@ export function renameBlueprintNode(
   if (isSiteButtonNode(updated)) {
     updated.config = { ...updated.config, accessibleLabel: trimmed };
   }
+  next.nodes[nodeId] = updated;
+  return { ok: true, blueprint: next };
+}
+
+export function setLayoutGroupWidthMode(
+  blueprint: SiteBlueprintV1,
+  nodeId: string,
+  widthMode: LayoutGroupWidthMode,
+  fitOrigin?: LayoutGroupFitOrigin,
+): BlueprintOpResult {
+  const node = blueprint.nodes[nodeId];
+  if (!node || node.kind !== "layoutGroup") {
+    return fail("invalid_target", "Selecciona un grupo.");
+  }
+  const nextMode: LayoutGroupWidthMode | undefined =
+    widthMode === "full" || widthMode === "scale" ? widthMode : undefined;
+  const nextOrigin: LayoutGroupFitOrigin | undefined =
+    nextMode === "scale" ? (fitOrigin === "end" ? "end" : "start") : undefined;
+  if (
+    (node.widthMode ?? "content") === (nextMode ?? "content") &&
+    (node.fitOrigin ?? undefined) === nextOrigin
+  ) {
+    return { ok: true, blueprint };
+  }
+  const next = cloneBlueprint(blueprint);
+  const updated: SiteBlueprintLayoutGroupNode = { ...node, widthMode: nextMode, fitOrigin: nextOrigin };
+  if (!nextMode) delete updated.widthMode;
+  if (!nextOrigin) delete updated.fitOrigin;
   next.nodes[nodeId] = updated;
   return { ok: true, blueprint: next };
 }

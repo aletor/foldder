@@ -13,6 +13,8 @@ import {
 import { SiteCreatorLayerPicker } from "./SiteCreatorLayerPicker";
 import { SiteCreatorSelectionOverlay } from "./SiteCreatorSelectionOverlay";
 import { SiteCreatorIsolationBreadcrumb } from "./SiteCreatorSelectionToolbar";
+import { SiteCreatorGroupFitHandles } from "./SiteCreatorGroupFitHandles";
+import type { GroupFitOpportunity } from "./site-creator-group-fit";
 import type {
   SiteCreatorSelectionAction,
   SiteCreatorSelectionIndex,
@@ -122,6 +124,8 @@ export interface SiteCreatorSelectionSurfaceProps {
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
+  groupFit?: { opportunity: GroupFitOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
+  onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
   /** Ancla de coordenadas de página (preview-page). */
   pageAnchorRef?: React.RefObject<HTMLElement | null>;
   /** Área scroll del preview; permite marquee desde fuera de la página. */
@@ -149,6 +153,8 @@ export function SiteCreatorSelectionSurface({
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
+  groupFit = null,
+  onGroupFit,
   pageAnchorRef,
   captureRootRef,
 }: SiteCreatorSelectionSurfaceProps) {
@@ -578,7 +584,11 @@ export function SiteCreatorSelectionSurface({
   }, [picker]);
 
   return (
-    <div ref={stageRef} className="site-creator-selection-surface absolute inset-0">
+    <div
+      ref={stageRef}
+      className="site-creator-selection-surface absolute inset-0"
+      onPointerLeave={() => dispatch({ type: "hover", layerId: null })}
+    >
       <svg
         ref={svgRef}
         className="absolute inset-0 z-[2] block h-full w-full cursor-crosshair"
@@ -590,7 +600,6 @@ export function SiteCreatorSelectionSurface({
         onPointerCancel={finishMarquee}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
-        onPointerLeave={() => dispatch({ type: "hover", layerId: null })}
       >
         <rect width={pageWidth} height={pageHeight} fill="transparent" />
       </svg>
@@ -607,6 +616,13 @@ export function SiteCreatorSelectionSurface({
         sectionOutlines={sectionOutlines}
         ghostOutlines={ghostOutlines}
       />
+      {groupFit && onGroupFit ? (
+        <SiteCreatorGroupFitHandles
+          opportunity={groupFit.opportunity}
+          displayBounds={groupFit.displayBounds}
+          onFit={onGroupFit}
+        />
+      ) : null}
       {focalLayerId ? (
         <div
           className="pointer-events-none absolute left-1/2 top-3 z-[5] -translate-x-1/2 rounded border border-white/15 bg-[#101820]/90 px-2 py-1 text-[10px] font-semibold text-white/80"

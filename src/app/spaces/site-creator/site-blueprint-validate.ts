@@ -218,7 +218,17 @@ function cloneNode(node: SiteBlueprintNode): SiteBlueprintNode {
       sectionType: node.sectionType,
       parentId: null,
       sourceRange: { ...node.sourceRange },
+      ...(node.promotedFromGroupId ? { promotedFromGroupId: node.promotedFromGroupId } : {}),
     };
   }
-  return { ...base, kind: "layoutGroup" };
+  const group = { ...base, kind: "layoutGroup" as const };
+  if (node.kind === "layoutGroup") {
+    if (node.widthMode === "content" || node.widthMode === "full" || node.widthMode === "scale") {
+      group.widthMode = node.widthMode;
+    }
+    if (node.fitOrigin === "start" || node.fitOrigin === "end") {
+      group.fitOrigin = node.fitOrigin;
+    }
+  }
+  return group;
 }
