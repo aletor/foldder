@@ -68,7 +68,22 @@ export interface SiteBlueprintV1 {
    * Persiste aunque Designer siga teniendo groupContainer / groupId.
    */
   dismissedDesignerMirrors?: SiteDismissedDesignerMirrorsV1;
+  /**
+   * Recorrido entre secciones (rail inferior).
+   * La transición vive en el tramo, no en la sección destino.
+   */
+  scrollFlow?: SiteBlueprintScrollFlowV1;
 }
+
+/** Cómo llega el scroll de un bloque al siguiente. Ausente = natural. */
+export type SiteSectionScrollKind = "natural" | "smooth" | "snap";
+
+export type SiteBlueprintScrollFlowV1 = {
+  /** Llegada a la primera sección (carga de página). */
+  entry?: SiteSectionScrollKind;
+  /** Tramos `fromId>toId`. */
+  hops?: Record<string, SiteSectionScrollKind>;
+};
 
 /** Agrupaciones Designer ignoradas en Site Creator (solo semántica local). */
 export type SiteDismissedDesignerMirrorsV1 = {

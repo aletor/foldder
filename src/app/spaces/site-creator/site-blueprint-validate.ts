@@ -199,6 +199,12 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
       groupIds: [...blueprint.dismissedDesignerMirrors.groupIds],
     };
   }
+  if (blueprint.scrollFlow) {
+    next.scrollFlow = {
+      ...(blueprint.scrollFlow.entry ? { entry: blueprint.scrollFlow.entry } : {}),
+      ...(blueprint.scrollFlow.hops ? { hops: { ...blueprint.scrollFlow.hops } } : {}),
+    };
+  }
   return next;
 }
 

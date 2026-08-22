@@ -134,6 +134,8 @@ import {
   resolveLayoutGroupFromHover,
 } from "./site-creator-group-fit";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
+import { SiteCreatorSectionFlowRail } from "./SiteCreatorSectionFlowRail";
+import { setEntryScrollKind, setSectionScrollHop } from "./site-creator-section-scroll";
 import {
   collapseLayersToSelectionUnits,
   deriveBlueprintNodeDisplayLabel,
@@ -2395,6 +2397,13 @@ export function SiteCreatorStudio({
   const heroDisabled = Object.values(blueprint.nodes).some(
     (n) => isSiteSectionNode(n) && n.sectionType === "hero",
   );
+  const selectedSectionId =
+    displayUnits.length === 1 && displayUnits[0]?.kind === "blueprintNode"
+      ? (() => {
+          const node = blueprint.nodes[displayUnits[0].nodeId];
+          return node && isSiteSectionNode(node) ? node.id : null;
+        })()
+      : null;
 
   const headerTitleSlot = (
     <div className="flex min-w-0 w-full flex-1 items-center gap-3 text-[10px]">
@@ -2647,6 +2656,32 @@ export function SiteCreatorStudio({
             <div className="flex flex-1 items-center justify-center px-8">
               <p className="max-w-md text-center text-sm text-white/50">{emptyStateMessage(originState)}</p>
             </div>
+          )}
+
+          {pagePreviewMode ? null : (
+            <SiteCreatorSectionFlowRail
+              blueprint={blueprint}
+              selectedNodeId={selectedSectionId}
+              portalHost={floatingHostEl}
+              onSelectSection={(sectionId) => {
+                selectCreatedNode(sectionId);
+                setStructureError(null);
+              }}
+              onEntryKindChange={(kind) => {
+                if (!persistGate.allowed) {
+                  setStructureError(persistGate.message);
+                  return;
+                }
+                commitBlueprint(setEntryScrollKind(blueprint, kind));
+              }}
+              onHopKindChange={(fromId, toId, kind) => {
+                if (!persistGate.allowed) {
+                  setStructureError(persistGate.message);
+                  return;
+                }
+                commitBlueprint(setSectionScrollHop(blueprint, fromId, toId, kind));
+              }}
+            />
           )}
 
           <footer className="site-creator-studio__footer flex h-11 shrink-0 items-center gap-3 border-t border-white/10 bg-[#101820] px-4 text-[11px] text-white/65">

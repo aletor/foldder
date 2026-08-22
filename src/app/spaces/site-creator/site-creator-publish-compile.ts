@@ -13,6 +13,11 @@ import {
   type SiteBlueprintV1,
 } from "./site-creator-types";
 import {
+  destinationScrollKind,
+  listDocumentSections,
+  scrollFlowUsesKind,
+} from "./site-creator-section-scroll";
+import {
   boxFromObject,
   buildPublishForest,
   collectObjectMap,
@@ -350,6 +355,7 @@ export function compilePublishedSite(args: {
     fontHref: googleFontsHref(collectDesignerPageFontFamilies(args.page)),
     forest,
     layers,
+    blueprint: args.blueprint,
   });
   return { html, css, js: `"use strict";\n` };
 }
@@ -452,6 +458,24 @@ function buildCss(args: {
     ".s-path{width:100%;height:100%;display:block}",
     bandPageCss(args.layouts.wide, flow),
   ];
+
+  if (scrollFlowUsesKind(args.blueprint, "smooth")) {
+    lines.push("html.s-scroll-smooth{scroll-behavior:smooth}");
+  }
+  if (scrollFlowUsesKind(args.blueprint, "snap")) {
+    lines.push("html.s-scroll-snap{scroll-snap-type:y proximity}");
+    lines.push(".s-sec-anchor.s-snap{scroll-snap-align:start}");
+  }
+  const sections = listDocumentSections(args.blueprint);
+  if (sections.length > 0) {
+    lines.push(".s-sec-anchor{position:absolute;left:0;width:100%;height:0;pointer-events:none}");
+    const pageHeight = Math.max(1, args.layouts.wide.height);
+    for (const section of sections) {
+      lines.push(
+        `.s-sec-anchor-${cssSafeId(section.id)}{top:${pct(section.sourceRange.top, pageHeight)}}`,
+      );
+    }
+  }
 
   collectTreeCss(lines, args.forest.children, "wide", args.layouts.wide, null, args.layers, false, args.blueprint);
 
@@ -665,15 +689,28 @@ function buildHtml(args: {
   fontHref: string | null;
   forest: PublishForest;
   layers: Map<string, CompiledLayer>;
+  blueprint: SiteBlueprintV1;
 }): string {
   const body = serializeTreeHtml(args.forest.children, args.layers, "    ");
   const pageClass = args.forest.usesFlow ? "s-page s-flow" : "s-page";
+  const htmlClass = [
+    scrollFlowUsesKind(args.blueprint, "smooth") ? "s-scroll-smooth" : "",
+    scrollFlowUsesKind(args.blueprint, "snap") ? "s-scroll-snap" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const anchors = listDocumentSections(args.blueprint)
+    .map((section) => {
+      const snap = destinationScrollKind(args.blueprint, section.id) === "snap" ? " s-snap" : "";
+      return `    <div class="s-sec-anchor s-sec-anchor-${cssSafeId(section.id)}${snap}" id="s-sec-${cssSafeId(section.id)}" data-section="${escapeHtml(section.id)}"></div>`;
+    })
+    .join("\n");
   const fontLink = args.fontHref
     ? `  <link rel="preconnect" href="https://fonts.googleapis.com">\n  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n  <link rel="stylesheet" href="${escapeHtml(args.fontHref)}">\n`
     : "";
 
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="es"${htmlClass ? ` class="${htmlClass}"` : ""}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -682,7 +719,7 @@ ${fontLink}  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="${pageClass}">
-${body}
+${anchors ? `${anchors}\n` : ""}${body}
   </main>
   <script src="script.js"></script>
 </body>
