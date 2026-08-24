@@ -126,6 +126,7 @@ import {
   reparentUnitsToContainer,
   resolveButtonParent,
   semanticNodeBounds,
+  setSectionHeightMode,
 } from "./site-blueprint-ops";
 import {
   applyGroupFitToContainer,
@@ -135,7 +136,14 @@ import {
 } from "./site-creator-group-fit";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import { SiteCreatorSectionFlowRail } from "./SiteCreatorSectionFlowRail";
-import { setEntryScrollKind, setSectionScrollHop } from "./site-creator-section-scroll";
+import { setEntryScrollKind, setSectionScrollHop, listDocumentSections } from "./site-creator-section-scroll";
+import {
+  describeSectionHeightOpportunity,
+  liveViewportHeightInPageUnits,
+  resolveSectionIdForHeightHandles,
+  sectionScrollStationsFromDisplay,
+  type SectionHeightBand,
+} from "./site-creator-section-height";
 import {
   collapseLayersToSelectionUnits,
   deriveBlueprintNodeDisplayLabel,
@@ -372,6 +380,11 @@ export function SiteCreatorStudio({
   } | null>(null);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
   const [pagePreviewMode, setPagePreviewMode] = useState(false);
+  const [sectionScrollCue, setSectionScrollCue] = useState<{
+    sectionId: string;
+    kind: "smooth" | "snap";
+    token: number;
+  } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
 
@@ -454,6 +467,21 @@ export function SiteCreatorStudio({
     [committedPage],
   );
 
+  const liveViewportHeight = useMemo(() => {
+    if (deviceFrame) return Math.max(1, deviceFrame.height);
+    const liveBand = bandForViewportWidth(effectiveViewportWidth, referenceWidth);
+    const layoutWidthForLive =
+      liveBand === "wide" ? referenceWidth : Math.max(1, effectiveViewportWidth);
+    if (availablePreviewSize && availablePreviewSize.width > 1 && availablePreviewSize.height > 1) {
+      return liveViewportHeightInPageUnits({
+        pageWidth: layoutWidthForLive,
+        availableWidth: availablePreviewSize.width,
+        availableHeight: availablePreviewSize.height,
+      });
+    }
+    return referenceHeight;
+  }, [availablePreviewSize, deviceFrame, effectiveViewportWidth, referenceHeight, referenceWidth]);
+
   const responsive = useMemo(() => {
     if (!page || !referenceIndex) return null;
     return resolveSiteCreatorResponsiveDisplay({
@@ -461,8 +489,9 @@ export function SiteCreatorStudio({
       blueprint,
       referenceIndex,
       viewportWidth: effectiveViewportWidth,
+      viewportHeight: liveViewportHeight,
     });
-  }, [blueprint, effectiveViewportWidth, page, referenceIndex]);
+  }, [blueprint, effectiveViewportWidth, liveViewportHeight, page, referenceIndex]);
 
   const displayPage = responsive?.displayPage ?? page;
   const objectClipById = responsive?.resolvedLayout?.objectClipById;
@@ -472,6 +501,18 @@ export function SiteCreatorStudio({
   );
   const layoutWidth = responsive?.layout.layoutWidth ?? referenceWidth;
   const layoutHeight = responsive?.layout.layoutHeight ?? referenceHeight;
+  const liveHeightBand: SectionHeightBand =
+    responsiveBand === "tablet" || responsiveBand === "mobile" ? responsiveBand : "wide";
+  const sectionScrollStations = useMemo(
+    () =>
+      sectionScrollStationsFromDisplay({
+        blueprint,
+        viewportHeight: liveViewportHeight,
+        band: liveHeightBand,
+        regions: responsive?.resolvedLayout?.regions,
+      }),
+    [blueprint, liveHeightBand, liveViewportHeight, responsive],
+  );
 
   useEffect(() => {
     if (!pageDimensions) return;
@@ -1514,6 +1555,66 @@ export function SiteCreatorStudio({
       if (result.ok) commitBlueprint(result.blueprint);
     },
     [blueprint, commitBlueprint, committedPage, groupFitModel, referenceIndex, selectionIndex, viewportBand],
+  );
+
+  const sectionHeightModel = useMemo(() => {
+    if (pagePreviewMode || !selectionIndex) return null;
+    const selected = displayUnits.length === 1 ? displayUnits[0] : undefined;
+    const sectionExplicit =
+      selected?.kind === "blueprintNode" &&
+      Boolean(blueprint.nodes[selected.nodeId] && isSiteSectionNode(blueprint.nodes[selected.nodeId]!));
+    if (groupFitModel && !sectionExplicit) return null;
+    const sectionId = resolveSectionIdForHeightHandles({
+      blueprint,
+      index: selectionIndex,
+      selectedNodeId: selected?.kind === "blueprintNode" ? selected.nodeId : null,
+      selectedLayerId: selected?.kind === "layer" ? selected.layerId : null,
+      hoverNodeId: hoverUnit?.kind === "blueprintNode" ? hoverUnit.nodeId : null,
+      hoverLayerId: hoverUnit?.kind === "layer" ? hoverUnit.layerId : displayShadow.hoverId,
+    });
+    if (!sectionId) return null;
+    const visual =
+      presentationBoundsForUnit(
+        { kind: "blueprintNode", nodeId: sectionId },
+        presentationTree,
+        selectionIndex,
+      ) ?? semanticNodeBounds(blueprint, sectionId, selectionIndex);
+    const opportunity = describeSectionHeightOpportunity({
+      blueprint,
+      sectionId,
+      pageWidth: layoutWidth,
+      viewportHeight: liveViewportHeight,
+      band: fitLayoutBandFromViewport(viewportBand),
+      visualRect: visual,
+    });
+    if (!opportunity || (!opportunity.showExpand && !opportunity.showRestore)) return null;
+    return { opportunity, displayBounds: opportunity.bounds };
+  }, [
+    blueprint,
+    displayShadow.hoverId,
+    displayUnits,
+    groupFitModel,
+    hoverUnit,
+    layoutWidth,
+    liveViewportHeight,
+    pagePreviewMode,
+    presentationTree,
+    selectionIndex,
+    viewportBand,
+  ]);
+
+  const handleSectionHeight = useCallback(
+    (mode: "content" | "viewport") => {
+      if (!sectionHeightModel) return;
+      const result = setSectionHeightMode(
+        blueprint,
+        sectionHeightModel.opportunity.sectionId,
+        mode,
+        fitLayoutBandFromViewport(viewportBand),
+      );
+      if (result.ok) commitBlueprint(result.blueprint);
+    },
+    [blueprint, commitBlueprint, sectionHeightModel, viewportBand],
   );
 
   const contextOutlines = useMemo((): SiteCreatorUnitOutline[] => {
@@ -2615,7 +2716,8 @@ export function SiteCreatorStudio({
               onAvailableSizeChange={setAvailablePreviewSize}
               selection={pagePreviewMode ? undefined : displayShadow}
               selectionIndex={pagePreviewMode ? undefined : selectionIndex ?? undefined}
-              blueprint={pagePreviewMode ? null : blueprint}
+              blueprint={blueprint}
+              sectionScrollCue={sectionScrollCue}
               onSelectionAction={pagePreviewMode ? undefined : dispatchSelection}
               unitOutlines={pagePreviewMode ? undefined : unitOutlines}
               hoverOutline={pagePreviewMode ? undefined : hoverOutline}
@@ -2624,6 +2726,11 @@ export function SiteCreatorStudio({
               ghostOutlines={pagePreviewMode ? undefined : ghostOutlines}
               groupFit={pagePreviewMode ? null : groupFitModel}
               onGroupFit={pagePreviewMode ? undefined : handleGroupFit}
+              sectionHeight={pagePreviewMode ? null : sectionHeightModel}
+              onSectionHeight={pagePreviewMode ? undefined : handleSectionHeight}
+              pageScreenHeight={liveViewportHeight}
+              heightBand={liveHeightBand}
+              sectionScrollStations={sectionScrollStations}
               microbar={pagePreviewMode ? null : microbarModel}
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}
@@ -2673,6 +2780,10 @@ export function SiteCreatorStudio({
                   return;
                 }
                 commitBlueprint(setEntryScrollKind(blueprint, kind));
+                const first = listDocumentSections(blueprint)[0];
+                if (first && (kind === "smooth" || kind === "snap")) {
+                  setSectionScrollCue({ sectionId: first.id, kind, token: Date.now() });
+                }
               }}
               onHopKindChange={(fromId, toId, kind) => {
                 if (!persistGate.allowed) {
@@ -2680,6 +2791,9 @@ export function SiteCreatorStudio({
                   return;
                 }
                 commitBlueprint(setSectionScrollHop(blueprint, fromId, toId, kind));
+                if (kind === "smooth" || kind === "snap") {
+                  setSectionScrollCue({ sectionId: toId, kind, token: Date.now() });
+                }
               }}
             />
           )}

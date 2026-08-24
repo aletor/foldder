@@ -41,6 +41,8 @@ describe("site-creator-publish-compile", () => {
     expect(compiled.js.toLowerCase()).not.toContain("foldder");
     expect(compiled.css).toContain(".s-page{");
     expect(compiled.css).toContain("@media (max-width:767px)");
+    expect(compiled.css).toContain("@media (max-width:1024px) and (min-width:768px)");
+    expect(compiled.css).not.toContain("max-width:1919px");
     expect(compiled.css).toContain(".s-el-hero{");
     expect(compiled.css).toContain(".s-el-title{");
   });

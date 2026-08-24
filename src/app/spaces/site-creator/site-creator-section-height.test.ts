@@ -1,0 +1,275 @@
+import { describe, expect, it } from "vitest";
+import { buildSiteSelectionIndex } from "./build-site-selection-index";
+import { createSectionFromSelection } from "./site-blueprint-ops";
+import { cloneBlueprint } from "./site-blueprint-validate";
+import { compilePublishedSite } from "./site-creator-publish-compile";
+import { setSectionHeightMode } from "./site-blueprint-ops";
+import {
+  applySectionViewportHeights,
+  describeSectionHeightOpportunity,
+  liveViewportHeightInPageUnits,
+  planSectionHeightLayout,
+  sectionHeightMode,
+  sectionHeightModeForBand,
+} from "./site-creator-section-height";
+import { createEmptySiteBlueprintV1 } from "./site-creator-types";
+import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
+import { findDisplayObject, resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
+import { SITE_CREATOR_TABLET_WIDTH } from "./site-creator-viewport";
+
+function twoSections() {
+  const page = makePage([
+    makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+    makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+  ]);
+  const index = buildSiteSelectionIndex(page);
+  const hero = createSectionFromSelection({
+    blueprint: createEmptySiteBlueprintV1(),
+    selectedLayerIds: ["h"],
+    index,
+    committedPage: page,
+    sectionType: "hero",
+  });
+  expect(hero.ok).toBe(true);
+  if (!hero.ok || !hero.createdNodeId) throw new Error("hero");
+  const section = createSectionFromSelection({
+    blueprint: hero.blueprint,
+    selectedLayerIds: ["b"],
+    index,
+    committedPage: page,
+    sectionType: "generic",
+  });
+  expect(section.ok).toBe(true);
+  if (!section.ok || !section.createdNodeId) throw new Error("section");
+  return {
+    page,
+    index,
+    blueprint: section.blueprint,
+    heroId: hero.createdNodeId,
+    sectionId: section.createdNodeId,
+  };
+}
+
+describe("section height mode", () => {
+  it("stores viewport height on the section and clones it", () => {
+    const { blueprint, heroId } = twoSections();
+    const next = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(next.ok).toBe(true);
+    if (!next.ok) return;
+    expect(sectionHeightMode(next.blueprint.nodes[heroId] as never)).toBe("viewport");
+    const cloned = cloneBlueprint(next.blueprint);
+    expect(cloned.nodes[heroId]).toMatchObject({ heightMode: "viewport" });
+    expect(cloned.nodes[heroId]).not.toBe(next.blueprint.nodes[heroId]);
+    cloned.nodes[heroId] = { ...cloned.nodes[heroId]!, label: "mutated" };
+    expect(next.blueprint.nodes[heroId]).toMatchObject({ heightMode: "viewport", label: expect.not.stringMatching(/^mutated$/) });
+  });
+
+  it("plans extra space so a short section fills the page height", () => {
+    const { blueprint, heroId, sectionId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const layout = planSectionHeightLayout(fitted.blueprint, 1080);
+    const hero = layout.ranges.find((r) => r.id === heroId)!;
+    const next = layout.ranges.find((r) => r.id === sectionId)!;
+    expect(hero.fitted).toBe(true);
+    expect(hero.height).toBe(1080);
+    expect(hero.extra).toBeGreaterThan(600);
+    expect(next.top).toBeGreaterThan(hero.top + 400);
+  });
+
+  it("shows expand arrow for content and restore for viewport", () => {
+    const { blueprint, heroId } = twoSections();
+    const content = describeSectionHeightOpportunity({
+      blueprint,
+      sectionId: heroId,
+      pageWidth: 1920,
+      viewportHeight: 1080,
+    });
+    expect(content?.showExpand).toBe(true);
+    expect(content?.showRestore).toBe(false);
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const restore = describeSectionHeightOpportunity({
+      blueprint: fitted.blueprint,
+      sectionId: heroId,
+      pageWidth: 1920,
+      viewportHeight: 1080,
+    });
+    expect(restore?.showExpand).toBe(false);
+    expect(restore?.showRestore).toBe(true);
+  });
+
+  it("anchors the expand handle to visual bounds when sourceRange is taller than the section", () => {
+    const { blueprint, heroId } = twoSections();
+    const node = blueprint.nodes[heroId];
+    expect(node && node.kind === "section").toBe(true);
+    if (!node || node.kind !== "section") return;
+    node.sourceRange = { top: 0, bottom: 1080 };
+    const inflated = describeSectionHeightOpportunity({
+      blueprint,
+      sectionId: heroId,
+      pageWidth: 1920,
+      viewportHeight: 1080,
+    });
+    expect(inflated?.showExpand).toBe(false);
+    const visual = describeSectionHeightOpportunity({
+      blueprint,
+      sectionId: heroId,
+      pageWidth: 1920,
+      viewportHeight: 1080,
+      visualRect: { x: 0, y: 0, width: 1920, height: 400 },
+    });
+    expect(visual?.showExpand).toBe(true);
+    expect(visual?.bounds.height).toBe(400);
+    expect(visual?.bounds.y).toBe(0);
+    expect(visual?.targetBounds.height).toBe(1080);
+  });
+
+  it("shifts following layers down on the preview page", () => {
+    const { page, blueprint, index, heroId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: fitted.blueprint,
+      index,
+      viewportHeight: 1080,
+    });
+    const body = laidOut.page.objects?.find((obj) => obj.id === "b");
+    expect(body?.y).toBeGreaterThan(1000);
+    expect(laidOut.page.customHeight).toBeGreaterThan(1400);
+  });
+
+  it("emits exact 100dvh height in published CSS", () => {
+    const { page, blueprint, heroId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: fitted.blueprint,
+      title: "Alto",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.html).toContain("s-has-vh-secs");
+    expect(compiled.css).toContain("height:100dvh");
+    expect(compiled.css).toContain("max-height:100dvh");
+    expect(compiled.css).toContain("100cqw");
+    expect(compiled.css).toMatch(/s-sec-anchor-[^{]+\{[^}]*calc\(/);
+    expect(compiled.css).not.toMatch(/foldder/i);
+  });
+
+  it("maps the live window to page units so height changes with resize", () => {
+    expect(
+      liveViewportHeightInPageUnits({ pageWidth: 1920, availableWidth: 960, availableHeight: 500 }),
+    ).toBe(1000);
+    expect(
+      liveViewportHeightInPageUnits({ pageWidth: 1920, availableWidth: 960, availableHeight: 700 }),
+    ).toBe(1400);
+  });
+
+  it("plans a different extra when the live viewport height changes", () => {
+    const { blueprint, heroId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const short = planSectionHeightLayout(fitted.blueprint, 800);
+    const tall = planSectionHeightLayout(fitted.blueprint, 1200);
+    const shortHero = short.ranges.find((r) => r.id === heroId)!;
+    const tallHero = tall.ranges.find((r) => r.id === heroId)!;
+    expect(tallHero.height).toBeGreaterThan(shortHero.height);
+    expect(tallHero.extra).toBe(shortHero.extra + 400);
+  });
+
+  it("does not freeze following layers to a snapshot height in published CSS", () => {
+    const { page, blueprint, heroId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: fitted.blueprint,
+      title: "Alto",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.css).toContain("100dvh");
+    expect(compiled.css).toMatch(/100cqw \* 500 \//);
+    expect(compiled.css).not.toMatch(/100cqw \* 1180 \//);
+  });
+
+  it("keeps viewport height independent per original / tablet / mobile", () => {
+    const { blueprint, heroId } = twoSections();
+    const section = blueprint.nodes[heroId];
+    if (!section || section.kind !== "section") throw new Error("section");
+    const original = setSectionHeightMode(blueprint, heroId, "viewport");
+    expect(original.ok).toBe(true);
+    if (!original.ok) return;
+    expect(sectionHeightMode(original.blueprint.nodes[heroId] as never)).toBe("viewport");
+    expect(sectionHeightModeForBand(original.blueprint, section, "tablet")).toBe("content");
+    expect(sectionHeightModeForBand(original.blueprint, section, "mobile")).toBe("content");
+
+    const tablet = setSectionHeightMode(original.blueprint, heroId, "viewport", "tablet");
+    expect(tablet.ok).toBe(true);
+    if (!tablet.ok) return;
+    expect(sectionHeightMode(tablet.blueprint.nodes[heroId] as never)).toBe("viewport");
+    expect(sectionHeightModeForBand(tablet.blueprint, section, "tablet")).toBe("viewport");
+    expect(sectionHeightModeForBand(tablet.blueprint, section, "mobile")).toBe("content");
+
+    const restored = setSectionHeightMode(tablet.blueprint, heroId, "content", "tablet");
+    expect(restored.ok).toBe(true);
+    if (!restored.ok) return;
+    expect(sectionHeightMode(restored.blueprint.nodes[heroId] as never)).toBe("viewport");
+    expect(sectionHeightModeForBand(restored.blueprint, section, "tablet")).toBe("content");
+  });
+
+  it("does not double-offset leftover layers when creating a section on tablet", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) throw new Error("hero");
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: hero.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const body = findDisplayObject(resolved.displayPage, "b");
+    const heroObj = findDisplayObject(resolved.displayPage, "h");
+    expect(body).toBeTruthy();
+    expect(heroObj).toBeTruthy();
+    const heroBottom = (heroObj?.y ?? 0) + (heroObj?.height ?? 0);
+    expect(body!.y).toBeGreaterThanOrEqual(heroBottom - 2);
+    expect(body!.y).toBeLessThan(heroBottom + 80);
+    expect(resolved.layout.layoutHeight).toBeLessThan((body!.y ?? 0) + (body!.height ?? 0) + 24);
+  });
+
+  it("emits 100dvh only inside the tablet band when height is tablet-only", () => {
+    const { page, blueprint, heroId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport", "tablet");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: fitted.blueprint,
+      title: "Alto tablet",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.html).toContain("s-has-vh-secs");
+    const wideCss = compiled.css.split("@media")[0] ?? "";
+    expect(wideCss).not.toContain("height:100dvh");
+    expect(compiled.css).toContain("height:100dvh");
+  });
+});

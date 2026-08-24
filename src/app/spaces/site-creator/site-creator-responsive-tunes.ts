@@ -106,6 +106,7 @@ function isEmptyContainerTune(tune: ResponsiveContainerTuneV1 | undefined): bool
   if (typeof tune.maxContentWidth === "number") return false;
   if (typeof tune.minHeight === "number") return false;
   if (tune.autoHeight === false) return false;
+  if (tune.heightMode === "viewport") return false;
   return true;
 }
 
@@ -177,6 +178,7 @@ function cleanContainerTune(tune: ResponsiveContainerTuneV1): ResponsiveContaine
     next.minHeight = Math.max(0, Math.round(tune.minHeight));
   }
   if (tune.autoHeight === false) next.autoHeight = false;
+  if (tune.heightMode === "viewport") next.heightMode = "viewport";
   return isEmptyContainerTune(next) ? null : next;
 }
 

@@ -225,16 +225,22 @@ function cloneNode(node: SiteBlueprintNode): SiteBlueprintNode {
       parentId: null,
       sourceRange: { ...node.sourceRange },
       ...(node.promotedFromGroupId ? { promotedFromGroupId: node.promotedFromGroupId } : {}),
+      ...(node.heightMode === "viewport" ? { heightMode: "viewport" as const } : {}),
     };
   }
-  const group = { ...base, kind: "layoutGroup" as const };
-  if (node.kind === "layoutGroup") {
-    if (node.widthMode === "content" || node.widthMode === "full" || node.widthMode === "scale") {
-      group.widthMode = node.widthMode;
-    }
-    if (node.fitOrigin === "start" || node.fitOrigin === "end") {
-      group.fitOrigin = node.fitOrigin;
-    }
-  }
-  return group;
+  return {
+    id: node.id,
+    label: node.label,
+    kind: "layoutGroup" as const,
+    parentId: node.parentId,
+    childIds: [...node.childIds],
+    layerIds: [...node.layerIds],
+    ...(node.kind === "layoutGroup" &&
+    (node.widthMode === "content" || node.widthMode === "full" || node.widthMode === "scale")
+      ? { widthMode: node.widthMode }
+      : {}),
+    ...(node.kind === "layoutGroup" && (node.fitOrigin === "start" || node.fitOrigin === "end")
+      ? { fitOrigin: node.fitOrigin }
+      : {}),
+  };
 }

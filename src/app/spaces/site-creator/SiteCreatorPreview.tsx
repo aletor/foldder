@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import { collectDesignerPageFontFamilies } from "@/app/spaces/designer/designer-page-text-frame-sync";
 import { ensureGoogleFontPreviewBatchLoaded } from "@/app/spaces/freehand/google-fonts-preview-loader";
@@ -11,6 +11,7 @@ import {
   type SiteCreatorUnitOutline,
 } from "./SiteCreatorSelectionSurface";
 import type { GroupFitOpportunity } from "./site-creator-group-fit";
+import type { SectionHeightOpportunity } from "./site-creator-section-height";
 import {
   SiteCreatorObjectMicrobar,
   type FloatingChromeGeometry,
@@ -28,6 +29,22 @@ import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorPrimaryAction } from "./site-creator-contextual-actions";
 import type { SiteBlueprintV1 } from "./site-creator-types";
+import { isSiteSectionNode } from "./site-creator-types";
+import {
+  lastDocumentSection,
+  listDocumentSections,
+  listSectionScrollHops,
+  sectionScrollNeedsViewportPad,
+} from "./site-creator-section-scroll";
+import { bindSectionScroller, scrollBehaviorForKind } from "./site-creator-section-scroll-runtime";
+import {
+  liveViewportHeightInPageUnits,
+  planSectionHeightLayout,
+  sectionDisplayTop,
+  sectionHeightModeForBand,
+  type SectionHeightBand,
+  type SectionScrollStationPoint,
+} from "./site-creator-section-height";
 import {
   clampViewportWidth,
   isSiteCreatorPreviewChromeBackgroundTarget,
@@ -87,6 +104,15 @@ export interface SiteCreatorPreviewProps {
   readOnly?: boolean;
   groupFit?: { opportunity: GroupFitOpportunity; displayBounds: PageRect } | null;
   onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
+  sectionHeight?: { opportunity: SectionHeightOpportunity; displayBounds: PageRect } | null;
+  onSectionHeight?: (mode: "content" | "viewport") => void;
+  /** Alto de página de diseño (una pantalla), no el lienzo ya expandido. */
+  pageScreenHeight?: number;
+  /** Banda de alto de sección (Original / tablet / móvil). */
+  heightBand?: SectionHeightBand;
+  /** Tops de sección en el espacio del display (preview P / publicación). */
+  sectionScrollStations?: SectionScrollStationPoint[];
+  sectionScrollCue?: { sectionId: string; kind: "smooth" | "snap"; token: number } | null;
 }
 
 function ResizeHandle({
@@ -152,6 +178,12 @@ export function SiteCreatorPreview({
   readOnly = false,
   groupFit = null,
   onGroupFit,
+  sectionHeight = null,
+  onSectionHeight,
+  pageScreenHeight,
+  heightBand = "wide",
+  sectionScrollStations = [],
+  sectionScrollCue = null,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -160,6 +192,7 @@ export function SiteCreatorPreview({
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
   const [frameTick, setFrameTick] = useState(0);
+  const [scrollPad, setScrollPad] = useState(0);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   const dragRef = useRef<{
     side: "left" | "right";
@@ -222,6 +255,139 @@ export function SiteCreatorPreview({
       inner?.removeEventListener("scroll", bump);
     };
   }, [deviceMode]);
+
+  const needsSectionScrollPad = Boolean(blueprint && sectionScrollNeedsViewportPad(blueprint));
+  const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
+
+  const liveScreenHeight = useCallback((): number => {
+    if (deviceMode && deviceFrame) return Math.max(1, deviceFrame.height);
+    const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+    if (scroller && scroller.clientWidth > 1 && scroller.clientHeight > 1) {
+      return liveViewportHeightInPageUnits({
+        pageWidth,
+        availableWidth: scroller.clientWidth,
+        availableHeight: scroller.clientHeight,
+      });
+    }
+    return Math.max(1, pageScreenHeight ?? pageHeight);
+  }, [deviceFrame, deviceMode, pageHeight, pageScreenHeight, pageWidth]);
+
+  useLayoutEffect(() => {
+    if (!readOnly || !blueprint || !needsSectionScrollPad) {
+      setScrollPad(0);
+      return;
+    }
+    const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+    if (!scroller) return;
+    const update = () => {
+      const last = lastDocumentSection(blueprint);
+      if (!last) {
+        setScrollPad(0);
+        return;
+      }
+      if (sectionHeightModeForBand(blueprint, last, heightBand) === "viewport") {
+        setScrollPad(0);
+        return;
+      }
+      const station = sectionScrollStations.find((item) => item.id === last.id);
+      const lastPageH =
+        station?.height ??
+        planSectionHeightLayout(blueprint, liveScreenHeight(), heightBand).ranges.at(-1)?.height ??
+        Math.max(1, last.sourceRange.bottom - last.sourceRange.top);
+      const stageH = stageRef.current?.getBoundingClientRect().height ?? contentDisplayHeight;
+      const lastScreen = (lastPageH / Math.max(1, pageHeight)) * stageH;
+      setScrollPad(Math.max(0, scroller.clientHeight - lastScreen));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(scroller);
+    if (stageRef.current) ro.observe(stageRef.current);
+    return () => ro.disconnect();
+  }, [
+    blueprint,
+    contentDisplayHeight,
+    deviceMode,
+    heightBand,
+    liveScreenHeight,
+    needsSectionScrollPad,
+    pageHeight,
+    readOnly,
+    sectionScrollStations,
+  ]);
+
+  const sectionScrollPadEl =
+    readOnly && needsSectionScrollPad && scrollPad > 0 ? (
+      <div
+        aria-hidden
+        data-testid="site-creator-section-scroll-pad"
+        className="pointer-events-none w-full shrink-0"
+        style={{ height: scrollPad }}
+      />
+    ) : null;
+
+  const sectionScrollTop = useCallback(
+    (sectionId: string): number | null => {
+      const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+      const stage = stageRef.current;
+      const node = blueprint?.nodes[sectionId];
+      if (!scroller || !stage || !node || !isSiteSectionNode(node)) return null;
+      const stageBox = stage.getBoundingClientRect();
+      const scrollerBox = scroller.getBoundingClientRect();
+      const screenH = liveScreenHeight();
+      const yDoc =
+        sectionScrollStations.find((item) => item.id === sectionId)?.y ??
+        sectionDisplayTop(blueprint, sectionId, screenH, heightBand) ??
+        node.sourceRange.top;
+      const yOnStage = (yDoc / Math.max(1, pageHeight)) * stageBox.height;
+      return scroller.scrollTop + (stageBox.top + yOnStage - scrollerBox.top);
+    },
+    [blueprint, deviceMode, heightBand, liveScreenHeight, pageHeight, sectionScrollStations],
+  );
+
+  useEffect(() => {
+    if (!sectionScrollCue) return;
+    const frame = window.requestAnimationFrame(() => {
+      const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+      const top = sectionScrollTop(sectionScrollCue.sectionId);
+      if (!scroller || top == null) return;
+      scroller.scrollTo({
+        top: Math.max(0, top),
+        behavior: scrollBehaviorForKind(sectionScrollCue.kind),
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [deviceMode, scrollPad, sectionScrollCue, sectionScrollTop]);
+
+  stationsFnRef.current = () => {
+    const boxScroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+    const stage = stageRef.current;
+    if (!boxScroller || !stage || !blueprint) return [];
+    const stageBox = stage.getBoundingClientRect();
+    const scrollerBox = boxScroller.getBoundingClientRect();
+    const screenH = liveScreenHeight();
+    return listDocumentSections(blueprint).map((section) => {
+      const yDoc =
+        sectionScrollStations.find((item) => item.id === section.id)?.y ??
+        sectionDisplayTop(blueprint, section.id, screenH, heightBand) ??
+        section.sourceRange.top;
+      const yOnStage = (yDoc / Math.max(1, pageHeight)) * stageBox.height;
+      return {
+        id: section.id,
+        y: boxScroller.scrollTop + (stageBox.top + yOnStage - scrollerBox.top),
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (!readOnly || !blueprint || !needsSectionScrollPad) return;
+    const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+    if (!scroller) return;
+    return bindSectionScroller({
+      scroller,
+      hops: listSectionScrollHops(blueprint),
+      stations: () => stationsFnRef.current(),
+    });
+  }, [blueprint, deviceMode, needsSectionScrollPad, readOnly]);
 
   useEffect(() => {
     const onWin = () => setFrameTick((n) => n + 1);
@@ -405,6 +571,9 @@ export function SiteCreatorPreview({
             onCancelFocal={onCancelFocal}
             groupFit={groupFit}
             onGroupFit={onGroupFit}
+            sectionHeight={sectionHeight}
+            onSectionHeight={onSectionHeight}
+            floatingPortalHost={floatingPortalHost}
           />
         ) : null}
       </div>
@@ -444,8 +613,8 @@ export function SiteCreatorPreview({
         }}
       >
         <div
-          className={`site-creator-preview-scroll-inner flex min-h-full ${
-            readOnly ? "items-stretch justify-stretch px-0 py-0" : "items-start justify-center px-8 py-8"
+          className={`site-creator-preview-scroll-inner flex min-h-full flex-col ${
+            readOnly ? "items-stretch justify-stretch px-0 py-0" : "items-center px-8 py-8"
           }`}
         >
           <div
@@ -491,6 +660,7 @@ export function SiteCreatorPreview({
                 >
                   {pageContent}
                 </div>
+                {sectionScrollPadEl}
               </div>
             ) : (
               <div ref={stageRef} className="relative h-full w-full">
@@ -518,6 +688,7 @@ export function SiteCreatorPreview({
               </div>
             ) : null}
           </div>
+          {deviceMode ? null : sectionScrollPadEl}
         </div>
       </div>
     </div>

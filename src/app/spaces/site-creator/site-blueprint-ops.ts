@@ -12,6 +12,7 @@ import {
   unique,
 } from "./site-blueprint-ownership";
 import { assertValidBlueprint, cloneBlueprint } from "./site-blueprint-validate";
+import { patchContainerTune } from "./site-creator-responsive-tunes";
 import type { SiteCreatorSelectionIndex, SiteCreatorSelectionIndexEntry } from "./site-creator-selection-types";
 import type {
   LayoutGroupFitOrigin,
@@ -21,6 +22,7 @@ import type {
   SiteBlueprintNode,
   SiteBlueprintSectionNode,
   SiteBlueprintV1,
+  SiteSectionHeightMode,
   SiteSectionType,
 } from "./site-creator-types";
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
@@ -939,6 +941,36 @@ export function setLayoutGroupWidthMode(
   if (!nextMode) delete updated.widthMode;
   if (!nextOrigin) delete updated.fitOrigin;
   next.nodes[nodeId] = updated;
+  return { ok: true, blueprint: next };
+}
+
+export function setSectionHeightMode(
+  blueprint: SiteBlueprintV1,
+  sectionId: string,
+  heightMode: SiteSectionHeightMode,
+  band: "wide" | "tablet" | "mobile" = "wide",
+): BlueprintOpResult {
+  const node = blueprint.nodes[sectionId];
+  if (!node || !isSiteSectionNode(node)) {
+    return fail("invalid_target", "Selecciona una sección.");
+  }
+  if (band === "tablet" || band === "mobile") {
+    const next = patchContainerTune({
+      blueprint,
+      target: { kind: "blueprintNode", nodeId: sectionId },
+      band,
+      patch: { heightMode: heightMode === "viewport" ? "viewport" : undefined },
+    }).blueprint;
+    return { ok: true, blueprint: next };
+  }
+  const nextMode: SiteSectionHeightMode | undefined = heightMode === "viewport" ? "viewport" : undefined;
+  if ((node.heightMode ?? "content") === (nextMode ?? "content")) {
+    return { ok: true, blueprint };
+  }
+  const next = cloneBlueprint(blueprint);
+  const updated: SiteBlueprintSectionNode = { ...node, heightMode: nextMode };
+  if (!nextMode) delete updated.heightMode;
+  next.nodes[sectionId] = updated;
   return { ok: true, blueprint: next };
 }
 

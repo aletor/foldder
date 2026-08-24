@@ -14,7 +14,9 @@ import { SiteCreatorLayerPicker } from "./SiteCreatorLayerPicker";
 import { SiteCreatorSelectionOverlay } from "./SiteCreatorSelectionOverlay";
 import { SiteCreatorIsolationBreadcrumb } from "./SiteCreatorSelectionToolbar";
 import { SiteCreatorGroupFitHandles } from "./SiteCreatorGroupFitHandles";
+import { SiteCreatorSectionHeightHandles } from "./SiteCreatorSectionHeightHandles";
 import type { GroupFitOpportunity } from "./site-creator-group-fit";
+import type { SectionHeightOpportunity } from "./site-creator-section-height";
 import type {
   SiteCreatorSelectionAction,
   SiteCreatorSelectionIndex,
@@ -126,6 +128,9 @@ export interface SiteCreatorSelectionSurfaceProps {
   onCancelFocal?: () => void;
   groupFit?: { opportunity: GroupFitOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
   onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
+  sectionHeight?: { opportunity: SectionHeightOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
+  onSectionHeight?: (mode: "content" | "viewport") => void;
+  floatingPortalHost?: HTMLElement | null;
   /** Ancla de coordenadas de página (preview-page). */
   pageAnchorRef?: React.RefObject<HTMLElement | null>;
   /** Área scroll del preview; permite marquee desde fuera de la página. */
@@ -155,6 +160,9 @@ export function SiteCreatorSelectionSurface({
   onCancelFocal,
   groupFit = null,
   onGroupFit,
+  sectionHeight = null,
+  onSectionHeight,
+  floatingPortalHost = null,
   pageAnchorRef,
   captureRootRef,
 }: SiteCreatorSelectionSurfaceProps) {
@@ -586,7 +594,7 @@ export function SiteCreatorSelectionSurface({
   return (
     <div
       ref={stageRef}
-      className="site-creator-selection-surface absolute inset-0"
+        className="site-creator-selection-surface absolute inset-0 overflow-visible"
       onPointerLeave={() => dispatch({ type: "hover", layerId: null })}
     >
       <svg
@@ -621,6 +629,17 @@ export function SiteCreatorSelectionSurface({
           opportunity={groupFit.opportunity}
           displayBounds={groupFit.displayBounds}
           onFit={onGroupFit}
+        />
+      ) : null}
+      {sectionHeight && onSectionHeight ? (
+        <SiteCreatorSectionHeightHandles
+          opportunity={sectionHeight.opportunity}
+          displayBounds={sectionHeight.displayBounds}
+          onChange={onSectionHeight}
+          portalHost={floatingPortalHost}
+          pageAnchorRef={pageAnchorRef}
+          pageWidth={pageWidth}
+          pageHeight={pageHeight}
         />
       ) : null}
       {focalLayerId ? (

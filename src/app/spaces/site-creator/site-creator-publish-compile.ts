@@ -14,9 +14,18 @@ import {
 } from "./site-creator-types";
 import {
   destinationScrollKind,
+  lastDocumentSection,
   listDocumentSections,
+  listSectionScrollHops,
   scrollFlowUsesKind,
+  sectionScrollNeedsViewportPad,
 } from "./site-creator-section-scroll";
+import { compilePublishedScrollScript } from "./site-creator-section-scroll-runtime";
+import {
+  blueprintHasViewportSection,
+  sectionHeightModeForBand,
+  type SectionHeightBand,
+} from "./site-creator-section-height";
 import {
   boxFromObject,
   buildPublishForest,
@@ -32,6 +41,7 @@ import { containerIsFullWidthForBand } from "./site-creator-group-width-layout";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
+  siteCreatorTabletMediaMaxWidth,
 } from "./site-creator-viewport";
 import {
   publishAssetPlaceholder,
@@ -210,6 +220,150 @@ function pct(value: number, total: number): string {
   return `${((value / Math.max(1, total)) * 100).toFixed(4)}%`;
 }
 
+type SectionLayoutHint = { sectionId: string; top: number; height: number };
+
+function sectionLayoutHint(
+  section: { id: string; sourceRange: { top: number; bottom: number } },
+  hints: SectionLayoutHint[] | null | undefined,
+): { top: number; bottom: number; designed: number } {
+  const hint = hints?.find((item) => item.sectionId === section.id);
+  if (hint) {
+    return {
+      top: hint.top,
+      bottom: hint.top + hint.height,
+      designed: Math.max(1, hint.height),
+    };
+  }
+  return {
+    top: section.sourceRange.top,
+    bottom: section.sourceRange.bottom,
+    designed: Math.max(1, section.sourceRange.bottom - section.sourceRange.top),
+  };
+}
+
+function hintsFromResolved(result: {
+  resolvedLayout?: { regions: { sectionId: string; layoutRect: { y: number; height: number } }[] } | null;
+}): SectionLayoutHint[] | null {
+  const regions = result.resolvedLayout?.regions;
+  if (!regions?.length) return null;
+  return regions.map((region) => ({
+    sectionId: region.sectionId,
+    top: region.layoutRect.y,
+    height: region.layoutRect.height,
+  }));
+}
+
+function extraShiftExpr(
+  blueprint: SiteBlueprintV1,
+  y: number,
+  pageWidth: number,
+  band: SectionHeightBand = "wide",
+  hints?: SectionLayoutHint[] | null,
+): string | null {
+  if (!blueprintHasViewportSection(blueprint, band)) return null;
+  const parts: string[] = [];
+  for (const section of listDocumentSections(blueprint)) {
+    if (sectionHeightModeForBand(blueprint, section, band) !== "viewport") continue;
+    const layout = sectionLayoutHint(section, hints);
+    if (y + 0.5 < layout.bottom) continue;
+    parts.push(`max(0px,100dvh - 100cqw * ${layout.designed} / ${Math.max(1, pageWidth)})`);
+  }
+  return parts.length > 0 ? parts.join(" + ") : "0px";
+}
+
+function extraGrowExpr(
+  blueprint: SiteBlueprintV1,
+  box: { y: number; height: number; width: number },
+  pageWidth: number,
+  band: SectionHeightBand = "wide",
+  hints?: SectionLayoutHint[] | null,
+): string | null {
+  if (!blueprintHasViewportSection(blueprint, band)) return null;
+  for (const section of listDocumentSections(blueprint)) {
+    if (sectionHeightModeForBand(blueprint, section, band) !== "viewport") continue;
+    const layout = sectionLayoutHint(section, hints);
+    const touchesBottom = box.y < layout.bottom && box.y + box.height >= layout.bottom - 4;
+    if (touchesBottom && box.width >= pageWidth * 0.8) {
+      return `max(0px,100dvh - 100cqw * ${layout.designed} / ${Math.max(1, pageWidth)})`;
+    }
+  }
+  return null;
+}
+
+function emitSectionViewportCss(
+  lines: string[],
+  blueprint: SiteBlueprintV1,
+  layout: { width: number; height: number },
+  band: SectionHeightBand,
+  hints: SectionLayoutHint[] | null | undefined,
+  flow: boolean,
+): void {
+  const sections = listDocumentSections(blueprint);
+  if (sections.length === 0) return;
+  const pageHeight = Math.max(1, layout.height);
+  const pageWidth = Math.max(1, layout.width);
+  const extraParts: string[] = [];
+  for (const section of sections) {
+    const viewport = sectionHeightModeForBand(blueprint, section, band) === "viewport";
+    const geom = sectionLayoutHint(section, hints);
+    const shift = extraShiftExpr(blueprint, geom.top, pageWidth, band, hints);
+    const top =
+      shift != null ? `calc(${shift} + ${cqwLen(geom.top, pageWidth)})` : pct(geom.top, pageHeight);
+    const heightRule = viewport
+      ? ";height:100dvh;max-height:100dvh"
+      : band === "wide"
+        ? ""
+        : ";height:0;min-height:0";
+    lines.push(`.s-sec-anchor-${cssSafeId(section.id)}{top:${top}${heightRule}}`);
+    if (viewport) {
+      extraParts.push(`max(0px,100dvh - 100cqw * ${geom.designed} / ${pageWidth})`);
+    }
+  }
+  if (extraParts.length > 0) {
+    lines.push(
+      `html.s-has-vh-secs .s-page{aspect-ratio:auto;height:auto;overflow:visible;min-height:calc(100cqw * ${pageHeight} / ${pageWidth} + ${extraParts.join(" + ")})}`,
+    );
+  } else if (band !== "wide") {
+    if (flow) {
+      lines.push(
+        `html.s-has-vh-secs .s-page{aspect-ratio:auto;height:auto;overflow:visible;min-height:calc(100cqw * ${pageHeight} / ${pageWidth})}`,
+      );
+    } else {
+      lines.push(
+        `html.s-has-vh-secs .s-page{aspect-ratio:${pageWidth} / ${pageHeight};min-height:0;height:auto;overflow:hidden}`,
+      );
+    }
+  }
+  emitSectionScrollEndPad(lines, blueprint, pageWidth, band, hints);
+}
+
+/** Pad solo si la última sección no es viewport: alinea su inicio sin un viewport extra. */
+function emitSectionScrollEndPad(
+  lines: string[],
+  blueprint: SiteBlueprintV1,
+  pageWidth: number,
+  band: SectionHeightBand,
+  hints: SectionLayoutHint[] | null | undefined,
+): void {
+  if (!sectionScrollNeedsViewportPad(blueprint)) return;
+  const last = lastDocumentSection(blueprint);
+  if (!last) return;
+  if (sectionHeightModeForBand(blueprint, last, band) === "viewport") {
+    if (band !== "wide") {
+      lines.push("html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:0}");
+    }
+    return;
+  }
+  const geom = sectionLayoutHint(last, hints);
+  lines.push(
+    `html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:max(0px,100dvh - 100cqw * ${geom.designed} / ${Math.max(1, pageWidth)})}`,
+  );
+}
+
+function cqwLen(px: number, pageWidth: number): string {
+  return `calc(100cqw * ${px} / ${Math.max(1, pageWidth)})`;
+}
+
 function textInnerHtml(obj: FreehandObject): string {
   const textObj = obj as FreehandObject & {
     text?: string;
@@ -280,18 +434,21 @@ export function compilePublishedSite(args: {
     blueprint: args.blueprint,
     referenceIndex,
     viewportWidth: reference.width,
+    expandViewportSections: false,
   });
   const tablet = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
     blueprint: args.blueprint,
     referenceIndex,
     viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    expandViewportSections: false,
   });
   const mobile = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
     blueprint: args.blueprint,
     referenceIndex,
     viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+    expandViewportSections: false,
   });
 
   const layouts: Record<BandName, { width: number; height: number; objects: FreehandObject[] }> = {
@@ -349,6 +506,11 @@ export function compilePublishedSite(args: {
     layers,
     referenceWidth: reference.width,
     blueprint: args.blueprint,
+    hintsByBand: {
+      wide: hintsFromResolved(wide),
+      tablet: hintsFromResolved(tablet),
+      mobile: hintsFromResolved(mobile),
+    },
   });
   const html = buildHtml({
     title: args.title.trim() || "Sitio",
@@ -357,7 +519,7 @@ export function compilePublishedSite(args: {
     layers,
     blueprint: args.blueprint,
   });
-  return { html, css, js: `"use strict";\n` };
+  return { html, css, js: compilePublishedScrollScript(listSectionScrollHops(args.blueprint)) };
 }
 
 function compilePaintLayer(
@@ -436,8 +598,9 @@ function buildCss(args: {
   layers: Map<string, CompiledLayer>;
   referenceWidth: number;
   blueprint: SiteBlueprintV1;
+  hintsByBand: Record<BandName, SectionLayoutHint[] | null>;
 }): string {
-  const tabletMax = Math.max(SITE_CREATOR_TABLET_WIDTH, args.referenceWidth - 1);
+  const tabletMax = siteCreatorTabletMediaMaxWidth(args.referenceWidth);
   const flow = args.forest.usesFlow;
   const lines: string[] = [
     "*,*::before,*::after{box-sizing:border-box}",
@@ -464,29 +627,77 @@ function buildCss(args: {
   }
   if (scrollFlowUsesKind(args.blueprint, "snap")) {
     lines.push("html.s-scroll-snap{scroll-snap-type:y proximity}");
-    lines.push(".s-sec-anchor.s-snap{scroll-snap-align:start}");
+    lines.push(".s-sec-anchor.s-snap{scroll-snap-align:start;scroll-snap-stop:always}");
   }
   const sections = listDocumentSections(args.blueprint);
   if (sections.length > 0) {
     lines.push(".s-sec-anchor{position:absolute;left:0;width:100%;height:0;pointer-events:none}");
-    const pageHeight = Math.max(1, args.layouts.wide.height);
-    for (const section of sections) {
-      lines.push(
-        `.s-sec-anchor-${cssSafeId(section.id)}{top:${pct(section.sourceRange.top, pageHeight)}}`,
-      );
-    }
+    emitSectionViewportCss(
+      lines,
+      args.blueprint,
+      args.layouts.wide,
+      "wide",
+      args.hintsByBand.wide,
+      flow,
+    );
   }
 
-  collectTreeCss(lines, args.forest.children, "wide", args.layouts.wide, null, args.layers, false, args.blueprint);
+  collectTreeCss(
+    lines,
+    args.forest.children,
+    "wide",
+    args.layouts.wide,
+    null,
+    args.layers,
+    false,
+    args.blueprint,
+    args.hintsByBand.wide,
+  );
 
   lines.push(`@media (max-width:${tabletMax}px) and (min-width:${SITE_CREATOR_TABLET_WIDTH}px){`);
   lines.push(bandPageCss(args.layouts.tablet, flow));
-  collectTreeCss(lines, args.forest.children, "tablet", args.layouts.tablet, null, args.layers, false, args.blueprint);
+  emitSectionViewportCss(
+    lines,
+    args.blueprint,
+    args.layouts.tablet,
+    "tablet",
+    args.hintsByBand.tablet,
+    flow,
+  );
+  collectTreeCss(
+    lines,
+    args.forest.children,
+    "tablet",
+    args.layouts.tablet,
+    null,
+    args.layers,
+    false,
+    args.blueprint,
+    args.hintsByBand.tablet,
+  );
   lines.push("}");
 
   lines.push(`@media (max-width:${SITE_CREATOR_TABLET_WIDTH - 1}px){`);
   lines.push(bandPageCss(args.layouts.mobile, flow));
-  collectTreeCss(lines, args.forest.children, "mobile", args.layouts.mobile, null, args.layers, false, args.blueprint);
+  emitSectionViewportCss(
+    lines,
+    args.blueprint,
+    args.layouts.mobile,
+    "mobile",
+    args.hintsByBand.mobile,
+    flow,
+  );
+  collectTreeCss(
+    lines,
+    args.forest.children,
+    "mobile",
+    args.layouts.mobile,
+    null,
+    args.layers,
+    false,
+    args.blueprint,
+    args.hintsByBand.mobile,
+  );
   lines.push("}");
 
   return `${lines.filter(Boolean).join("\n")}\n`;
@@ -508,17 +719,18 @@ function collectTreeCss(
   layers: Map<string, CompiledLayer>,
   inRow = false,
   blueprint: SiteBlueprintV1,
+  hints: SectionLayoutHint[] | null = null,
 ): void {
   const percentParent: PublishBox =
     parent ?? { x: 0, y: 0, width: layout.width, height: layout.height, rotation: 0, opacity: 1, visible: true };
   for (const node of nodes) {
     if (node.kind === "row") {
       lines.push(rowBoxCss(node, band, percentParent));
-      collectTreeCss(lines, node.children, band, layout, percentParent, layers, true, blueprint);
+      collectTreeCss(lines, node.children, band, layout, percentParent, layers, true, blueprint, hints);
       continue;
     }
     if (node.kind === "group") {
-      lines.push(groupBoxCss(node, band, percentParent, inRow, blueprint));
+      lines.push(groupBoxCss(node, band, percentParent, inRow, blueprint, layout.width, hints));
       collectTreeCss(
         lines,
         node.children,
@@ -528,12 +740,15 @@ function collectTreeCss(
         layers,
         false,
         blueprint,
+        hints,
       );
       continue;
     }
     const layer = layers.get(node.id);
     if (!layer) continue;
-    lines.push(layerBoxCss(layer, band, percentParent, worldBoxForBand(node, band as TreeBand), inRow));
+    lines.push(
+      layerBoxCss(layer, band, percentParent, worldBoxForBand(node, band as TreeBand), inRow, blueprint, layout.width, hints),
+    );
   }
 }
 
@@ -554,20 +769,34 @@ function groupBoxCss(
   parent: PublishBox,
   inRow: boolean,
   blueprint: SiteBlueprintV1,
+  pageWidth = parent.width,
+  hints: SectionLayoutHint[] | null = null,
 ): string {
   const sel = `.s-group-${cssSafeId(node.id)}`;
   const box = worldBoxForBand(node, band as TreeBand);
   if (!box) return `${sel}{display:none}`;
   const local = toLocalBox(box, parent);
   const full = node.widthMode === "full" || containerIsFullWidthForBand(blueprint, node.id, band);
+  const pageParent = !inRow && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
+  const shift = pageParent ? extraShiftExpr(blueprint, box.y, pageWidth, band, hints) : null;
+  const useCqw = Boolean(pageParent && shift != null);
+  const grow = useCqw ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
   const rules = [
-    inRow ? "left:auto;top:auto" : full ? "left:0" : `left:${pct(local.x, parent.width)}`,
-    inRow || full ? "" : `top:${pct(local.y, parent.height)}`,
-    full ? "width:100%" : `width:${pct(local.width, parent.width)}`,
+    inRow ? "left:auto;top:auto" : full ? "left:0" : useCqw ? `left:${cqwLen(box.x, pageWidth)}` : `left:${pct(local.x, parent.width)}`,
+    inRow || full
+      ? ""
+      : useCqw
+        ? `top:calc(${shift} + ${cqwLen(box.y, pageWidth)})`
+        : `top:${pct(local.y, parent.height)}`,
+    full ? "width:100%" : useCqw ? `width:${cqwLen(box.width, pageWidth)}` : `width:${pct(local.width, parent.width)}`,
     inRow && full ? "flex:0 0 100%" : "",
     full || inRow
       ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
-      : `height:${pct(local.height, parent.height)}`,
+      : useCqw
+        ? grow
+          ? `height:calc(${cqwLen(box.height, pageWidth)} + ${grow})`
+          : `height:${cqwLen(box.height, pageWidth)}`
+        : `height:${pct(local.height, parent.height)}`,
     `z-index:${node.z}`,
     box.opacity < 1 ? `opacity:${box.opacity}` : "",
     box.rotation ? `transform:rotate(${box.rotation}deg)` : "",
@@ -581,11 +810,19 @@ function layerBoxCss(
   parent: PublishBox,
   world: PublishBox | null,
   inRow = false,
+  blueprint?: SiteBlueprintV1,
+  pageWidth = parent.width,
+  hints: SectionLayoutHint[] | null = null,
 ): string {
   const sel = `.s-el-${layer.cssId}`;
   const box = world ?? layer.boxes[band];
   if (!box) return `${sel}{display:none}`;
   const local = toLocalBox(box, parent);
+  const pageParent =
+    !inRow && Boolean(blueprint) && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
+  const shift = pageParent && blueprint ? extraShiftExpr(blueprint, box.y, pageWidth, band, hints) : null;
+  const useCqw = Boolean(pageParent && shift != null);
+  const grow = useCqw && blueprint ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
   const transform = box.rotation ? `transform:rotate(${box.rotation}deg)` : "";
   const font =
     layer.kind === "text"
@@ -593,12 +830,20 @@ function layerBoxCss(
       : "";
   const rules = [
     "display:block",
-    inRow ? "left:auto;top:auto" : `left:${pct(local.x, parent.width)}`,
-    inRow ? "" : `top:${pct(local.y, parent.height)}`,
-    `width:${pct(local.width, parent.width)}`,
+    inRow ? "left:auto;top:auto" : useCqw ? `left:${cqwLen(box.x, pageWidth)}` : `left:${pct(local.x, parent.width)}`,
+    inRow
+      ? ""
+      : useCqw
+        ? `top:calc(${shift} + ${cqwLen(box.y, pageWidth)})`
+        : `top:${pct(local.y, parent.height)}`,
+    useCqw ? `width:${cqwLen(box.width, pageWidth)}` : `width:${pct(local.width, parent.width)}`,
     inRow
       ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
-      : `height:${pct(local.height, parent.height)}`,
+      : useCqw
+        ? grow
+          ? `height:calc(${cqwLen(box.height, pageWidth)} + ${grow})`
+          : `height:${cqwLen(box.height, pageWidth)}`
+        : `height:${pct(local.height, parent.height)}`,
     `z-index:${layer.z}`,
     box.opacity < 1 ? `opacity:${box.opacity}` : "",
     transform,
@@ -611,9 +856,7 @@ function layerBoxCss(
     layer.kind === "text" && layer.textAlign ? `text-align:${layer.textAlign}` : "",
     layer.kind === "text" && layer.color ? `color:${layer.color}` : "",
     layer.kind === "shape" && layer.background ? `background:${layer.background}` : "",
-    layer.stroke && layer.strokeWidth ? `border:${layer.strokeWidth}px solid ${layer.stroke}` : "",
-    layer.borderRadius ? `border-radius:${layer.borderRadius}` : "",
-    layer.kind === "image" && layer.objectFit ? `object-fit:${layer.objectFit}` : "",
+    layer.objectFit ? `object-fit:${layer.objectFit}` : "",
   ].filter(Boolean);
   return `${sel}{${rules.join(";")}}`;
 }
@@ -696,6 +939,7 @@ function buildHtml(args: {
   const htmlClass = [
     scrollFlowUsesKind(args.blueprint, "smooth") ? "s-scroll-smooth" : "",
     scrollFlowUsesKind(args.blueprint, "snap") ? "s-scroll-snap" : "",
+    blueprintHasViewportSection(args.blueprint) ? "s-has-vh-secs" : "",
   ]
     .filter(Boolean)
     .join(" ");

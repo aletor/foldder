@@ -21,8 +21,8 @@ export const SECTION_SCROLL_LABEL: Record<SiteSectionScrollKind, string> = {
 
 export const SECTION_SCROLL_HINT: Record<SiteSectionScrollKind, string> = {
   natural: "El visitante para donde quiera",
-  smooth: "Anima hasta el inicio de la sección",
-  snap: "Encaja el scroll en el inicio de la sección",
+  smooth: "La rueda anima y deja el inicio de la siguiente sección",
+  snap: "La rueda encaja de golpe en el inicio de la sección",
 };
 
 export type SectionScrollHop = {
@@ -155,6 +155,17 @@ export function scrollFlowUsesKind(
 ): boolean {
   if (kind === "natural") return listSectionScrollHops(blueprint).some((hop) => hop.kind === "natural");
   return listSectionScrollHops(blueprint).some((hop) => hop.kind === kind);
+}
+
+/** Hay suave/ancla: hace falta poder alinear el inicio de una sección con el borde superior. */
+export function sectionScrollNeedsViewportPad(blueprint: SiteBlueprintV1): boolean {
+  if (listDocumentSections(blueprint).length < 2) return false;
+  return scrollFlowUsesKind(blueprint, "smooth") || scrollFlowUsesKind(blueprint, "snap");
+}
+
+export function lastDocumentSection(blueprint: SiteBlueprintV1): SiteBlueprintSectionNode | null {
+  const sections = listDocumentSections(blueprint);
+  return sections[sections.length - 1] ?? null;
 }
 
 export function destinationScrollKind(

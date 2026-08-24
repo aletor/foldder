@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
-import { createSectionFromSelection } from "./site-blueprint-ops";
+import { createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import { compilePublishedSite } from "./site-creator-publish-compile";
 import { SiteCreatorSectionFlowRail } from "./SiteCreatorSectionFlowRail";
+import { compilePublishedScrollScript, planScrollStep } from "./site-creator-section-scroll-runtime";
 import {
   listDocumentSections,
   listSectionScrollHops,
@@ -121,5 +122,98 @@ describe("site-creator section scroll flow", () => {
     expect(compiled.css).toContain("scroll-behavior:smooth");
     expect(compiled.css).toContain("scroll-snap-type:y proximity");
     expect(compiled.css).toContain("scroll-snap-align:start");
+    expect(compiled.js).toContain("scrollTo");
+    expect(compiled.js).toContain('"kind":"snap"');
+    expect(compiled.js).not.toMatch(/foldder/i);
+  });
+
+  it("emits intercept script when a hop is suave", () => {
+    const { page, blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: setSectionScrollHop(blueprint, heroId, sectionId, "smooth"),
+      title: "Suave",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.js).toContain("scrollTo");
+    expect(compiled.js).toContain(`"kind":"smooth"`);
+    expect(compiled.js).toContain(heroId);
+    expect(compiled.js).toContain(sectionId);
+    expect(compiled.css).toContain("padding-bottom:max(0px,100dvh");
+    expect(compiled.css).not.toContain("padding-bottom:100vh");
+    expect(compiled.js).toContain("visualViewport");
+    expect(compiled.js).not.toMatch(/foldder/i);
+  });
+
+  it("does not add a dummy viewport pad when the last section is already one screen", () => {
+    const { page, blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const fitted = setSectionHeightMode(
+      setSectionScrollHop(blueprint, heroId, sectionId, "smooth"),
+      sectionId,
+      "viewport",
+    );
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: fitted.blueprint,
+      title: "Última viewport",
+      imageHrefByLayerId: {},
+    });
+    const wideCss = compiled.css.split("@media")[0] ?? "";
+    expect(wideCss).not.toContain("padding-bottom:100vh");
+    expect(wideCss).not.toContain("padding-bottom:max(0px,100dvh");
+  });
+
+  it("leaves published js empty when every hop is natural", () => {
+    const hops = listSectionScrollHops(twoSectionsBlueprint().blueprint);
+    expect(compilePublishedScrollScript(hops)).toBe('"use strict";\n');
+  });
+});
+
+describe("planScrollStep", () => {
+  const stations = [
+    { id: "hero", y: 0 },
+    { id: "products", y: 900 },
+    { id: "contact", y: 1700 },
+  ];
+  const hops = [
+    { fromId: "hero", toId: "products", kind: "smooth" as const },
+    { fromId: "products", toId: "contact", kind: "natural" as const },
+  ];
+
+  it("animates down to the next section when the hop is suave", () => {
+    expect(
+      planScrollStep({ stations, hops, scrollY: 0, direction: 1 }),
+    ).toEqual({
+      kind: "smooth",
+      toId: "products",
+      targetY: 900,
+    });
+  });
+
+  it("does not intercept wheel when the next hop is natural", () => {
+    expect(planScrollStep({ stations, hops, scrollY: 900, direction: 1 })).toBeNull();
+  });
+
+  it("returns to the current section start when scrolling up from mid-section", () => {
+    expect(
+      planScrollStep({ stations, hops, scrollY: 1200, direction: -1 }),
+    ).toEqual({
+      kind: "smooth",
+      toId: "products",
+      targetY: 900,
+    });
+  });
+
+  it("jumps instantly when the hop is ancla", () => {
+    const snapHops = [{ fromId: "hero", toId: "products", kind: "snap" as const }];
+    expect(
+      planScrollStep({ stations, hops: snapHops, scrollY: 0, direction: 1 }),
+    ).toEqual({
+      kind: "snap",
+      toId: "products",
+      targetY: 900,
+    });
   });
 });

@@ -252,6 +252,10 @@ describe("site-creator-responsive 6B.1", () => {
 
   it("maps viewport widths to bands", () => {
     expect(bandForViewportWidth(1920, 1920)).toBe("wide");
+    expect(bandForViewportWidth(1440, 1920)).toBe("wide");
+    expect(bandForViewportWidth(1280, 1920)).toBe("wide");
+    expect(bandForViewportWidth(1025, 1920)).toBe("wide");
+    expect(bandForViewportWidth(1024, 1920)).toBe("tablet");
     expect(bandForViewportWidth(768, 1920)).toBe("tablet");
     expect(bandForViewportWidth(390, 1920)).toBe("mobile");
   });

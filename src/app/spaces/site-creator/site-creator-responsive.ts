@@ -14,6 +14,7 @@ import type { SiteBlueprintV1 } from "./site-creator-types";
 import { isSiteSectionNode, type SiteBlueprintSectionNode } from "./site-creator-types";
 import {
   SITE_CREATOR_TABLET_WIDTH,
+  siteCreatorTabletMediaMaxWidth,
   clampViewportWidth,
   type SiteCreatorResolvedLayout,
 } from "./site-creator-viewport";
@@ -65,6 +66,7 @@ import {
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
+import { applySectionViewportHeights, sectionHeightModeForBand } from "./site-creator-section-height";
 
 export type ResponsiveBand = "wide" | "tablet" | "mobile";
 
@@ -159,7 +161,8 @@ export function bandForViewportWidth(
   referenceWidth: number,
 ): ResponsiveBand {
   const w = clampViewportWidth(viewportWidth, referenceWidth);
-  if (w >= Math.round(referenceWidth) - 1) return "wide";
+  const tabletMax = siteCreatorTabletMediaMaxWidth(referenceWidth);
+  if (w > tabletMax) return "wide";
   if (w >= SITE_CREATOR_TABLET_WIDTH) return "tablet";
   return "mobile";
 }
@@ -224,7 +227,8 @@ function resolveSectionLayoutMetrics(args: {
     contentLeft: widthMode === "full" ? 0 : contentLeft,
     contentAlignX,
     contentAlignY: tune?.contentAlignY ?? null,
-    contentWidthMode: widthMode,
+    contentWidthMode:
+      widthMode === "content" || widthMode === "container" || widthMode === "full" ? widthMode : null,
     minHeight,
     autoHeight: tune?.autoHeight !== false,
   };
@@ -1643,10 +1647,13 @@ function layoutUniformMatrixPreserve(args: {
   band: ResponsiveBand;
 }): number {
   const scale = args.viewportWidth / Math.max(1, args.sourceWidth);
+  const cluster = boundsOfIds(args.layerIds, args.index);
+  const originY = cluster?.y ?? 0;
+  const originH = Math.max(1, cluster?.height ?? args.sourceHeight);
   layoutPreserveComposition({
     byId: args.byId,
     layerIds: args.layerIds,
-    origin: { x: 0, y: 0, width: args.sourceWidth, height: args.sourceHeight },
+    origin: { x: 0, y: originY, width: args.sourceWidth, height: originH },
     index: args.index,
     band: args.band,
     targetX: 0,
@@ -1654,7 +1661,7 @@ function layoutUniformMatrixPreserve(args: {
     scale,
     enforceMinFont: false,
   });
-  return args.targetY + args.sourceHeight * scale;
+  return args.targetY + originH * scale;
 }
 
 /** @deprecated Hotfix: sustituido por layoutUniformMatrixPreserve (matriz única). */
@@ -1833,6 +1840,7 @@ function withLayoutGroupWidthModes(
   result: SiteCreatorResponsiveResolveResult,
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
+  sectionViewport?: { viewportHeight?: number; expandViewportSections?: boolean },
 ): SiteCreatorResponsiveResolveResult {
   const laidOut = applyLayoutGroupWidthModes({
     page: result.displayPage,
@@ -1842,15 +1850,30 @@ function withLayoutGroupWidthModes(
     viewportHeight: result.layout.layoutHeight,
     band: result.band,
   });
-  if (laidOut.page === result.displayPage && laidOut.layoutHeight === result.layout.layoutHeight) {
+  let page = laidOut.page;
+  let layoutHeight = laidOut.layoutHeight;
+  const expand = sectionViewport?.expandViewportSections !== false;
+  const screenH = sectionViewport?.viewportHeight ?? result.layout.referenceHeight;
+  if (result.band === "wide" && expand) {
+    const sectioned = applySectionViewportHeights({
+      page,
+      blueprint,
+      index,
+      viewportHeight: screenH,
+      band: "wide",
+    });
+    page = sectioned.page;
+    layoutHeight = Math.max(layoutHeight, sectioned.layout.pageHeight);
+  }
+  if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
     return result;
   }
-  laidOut.page.customWidth = result.layout.layoutWidth;
-  laidOut.page.customHeight = laidOut.layoutHeight;
+  page.customWidth = result.layout.layoutWidth;
+  page.customHeight = layoutHeight;
   return {
     ...result,
-    displayPage: laidOut.page,
-    layout: { ...result.layout, layoutHeight: laidOut.layoutHeight },
+    displayPage: page,
+    layout: { ...result.layout, layoutHeight },
   };
 }
 
@@ -1859,10 +1882,18 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   blueprint: SiteBlueprintV1;
   referenceIndex: SiteCreatorSelectionIndex;
   viewportWidth: number;
+  /** Alto vivo de la ventana en unidades de página. Ausente = alto del artboard. */
+  viewportHeight?: number;
+  /** false al publicar: el CSS usa 100dvh en vivo, sin congelar píxeles. */
+  expandViewportSections?: boolean;
 }): SiteCreatorResponsiveResolveResult {
   const reference = getPageDimensions(args.page);
   const viewportWidth = clampViewportWidth(args.viewportWidth, reference.width);
   const band = bandForViewportWidth(viewportWidth, reference.width);
+  const sectionViewport = {
+    viewportHeight: args.viewportHeight ?? reference.height,
+    expandViewportSections: args.expandViewportSections !== false,
+  };
 
   if (band === "wide") {
     const displayPage = deepCloneDesignerPageState(args.page);
@@ -1891,6 +1922,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       },
       args.blueprint,
       args.referenceIndex,
+      sectionViewport,
     );
   }
 
@@ -1986,6 +2018,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       },
       args.blueprint,
       args.referenceIndex,
+      sectionViewport,
     );
   }
 
@@ -2048,6 +2081,27 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       }
     }
     regions.push(region);
+
+    if (
+      sectionViewport.expandViewportSections &&
+      sectionHeightModeForBand(args.blueprint, section, band === "mobile" ? "mobile" : "tablet") === "viewport"
+    ) {
+      const pageScreen = sectionViewport.viewportHeight;
+      const extra = Math.max(0, pageScreen - region.layoutRect.height);
+      if (extra > 0.5) {
+        region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
+        region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
+        placeBackgroundLayers({
+          byId,
+          backgroundLayerIds: region.backgroundLayerIds,
+          layoutRect: region.layoutRect,
+          sourceRegion: analysis.containerBounds,
+          index,
+          blueprint: args.blueprint,
+          band,
+        });
+      }
+    }
 
     // Clip de render: fondos + capas de cobertura de la región
     for (const layerId of collectSemanticCoverageLayerIds(args.blueprint, section.id)) {
@@ -2154,6 +2208,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     },
     args.blueprint,
     args.referenceIndex,
+    sectionViewport,
   );
 }
 

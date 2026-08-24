@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
+  SITE_CREATOR_TABLET_MAX_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
   SITE_CREATOR_PREVIEW_ZOOM_MAX,
   SITE_CREATOR_PREVIEW_ZOOM_MIN,
@@ -18,6 +19,7 @@ import {
   pageToScreenScale,
   resolveDeviceDimensions,
   resolveSiteCreatorLayout,
+  siteCreatorTabletMediaMaxWidth,
   viewportWidthDeltaFromCenteredEdgeDrag,
 } from "./site-creator-viewport";
 
@@ -32,6 +34,12 @@ describe("site-creator-viewport", () => {
     expect(layout.layoutScale).toBeCloseTo(390 / 1920);
     expect(layout.layoutHeight).toBeCloseTo(1080 * (390 / 1920));
     expect(layout.referenceWidth).toBe(1920);
+  });
+
+  it("keeps tablet media below typical desktop widths", () => {
+    expect(siteCreatorTabletMediaMaxWidth(1920)).toBe(SITE_CREATOR_TABLET_MAX_WIDTH);
+    expect(siteCreatorTabletMediaMaxWidth(800)).toBe(799);
+    expect(siteCreatorTabletMediaMaxWidth(768)).toBe(768);
   });
 
   it("detects presets and custom widths", () => {

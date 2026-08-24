@@ -4,7 +4,17 @@
  */
 
 export const SITE_CREATOR_TABLET_WIDTH = 768;
+/** Inclusive: tablet CSS applies up to this width. Desktop starts at 1025. */
+export const SITE_CREATOR_TABLET_MAX_WIDTH = 1024;
 export const SITE_CREATOR_MOBILE_WIDTH = 390;
+
+/** Media query max-width for tablet. Never swallows typical desktop widths. */
+export function siteCreatorTabletMediaMaxWidth(referenceWidth: number): number {
+  return Math.min(
+    SITE_CREATOR_TABLET_MAX_WIDTH,
+    Math.max(SITE_CREATOR_TABLET_WIDTH, Math.round(referenceWidth) - 1),
+  );
+}
 export const SITE_CREATOR_MIN_VIEWPORT_WIDTH = 280;
 export const SITE_CREATOR_MIN_DEVICE_HEIGHT = 320;
 export const SITE_CREATOR_MAX_DEVICE_HEIGHT = 2400;

@@ -19,11 +19,18 @@ export interface SiteBlueprintNodeBase {
   layerIds: string[];
 }
 
+export type SiteSectionHeightMode = "content" | "viewport";
+
 export interface SiteBlueprintSectionNode extends SiteBlueprintNodeBase {
   kind: "section";
   sectionType: SiteSectionType;
   parentId: null;
   sourceRange: { top: number; bottom: number };
+  /**
+   * Alto de la sección. Ausente / `content` = alto del diseño.
+   * `viewport` = al menos el alto de la página / ventana (`100dvh` al publicar).
+   */
+  heightMode?: SiteSectionHeightMode;
   /** Sección creada al adaptar un grupo de raíz al ancho de página. */
   promotedFromGroupId?: string;
 }
@@ -138,6 +145,8 @@ export type ResponsiveContainerTuneV1 = {
   maxContentWidth?: number;
   minHeight?: number;
   autoHeight?: boolean;
+  /** Alto de sección en esta banda. Ausente = alto del diseño. */
+  heightMode?: SiteSectionHeightMode;
 };
 
 export type ResponsiveContainerTuneRuleV1 = {

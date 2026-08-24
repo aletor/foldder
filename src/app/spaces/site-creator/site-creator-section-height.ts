@@ -1,0 +1,301 @@
+/**
+ * Alto de sección: contenido real o al menos el alto de página / ventana.
+ * No reescribe el Designer; es presentación (lienzo + publicación).
+ */
+import type { FreehandObject } from "../FreehandStudio";
+import type { DesignerPageState } from "../designer/DesignerNode";
+import { deepCloneDesignerPageState } from "./designer-source-snapshot";
+import { listDocumentSections } from "./site-creator-section-scroll";
+import { isWorldSpaceLayerId, worldSpaceAncestorId } from "./site-creator-layer-world-bounds";
+import { findLayerSemanticOwner } from "./site-blueprint-ownership";
+import type { PageRect } from "./site-creator-coordinate-space";
+import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
+import type {
+  SiteBlueprintNode,
+  SiteBlueprintSectionNode,
+  SiteBlueprintV1,
+  SiteSectionHeightMode,
+} from "./site-creator-types";
+import { isSiteSectionNode } from "./site-creator-types";
+
+const FIT_EPSILON = 8;
+
+export type SectionHeightRange = {
+  id: string;
+  top: number;
+  height: number;
+  extra: number;
+  fitted: boolean;
+};
+
+export type SectionHeightLayout = {
+  viewportHeight: number;
+  pageHeight: number;
+  ranges: SectionHeightRange[];
+};
+
+export type SectionHeightOpportunity = {
+  sectionId: string;
+  bounds: PageRect;
+  targetBounds: PageRect;
+  restoreBounds: PageRect;
+  fitted: boolean;
+  showExpand: boolean;
+  showRestore: boolean;
+};
+
+export function sectionHeightMode(node: SiteBlueprintSectionNode): SiteSectionHeightMode {
+  return node.heightMode === "viewport" ? "viewport" : "content";
+}
+
+export type SectionHeightBand = "wide" | "tablet" | "mobile";
+
+function sectionTuneHeightMode(
+  blueprint: SiteBlueprintV1,
+  sectionId: string,
+  band: "tablet" | "mobile",
+): SiteSectionHeightMode {
+  const rules = blueprint.responsive?.containerTunes ?? [];
+  for (const rule of rules) {
+    if (rule.target.kind !== "blueprintNode" || rule.target.nodeId !== sectionId) continue;
+    return rule.byBand[band]?.heightMode === "viewport" ? "viewport" : "content";
+  }
+  return "content";
+}
+
+export function sectionHeightModeForBand(
+  blueprint: SiteBlueprintV1,
+  section: SiteBlueprintSectionNode,
+  band: SectionHeightBand = "wide",
+): SiteSectionHeightMode {
+  if (band === "tablet" || band === "mobile") {
+    return sectionTuneHeightMode(blueprint, section.id, band);
+  }
+  return sectionHeightMode(section);
+}
+
+export function blueprintHasViewportSection(
+  blueprint: SiteBlueprintV1,
+  band?: SectionHeightBand,
+): boolean {
+  const bands: SectionHeightBand[] = band ? [band] : ["wide", "tablet", "mobile"];
+  return listDocumentSections(blueprint).some((section) =>
+    bands.some((item) => sectionHeightModeForBand(blueprint, section, item) === "viewport"),
+  );
+}
+
+export function planSectionHeightLayout(
+  blueprint: SiteBlueprintV1,
+  viewportHeight: number,
+  band: SectionHeightBand = "wide",
+): SectionHeightLayout {
+  const screen = Math.max(1, viewportHeight);
+  const sections = listDocumentSections(blueprint);
+  const ranges: SectionHeightRange[] = [];
+  let shift = 0;
+  let pageHeight = screen;
+  for (const section of sections) {
+    const designed = Math.max(1, section.sourceRange.bottom - section.sourceRange.top);
+    const fitted = sectionHeightModeForBand(blueprint, section, band) === "viewport";
+    const extra = fitted ? Math.max(0, screen - designed) : 0;
+    const top = section.sourceRange.top + shift;
+    const height = fitted ? screen : designed;
+    ranges.push({ id: section.id, top, height, extra, fitted });
+    shift += extra;
+    pageHeight = Math.max(pageHeight, top + height);
+  }
+  return { viewportHeight: screen, pageHeight, ranges };
+}
+
+export function describeSectionHeightOpportunity(args: {
+  blueprint: SiteBlueprintV1;
+  sectionId: string;
+  pageWidth: number;
+  viewportHeight: number;
+  band?: SectionHeightBand;
+  /**
+   * Recuadro visual de la sección en el lienzo (unión de capas).
+   * Si `sourceRange` está inflado, la flecha debe anclarse aquí, no al rango.
+   */
+  visualRect?: PageRect | null;
+}): SectionHeightOpportunity | null {
+  const node = args.blueprint.nodes[args.sectionId];
+  if (!node || !isSiteSectionNode(node)) return null;
+  const layout = planSectionHeightLayout(args.blueprint, args.viewportHeight, args.band ?? "wide");
+  const range = layout.ranges.find((item) => item.id === args.sectionId);
+  if (!range) return null;
+  const sourceDesigned = Math.max(1, node.sourceRange.bottom - node.sourceRange.top);
+  const visualH = args.visualRect ? Math.max(1, args.visualRect.height) : sourceDesigned;
+  const top = args.visualRect ? args.visualRect.y : range.top;
+  const designed = visualH;
+  const currentH = range.fitted ? Math.max(designed, range.height) : designed;
+  const canExpand = designed < args.viewportHeight - FIT_EPSILON;
+  return {
+    sectionId: args.sectionId,
+    bounds: { x: 0, y: top, width: args.pageWidth, height: currentH },
+    targetBounds: {
+      x: 0,
+      y: top,
+      width: args.pageWidth,
+      height: Math.max(currentH, args.viewportHeight),
+    },
+    restoreBounds: { x: 0, y: top, width: args.pageWidth, height: designed },
+    fitted: range.fitted,
+    showExpand: !range.fitted && canExpand,
+    showRestore: range.fitted,
+  };
+}
+
+function walkObjects(objs: FreehandObject[] | undefined, byId: Map<string, FreehandObject>): void {
+  for (const obj of objs ?? []) {
+    byId.set(obj.id, obj);
+    if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
+      walkObjects((obj as { children?: FreehandObject[] }).children, byId);
+    } else if (obj.type === "clippingContainer") {
+      const clip = obj as { mask?: FreehandObject; content?: FreehandObject[] };
+      if (clip.mask) walkObjects([clip.mask], byId);
+      walkObjects(clip.content, byId);
+    }
+  }
+}
+
+export function applySectionViewportHeights(args: {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  index: SiteCreatorSelectionIndex;
+  viewportHeight: number;
+  band?: SectionHeightBand;
+}): { page: DesignerPageState; layout: SectionHeightLayout } {
+  const band = args.band ?? "wide";
+  const layout = planSectionHeightLayout(args.blueprint, args.viewportHeight, band);
+  if (!layout.ranges.some((range) => range.extra > 0.5)) {
+    return { page: args.page, layout };
+  }
+  const page = deepCloneDesignerPageState(args.page);
+  const byId = new Map<string, FreehandObject>();
+  walkObjects(page.objects, byId);
+  const shifted = new Set<string>();
+  let acc = 0;
+  const pageWidth = Math.max(1, page.customWidth ?? 1);
+  for (const section of listDocumentSections(args.blueprint)) {
+    const designed = Math.max(1, section.sourceRange.bottom - section.sourceRange.top);
+    const extra =
+      sectionHeightModeForBand(args.blueprint, section, band) === "viewport"
+        ? Math.max(0, args.viewportHeight - designed)
+        : 0;
+    const designedBottom = section.sourceRange.bottom + acc;
+    if (extra > 0.5) {
+      for (const [id, obj] of byId) {
+        if (!isWorldSpaceLayerId(id, args.index)) continue;
+        const worldId = worldSpaceAncestorId(id, args.index);
+        if (worldId !== id) continue;
+        if (shifted.has(id)) continue;
+        if (typeof obj.y !== "number") continue;
+        if (obj.y + 0.5 >= designedBottom) {
+          obj.y += extra;
+          shifted.add(id);
+        } else if (
+          typeof obj.height === "number" &&
+          typeof obj.width === "number" &&
+          obj.y < designedBottom &&
+          obj.y + obj.height >= designedBottom - 4 &&
+          obj.width >= pageWidth * 0.8
+        ) {
+          obj.height = Math.max(1, obj.height + extra);
+        }
+      }
+    }
+    acc += extra;
+  }
+  page.customHeight = layout.pageHeight;
+  return { page, layout };
+}
+
+export function sectionDisplayTop(
+  blueprint: SiteBlueprintV1,
+  sectionId: string,
+  viewportHeight: number,
+  band: SectionHeightBand = "wide",
+): number | null {
+  const range = planSectionHeightLayout(blueprint, viewportHeight, band).ranges.find((item) => item.id === sectionId);
+  return range?.top ?? null;
+}
+
+export type SectionScrollStationPoint = { id: string; y: number; height: number };
+
+/** Tops de sección en el espacio del display (tablet/móvil = regiones; Original = plan). */
+export function sectionScrollStationsFromDisplay(args: {
+  blueprint: SiteBlueprintV1;
+  viewportHeight: number;
+  band: SectionHeightBand;
+  regions?: { sectionId: string; layoutRect: { y: number; height: number } }[] | null;
+}): SectionScrollStationPoint[] {
+  const sections = listDocumentSections(args.blueprint);
+  if (args.regions && args.regions.length > 0) {
+    return sections.map((section) => {
+      const region = args.regions!.find((item) => item.sectionId === section.id);
+      if (region) {
+        return { id: section.id, y: region.layoutRect.y, height: region.layoutRect.height };
+      }
+      const range = planSectionHeightLayout(args.blueprint, args.viewportHeight, args.band).ranges.find(
+        (item) => item.id === section.id,
+      );
+      return {
+        id: section.id,
+        y: range?.top ?? section.sourceRange.top,
+        height: range?.height ?? Math.max(1, section.sourceRange.bottom - section.sourceRange.top),
+      };
+    });
+  }
+  return planSectionHeightLayout(args.blueprint, args.viewportHeight, args.band).ranges.map((range) => ({
+    id: range.id,
+    y: range.top,
+    height: range.height,
+  }));
+}
+
+/** Alto de ventana en unidades de página, según el marco visible actual (cambia con el resize). */
+export function liveViewportHeightInPageUnits(args: {
+  pageWidth: number;
+  availableWidth: number;
+  availableHeight: number;
+}): number {
+  const width = Math.max(1, args.availableWidth);
+  const pageWidth = Math.max(1, args.pageWidth);
+  return Math.max(1, args.availableHeight * (pageWidth / width));
+}
+
+function sectionIdFromNode(
+  blueprint: SiteBlueprintV1,
+  nodeId: string | null | undefined,
+): string | null {
+  if (!nodeId) return null;
+  let current: SiteBlueprintNode | undefined = blueprint.nodes[nodeId];
+  while (current) {
+    if (isSiteSectionNode(current)) return current.id;
+    current = current.parentId ? blueprint.nodes[current.parentId] : undefined;
+  }
+  return null;
+}
+
+/** Sección bajo selección o hover, incluyendo capas hijas. */
+export function resolveSectionIdForHeightHandles(args: {
+  blueprint: SiteBlueprintV1;
+  index: SiteCreatorSelectionIndex;
+  selectedNodeId?: string | null;
+  selectedLayerId?: string | null;
+  hoverNodeId?: string | null;
+  hoverLayerId?: string | null;
+}): string | null {
+  const fromNode = (id?: string | null) => sectionIdFromNode(args.blueprint, id);
+  const fromLayer = (layerId?: string | null) => {
+    if (!layerId) return null;
+    return fromNode(findLayerSemanticOwner(args.blueprint, layerId, args.index)?.id);
+  };
+  return (
+    fromNode(args.selectedNodeId) ??
+    fromLayer(args.selectedLayerId) ??
+    fromNode(args.hoverNodeId) ??
+    fromLayer(args.hoverLayerId)
+  );
+}
