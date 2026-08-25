@@ -12,6 +12,7 @@ import {
 } from "./site-creator-coordinate-space";
 import { resolveSiteCreatorDisplayPage } from "./site-creator-display-page";
 import {
+  canEnterContainer,
   collapseContainerDescendants,
   frontmostDirectHit,
   layerPickerHitsAtPoint,
@@ -219,6 +220,20 @@ describe("site creator hit testing", () => {
     expect(index.byId.lock?.locked).toBe(true);
     expect(frontmostDirectHit(index, [], { x: 10, y: 10 })?.layerId).toBe("lock");
   });
+
+  it("skips Site Creator canvas-locked layers even if Designer locked is false", () => {
+    const index = buildSiteSelectionIndex(
+      page([
+        layer({ id: "back", type: "rect", x: 0, y: 0, width: 80, height: 80 }),
+        layer({ id: "front", type: "rect", x: 0, y: 0, width: 80, height: 80 }),
+      ]),
+    );
+    const blueprint: SiteBlueprintV1 = {
+      ...createEmptySiteBlueprintV1(),
+      canvasLocks: { layerIds: ["front"] },
+    };
+    expect(frontmostDirectHit(index, [], { x: 10, y: 10 }, blueprint)?.layerId).toBe("back");
+  });
 });
 
 describe("site creator groups and isolation", () => {
@@ -270,6 +285,8 @@ describe("site creator groups and isolation", () => {
     expect(index.byId.clip?.containerKind).toBe("clippingContainer");
     expect(frontmostDirectHit(index, [], { x: 10, y: 10 })?.layerId).toBe("clip");
     expect(index.byId.mask?.selectableFromCanvas).toBe(false);
+    expect(index.byId.clipped?.selectableFromCanvas).toBe(false);
+    expect(canEnterContainer(index.byId.clip)).toBe(false);
   });
 
   it("treats booleanGroup as a unit", () => {

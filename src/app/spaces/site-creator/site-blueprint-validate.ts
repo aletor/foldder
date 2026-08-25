@@ -205,6 +205,12 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
       ...(blueprint.scrollFlow.hops ? { hops: { ...blueprint.scrollFlow.hops } } : {}),
     };
   }
+  if (blueprint.canvasLocks) {
+    next.canvasLocks = {
+      ...(blueprint.canvasLocks.layerIds ? { layerIds: [...blueprint.canvasLocks.layerIds] } : {}),
+      ...(blueprint.canvasLocks.nodeIds ? { nodeIds: [...blueprint.canvasLocks.nodeIds] } : {}),
+    };
+  }
   return next;
 }
 

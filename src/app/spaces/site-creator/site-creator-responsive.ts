@@ -17,6 +17,7 @@ import {
   siteCreatorTabletMediaMaxWidth,
   clampViewportWidth,
   type SiteCreatorResolvedLayout,
+  type SiteCreatorViewportBand,
 } from "./site-creator-viewport";
 import {
   deriveImageFocalFromSourceGeometry,
@@ -165,6 +166,19 @@ export function bandForViewportWidth(
   if (w > tabletMax) return "wide";
   if (w >= SITE_CREATOR_TABLET_WIDTH) return "tablet";
   return "mobile";
+}
+
+/**
+ * Banda de layout en el editor. Tablet/Móvil siguen el dispositivo aunque el
+ * ancho landscape cruce el breakpoint CSS (p. ej. iPad 1180px > 1024).
+ */
+export function bandForEditorDevice(
+  viewportBand: SiteCreatorViewportBand,
+  viewportWidth: number,
+  referenceWidth: number,
+): ResponsiveBand {
+  if (viewportBand === "tablet" || viewportBand === "mobile") return viewportBand;
+  return bandForViewportWidth(viewportWidth, referenceWidth);
 }
 
 function insetForBand(band: ResponsiveBand): number {
@@ -938,6 +952,7 @@ function layoutSectionFromAnalysis(args: {
   index: SiteCreatorSelectionIndex;
   band: ResponsiveBand;
   viewportWidth: number;
+  sourceWidth: number;
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
@@ -963,6 +978,7 @@ function layoutSectionPreserveMode(args: {
   index: SiteCreatorSelectionIndex;
   band: ResponsiveBand;
   viewportWidth: number;
+  sourceWidth: number;
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
@@ -984,9 +1000,12 @@ function layoutSectionPreserveMode(args: {
   const foregroundIds = collectSemanticCoverageLayerIds(args.blueprint, analysis.sectionId).filter(
     (id) => !bgSet.has(id),
   );
-  const origin =
-    boundsOfIds(foregroundIds, index) ??
-    analysis.containerBounds;
+  const origin: PageRect = {
+    x: 0,
+    y: analysis.containerBounds.y,
+    width: Math.max(1, args.sourceWidth),
+    height: Math.max(1, analysis.containerBounds.height),
+  };
   const scale = Math.min(1, contentWidth / Math.max(1, origin.width));
   const compW = origin.width * scale;
   const compH = origin.height * scale;
@@ -1886,10 +1905,15 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   viewportHeight?: number;
   /** false al publicar: el CSS usa 100dvh en vivo, sin congelar píxeles. */
   expandViewportSections?: boolean;
+  /**
+   * Fuerza la banda (editor en marco de dispositivo). Si falta, se infiere del ancho.
+   * El CSS publicado sigue infiriendo por media query.
+   */
+  band?: ResponsiveBand;
 }): SiteCreatorResponsiveResolveResult {
   const reference = getPageDimensions(args.page);
   const viewportWidth = clampViewportWidth(args.viewportWidth, reference.width);
-  const band = bandForViewportWidth(viewportWidth, reference.width);
+  const band = args.band ?? bandForViewportWidth(viewportWidth, reference.width);
   const sectionViewport = {
     viewportHeight: args.viewportHeight ?? reference.height,
     expandViewportSections: args.expandViewportSections !== false,
@@ -2060,6 +2084,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       index,
       band,
       viewportWidth,
+      sourceWidth: reference.width,
       yCursor,
     });
     if (band === "tablet" || band === "mobile") {

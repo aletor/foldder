@@ -38,6 +38,10 @@ function relativeOffsets(ids: string[], index: ReturnType<typeof buildSiteSelect
   });
 }
 
+function pageScale(viewportWidth: number, pageWidth = 1920) {
+  return Math.min(1, viewportWidth / Math.max(1, pageWidth));
+}
+
 describe("section preserve composition", () => {
   it("preserves relative offsets between multiple loose rects on tablet", () => {
     const committedPage: DesignerPageState = {
@@ -73,13 +77,15 @@ describe("section preserve composition", () => {
     });
 
     expect(resolved.band).toBe("tablet");
+    const scale = pageScale(768);
     const firstObj = findObject(resolved.displayPage, "a")!;
+    expect(firstObj.x).toBeCloseTo(200 * scale, 1);
     for (const { id, dx, dy } of sourceOffsets) {
       const obj = findObject(resolved.displayPage, id)!;
       const actualDx = obj.x - firstObj.x;
       const actualDy = obj.y - firstObj.y;
-      expect(actualDx, `${id} dx`).toBeCloseTo(dx, 1);
-      expect(actualDy, `${id} dy`).toBeCloseTo(dy, 1);
+      expect(actualDx, `${id} dx`).toBeCloseTo(dx * scale, 1);
+      expect(actualDy, `${id} dy`).toBeCloseTo(dy * scale, 1);
     }
   });
 
@@ -97,10 +103,6 @@ describe("section preserve composition", () => {
     };
     const index = buildSiteSelectionIndex(committedPage);
     const sourceOffsets = relativeOffsets(["a", "b", "c"], index);
-    const originW =
-      Math.max(...["a", "b", "c"].map((id) => index.byId[id]!.visualBounds.x + index.byId[id]!.visualBounds.width)) -
-      Math.min(...["a", "b", "c"].map((id) => index.byId[id]!.visualBounds.x));
-
     const created = createSectionFromSelection({
       blueprint: createEmptySiteBlueprintV1(),
       selectedLayerIds: ["a", "b", "c"],
@@ -113,7 +115,7 @@ describe("section preserve composition", () => {
 
     const blueprint = applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId!);
     const viewportWidth = 390;
-    const scale = Math.min(1, viewportWidth / Math.max(1, originW));
+    const scale = pageScale(viewportWidth);
     const resolved = resolveSiteCreatorResponsiveDisplay({
       page: committedPage,
       blueprint,
@@ -168,10 +170,13 @@ describe("section preserve composition", () => {
     });
 
     const firstObj = findObject(resolved.displayPage, "a")!;
+    const scale = pageScale(768);
+    expect(firstObj.x).toBeCloseTo(120 * scale, 1);
+    expect(firstObj.x).toBeGreaterThan(8);
     for (const { id, dx, dy } of sourceOffsets) {
       const obj = findObject(resolved.displayPage, id)!;
-      expect(obj.x - firstObj.x, `${id} dx`).toBeCloseTo(dx, 1);
-      expect(obj.y - firstObj.y, `${id} dy`).toBeCloseTo(dy, 1);
+      expect(obj.x - firstObj.x, `${id} dx`).toBeCloseTo(dx * scale, 1);
+      expect(obj.y - firstObj.y, `${id} dy`).toBeCloseTo(dy * scale, 1);
     }
   });
 
@@ -220,10 +225,12 @@ describe("section preserve composition", () => {
     });
 
     const firstObj = findObject(resolved.displayPage, "a")!;
+    const scale = pageScale(390);
+    expect(firstObj.x).toBeCloseTo(110 * scale, 1);
     for (const { id, dx, dy } of sourceOffsets) {
       const obj = findObject(resolved.displayPage, id)!;
-      expect(obj.x - firstObj.x, `${id} dx`).toBeCloseTo(dx, 1);
-      expect(obj.y - firstObj.y, `${id} dy`).toBeCloseTo(dy, 1);
+      expect(obj.x - firstObj.x, `${id} dx`).toBeCloseTo(dx * scale, 1);
+      expect(obj.y - firstObj.y, `${id} dy`).toBeCloseTo(dy * scale, 1);
     }
   });
 
@@ -272,10 +279,12 @@ describe("section preserve composition", () => {
     });
 
     const firstObj = findObject(resolved.displayPage, "a")!;
+    const scale = pageScale(768);
+    expect(firstObj.x).toBeCloseTo(110 * scale, 1);
     for (const { id, dx, dy } of sourceOffsets) {
       const obj = findObject(resolved.displayPage, id)!;
-      expect(obj.x - firstObj.x, `${id} dx`).toBeCloseTo(dx, 1);
-      expect(obj.y - firstObj.y, `${id} dy`).toBeCloseTo(dy, 1);
+      expect(obj.x - firstObj.x, `${id} dx`).toBeCloseTo(dx * scale, 1);
+      expect(obj.y - firstObj.y, `${id} dy`).toBeCloseTo(dy * scale, 1);
     }
   });
 

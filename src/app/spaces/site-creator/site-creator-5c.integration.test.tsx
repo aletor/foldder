@@ -166,7 +166,34 @@ describe("5C visual grammar", () => {
       } as Partial<FreehandObject> & { id: string; type: "clippingContainer" }),
     ]);
     const index = buildSiteSelectionIndex(p);
-    expect(deriveLayerDisplayLabel("clip", index)).toBe("Rectángulo");
+    expect(deriveLayerDisplayLabel("clip", index)).toBe("Máscara · Rectángulo");
+  });
+
+  it("image frame names map to mask labels", () => {
+    const p = page([
+      layer({
+        id: "frame",
+        type: "rect",
+        name: "Image Frame 3",
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 80,
+        isImageFrame: true,
+        imageFrameContent: {
+          src: "https://cdn.example/a.jpg",
+          originalWidth: 80,
+          originalHeight: 80,
+          scaleX: 1,
+          scaleY: 1,
+          offsetX: 0,
+          offsetY: 0,
+          fittingMode: "fill-proportional",
+        },
+      }),
+    ]);
+    const index = buildSiteSelectionIndex(p);
+    expect(deriveLayerDisplayLabel("frame", index)).toBe("Máscara · Imagen");
   });
 
   it("strokes declare non-scaling-stroke", () => {

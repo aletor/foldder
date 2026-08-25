@@ -62,7 +62,7 @@ export function SiteCreatorDeviceSelector({
   selectOnly = false,
 }: SiteCreatorDeviceSelectorProps) {
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{ left: number; top: number } | null>(null);
   const presets = devicePresetsForBand(band);
@@ -212,34 +212,62 @@ export function SiteCreatorDeviceSelector({
       </div>
     ) : null;
 
+  const shellClass = `flex max-w-[220px] items-center rounded text-[10px] font-semibold tracking-wide transition ${
+    active ? "bg-white/12 text-white" : "text-white/50 hover:bg-white/6 hover:text-white/80"
+  }`;
+  const label = (
+    <span className="truncate">
+      {bandLabel} · {sizeLabel}{" "}
+      <span className="font-normal text-white/45 tabular-nums">
+        {resolvedWidth} × {resolvedHeight}
+      </span>
+    </span>
+  );
+
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid={`site-creator-device-trigger-${band}`}
-        aria-expanded={open}
-        className={`flex max-w-[220px] items-center gap-1 rounded px-2 py-1 text-[10px] font-semibold tracking-wide transition ${
-          active ? "bg-white/12 text-white" : "text-white/50 hover:bg-white/6 hover:text-white/80"
-        }`}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={() => {
-          onActivate();
-          if (!selectOnly) setOpen((v) => !v);
-        }}
-      >
-        <span className="truncate">
-          {bandLabel} · {sizeLabel}{" "}
-          <span className="font-normal text-white/45 tabular-nums">
-            {resolvedWidth} × {resolvedHeight}
-          </span>
-        </span>
-        {selectOnly ? null : (
-        <span className="shrink-0 text-white/35" aria-hidden>
-          ▾
-        </span>
-        )}
-      </button>
+      {selectOnly ? (
+        <button
+          ref={triggerRef}
+          type="button"
+          data-testid={`site-creator-device-trigger-${band}`}
+          className={`${shellClass} gap-1 px-2 py-1`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onActivate()}
+        >
+          {label}
+        </button>
+      ) : (
+        <div ref={triggerRef} className={shellClass}>
+          <button
+            type="button"
+            data-testid={`site-creator-device-trigger-${band}`}
+            className="flex min-w-0 flex-1 items-center px-2 py-1 text-left"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              onActivate();
+              setOpen(false);
+            }}
+          >
+            {label}
+          </button>
+          <button
+            type="button"
+            data-testid={`site-creator-device-menu-${band}`}
+            aria-label={`Elegir tamaño de ${bandLabel}`}
+            aria-expanded={open}
+            aria-haspopup="menu"
+            className="shrink-0 px-1.5 py-1 text-white/35 hover:text-white/80"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              onActivate();
+              setOpen((v) => !v);
+            }}
+          >
+            <span aria-hidden>▾</span>
+          </button>
+        </div>
+      )}
       {typeof document !== "undefined" && popover
         ? createPortal(popover, portalHost ?? document.body)
         : null}

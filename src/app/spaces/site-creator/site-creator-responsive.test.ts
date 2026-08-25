@@ -10,6 +10,7 @@ import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import {
   analyzeSectionVisualPresentation,
   assertNoHorizontalOverflow,
+  bandForEditorDevice,
   bandForViewportWidth,
   classifyContainerBackground,
   findDisplayObject,
@@ -18,12 +19,13 @@ import {
 } from "./site-creator-responsive";
 import {
   fixtureAmbiguousOverlap,
-  fixtureHeroBackgroundNoPanel,
   fixtureHeroPanelButton,
+  fixtureHeroBackgroundNoPanel,
   fixtureSimpleSection,
   makeLayer,
   makePage,
 } from "./site-creator-responsive-fixtures";
+import { defaultDeviceConfig, resolveDeviceDimensions } from "./site-creator-viewport";
 
 describe("site-creator-responsive 6B.1", () => {
   beforeEach(() => {
@@ -258,6 +260,60 @@ describe("site-creator-responsive 6B.1", () => {
     expect(bandForViewportWidth(1024, 1920)).toBe("tablet");
     expect(bandForViewportWidth(768, 1920)).toBe("tablet");
     expect(bandForViewportWidth(390, 1920)).toBe("mobile");
+  });
+
+  it("keeps tablet/mobile device band in landscape even when CSS width is another breakpoint", () => {
+    const tabletLandscape = resolveDeviceDimensions({
+      band: "tablet",
+      config: { ...defaultDeviceConfig("tablet"), orientation: "landscape" },
+      referenceWidth: 1920,
+    });
+    expect(tabletLandscape.width).toBe(1180);
+    expect(bandForViewportWidth(tabletLandscape.width, 1920)).toBe("wide");
+    expect(bandForEditorDevice("tablet", tabletLandscape.width, 1920)).toBe("tablet");
+
+    const mobileLandscape = resolveDeviceDimensions({
+      band: "mobile",
+      config: { ...defaultDeviceConfig("mobile"), orientation: "landscape" },
+      referenceWidth: 1920,
+    });
+    expect(mobileLandscape.width).toBe(844);
+    expect(bandForViewportWidth(mobileLandscape.width, 1920)).toBe("tablet");
+    expect(bandForEditorDevice("mobile", mobileLandscape.width, 1920)).toBe("mobile");
+  });
+
+  it("fits editor tablet landscape content to the device width instead of Original identity", () => {
+    const landscape = resolveDeviceDimensions({
+      band: "tablet",
+      config: { ...defaultDeviceConfig("tablet"), orientation: "landscape" },
+      referenceWidth: 1920,
+    });
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 1080 }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const inferred = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: createEmptySiteBlueprintV1(),
+      referenceIndex: index,
+      viewportWidth: landscape.width,
+    });
+    expect(inferred.band).toBe("wide");
+    expect(inferred.layout.layoutWidth).toBe(1920);
+
+    const editor = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: createEmptySiteBlueprintV1(),
+      referenceIndex: index,
+      viewportWidth: landscape.width,
+      band: bandForEditorDevice("tablet", landscape.width, 1920),
+    });
+    expect(editor.band).toBe("tablet");
+    expect(editor.layout.layoutWidth).toBe(1180);
+    expect(editor.strategy).not.toBe("identity");
+    const bg = findDisplayObject(editor.displayPage, "bg")!;
+    expect(bg.width).toBeCloseTo(1180, 0);
+    expect(bg.x).toBeCloseTo(0, 0);
   });
 
   it("empty blueprint wide path still identity", () => {

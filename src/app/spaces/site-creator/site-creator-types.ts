@@ -80,7 +80,17 @@ export interface SiteBlueprintV1 {
    * La transición vive en el tramo, no en la sección destino.
    */
   scrollFlow?: SiteBlueprintScrollFlowV1;
+  /**
+   * Capas y nodos que no se pueden elegir desde el lienzo.
+   * Siguen seleccionables en el árbol de la izquierda.
+   */
+  canvasLocks?: SiteBlueprintCanvasLocksV1;
 }
+
+export type SiteBlueprintCanvasLocksV1 = {
+  layerIds?: string[];
+  nodeIds?: string[];
+};
 
 /** Cómo llega el scroll de un bloque al siguiente. Ausente = natural. */
 export type SiteSectionScrollKind = "natural" | "smooth" | "snap";

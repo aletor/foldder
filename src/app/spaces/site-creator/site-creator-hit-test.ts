@@ -10,9 +10,13 @@ import type {
   SiteCreatorSelectionIndexEntry,
 } from "./site-creator-selection-types";
 import type { SiteBlueprintV1 } from "./site-creator-types";
+import { isLayerCanvasLocked } from "./site-creator-canvas-locks";
 
 function isClipMaskChild(entry: SiteCreatorSelectionIndexEntry): boolean {
-  return entry.parentContainerType === "clippingContainer" && entry.containerKind == null;
+  return (
+    entry.containerKind == null &&
+    (entry.parentContainerType === "clippingContainer" || entry.parentContainerType === "clippingContent")
+  );
 }
 
 /** Expone hijos de carpetas Designer cuyo espejo fue desagrupado en Site Creator. */
@@ -44,6 +48,14 @@ function collectDismissedFolderPromotedUnits(
   }
 }
 
+function withoutCanvasLocks(
+  units: SiteCreatorSelectionIndexEntry[],
+  index: SiteCreatorSelectionIndex,
+  blueprint: SiteBlueprintV1,
+): SiteCreatorSelectionIndexEntry[] {
+  return units.filter((entry) => !isLayerCanvasLocked(blueprint, entry.layerId, index));
+}
+
 /**
  * Unidades hittables en el lienzo. Cuando una carpeta Designer fue desagrupada
  * en Site Creator, sus hijos pasan al mismo nivel de hit-test (sin tocar Designer).
@@ -56,15 +68,16 @@ export function canvasHitTestUnits(
   const base = isolationUnits(index, isolationIds);
   if (!blueprint) return base;
 
-  const dismissedAtScope = base.filter(
+  const unlocked = withoutCanvasLocks(base, index, blueprint);
+  const dismissedAtScope = unlocked.filter(
     (entry) =>
       entry.type === "groupContainer" &&
       isDesignerContainerMirrorDismissed(blueprint, entry.layerId),
   );
-  if (dismissedAtScope.length === 0) return base;
+  if (dismissedAtScope.length === 0) return unlocked;
 
   const dismissedAtScopeIds = new Set(dismissedAtScope.map((entry) => entry.layerId));
-  const filtered = base.filter((entry) => !dismissedAtScopeIds.has(entry.layerId));
+  const filtered = unlocked.filter((entry) => !dismissedAtScopeIds.has(entry.layerId));
   const promoted: SiteCreatorSelectionIndexEntry[] = [];
   const seen = new Set(filtered.map((entry) => entry.layerId));
 
@@ -72,7 +85,7 @@ export function canvasHitTestUnits(
     collectDismissedFolderPromotedUnits(container.layerId, index, blueprint, promoted, seen);
   }
 
-  return [...filtered, ...promoted];
+  return withoutCanvasLocks([...filtered, ...promoted], index, blueprint);
 }
 
 /** Capas elegibles para marquee: hojas visibles; en raíz atraviesa carpetas Designer. */
@@ -81,15 +94,14 @@ export function marqueeHitTestUnits(
   isolationIds: string[],
   blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionIndexEntry[] {
-  if (isolationIds.length > 0) {
-    return canvasHitTestUnits(index, isolationIds, blueprint);
-  }
-
-  return index.entries.filter((entry) => {
-    if (!entry.selectableFromCanvas) return false;
-    if (entry.type === "groupContainer") return false;
-    return true;
-  });
+  const units = isolationIds.length > 0
+    ? canvasHitTestUnits(index, isolationIds, blueprint)
+    : index.entries.filter((entry) => {
+        if (!entry.selectableFromCanvas) return false;
+        if (entry.type === "groupContainer") return false;
+        return true;
+      });
+  return blueprint ? withoutCanvasLocks(units, index, blueprint) : units;
 }
 
 export function entriesUnderPoint(
@@ -160,7 +172,8 @@ export function layerPickerHitsAtPoint(
     }
   }
   // Imágenes atravesadas primero en el picker para poder elegirlas a propósito
-  return [...unitHits, ...extras];
+  const all = [...unitHits, ...extras];
+  return blueprint ? withoutCanvasLocks(all, index, blueprint) : all;
 }
 
 export function marqueeHits(
@@ -201,6 +214,7 @@ export function canEnterContainer(
   blueprint?: SiteBlueprintV1 | null,
 ): boolean {
   if (!isContainerEntry(entry ?? undefined)) return false;
+  if (entry?.type === "clippingContainer") return false;
   if (
     blueprint &&
     entry?.type === "groupContainer" &&

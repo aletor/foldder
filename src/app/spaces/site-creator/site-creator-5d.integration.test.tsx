@@ -104,7 +104,7 @@ beforeEach(() => {
 const gateOk = canPersistSiteStructure({ originState: "synced", hasSnapshot: true });
 
 describe("5D presentation tree", () => {
-  it("hides clipping wrappers and never shows Clip / Grupo recortado", () => {
+  it("shows a clipping mask as one selectable row and hides its interior", () => {
     const p = page([
       layer({
         id: "clip",
@@ -115,7 +115,7 @@ describe("5D presentation tree", () => {
         width: 80,
         height: 80,
         mask: layer({ id: "mask", type: "rect", x: 0, y: 0, width: 80, height: 80 }),
-        content: [layer({ id: "inside", type: "rect", x: 4, y: 4, width: 40, height: 40 })],
+        content: [layer({ id: "inside", type: "image", x: 4, y: 4, width: 40, height: 40, name: "Foto portada" })],
       } as Partial<FreehandObject> & { id: string; type: "clippingContainer" }),
     ]);
     const index = buildSiteSelectionIndex(p);
@@ -127,15 +127,88 @@ describe("5D presentation tree", () => {
       snapshot: snap,
     });
     const labels: string[] = [];
+    const layerIds: string[] = [];
     const walk = (nodes: typeof tree.roots) => {
       for (const n of nodes) {
         labels.push(n.label);
+        if (n.kind === "layer") layerIds.push(n.layerId);
         walk(n.children);
       }
     };
     walk(tree.roots);
+    expect(labels.join(" | ")).toMatch(/Máscara · Foto portada/);
     expect(labels.join(" | ")).not.toMatch(/Clip 1|Grupo recortado/i);
-    expect(deriveLayerDisplayLabel("clip", index)).not.toBe("Grupo recortado");
+    expect(layerIds).toContain("clip");
+    expect(layerIds).not.toContain("inside");
+    expect(layerIds).not.toContain("mask");
+    expect(deriveLayerDisplayLabel("clip", index)).toBe("Máscara · Foto portada");
+    const clipNode = tree.roots
+      .flatMap((n) => (n.kind === "unorganized" ? n.children : [n]))
+      .find((n) => n.kind === "layer" && n.layerId === "clip");
+    expect(clipNode?.children).toEqual([]);
+    expect(clipNode?.unit).toEqual({ kind: "layer", layerId: "clip" });
+  });
+
+  it("shows a Designer image frame as a mask row, not a plain image", () => {
+    const filled = layer({
+      id: "frame",
+      type: "rect",
+      name: "Image Frame 8",
+      x: 0,
+      y: 0,
+      width: 120,
+      height: 80,
+      isImageFrame: true,
+      imageFrameContent: {
+        src: "https://cdn.example/photo.jpg",
+        originalWidth: 1200,
+        originalHeight: 800,
+        scaleX: 1,
+        scaleY: 1,
+        offsetX: 0,
+        offsetY: 0,
+        fittingMode: "fill-proportional",
+      },
+    });
+    const empty = layer({
+      id: "empty-frame",
+      type: "rect",
+      name: "Image Frame 9",
+      x: 140,
+      y: 0,
+      width: 80,
+      height: 80,
+      isImageFrame: true,
+      imageFrameContent: null,
+    });
+    const p = page([filled, empty]);
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const tree = buildSiteCreatorPresentationTree({
+      page: p,
+      blueprint: createEmptySiteBlueprintV1(),
+      selectionIndex: index,
+      snapshot: snap,
+    });
+    const labels: string[] = [];
+    const layerIds: string[] = [];
+    const walk = (nodes: typeof tree.roots) => {
+      for (const n of nodes) {
+        labels.push(n.label);
+        if (n.kind === "layer") layerIds.push(n.layerId);
+        walk(n.children);
+      }
+    };
+    walk(tree.roots);
+    expect(labels.join(" | ")).toMatch(/Máscara · Imagen/);
+    expect(labels.join(" | ")).toMatch(/Máscara(?! ·)/);
+    expect(labels.join(" | ")).not.toMatch(/Image Frame/i);
+    expect(layerIds).toContain("frame");
+    expect(layerIds).toContain("empty-frame");
+    expect(deriveLayerDisplayLabel("frame", index)).toBe("Máscara · Imagen");
+    expect(deriveLayerDisplayLabel("empty-frame", index)).toBe("Máscara");
+    expect(index.byId.frame?.selectableFromCanvas).toBe(true);
+    expect(index.byId["empty-frame"]?.selectableFromCanvas).toBe(true);
   });
 
   it("Hero tree shows direct presentation children; Button nests Forma + Texto", () => {
@@ -210,16 +283,23 @@ describe("5D presentation tree", () => {
     });
     const unorg = tree.roots.find((r) => r.kind === "unorganized");
     expect(unorg).toBeTruthy();
+    const childIds = (unorg?.children ?? [])
+      .filter((c): c is Extract<typeof c, { kind: "layer" }> => c.kind === "layer")
+      .map((c) => c.layerId);
+    expect(childIds).toContain("a");
+    expect(childIds).toContain("clip");
+    expect(childIds).not.toContain("b");
+    expect(childIds).not.toContain("mask");
     const labels = (unorg?.children ?? []).map((c) => c.label).join("|");
+    expect(labels).toMatch(/Máscara/);
     expect(labels).not.toMatch(/Clip 1|Grupo recortado/i);
-    // Bounds presentados no usan el AABB 1920×1080 del clip
-    for (const child of unorg?.children ?? []) {
-      if (!child.unit) continue;
-      const b = presentationBoundsForUnit(child.unit, tree, index);
+    const loose = unorg?.children.find((c) => c.kind === "layer" && c.layerId === "a");
+    expect(loose?.unit).toBeTruthy();
+    if (loose?.unit) {
+      const b = presentationBoundsForUnit(loose.unit, tree, index);
       expect(b).toBeTruthy();
-      if (!b) continue;
-      expect(b.width).toBeLessThan(200);
-      expect(b.height).toBeLessThan(200);
+      expect(b!.width).toBeLessThan(200);
+      expect(b!.height).toBeLessThan(200);
     }
   });
 });

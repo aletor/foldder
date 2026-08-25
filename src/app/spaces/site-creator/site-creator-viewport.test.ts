@@ -178,4 +178,14 @@ describe("site-creator-viewport", () => {
     expect(dims.width).toBe(820);
     expect(dims.height).toBe(1180);
   });
+
+  it("swaps tablet standard to 1180 × 820 in landscape", () => {
+    const dims = resolveDeviceDimensions({
+      band: "tablet",
+      config: { ...defaultDeviceConfig("tablet"), orientation: "landscape" },
+      referenceWidth: 1920,
+    });
+    expect(dims.width).toBe(1180);
+    expect(dims.height).toBe(820);
+  });
 });

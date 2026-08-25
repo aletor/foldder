@@ -35,6 +35,9 @@ export function deriveLayerDisplayLabel(
       }
       return truncateLabel(text, 28);
     }
+    if (isDesignerImageFrame(obj)) {
+      return labelImageFrame(obj);
+    }
     if (typeof obj.name === "string" && obj.name.trim()) {
       const localized = localizeEnglishTypeName(obj.name.trim());
       if (localized) return localized;
@@ -64,34 +67,64 @@ function localizeEnglishTypeName(name: string): string | null {
   return null;
 }
 
+function clippingContentHint(
+  obj: FreehandObject,
+  index: SiteCreatorSelectionIndex,
+  snapshot?: DesignerSourceSnapshotV1 | null,
+): string | null {
+  const content = (obj as { content?: FreehandObject[] }).content ?? [];
+  const first =
+    content.find((c) => c.type === "image" || Boolean((c as { isImageFrame?: boolean }).isImageFrame)) ??
+    content[0];
+  if (!first) return null;
+  const name = typeof first.name === "string" ? first.name.trim() : "";
+  const usefulName = Boolean(name) && name !== first.id && !looksTechnicalName(name, first.type);
+  if (first.type === "image" || Boolean((first as { isImageFrame?: boolean }).isImageFrame)) {
+    const localized = name ? localizeEnglishTypeName(name) : null;
+    if (localized) return localized;
+    if (usefulName) return name;
+    return "Imagen";
+  }
+  const text = readObjectText(first);
+  if (text) {
+    if (first.type === "text" || first.type === "textOnPath") {
+      return `Texto “${truncateLabel(text, 24)}”`;
+    }
+    return truncateLabel(text, 28);
+  }
+  if (usefulName) return name;
+  void index;
+  void snapshot;
+  return humanLayerFallback(first.type);
+}
+
+export function isDesignerImageFrame(obj: FreehandObject | null | undefined): boolean {
+  return Boolean(obj && obj.type === "rect" && (obj as { isImageFrame?: boolean }).isImageFrame);
+}
+
+export function imageFrameHasPhoto(obj: FreehandObject): boolean {
+  const src = (obj as { imageFrameContent?: { src?: string } | null }).imageFrameContent?.src;
+  if (typeof src !== "string") return false;
+  const trimmed = src.trim();
+  return Boolean(trimmed) && trimmed !== "data:," && trimmed !== "data:";
+}
+
+function labelImageFrame(obj: FreehandObject): string {
+  const name = typeof obj.name === "string" ? obj.name.trim() : "";
+  const usefulName = Boolean(name) && name !== obj.id && !looksTechnicalName(name, obj.type);
+  if (usefulName && !localizeEnglishTypeName(name)) {
+    return `Máscara · ${name}`;
+  }
+  return imageFrameHasPhoto(obj) ? "Máscara · Imagen" : "Máscara";
+}
+
 function labelClippingContainer(
   obj: FreehandObject,
   index: SiteCreatorSelectionIndex,
   snapshot?: DesignerSourceSnapshotV1 | null,
 ): string {
-  const content = (obj as { content?: FreehandObject[] }).content ?? [];
-  const mask = (obj as { mask?: FreehandObject }).mask;
-  const first =
-    content.find((c) => c.type === "image" || c.type === "text" || c.type === "rect") ??
-    content[0] ??
-    mask;
-  if (first) {
-    if (first.type === "image") return "Imagen";
-    if (first.type === "text" || first.type === "textOnPath") {
-      const t = readObjectText(first);
-      return t ? `Texto “${truncateLabel(t, 24)}”` : "Texto";
-    }
-    if (first.type === "rect" || first.type === "ellipse" || first.type === "path") {
-      return humanLayerFallback(first.type);
-    }
-    if (typeof first.name === "string" && first.name.trim() && !looksTechnicalName(first.name, first.type)) {
-      return first.name.trim();
-    }
-    return humanLayerFallback(first.type);
-  }
-  void index;
-  void snapshot;
-  return "Imagen";
+  const hint = clippingContentHint(obj, index, snapshot);
+  return hint ? `Máscara · ${hint}` : "Máscara";
 }
 
 function readObjectText(obj: FreehandObject): string | null {
@@ -112,6 +145,9 @@ function looksTechnicalName(name: string, type: string): boolean {
     return true;
   }
   if (/^clip(ping)?(\s*container)?\s*\d*$/i.test(name.trim())) return true;
+  if (/^image\s*frame\s*\d*$/i.test(name.trim())) return true;
+  if (/^marco(\s*de)?\s*imagen\s*\d*$/i.test(name.trim())) return true;
+  if (/^campo(\s*de)?\s*imagen\s*\d*$/i.test(name.trim())) return true;
   if (/^[A-Z]{2,}_[A-Z0-9_]+$/.test(name.trim())) return true;
   // ids internos estilo btn_shape / layer_12
   if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+$/i.test(name.trim())) return true;
@@ -138,7 +174,7 @@ function humanLayerFallback(type: string): string {
     case "booleanGroup":
       return "Composición";
     case "clippingContainer":
-      return "Imagen";
+      return "Máscara";
     default:
       return "Elemento";
   }

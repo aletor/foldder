@@ -25,8 +25,12 @@ function visualBoundsOf(obj: FreehandObject, flat: FreehandObject[]): SiteCreato
   return { x: aabb.x, y: aabb.y, width: aabb.w, height: aabb.h };
 }
 
-function isClipMaskChild(parentContainerType: LayerParentContainerType, obj: FreehandObject): boolean {
-  return parentContainerType === "clippingContainer" && obj.type !== "clippingContainer";
+function isClipInterior(
+  parentContainerType: LayerParentContainerType,
+  obj: FreehandObject,
+): boolean {
+  if (obj.type === "clippingContainer") return false;
+  return parentContainerType === "clippingContainer" || parentContainerType === "clippingContent";
 }
 
 function isSelectableFromCanvas(
@@ -36,7 +40,7 @@ function isSelectableFromCanvas(
 ): boolean {
   if (obj.visible === false) return false;
   if (obj.type === "adjustmentLayer") return false;
-  if (isClipMaskChild(parentContainerType, obj)) return false;
+  if (isClipInterior(parentContainerType, obj)) return false;
   if (!(bounds.width > 0 && bounds.height > 0)) return false;
   return true;
 }
@@ -147,6 +151,7 @@ export function isolationUnits(
     if (parentId == null) return entry.parentLayerId == null;
     if (entry.parentLayerId !== parentId) return false;
     if (entry.parentContainerType === "clippingContainer" && entry.containerKind == null) return false;
+    if (entry.parentContainerType === "clippingContent") return false;
     return true;
   });
 }

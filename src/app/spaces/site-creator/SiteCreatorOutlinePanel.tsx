@@ -1,28 +1,113 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Component, LayoutTemplate, Square, Layers } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Circle,
+  Component,
+  Crop,
+  Folder,
+  Image as ImageIcon,
+  Layers,
+  LayoutTemplate,
+  Lock,
+  PenTool,
+  Square,
+  Type,
+  Unlock,
+} from "lucide-react";
 import type {
   SiteCreatorPresentationNode,
   SiteCreatorPresentationTree,
 } from "./site-creator-presentation-tree";
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
-import { sameSelectionUnit } from "./site-creator-display-labels";
+import { imageFrameHasPhoto, isDesignerImageFrame, sameSelectionUnit } from "./site-creator-display-labels";
+import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 
-function Glyph({ node }: { node: SiteCreatorPresentationNode }) {
-  const className = "h-3.5 w-3.5 shrink-0 opacity-70";
-  if (node.kind === "unorganized") return <Layers className={className} />;
+function solidFillCss(fill: unknown): string | null {
+  if (typeof fill === "string") {
+    if (!fill || fill === "none" || fill === "transparent") return null;
+    return fill;
+  }
+  if (!fill || typeof fill !== "object") return null;
+  const rec = fill as { type?: string; color?: string; stops?: Array<{ color?: string }> };
+  if (rec.type === "solid" && rec.color && rec.color !== "none" && rec.color !== "transparent") {
+    return rec.color;
+  }
+  const stop = rec.stops?.[0]?.color;
+  return stop && stop !== "none" ? stop : null;
+}
+
+function OutlineGlyph({
+  node,
+  selectionIndex,
+}: {
+  node: SiteCreatorPresentationNode;
+  selectionIndex?: SiteCreatorSelectionIndex | null;
+}) {
+  const iconClass = "h-3 w-3 shrink-0 text-white/40";
+  if (node.kind === "unorganized") return <Layers className={iconClass} />;
   if (node.kind === "semantic") {
-    // Heurística por label
     if (node.label.startsWith("Botón") || node.label.startsWith("Boton")) {
-      return <Component className={className} />;
+      return <Component className={iconClass} />;
     }
     if (node.label.startsWith("Hero") || node.label.startsWith("Sección") || node.label.startsWith("Seccion")) {
-      return <LayoutTemplate className={className} />;
+      return <LayoutTemplate className={iconClass} />;
     }
-    return <Square className={className} />;
+    return <Folder className={iconClass} />;
   }
-  return <Square className={className} />;
+
+  const entry = selectionIndex?.byId[node.layerId];
+  const obj = entry?.object;
+  const type = obj?.type ?? entry?.type;
+  const fill = obj ? solidFillCss(obj.fill) : null;
+  const frame = Boolean(obj && isDesignerImageFrame(obj));
+  const isImage = type === "image";
+
+  if (type === "clippingContainer" || frame) {
+    const hasImage = frame
+      ? imageFrameHasPhoto(obj!)
+      : ((obj as { content?: Array<{ type?: string; isImageFrame?: boolean }> } | undefined)?.content ?? []).some(
+          (c) => c.type === "image" || Boolean(c.isImageFrame),
+        );
+    return (
+      <span className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden>
+        <Crop className="h-3 w-3 text-white/40" strokeWidth={1.5} />
+        {hasImage ? (
+          <ImageIcon className="absolute -bottom-0.5 -right-0.5 h-2 w-2 text-white/55" strokeWidth={2} />
+        ) : null}
+      </span>
+    );
+  }
+  if (isImage) return <ImageIcon className={iconClass} />;
+  if (type === "text" || type === "textOnPath") return <Type className={iconClass} />;
+  if (type === "groupContainer" || type === "booleanGroup") {
+    return <Folder className={iconClass} />;
+  }
+  if (type === "path") return <PenTool className={iconClass} />;
+  if (type === "ellipse") {
+    if (fill) {
+      return (
+        <span
+          aria-hidden
+          className="inline-block h-3 w-3 shrink-0 rounded-full border border-white/15"
+          style={{ background: fill }}
+        />
+      );
+    }
+    return <Circle className={iconClass} />;
+  }
+  if (fill) {
+    return (
+      <span
+        aria-hidden
+        className="inline-block h-3 w-3 shrink-0 rounded-[2px] border border-white/15"
+        style={{ background: fill }}
+      />
+    );
+  }
+  return <Square className={iconClass} />;
 }
 
 function rowSelected(
@@ -31,6 +116,14 @@ function rowSelected(
 ): boolean {
   if (!node.unit) return false;
   return selected.some((u) => sameSelectionUnit(u, node.unit!));
+}
+
+function rowLabel(node: SiteCreatorPresentationNode, open: boolean, closedCount: number | null): string {
+  if (closedCount != null && node.kind !== "unorganized") {
+    return node.label.includes("·") ? node.label : `${node.label} · ${closedCount}`;
+  }
+  if (node.kind === "unorganized" && open) return "Contenido sin organizar";
+  return node.label;
 }
 
 function OutlineTreeRow({
@@ -47,6 +140,9 @@ function OutlineTreeRow({
   onDragOverTarget,
   dragOverId,
   resolveOverride,
+  canvasLockForUnit,
+  onToggleCanvasLock,
+  selectionIndex,
 }: {
   node: SiteCreatorPresentationNode;
   depth: number;
@@ -63,10 +159,12 @@ function OutlineTreeRow({
   resolveOverride?: (
     node: SiteCreatorPresentationNode,
   ) => { dot: "current" | "other"; title: string; hidden?: boolean } | null;
+  canvasLockForUnit?: (unit: SiteCreatorSelectionUnit) => { locked: boolean; inherited: boolean };
+  onToggleCanvasLock?: (unit: SiteCreatorSelectionUnit) => void;
+  selectionIndex?: SiteCreatorSelectionIndex | null;
 }) {
+  const rowRef = useRef<HTMLButtonElement | null>(null);
   const hasChildren = node.children.length > 0;
-  const isOpen = expanded[node.id] === true || (expanded[node.id] !== false && node.kind === "unorganized" && Object.keys(expanded).length === 0);
-  // Default: unorganized open if never set; containers closed unless expanded
   const open =
     expanded[node.id] !== undefined
       ? expanded[node.id] === true
@@ -76,23 +174,30 @@ function OutlineTreeRow({
   const dropTarget = dragOverId === node.id && node.kind === "semantic";
   const closedCount = !open && hasChildren ? node.childCount : null;
   const overrideInfo = resolveOverride?.(node) ?? null;
+  const lockInfo = node.unit ? canvasLockForUnit?.(node.unit) ?? { locked: false, inherited: false } : null;
+
+  useEffect(() => {
+    if (!active) return;
+    rowRef.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active]);
 
   return (
     <div>
       <button
+        ref={rowRef}
         type="button"
         draggable={node.kind === "layer" || (node.kind === "semantic" && node.label.startsWith("Botón"))}
         data-testid={`outline-row-${node.id}`}
-        className={`flex w-full items-center gap-1 rounded px-1.5 py-1 text-left text-[12px] ${
+        className={`group/row relative flex w-full items-center gap-1.5 rounded-sm py-[5px] pr-1 text-left text-[11px] font-normal tracking-tight ${
           active
-            ? "bg-[#A8FF32]/15 text-[#A8FF32]"
+            ? "bg-white/[0.07] text-white"
             : dropTarget
-              ? "bg-[#A8FF32]/10 text-white"
+              ? "bg-white/[0.05] text-white"
               : hovered
-                ? "bg-white/8 text-white/90"
-                : "text-white/80 hover:bg-white/5"
+                ? "bg-white/[0.04] text-white/90"
+                : "text-white/65 hover:bg-white/[0.03] hover:text-white/85"
         }`}
-        style={{ paddingLeft: 6 + depth * 12 }}
+        style={{ paddingLeft: 8 + depth * 10 }}
         onClick={(e) => {
           if (node.unit) onSelect(node.unit, e.ctrlKey || e.metaKey, node);
         }}
@@ -121,37 +226,34 @@ function OutlineTreeRow({
           if (node.kind === "semantic") onDropOn?.(node);
         }}
       >
+        {active ? (
+          <span className="absolute bottom-1 left-0 top-1 w-px bg-[#A8FF32]/70" aria-hidden />
+        ) : null}
         {hasChildren ? (
           <span
             role="presentation"
-            className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-white/40"
+            className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-white/30"
             onClick={(event) => {
               event.stopPropagation();
               onToggle(node.id);
             }}
           >
-            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            {open ? <ChevronDown className="h-3 w-3" strokeWidth={1.5} /> : <ChevronRight className="h-3 w-3" strokeWidth={1.5} />}
           </span>
         ) : (
-          <span className="inline-block h-4 w-4 shrink-0" />
+          <span className="inline-block h-3.5 w-3.5 shrink-0" />
         )}
-        <Glyph node={node} />
+        <OutlineGlyph node={node} selectionIndex={selectionIndex} />
         <span
-          className={`min-w-0 truncate font-semibold ${overrideInfo?.hidden ? "opacity-45" : ""}`}
+          className={`min-w-0 truncate font-normal ${overrideInfo?.hidden ? "opacity-40" : ""}`}
         >
-          {closedCount != null && node.kind !== "unorganized"
-            ? node.label.includes("·")
-              ? node.label
-              : `${node.label} · ${closedCount}`
-            : node.kind === "unorganized" && open
-              ? "Contenido sin organizar"
-              : node.label}
+          {rowLabel(node, open, closedCount)}
         </span>
         {overrideInfo?.hidden ? (
           <span
             data-testid={`outline-hidden-${node.id}`}
             title="Oculto en esta vista. Sigue visible en Original."
-            className="ml-1 shrink-0 text-[9px] font-semibold uppercase tracking-wide text-white/35"
+            className="ml-0.5 shrink-0 text-[9px] font-normal tracking-wide text-white/30"
           >
             oculto
           </span>
@@ -160,16 +262,58 @@ function OutlineTreeRow({
           <span
             data-testid={`outline-override-dot-${node.id}`}
             title={overrideInfo.title}
-            className="ml-1 inline-block h-1 w-1 shrink-0 rounded-full"
+            className="ml-0.5 inline-block h-1 w-1 shrink-0 rounded-full"
             style={{
-              background: overrideInfo.dot === "current" ? "#A8FF32" : "rgba(255,255,255,0.28)",
+              background: overrideInfo.dot === "current" ? "#A8FF32" : "rgba(255,255,255,0.22)",
             }}
             aria-hidden
           />
         ) : null}
-        {dropTarget ? (
-          <span className="ml-auto shrink-0 text-[9px] text-[#A8FF32]/80">
-            {`Añadir a ${node.label.split(" · ")[0]}`}
+        {dropTarget || lockInfo ? (
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            {dropTarget ? (
+              <span className="text-[9px] font-normal text-white/45">
+                {`Añadir a ${node.label.split(" · ")[0]}`}
+              </span>
+            ) : null}
+            {lockInfo && node.unit ? (
+              <span
+                role="button"
+                aria-label={
+                  lockInfo.inherited
+                    ? "Bloqueado por un grupo o sección superior"
+                    : lockInfo.locked
+                      ? "Desbloquear en el lienzo"
+                      : "Bloquear en el lienzo"
+                }
+                aria-pressed={lockInfo.locked}
+                data-testid={`outline-lock-${node.id}`}
+                title={
+                  lockInfo.inherited
+                    ? "Bloqueado por un grupo o sección superior"
+                    : lockInfo.locked
+                      ? "Desbloquear en el lienzo"
+                      : "Bloquear en el lienzo"
+                }
+                className={`inline-flex h-3.5 w-3.5 items-center justify-center ${
+                  lockInfo.locked ? "text-white/55" : "text-white/25 hover:text-white/60"
+                } ${lockInfo.inherited ? "cursor-default" : ""} ${
+                  lockInfo.locked
+                    ? ""
+                    : "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100"
+                }`}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (lockInfo.inherited || !node.unit) return;
+                  onToggleCanvasLock?.(node.unit);
+                }}
+              >
+                {lockInfo.locked ? <Lock className="h-3 w-3" strokeWidth={1.5} /> : <Unlock className="h-3 w-3" strokeWidth={1.5} />}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </button>
@@ -190,6 +334,9 @@ function OutlineTreeRow({
               onDragOverTarget={onDragOverTarget}
               dragOverId={dragOverId}
               resolveOverride={resolveOverride}
+              canvasLockForUnit={canvasLockForUnit}
+              onToggleCanvasLock={onToggleCanvasLock}
+              selectionIndex={selectionIndex}
             />
           ))
         : null}
@@ -212,6 +359,9 @@ export interface SiteCreatorOutlinePanelProps {
   resolveOverride?: (
     node: SiteCreatorPresentationNode,
   ) => { dot: "current" | "other"; title: string; hidden?: boolean } | null;
+  canvasLockForUnit?: (unit: SiteCreatorSelectionUnit) => { locked: boolean; inherited: boolean };
+  onToggleCanvasLock?: (unit: SiteCreatorSelectionUnit) => void;
+  selectionIndex?: SiteCreatorSelectionIndex | null;
 }
 
 function ancestorSemanticIds(
@@ -251,6 +401,9 @@ export function SiteCreatorOutlinePanel({
   visualLayerCount,
   reviewCount,
   resolveOverride,
+  canvasLockForUnit,
+  onToggleCanvasLock,
+  selectionIndex,
 }: SiteCreatorOutlinePanelProps) {
   const [dragSource, setDragSource] = useState<SiteCreatorPresentationNode | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -263,13 +416,13 @@ export function SiteCreatorOutlinePanel({
   };
 
   return (
-    <aside className="site-creator-studio__sidebar flex w-[240px] shrink-0 flex-col border-r border-white/10 bg-[#101820] px-3 py-4">
-      <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-[0.14em] text-white/45">
+    <aside className="site-creator-studio__sidebar flex w-[240px] shrink-0 flex-col border-r border-white/10 bg-[#101820] px-2 py-3">
+      <p className="mb-2 px-1.5 text-[10px] font-normal uppercase tracking-[0.16em] text-white/35">
         Página
       </p>
       <div className="min-h-0 flex-1 overflow-auto">
         {tree.roots.length === 0 ? (
-          <p className="px-1 text-[11px] text-white/35">
+          <p className="px-1.5 text-[11px] font-normal leading-relaxed text-white/35">
             Selecciona elementos en el diseño. Usa Ctrl/Cmd para añadir varios.
           </p>
         ) : (
@@ -298,20 +451,22 @@ export function SiteCreatorOutlinePanel({
               onDragOverTarget={setDragOverId}
               dragOverId={dragOverId}
               resolveOverride={resolveOverride}
+              canvasLockForUnit={canvasLockForUnit}
+              onToggleCanvasLock={onToggleCanvasLock}
+              selectionIndex={selectionIndex}
             />
           ))
         )}
       </div>
 
-      <div className="mt-4 border-t border-white/10 px-1 pt-4">
-        <p className="text-sm font-semibold text-white/90">Contenido visual</p>
-        <p className="mt-1 text-xs text-white/55">{visualLayerCount} capas</p>
+      <div className="mt-3 border-t border-white/10 px-1.5 pt-3">
+        <p className="text-[11px] font-normal text-white/40">{visualLayerCount} capas</p>
         {reviewCount > 0 ? (
-          <p className="mt-4 text-[10px] font-black uppercase tracking-[0.14em] text-amber-300/90">
+          <p className="mt-2 text-[10px] font-normal tracking-wide text-amber-300/80">
             Por revisar · {reviewCount}
           </p>
         ) : null}
-        {emptyHint ? <p className="mt-4 text-xs leading-relaxed text-white/45">{emptyHint}</p> : null}
+        {emptyHint ? <p className="mt-3 text-[11px] font-normal leading-relaxed text-white/35">{emptyHint}</p> : null}
       </div>
     </aside>
   );

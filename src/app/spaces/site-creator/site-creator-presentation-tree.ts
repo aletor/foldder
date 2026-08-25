@@ -1,12 +1,13 @@
 /**
  * Jerarquía de presentación Site Creator (5D).
- * No modifica Designer; oculta wrappers técnicos (clipping/máscaras).
+ * No modifica Designer; oculta wrappers técnicos (máscaras de ajuste, booleanos).
+ * Un clippingContainer se enseña como máscara seleccionable; su interior no.
  */
 import type { DesignerPageState } from "../designer/DesignerNode";
 import type { FreehandObject } from "../FreehandStudio";
 import type { DesignerSourceSnapshotV1, SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
-import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
+import type { SiteCreatorSelectionIndex, SiteCreatorSelectionIndexEntry } from "./site-creator-selection-types";
 import type { PageRect } from "./site-creator-coordinate-space";
 import { unionPageRects } from "./site-creator-coordinate-space";
 import { worldVisualBoundsForLayer } from "./site-creator-layer-world-bounds";
@@ -70,10 +71,46 @@ export type SiteCreatorPresentationTree = {
 
 function isTechnicalWrapper(obj: FreehandObject | null | undefined, name: string): boolean {
   if (!obj) return false;
-  if (obj.type === "clippingContainer") return true;
   if (obj.type === "booleanGroup" && looksTechnicalName(name, obj.type)) return true;
   if (obj.type === "adjustmentLayer") return true;
   return false;
+}
+
+function clipOwnerLayerId(
+  entry: SiteCreatorSelectionIndexEntry,
+  index: SiteCreatorSelectionIndex,
+): string | null {
+  if (entry.type === "clippingContainer") return entry.layerId;
+  if (
+    entry.parentContainerType !== "clippingContainer" &&
+    entry.parentContainerType !== "clippingContent"
+  ) {
+    return entry.layerId;
+  }
+  const parentId = entry.parentLayerId;
+  return parentId && index.byId[parentId]?.type === "clippingContainer" ? parentId : null;
+}
+
+function makePresentationLayerNode(
+  layerId: string,
+  index: SiteCreatorSelectionIndex,
+  snapshot: DesignerSourceSnapshotV1 | null,
+): SiteCreatorPresentationNode | null {
+  const entry = index.byId[layerId];
+  if (!entry) return null;
+  const id = clipOwnerLayerId(entry, index);
+  if (!id) return null;
+  const resolved = index.byId[id] ?? entry;
+  return {
+    kind: "layer",
+    id: `layer:${id}`,
+    layerId: id,
+    label: presentationLayerLabel(id, index, snapshot),
+    childCount: 0,
+    children: [],
+    unit: { kind: "layer", layerId: id },
+    isContainer: resolved.type === "groupContainer" && isUsefulDesignerGroup(resolved.object, resolved.name),
+  };
 }
 
 function isUsefulDesignerGroup(obj: FreehandObject, name: string): boolean {
@@ -90,8 +127,7 @@ function presentationLayerLabel(
   const entry = index.byId[layerId];
   if (!entry) return "Elemento";
   if (entry.type === "clippingContainer") {
-    // Nunca mostrar wrapper: no debería llegar aquí como fila.
-    return "Grupo visual";
+    return deriveLayerDisplayLabel(layerId, index, snapshot);
   }
   if (entry.type === "groupContainer") {
     if (looksTechnicalName(entry.name, entry.type) || !entry.name.trim() || entry.name === entry.layerId) {
@@ -115,18 +151,8 @@ function expandTechnicalLayer(
     if (owned.has(layerId) && entry.type !== "groupContainer") {
       // Capas poseídas por semántica no van en unorganized
     }
-    return [
-      {
-        kind: "layer",
-        id: `layer:${layerId}`,
-        layerId,
-        label: presentationLayerLabel(layerId, index, snapshot),
-        childCount: 0,
-        children: [],
-        unit: { kind: "layer", layerId },
-        isContainer: entry.type === "groupContainer",
-      },
-    ];
+    const node = makePresentationLayerNode(layerId, index, snapshot);
+    return node ? [node] : [];
   }
   // Hijos Designer (descendants in index)
   const kids = index.entries.filter(
@@ -147,17 +173,8 @@ function expandTechnicalLayer(
       out.push(...expandTechnicalLayer(child.layerId, index, owned, snapshot));
       continue;
     }
-    // Solo promover hojas / grupos útiles (no máscaras)
-    out.push({
-      kind: "layer",
-      id: `layer:${child.layerId}`,
-      layerId: child.layerId,
-      label: presentationLayerLabel(child.layerId, index, snapshot),
-      childCount: 0,
-      children: [],
-      unit: { kind: "layer", layerId: child.layerId },
-      isContainer: child.type === "groupContainer" && isUsefulDesignerGroup(child.object, child.name),
-    });
+    const layerNode = makePresentationLayerNode(child.layerId, index, snapshot);
+    if (layerNode) out.push(layerNode);
   }
   return out;
 }
@@ -266,16 +283,10 @@ function buildDesignerContainerDirectChildren(
       continue;
     }
 
-    out.push({
-      kind: "layer",
-      id: `layer:${child.layerId}`,
-      layerId: child.layerId,
-      label: presentationLayerLabel(child.layerId, index, snapshot),
-      childCount: 0,
-      children: [],
-      unit: { kind: "layer", layerId: child.layerId },
-      isContainer: false,
-    });
+    const layerNode = makePresentationLayerNode(child.layerId, index, snapshot);
+    if (layerNode && !out.some((n) => n.kind === "layer" && n.layerId === layerNode.layerId)) {
+      out.push(layerNode);
+    }
   }
   return out;
 }
@@ -306,16 +317,10 @@ function buildSemanticSubtree(
       children.push(...expandTechnicalLayer(layerId, index, new Set(), snapshot));
       continue;
     }
-    children.push({
-      kind: "layer",
-      id: `layer:${layerId}`,
-      layerId,
-      label: presentationLayerLabel(layerId, index, snapshot),
-      childCount: 0,
-      children: [],
-      unit: { kind: "layer", layerId },
-      isContainer: entry.type === "groupContainer" && isUsefulDesignerGroup(entry.object, entry.name),
-    });
+    const layerNode = makePresentationLayerNode(layerId, index, snapshot);
+    if (layerNode && !children.some((c) => c.kind === "layer" && c.layerId === layerNode.layerId)) {
+      children.push(layerNode);
+    }
   }
 
   const labelBase = isSiteButtonNode(node)
@@ -425,9 +430,20 @@ export function buildSiteCreatorPresentationTree(args: {
     ) {
       continue;
     }
+    if (entry.type === "clippingContainer") {
+      const interiorOwned = index.entries.some(
+        (inner) =>
+          inner.parentLayerId === entry.layerId &&
+          (ownership.ownerByLayerId[inner.layerId] || ownership.coveredByContainerOwner[inner.layerId]),
+      );
+      if (interiorOwned) {
+        seen.add(entry.layerId);
+        continue;
+      }
+    }
     // Saltar descendientes de unorganized wrappers ya expandidos
     if (entry.ancestorIds.some((a) => seen.has(a))) continue;
-    if (isTechnicalWrapper(entry.object, entry.name) || entry.type === "clippingContainer" || entry.type === "adjustmentLayer") {
+    if (isTechnicalWrapper(entry.object, entry.name) || entry.type === "adjustmentLayer") {
       const promoted = expandTechnicalLayer(entry.layerId, index, new Set(), snapshot);
       for (const p of promoted) {
         if (p.kind === "layer" && seen.has(p.layerId)) continue;

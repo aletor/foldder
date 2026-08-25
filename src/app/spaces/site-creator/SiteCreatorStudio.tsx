@@ -18,7 +18,11 @@ import {
   type SiteCreatorDeviceConfig,
   type SiteCreatorViewportBand,
 } from "./site-creator-viewport";
-import { resolveSiteCreatorResponsiveDisplay, bandForViewportWidth } from "./site-creator-responsive";
+import {
+  resolveSiteCreatorResponsiveDisplay,
+  bandForEditorDevice,
+  bandForViewportWidth,
+} from "./site-creator-responsive";
 import { countContainerReflowUnits } from "./site-creator-responsive-apply";
 import {
   SiteCreatorAdaptationControl,
@@ -135,6 +139,7 @@ import {
   resolveLayoutGroupFromHover,
 } from "./site-creator-group-fit";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
+import { isUnitCanvasLocked, isUnitOwnCanvasLocked, setUnitCanvasLock } from "./site-creator-canvas-locks";
 import { SiteCreatorSectionFlowRail } from "./SiteCreatorSectionFlowRail";
 import { setEntryScrollKind, setSectionScrollHop, listDocumentSections } from "./site-creator-section-scroll";
 import {
@@ -458,7 +463,9 @@ export function SiteCreatorStudio({
     pagePreviewMode || activeDeviceDimensions == null
       ? null
       : { width: activeDeviceDimensions.width, height: activeDeviceDimensions.height };
-  const responsiveBand = bandForViewportWidth(effectiveViewportWidth, referenceWidth);
+  const responsiveBand = pagePreviewMode
+    ? bandForViewportWidth(effectiveViewportWidth, referenceWidth)
+    : bandForEditorDevice(viewportBand, effectiveViewportWidth, referenceWidth);
   const showPreview = Boolean(page);
 
   const referenceIndex = useMemo(() => (page ? buildSiteSelectionIndex(page) : null), [page]);
@@ -490,8 +497,9 @@ export function SiteCreatorStudio({
       referenceIndex,
       viewportWidth: effectiveViewportWidth,
       viewportHeight: liveViewportHeight,
+      band: responsiveBand,
     });
-  }, [blueprint, effectiveViewportWidth, liveViewportHeight, page, referenceIndex]);
+  }, [blueprint, effectiveViewportWidth, liveViewportHeight, page, referenceIndex, responsiveBand]);
 
   const displayPage = responsive?.displayPage ?? page;
   const objectClipById = responsive?.resolvedLayout?.objectClipById;
@@ -2695,6 +2703,22 @@ export function SiteCreatorStudio({
           visualLayerCount={visualLayerCount}
           reviewCount={reviewCount}
           resolveOverride={resolveOutlineOverride}
+          selectionIndex={selectionIndex}
+          canvasLockForUnit={(unit) => {
+            const own = isUnitOwnCanvasLocked(blueprint, unit);
+            const locked = selectionIndex
+              ? isUnitCanvasLocked(blueprint, unit, selectionIndex)
+              : own;
+            return { locked, inherited: locked && !own };
+          }}
+          onToggleCanvasLock={(unit) => {
+            const own = isUnitOwnCanvasLocked(blueprint, unit);
+            const inherited = Boolean(
+              selectionIndex && isUnitCanvasLocked(blueprint, unit, selectionIndex) && !own,
+            );
+            if (inherited) return;
+            commitBlueprint(setUnitCanvasLock(blueprint, unit, !own));
+          }}
           emptyHint={!showPreview ? emptyStateMessage(originState) : null}
         />
         )}
