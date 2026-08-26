@@ -10,6 +10,7 @@ import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import {
   isSiteButtonNode,
+  type SiteBlueprintSectionNode,
   type SiteBlueprintV1,
 } from "./site-creator-types";
 import {
@@ -22,7 +23,7 @@ import {
 } from "./site-creator-section-scroll";
 import { compilePublishedScrollScript } from "./site-creator-section-scroll-runtime";
 import {
-  blueprintHasViewportSection,
+  sectionCustomHeightForBand,
   sectionHeightModeForBand,
   type SectionHeightBand,
 } from "./site-creator-section-height";
@@ -253,20 +254,67 @@ function hintsFromResolved(result: {
   }));
 }
 
+function blueprintHasExpandedSection(
+  blueprint: SiteBlueprintV1,
+  band?: SectionHeightBand,
+): boolean {
+  const bands: SectionHeightBand[] = band ? [band] : ["wide", "tablet", "mobile"];
+  return bands.some((currentBand) =>
+    listDocumentSections(blueprint).some(
+      (section) => sectionHeightModeForBand(blueprint, section, currentBand) !== "content",
+    ),
+  );
+}
+
+function sectionExtraExpr(
+  blueprint: SiteBlueprintV1,
+  section: SiteBlueprintSectionNode,
+  layout: { designed: number },
+  pageWidth: number,
+  band: SectionHeightBand,
+): string | null {
+  const mode = sectionHeightModeForBand(blueprint, section, band);
+  if (mode === "viewport") {
+    return `max(0px,100dvh - 100cqw * ${layout.designed} / ${Math.max(1, pageWidth)})`;
+  }
+  if (mode === "custom") {
+    const custom = sectionCustomHeightForBand(blueprint, section, band);
+    const extra = custom == null ? 0 : Math.max(0, custom - layout.designed);
+    if (extra > 0.5) return `calc(100cqw * ${extra} / ${Math.max(1, pageWidth)})`;
+  }
+  return null;
+}
+
 function extraShiftExpr(
   blueprint: SiteBlueprintV1,
-  y: number,
+  box: { y: number; height: number; width: number },
   pageWidth: number,
   band: SectionHeightBand = "wide",
   hints?: SectionLayoutHint[] | null,
+  centerWithinSection = true,
 ): string | null {
-  if (!blueprintHasViewportSection(blueprint, band)) return null;
+  if (!blueprintHasExpandedSection(blueprint, band)) return null;
   const parts: string[] = [];
   for (const section of listDocumentSections(blueprint)) {
-    if (sectionHeightModeForBand(blueprint, section, band) !== "viewport") continue;
     const layout = sectionLayoutHint(section, hints);
-    if (y + 0.5 < layout.bottom) continue;
-    parts.push(`max(0px,100dvh - 100cqw * ${layout.designed} / ${Math.max(1, pageWidth)})`);
+    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, band);
+    if (!extra) continue;
+    if (box.y + 0.5 >= layout.bottom) {
+      parts.push(extra);
+      continue;
+    }
+    const fillsSectionBottom =
+      box.y < layout.bottom &&
+      box.y + box.height >= layout.bottom - 4 &&
+      box.width >= pageWidth * 0.8;
+    if (
+      centerWithinSection &&
+      box.y + box.height > layout.top + 0.5 &&
+      box.y < layout.bottom &&
+      !fillsSectionBottom
+    ) {
+      parts.push(`(${extra}) / 2`);
+    }
   }
   return parts.length > 0 ? parts.join(" + ") : "0px";
 }
@@ -278,13 +326,14 @@ function extraGrowExpr(
   band: SectionHeightBand = "wide",
   hints?: SectionLayoutHint[] | null,
 ): string | null {
-  if (!blueprintHasViewportSection(blueprint, band)) return null;
+  if (!blueprintHasExpandedSection(blueprint, band)) return null;
   for (const section of listDocumentSections(blueprint)) {
-    if (sectionHeightModeForBand(blueprint, section, band) !== "viewport") continue;
     const layout = sectionLayoutHint(section, hints);
+    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, band);
+    if (!extra) continue;
     const touchesBottom = box.y < layout.bottom && box.y + box.height >= layout.bottom - 4;
     if (touchesBottom && box.width >= pageWidth * 0.8) {
-      return `max(0px,100dvh - 100cqw * ${layout.designed} / ${Math.max(1, pageWidth)})`;
+      return extra;
     }
   }
   return null;
@@ -306,7 +355,15 @@ function emitSectionViewportCss(
   for (const section of sections) {
     const viewport = sectionHeightModeForBand(blueprint, section, band) === "viewport";
     const geom = sectionLayoutHint(section, hints);
-    const shift = extraShiftExpr(blueprint, geom.top, pageWidth, band, hints);
+    const extra = sectionExtraExpr(blueprint, section, geom, pageWidth, band);
+    const shift = extraShiftExpr(
+      blueprint,
+      { y: geom.top, height: 0, width: 0 },
+      pageWidth,
+      band,
+      hints,
+      false,
+    );
     const top =
       shift != null ? `calc(${shift} + ${cqwLen(geom.top, pageWidth)})` : pct(geom.top, pageHeight);
     const heightRule = viewport
@@ -315,9 +372,7 @@ function emitSectionViewportCss(
         ? ""
         : ";height:0;min-height:0";
     lines.push(`.s-sec-anchor-${cssSafeId(section.id)}{top:${top}${heightRule}}`);
-    if (viewport) {
-      extraParts.push(`max(0px,100dvh - 100cqw * ${geom.designed} / ${pageWidth})`);
-    }
+    if (extra) extraParts.push(extra);
   }
   if (extraParts.length > 0) {
     lines.push(
@@ -807,7 +862,7 @@ function groupBoxCss(
   const local = toLocalBox(box, parent);
   const full = node.widthMode === "full" || containerIsFullWidthForBand(blueprint, node.id, band);
   const pageParent = !inRow && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
-  const shift = pageParent ? extraShiftExpr(blueprint, box.y, pageWidth, band, hints) : null;
+  const shift = pageParent ? extraShiftExpr(blueprint, box, pageWidth, band, hints) : null;
   const useCqw = Boolean(pageParent && shift != null);
   const grow = useCqw ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
   const rules = [
@@ -850,7 +905,7 @@ function layerBoxCss(
   const local = toLocalBox(box, parent);
   const pageParent =
     !inRow && Boolean(blueprint) && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
-  const shift = pageParent && blueprint ? extraShiftExpr(blueprint, box.y, pageWidth, band, hints) : null;
+  const shift = pageParent && blueprint ? extraShiftExpr(blueprint, box, pageWidth, band, hints) : null;
   const useCqw = Boolean(pageParent && shift != null);
   const grow = useCqw && blueprint ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
   const transform = box.rotation ? `transform:rotate(${box.rotation}deg)` : "";
@@ -970,7 +1025,7 @@ function buildHtml(args: {
   const htmlClass = [
     scrollFlowUsesKind(args.blueprint, "smooth") ? "s-scroll-smooth" : "",
     scrollFlowUsesKind(args.blueprint, "snap") ? "s-scroll-snap" : "",
-    blueprintHasViewportSection(args.blueprint) ? "s-has-vh-secs" : "",
+    blueprintHasExpandedSection(args.blueprint) ? "s-has-vh-secs" : "",
   ]
     .filter(Boolean)
     .join(" ");

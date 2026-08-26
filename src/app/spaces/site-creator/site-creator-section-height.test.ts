@@ -15,7 +15,11 @@ import {
   sectionScrollStationsFromDisplay,
 } from "./site-creator-section-height";
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
-import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
+import {
+  fixtureHeroPanelButton,
+  makeLayer,
+  makePage,
+} from "./site-creator-responsive-fixtures";
 import { findDisplayObject, resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import { SITE_CREATOR_TABLET_WIDTH } from "./site-creator-viewport";
 
@@ -161,6 +165,98 @@ describe("section height mode", () => {
     expect(laidOut.page.customHeight).toBeGreaterThan(1400);
   });
 
+  it("centers section content as one block without changing its internal spacing", () => {
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "title", type: "text", x: 240, y: 100, width: 600, height: 60, text: "Title" }),
+      makeLayer({ id: "subtitle", type: "text", x: 240, y: 220, width: 500, height: 40, text: "Subtitle" }),
+      makeLayer({ id: "body", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title", "subtitle"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const fitted = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: fitted.blueprint,
+      index,
+      viewportHeight: 1080,
+    }).page;
+    const bg = findDisplayObject(laidOut, "bg")!;
+    const title = findDisplayObject(laidOut, "title")!;
+    const subtitle = findDisplayObject(laidOut, "subtitle")!;
+    const body = findDisplayObject(laidOut, "body")!;
+
+    expect(bg.y).toBe(0);
+    expect(bg.height).toBe(1000);
+    expect(title.y).toBe(400);
+    expect(subtitle.y).toBe(520);
+    expect(subtitle.y - title.y).toBe(120);
+    expect(body.y).toBe(1100);
+  });
+
+  it("centers responsive content while backgrounds keep covering the expanded section", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const baseline = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const baselineRegion = baseline.resolvedLayout?.regions.find(
+      (region) => region.sectionId === fx.heroId,
+    );
+    expect(baselineRegion).toBeTruthy();
+    if (!baselineRegion) return;
+    const baselineTitle = findDisplayObject(baseline.displayPage, "title")!;
+    const baselinePanel = findDisplayObject(baseline.displayPage, "panel")!;
+    const baselinePhoto = findDisplayObject(baseline.displayPage, "photo")!;
+
+    const custom = setSectionHeightMode(
+      fx.blueprint,
+      fx.heroId,
+      "custom",
+      "tablet",
+      baselineRegion.naturalHeight + 200,
+    );
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+    const expanded = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: custom.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const expandedRegion = expanded.resolvedLayout?.regions.find(
+      (region) => region.sectionId === fx.heroId,
+    );
+    expect(expandedRegion).toBeTruthy();
+    if (!expandedRegion) return;
+    const title = findDisplayObject(expanded.displayPage, "title")!;
+    const panel = findDisplayObject(expanded.displayPage, "panel")!;
+    const photo = findDisplayObject(expanded.displayPage, "photo")!;
+
+    expect(title.y - baselineTitle.y).toBeCloseTo(100, 4);
+    expect(panel.y - baselinePanel.y).toBeCloseTo(100, 4);
+    expect(title.y - panel.y).toBeCloseTo(baselineTitle.y - baselinePanel.y, 4);
+    expect(photo.y).toBeCloseTo(expandedRegion.layoutRect.y, 4);
+    expect(photo.height).toBeCloseTo(expandedRegion.layoutRect.height, 4);
+    expect(photo.y).toBeCloseTo(baselinePhoto.y, 4);
+  });
+
   it("emits exact 100dvh height in published CSS", () => {
     const { page, blueprint, heroId } = twoSections();
     const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
@@ -178,6 +274,54 @@ describe("section height mode", () => {
     expect(compiled.css).toContain("100cqw");
     expect(compiled.css).toMatch(/s-sec-anchor-[^{]+\{[^}]*calc\(/);
     expect(compiled.css).not.toMatch(/foldder/i);
+  });
+
+  it("publishes the same half-extra vertical translation for section content", () => {
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "title", type: "text", x: 240, y: 120, width: 600, height: 60, text: "Title" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const fitted = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "viewport");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: fitted.blueprint,
+      title: "Centrado",
+      imageHrefByLayerId: {},
+    });
+
+    expect(compiled.css).toContain(
+      "top:calc((max(0px,100dvh - 100cqw * 400 / 1920)) / 2 + calc(100cqw * 120 / 1920))",
+    );
+    expect(compiled.css).toMatch(/\.s-el-bg\{[^}]*height:calc\([^}]*100dvh/);
+
+    const custom = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+    const customCompiled = compilePublishedSite({
+      page,
+      blueprint: custom.blueprint,
+      title: "Centrado custom",
+      imageHrefByLayerId: {},
+    });
+    expect(customCompiled.html).toContain("s-has-vh-secs");
+    expect(customCompiled.css).toContain(
+      "top:calc((calc(100cqw * 600 / 1920)) / 2 + calc(100cqw * 120 / 1920))",
+    );
+    expect(customCompiled.css).toContain(
+      "height:calc(calc(100cqw * 400 / 1920) + calc(100cqw * 600 / 1920))",
+    );
   });
 
   it("maps the live window to page units so height changes with resize", () => {

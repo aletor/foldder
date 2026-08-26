@@ -7,7 +7,10 @@ import type { DesignerPageState } from "../designer/DesignerNode";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
 import { listDocumentSections } from "./site-creator-section-scroll";
 import { isWorldSpaceLayerId, worldSpaceAncestorId } from "./site-creator-layer-world-bounds";
-import { findLayerSemanticOwner } from "./site-blueprint-ownership";
+import {
+  collectSemanticCoverageLayerIds,
+  findLayerSemanticOwner,
+} from "./site-blueprint-ownership";
 import type { PageRect } from "./site-creator-coordinate-space";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type {
@@ -244,7 +247,6 @@ export function applySectionViewportHeights(args: {
   const page = deepCloneDesignerPageState(args.page);
   const byId = new Map<string, FreehandObject>();
   walkObjects(page.objects, byId);
-  const shifted = new Set<string>();
   let acc = 0;
   const pageWidth = Math.max(1, page.customWidth ?? 1);
   for (const section of listDocumentSections(args.blueprint)) {
@@ -258,16 +260,20 @@ export function applySectionViewportHeights(args: {
           : 0;
     const designedBottom = section.sourceRange.bottom + acc;
     if (extra > 0.5) {
+      const sectionWorldIds = new Set(
+        collectSemanticCoverageLayerIds(args.blueprint, section.id).map((id) =>
+          worldSpaceAncestorId(id, args.index),
+        ),
+      );
       for (const [id, obj] of byId) {
         if (!isWorldSpaceLayerId(id, args.index)) continue;
         const worldId = worldSpaceAncestorId(id, args.index);
         if (worldId !== id) continue;
-        if (shifted.has(id)) continue;
         if (typeof obj.y !== "number") continue;
         if (obj.y + 0.5 >= designedBottom) {
           obj.y += extra;
-          shifted.add(id);
         } else if (
+          sectionWorldIds.has(id) &&
           typeof obj.height === "number" &&
           typeof obj.width === "number" &&
           obj.y < designedBottom &&
@@ -275,6 +281,8 @@ export function applySectionViewportHeights(args: {
           obj.width >= pageWidth * 0.8
         ) {
           obj.height = Math.max(1, obj.height + extra);
+        } else if (sectionWorldIds.has(id)) {
+          obj.y += extra / 2;
         }
       }
     }

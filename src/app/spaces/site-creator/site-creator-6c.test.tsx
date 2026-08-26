@@ -15,12 +15,15 @@ import {
   fixtureRealEightLayersGrouped,
 } from "./site-creator-responsive-fixtures";
 import { setResponsiveOverride } from "./site-creator-responsive-overrides";
+import { setSectionHeightMode } from "./site-blueprint-ops";
+import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import {
   bandHasCustomizations,
   patchContainerTune,
   patchItemTune,
   patchMediaTune,
   resetResponsiveBand,
+  resolveContainerTune,
   resolveItemTune,
   resolveMediaTune,
 } from "./site-creator-responsive-tunes";
@@ -156,6 +159,88 @@ describe("site-creator 6C contextual refine", () => {
     const reset = resetResponsiveBand({ blueprint: bp, band: "mobile" }).blueprint;
     expect(bandHasCustomizations(reset, "mobile")).toBe(false);
     expect(bandHasCustomizations(reset, "tablet")).toBe(true);
+  });
+
+  it("restores the responsive section baseline instead of switching it to auto layout", () => {
+    const fx = fixtureHeroPanelButton();
+    let initial = applyNewSectionResponsiveDefaults(fx.blueprint, fx.heroId);
+    initial = applyNewSectionResponsiveDefaults(initial, fx.sectionId);
+    expect(bandHasCustomizations(initial, "mobile")).toBe(false);
+
+    const index = buildSiteSelectionIndex(fx.page);
+    const baseline = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: initial,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    let customized = patchContainerTune({
+      blueprint: initial,
+      target: { kind: "blueprintNode", nodeId: fx.heroId },
+      band: "mobile",
+      patch: { padding: 48, contentAlignX: "end" },
+    }).blueprint;
+    customized = setResponsiveOverride({
+      blueprint: customized,
+      target: { kind: "blueprintNode", nodeId: fx.heroId },
+      band: "mobile",
+      mode: "stack",
+    }).blueprint;
+    expect(bandHasCustomizations(customized, "mobile")).toBe(true);
+
+    const reset = resetResponsiveBand({ blueprint: customized, band: "mobile" }).blueprint;
+    expect(bandHasCustomizations(reset, "mobile")).toBe(false);
+    const restored = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: reset,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    for (const id of ["photo", "panel", "title", "btn_shape", "btn_text", "sec_bg", "sec_text"]) {
+      const before = findDisplayObject(baseline.displayPage, id);
+      const after = findDisplayObject(restored.displayPage, id);
+      expect(after, id).toMatchObject({
+        x: before?.x,
+        y: before?.y,
+        width: before?.width,
+        height: before?.height,
+        opacity: before?.opacity,
+      });
+    }
+  });
+
+  it("keeps section height when resetting Tablet or Mobile refinements", () => {
+    const fx = fixtureHeroPanelButton();
+    for (const band of ["tablet", "mobile"] as const) {
+      let initial = applyNewSectionResponsiveDefaults(fx.blueprint, fx.heroId);
+      const height = setSectionHeightMode(initial, fx.heroId, "custom", band, 1200);
+      expect(height.ok).toBe(true);
+      if (!height.ok) continue;
+      initial = patchContainerTune({
+        blueprint: height.blueprint,
+        target: { kind: "blueprintNode", nodeId: fx.heroId },
+        band,
+        patch: { gap: 36, contentAlignY: "end" },
+      }).blueprint;
+
+      const reset = resetResponsiveBand({ blueprint: initial, band }).blueprint;
+      expect(
+        resolveContainerTune(
+          reset,
+          { kind: "blueprintNode", nodeId: fx.heroId },
+          band,
+        ),
+      ).toMatchObject({
+        padding: 0,
+        gap: 0,
+        minHeight: 0,
+        heightMode: "custom",
+        customHeight: 1200,
+      });
+      expect(bandHasCustomizations(reset, band)).toBe(false);
+    }
   });
 
   it("contain fit keeps the image inside the target", () => {
@@ -447,7 +532,7 @@ describe("site-creator 6C visible layout effects", () => {
   it("container padding changes the inset of stacked content", () => {
     const fx = fixtureHorizontalCardsGroup();
     const index = buildSiteSelectionIndex(fx.page);
-    let bp = setResponsiveOverride({
+    const bp = setResponsiveOverride({
       blueprint: fx.blueprint,
       target: { kind: "blueprintNode", nodeId: fx.sectionId },
       band: "tablet",

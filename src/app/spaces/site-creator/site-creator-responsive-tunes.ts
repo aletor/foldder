@@ -7,7 +7,6 @@ import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import {
-  isSiteButtonNode,
   isSiteSectionNode,
   type ResponsiveAlignX,
   type ResponsiveContainerTuneRuleV1,
@@ -32,6 +31,54 @@ export function sameItemRef(a: ResponsiveItemRef, b: ResponsiveItemRef): boolean
   if (a.kind === "blueprintNode" && b.kind === "blueprintNode") return a.nodeId === b.nodeId;
   if (a.kind === "layer" && b.kind === "layer") return a.layerId === b.layerId;
   return false;
+}
+
+function sectionIdForTarget(
+  blueprint: SiteBlueprintV1,
+  target: ResponsiveTargetRef,
+): string | null {
+  if (target.kind !== "blueprintNode") return null;
+  const node = blueprint.nodes[target.nodeId];
+  return node && isSiteSectionNode(node) ? node.id : null;
+}
+
+function resetSectionContainerTune(
+  tune: ResponsiveContainerTuneV1 | undefined,
+): ResponsiveContainerTuneV1 {
+  const height =
+    tune?.heightMode === "viewport"
+      ? { heightMode: "viewport" as const }
+      : tune?.heightMode === "custom" && typeof tune.customHeight === "number"
+        ? { heightMode: "custom" as const, customHeight: tune.customHeight }
+        : {};
+  return { padding: 0, gap: 0, minHeight: 0, ...height };
+}
+
+function sectionTuneHasResettableCustomization(
+  tune: ResponsiveContainerTuneV1 | undefined,
+): boolean {
+  if (!tune) return false;
+  if (typeof tune.padding === "number" && tune.padding !== 0) return true;
+  if (typeof tune.gap === "number" && tune.gap !== 0) return true;
+  if (typeof tune.minHeight === "number" && tune.minHeight !== 0) return true;
+  if (tune.contentAlignX || tune.contentAlignY) return true;
+  if (tune.contentWidthMode && tune.contentWidthMode !== "container") return true;
+  if (tune.fitOrigin) return true;
+  if (typeof tune.maxContentWidth === "number") return true;
+  if (tune.autoHeight === false) return true;
+  return false;
+}
+
+function sectionTuneMatchesResetBaseline(
+  tune: ResponsiveContainerTuneV1 | undefined,
+): boolean {
+  return Boolean(
+    tune &&
+      tune.padding === 0 &&
+      tune.gap === 0 &&
+      tune.minHeight === 0 &&
+      !sectionTuneHasResettableCustomization(tune),
+  );
 }
 
 export function itemRefKey(target: ResponsiveItemRef): string {
@@ -349,7 +396,7 @@ export function patchItemTune(args: {
   const next = cloneBlueprint(args.blueprint);
   const items = [...(next.responsive?.items ?? [])];
   const idx = items.findIndex((r) => sameItemRef(r.target, args.target));
-  let rule: ResponsiveItemRuleV1 =
+  const rule: ResponsiveItemRuleV1 =
     idx >= 0
       ? { target: items[idx]!.target, byBand: { ...items[idx]!.byBand } }
       : { target: args.target, byBand: {} };
@@ -384,7 +431,7 @@ export function patchContainerTune(args: {
   const next = cloneBlueprint(args.blueprint);
   const containerTunes = [...(next.responsive?.containerTunes ?? [])];
   const idx = containerTunes.findIndex((r) => sameResponsiveTarget(r.target, args.target));
-  let rule: ResponsiveContainerTuneRuleV1 =
+  const rule: ResponsiveContainerTuneRuleV1 =
     idx >= 0
       ? { target: containerTunes[idx]!.target, byBand: { ...containerTunes[idx]!.byBand } }
       : { target: args.target, byBand: {} };
@@ -419,7 +466,7 @@ export function patchMediaTune(args: {
   const next = cloneBlueprint(args.blueprint);
   const media = [...(next.responsive?.media ?? [])];
   const idx = media.findIndex((r) => r.layerId === args.layerId);
-  let rule: ResponsiveMediaRuleV1 =
+  const rule: ResponsiveMediaRuleV1 =
     idx >= 0
       ? { layerId: media[idx]!.layerId, byBand: { ...media[idx]!.byBand } }
       : { layerId: args.layerId, byBand: {} };
@@ -504,14 +551,14 @@ export function resetResponsiveBand(args: {
   blueprint: SiteBlueprintV1;
   band: ResponsiveEditableBand;
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
-  const doc = args.blueprint.responsive;
-  if (!doc) return { blueprint: args.blueprint, changed: false };
+  const doc: SiteResponsiveV1 = args.blueprint.responsive ?? { version: 1, rules: [] };
 
   const next: SiteResponsiveV1 = {
     version: 1,
     rules: doc.rules.map((r) => {
       const byBand = { ...r.byBand };
-      delete byBand[args.band];
+      if (sectionIdForTarget(args.blueprint, r.target)) byBand[args.band] = "preserve";
+      else delete byBand[args.band];
       return { target: r.target, byBand };
     }),
     items: doc.items?.map((r) => {
@@ -521,7 +568,11 @@ export function resetResponsiveBand(args: {
     }),
     containerTunes: doc.containerTunes?.map((r) => {
       const byBand = { ...r.byBand };
-      delete byBand[args.band];
+      if (sectionIdForTarget(args.blueprint, r.target)) {
+        byBand[args.band] = resetSectionContainerTune(byBand[args.band]);
+      } else {
+        delete byBand[args.band];
+      }
       return { target: r.target, byBand };
     }),
     media: doc.media?.map((r) => {
@@ -530,6 +581,25 @@ export function resetResponsiveBand(args: {
       return { layerId: r.layerId, byBand };
     }),
   };
+  for (const node of Object.values(args.blueprint.nodes)) {
+    if (!isSiteSectionNode(node)) continue;
+    const target: ResponsiveTargetRef = { kind: "blueprintNode", nodeId: node.id };
+    const rule = next.rules.find((candidate) => sameResponsiveTarget(candidate.target, target));
+    if (rule) rule.byBand[args.band] = "preserve";
+    else next.rules.push({ target, byBand: { [args.band]: "preserve" } });
+
+    const tuneRule = next.containerTunes?.find((candidate) =>
+      sameResponsiveTarget(candidate.target, target),
+    );
+    if (tuneRule) {
+      tuneRule.byBand[args.band] = resetSectionContainerTune(tuneRule.byBand[args.band]);
+    } else {
+      next.containerTunes = [
+        ...(next.containerTunes ?? []),
+        { target, byBand: { [args.band]: resetSectionContainerTune(undefined) } },
+      ];
+    }
+  }
   const compact = compactSiteResponsive(next);
   if (JSON.stringify(compact ?? null) === JSON.stringify(compactSiteResponsive(doc) ?? null)) {
     return { blueprint: args.blueprint, changed: false };
@@ -542,10 +612,36 @@ export function bandHasCustomizations(
   band: ResponsiveEditableBand,
 ): boolean {
   const doc = blueprint.responsive;
+  for (const node of Object.values(blueprint.nodes)) {
+    if (!isSiteSectionNode(node)) continue;
+    const target: ResponsiveTargetRef = { kind: "blueprintNode", nodeId: node.id };
+    const mode = doc?.rules.find((r) => sameResponsiveTarget(r.target, target))?.byBand[band];
+    if (mode !== "preserve") return true;
+    const tune = doc?.containerTunes?.find((r) =>
+      sameResponsiveTarget(r.target, target),
+    )?.byBand[band];
+    if (!sectionTuneMatchesResetBaseline(tune)) return true;
+  }
   if (!doc) return false;
-  if (doc.rules.some((r) => r.byBand[band])) return true;
+  if (
+    doc.rules.some((r) => {
+      const mode = r.byBand[band];
+      if (!mode) return false;
+      return !sectionIdForTarget(blueprint, r.target);
+    })
+  ) {
+    return true;
+  }
   if (doc.items?.some((r) => r.byBand[band])) return true;
-  if (doc.containerTunes?.some((r) => r.byBand[band])) return true;
+  if (
+    doc.containerTunes?.some((r) => {
+      const tune = r.byBand[band];
+      if (!tune) return false;
+      return !sectionIdForTarget(blueprint, r.target);
+    })
+  ) {
+    return true;
+  }
   if (doc.media?.some((r) => r.byBand[band])) return true;
   return false;
 }
@@ -561,10 +657,30 @@ export function unitHasCustomization(args: {
     const node = blueprint.nodes[unit.nodeId];
     if (node && (isSiteSectionNode(node) || node.kind === "layoutGroup")) {
       const target: ResponsiveTargetRef = { kind: "blueprintNode", nodeId: node.id };
-      if (blueprint.responsive?.rules.some((r) => sameResponsiveTarget(r.target, target) && r.byBand[band])) {
+      if (isSiteSectionNode(node)) {
+        const mode = blueprint.responsive?.rules.find((r) =>
+          sameResponsiveTarget(r.target, target),
+        )?.byBand[band];
+        if (mode !== "preserve") return true;
+        const tune = resolveContainerTune(blueprint, target, band);
+        if (!sectionTuneMatchesResetBaseline(tune ?? undefined)) return true;
+      }
+      if (
+        blueprint.responsive?.rules.some((r) => {
+          if (!sameResponsiveTarget(r.target, target)) return false;
+          const mode = r.byBand[band];
+          return Boolean(mode && !isSiteSectionNode(node));
+        })
+      ) {
         return true;
       }
-      if (resolveContainerTune(blueprint, target, band)) return true;
+      const containerTune = resolveContainerTune(blueprint, target, band);
+      if (
+        containerTune &&
+        !isSiteSectionNode(node)
+      ) {
+        return true;
+      }
     }
     const item: ResponsiveItemRef = { kind: "blueprintNode", nodeId: unit.nodeId };
     if (resolveItemTune(blueprint, item, band)) return true;

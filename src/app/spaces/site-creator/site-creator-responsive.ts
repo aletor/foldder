@@ -618,7 +618,7 @@ export function placeClusterByAnchor(args: {
   const w = Math.min(clusterSize.width, availW);
   const h = Math.min(clusterSize.height, availH);
 
-  let ax = clampNumber(0, anchor.x, 1);
+  const ax = clampNumber(0, anchor.x, 1);
   let ay = clampNumber(0, anchor.y, 1);
   // Si el ancla cae fuera de la zona útil tras clamp de tamaño, preferir centro.
   if (h + pad * 2 > regionRect.height * 0.98) {
@@ -1895,6 +1895,30 @@ function maxRight(page: DesignerPageState): number {
   return max;
 }
 
+function shiftSectionContentY(args: {
+  byId: Map<string, FreehandObject>;
+  blueprint: SiteBlueprintV1;
+  index: SiteCreatorSelectionIndex;
+  sectionId: string;
+  backgroundLayerIds: string[];
+  deltaY: number;
+}): void {
+  if (!(Math.abs(args.deltaY) > 0.01)) return;
+  const backgroundRoots = new Set(
+    args.backgroundLayerIds.map((id) => worldSpaceAncestorId(id, args.index)),
+  );
+  const shifted = new Set<string>();
+  for (const id of collectSemanticCoverageLayerIds(args.blueprint, args.sectionId)) {
+    const worldId = worldSpaceAncestorId(id, args.index);
+    if (backgroundRoots.has(worldId) || shifted.has(worldId)) continue;
+    if (!isWorldSpaceLayerId(worldId, args.index)) continue;
+    const obj = args.byId.get(worldId);
+    if (!obj || typeof obj.y !== "number") continue;
+    obj.y += args.deltaY;
+    shifted.add(worldId);
+  }
+}
+
 /**
  * Resuelve la página de preview para un ancho dado.
  * `wide` → identidad. `tablet`/`mobile` → Automático con clusters visuales.
@@ -2166,6 +2190,14 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       if (targetH != null) {
         const extra = Math.max(0, targetH - region.layoutRect.height);
         if (extra > 0.5) {
+          shiftSectionContentY({
+            byId,
+            blueprint: args.blueprint,
+            index,
+            sectionId: section.id,
+            backgroundLayerIds: region.backgroundLayerIds,
+            deltaY: extra / 2,
+          });
           region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
           region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
           placeBackgroundLayers({
