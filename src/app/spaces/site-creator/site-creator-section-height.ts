@@ -45,22 +45,49 @@ export type SectionHeightOpportunity = {
 };
 
 export function sectionHeightMode(node: SiteBlueprintSectionNode): SiteSectionHeightMode {
-  return node.heightMode === "viewport" ? "viewport" : "content";
+  if (node.heightMode === "viewport") return "viewport";
+  if (node.heightMode === "custom" && typeof node.customHeight === "number" && node.customHeight > 0) {
+    return "custom";
+  }
+  return "content";
 }
 
 export type SectionHeightBand = "wide" | "tablet" | "mobile";
 
-function sectionTuneHeightMode(
+function sectionTuneForBand(
   blueprint: SiteBlueprintV1,
   sectionId: string,
   band: "tablet" | "mobile",
-): SiteSectionHeightMode {
+): { heightMode?: SiteSectionHeightMode; customHeight?: number } | null {
   const rules = blueprint.responsive?.containerTunes ?? [];
   for (const rule of rules) {
     if (rule.target.kind !== "blueprintNode" || rule.target.nodeId !== sectionId) continue;
-    return rule.byBand[band]?.heightMode === "viewport" ? "viewport" : "content";
+    const tune = rule.byBand[band];
+    if (!tune) continue;
+    return {
+      heightMode: tune.heightMode,
+      customHeight: tune.customHeight,
+    };
   }
-  return "content";
+  return null;
+}
+
+export function sectionCustomHeightForBand(
+  blueprint: SiteBlueprintV1,
+  section: SiteBlueprintSectionNode,
+  band: SectionHeightBand = "wide",
+): number | null {
+  if (band === "tablet" || band === "mobile") {
+    const tune = sectionTuneForBand(blueprint, section.id, band);
+    if (tune?.heightMode === "custom" && typeof tune.customHeight === "number" && tune.customHeight > 0) {
+      return Math.max(1, Math.round(tune.customHeight));
+    }
+    return null;
+  }
+  if (section.heightMode === "custom" && typeof section.customHeight === "number" && section.customHeight > 0) {
+    return Math.max(1, Math.round(section.customHeight));
+  }
+  return null;
 }
 
 export function sectionHeightModeForBand(
@@ -69,7 +96,16 @@ export function sectionHeightModeForBand(
   band: SectionHeightBand = "wide",
 ): SiteSectionHeightMode {
   if (band === "tablet" || band === "mobile") {
-    return sectionTuneHeightMode(blueprint, section.id, band);
+    const tune = sectionTuneForBand(blueprint, section.id, band);
+    if (tune?.heightMode === "viewport") return "viewport";
+    if (
+      tune?.heightMode === "custom" &&
+      typeof tune.customHeight === "number" &&
+      tune.customHeight > 0
+    ) {
+      return "custom";
+    }
+    return "content";
   }
   return sectionHeightMode(section);
 }
@@ -84,6 +120,30 @@ export function blueprintHasViewportSection(
   );
 }
 
+function sectionDesignedHeight(section: SiteBlueprintSectionNode): number {
+  return Math.max(1, section.sourceRange.bottom - section.sourceRange.top);
+}
+
+function sectionResolvedHeight(
+  blueprint: SiteBlueprintV1,
+  section: SiteBlueprintSectionNode,
+  band: SectionHeightBand,
+  viewportHeight: number,
+): { height: number; extra: number; fitted: boolean; mode: SiteSectionHeightMode } {
+  const designed = sectionDesignedHeight(section);
+  const mode = sectionHeightModeForBand(blueprint, section, band);
+  if (mode === "viewport") {
+    const height = Math.max(designed, Math.max(1, viewportHeight));
+    return { height, extra: Math.max(0, height - designed), fitted: true, mode };
+  }
+  if (mode === "custom") {
+    const custom = sectionCustomHeightForBand(blueprint, section, band) ?? designed;
+    const height = Math.max(designed, custom);
+    return { height, extra: Math.max(0, height - designed), fitted: false, mode };
+  }
+  return { height: designed, extra: 0, fitted: false, mode };
+}
+
 export function planSectionHeightLayout(
   blueprint: SiteBlueprintV1,
   viewportHeight: number,
@@ -95,14 +155,17 @@ export function planSectionHeightLayout(
   let shift = 0;
   let pageHeight = screen;
   for (const section of sections) {
-    const designed = Math.max(1, section.sourceRange.bottom - section.sourceRange.top);
-    const fitted = sectionHeightModeForBand(blueprint, section, band) === "viewport";
-    const extra = fitted ? Math.max(0, screen - designed) : 0;
+    const resolved = sectionResolvedHeight(blueprint, section, band, screen);
     const top = section.sourceRange.top + shift;
-    const height = fitted ? screen : designed;
-    ranges.push({ id: section.id, top, height, extra, fitted });
-    shift += extra;
-    pageHeight = Math.max(pageHeight, top + height);
+    ranges.push({
+      id: section.id,
+      top,
+      height: resolved.height,
+      extra: resolved.extra,
+      fitted: resolved.fitted,
+    });
+    shift += resolved.extra;
+    pageHeight = Math.max(pageHeight, top + resolved.height);
   }
   return { viewportHeight: screen, pageHeight, ranges };
 }
@@ -128,7 +191,14 @@ export function describeSectionHeightOpportunity(args: {
   const visualH = args.visualRect ? Math.max(1, args.visualRect.height) : sourceDesigned;
   const top = args.visualRect ? args.visualRect.y : range.top;
   const designed = visualH;
-  const currentH = range.fitted ? Math.max(designed, range.height) : designed;
+  const mode = sectionHeightModeForBand(args.blueprint, node, args.band ?? "wide");
+  const customH = sectionCustomHeightForBand(args.blueprint, node, args.band ?? "wide");
+  const currentH =
+    mode === "custom" && customH != null
+      ? Math.max(designed, customH)
+      : range.fitted
+        ? Math.max(designed, range.height)
+        : designed;
   const canExpand = designed < args.viewportHeight - FIT_EPSILON;
   return {
     sectionId: args.sectionId,
@@ -141,8 +211,8 @@ export function describeSectionHeightOpportunity(args: {
     },
     restoreBounds: { x: 0, y: top, width: args.pageWidth, height: designed },
     fitted: range.fitted,
-    showExpand: !range.fitted && canExpand,
-    showRestore: range.fitted,
+    showExpand: mode === "content" && canExpand,
+    showRestore: mode === "viewport",
   };
 }
 
@@ -179,10 +249,13 @@ export function applySectionViewportHeights(args: {
   const pageWidth = Math.max(1, page.customWidth ?? 1);
   for (const section of listDocumentSections(args.blueprint)) {
     const designed = Math.max(1, section.sourceRange.bottom - section.sourceRange.top);
+    const mode = sectionHeightModeForBand(args.blueprint, section, band);
     const extra =
-      sectionHeightModeForBand(args.blueprint, section, band) === "viewport"
+      mode === "viewport"
         ? Math.max(0, args.viewportHeight - designed)
-        : 0;
+        : mode === "custom"
+          ? Math.max(0, (sectionCustomHeightForBand(args.blueprint, section, band) ?? designed) - designed)
+          : 0;
     const designedBottom = section.sourceRange.bottom + acc;
     if (extra > 0.5) {
       for (const [id, obj] of byId) {
@@ -221,21 +294,36 @@ export function sectionDisplayTop(
   return range?.top ?? null;
 }
 
-export type SectionScrollStationPoint = { id: string; y: number; height: number };
+export type SectionScrollStationPoint = {
+  id: string;
+  y: number;
+  height: number;
+  /** Mínimo natural de la banda antes de ampliar viewport/custom. */
+  naturalHeight: number;
+};
 
 /** Tops de sección en el espacio del display (tablet/móvil = regiones; Original = plan). */
 export function sectionScrollStationsFromDisplay(args: {
   blueprint: SiteBlueprintV1;
   viewportHeight: number;
   band: SectionHeightBand;
-  regions?: { sectionId: string; layoutRect: { y: number; height: number } }[] | null;
+  regions?: {
+    sectionId: string;
+    layoutRect: { y: number; height: number };
+    naturalHeight?: number;
+  }[] | null;
 }): SectionScrollStationPoint[] {
   const sections = listDocumentSections(args.blueprint);
   if (args.regions && args.regions.length > 0) {
     return sections.map((section) => {
       const region = args.regions!.find((item) => item.sectionId === section.id);
       if (region) {
-        return { id: section.id, y: region.layoutRect.y, height: region.layoutRect.height };
+        return {
+          id: section.id,
+          y: region.layoutRect.y,
+          height: region.layoutRect.height,
+          naturalHeight: Math.max(1, region.naturalHeight ?? region.layoutRect.height),
+        };
       }
       const range = planSectionHeightLayout(args.blueprint, args.viewportHeight, args.band).ranges.find(
         (item) => item.id === section.id,
@@ -244,6 +332,7 @@ export function sectionScrollStationsFromDisplay(args: {
         id: section.id,
         y: range?.top ?? section.sourceRange.top,
         height: range?.height ?? Math.max(1, section.sourceRange.bottom - section.sourceRange.top),
+        naturalHeight: Math.max(1, section.sourceRange.bottom - section.sourceRange.top),
       };
     });
   }
@@ -251,6 +340,7 @@ export function sectionScrollStationsFromDisplay(args: {
     id: range.id,
     y: range.top,
     height: range.height,
+    naturalHeight: Math.max(1, range.height - range.extra),
   }));
 }
 

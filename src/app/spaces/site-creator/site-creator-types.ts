@@ -19,7 +19,7 @@ export interface SiteBlueprintNodeBase {
   layerIds: string[];
 }
 
-export type SiteSectionHeightMode = "content" | "viewport";
+export type SiteSectionHeightMode = "content" | "viewport" | "custom";
 
 export interface SiteBlueprintSectionNode extends SiteBlueprintNodeBase {
   kind: "section";
@@ -29,8 +29,11 @@ export interface SiteBlueprintSectionNode extends SiteBlueprintNodeBase {
   /**
    * Alto de la sección. Ausente / `content` = alto del diseño.
    * `viewport` = al menos el alto de la página / ventana (`100dvh` al publicar).
+   * `custom` = alto fijo en píxeles (`customHeight`).
    */
   heightMode?: SiteSectionHeightMode;
+  /** Solo con `heightMode: "custom"` (vista Original). */
+  customHeight?: number;
   /** Sección creada al adaptar un grupo de raíz al ancho de página. */
   promotedFromGroupId?: string;
 }
@@ -76,7 +79,7 @@ export interface SiteBlueprintV1 {
    */
   dismissedDesignerMirrors?: SiteDismissedDesignerMirrorsV1;
   /**
-   * Recorrido entre secciones (rail inferior).
+   * Recorrido entre secciones (rail vertical del lienzo).
    * La transición vive en el tramo, no en la sección destino.
    */
   scrollFlow?: SiteBlueprintScrollFlowV1;
@@ -95,11 +98,18 @@ export type SiteBlueprintCanvasLocksV1 = {
 /** Cómo llega el scroll de un bloque al siguiente. Ausente = natural. */
 export type SiteSectionScrollKind = "natural" | "smooth" | "snap";
 
-export type SiteBlueprintScrollFlowV1 = {
+export type SiteSectionScrollBand = "wide" | "tablet" | "mobile";
+
+export type SiteBlueprintScrollFlowBandV1 = {
   /** Llegada a la primera sección (carga de página). */
   entry?: SiteSectionScrollKind;
   /** Tramos `fromId>toId`. */
   hops?: Record<string, SiteSectionScrollKind>;
+};
+
+export type SiteBlueprintScrollFlowV1 = SiteBlueprintScrollFlowBandV1 & {
+  /** Tablet y móvil son independientes; ausente = recorrido natural en esa banda. */
+  byBand?: Partial<Record<ResponsiveEditableBand, SiteBlueprintScrollFlowBandV1>>;
 };
 
 /** Agrupaciones Designer ignoradas en Site Creator (solo semántica local). */
@@ -157,6 +167,8 @@ export type ResponsiveContainerTuneV1 = {
   autoHeight?: boolean;
   /** Alto de sección en esta banda. Ausente = alto del diseño. */
   heightMode?: SiteSectionHeightMode;
+  /** Solo con `heightMode: "custom"`. */
+  customHeight?: number;
 };
 
 export type ResponsiveContainerTuneRuleV1 = {

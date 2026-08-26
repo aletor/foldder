@@ -5,9 +5,10 @@
 import { cloneBlueprint } from "./site-blueprint-validate";
 import {
   isSiteSectionNode,
-  type SiteBlueprintScrollFlowV1,
+  type SiteBlueprintScrollFlowBandV1,
   type SiteBlueprintSectionNode,
   type SiteBlueprintV1,
+  type SiteSectionScrollBand,
   type SiteSectionScrollKind,
 } from "./site-creator-types";
 
@@ -16,7 +17,7 @@ export const SECTION_SCROLL_KINDS: SiteSectionScrollKind[] = ["natural", "smooth
 export const SECTION_SCROLL_LABEL: Record<SiteSectionScrollKind, string> = {
   natural: "Natural",
   smooth: "Suave",
-  snap: "Ancla",
+  snap: "Fijo",
 };
 
 export const SECTION_SCROLL_HINT: Record<SiteSectionScrollKind, string> = {
@@ -52,8 +53,19 @@ export function sectionScrollHopKey(fromId: string, toId: string): string {
   return `${fromId}>${toId}`;
 }
 
-export function resolveEntryScroll(blueprint: SiteBlueprintV1): SiteSectionScrollKind {
-  const entry = blueprint.scrollFlow?.entry;
+function flowForBand(
+  blueprint: SiteBlueprintV1,
+  band: SiteSectionScrollBand,
+): SiteBlueprintScrollFlowBandV1 | undefined {
+  if (band === "wide") return blueprint.scrollFlow;
+  return blueprint.scrollFlow?.byBand?.[band];
+}
+
+export function resolveEntryScroll(
+  blueprint: SiteBlueprintV1,
+  band: SiteSectionScrollBand = "wide",
+): SiteSectionScrollKind {
+  const entry = flowForBand(blueprint, band)?.entry;
   return isSectionScrollKind(entry) && entry !== "natural" ? entry : "natural";
 }
 
@@ -61,26 +73,32 @@ export function resolveSectionScrollHop(
   blueprint: SiteBlueprintV1,
   fromId: string,
   toId: string,
+  band: SiteSectionScrollBand = "wide",
 ): SiteSectionScrollKind {
-  const raw = blueprint.scrollFlow?.hops?.[sectionScrollHopKey(fromId, toId)];
+  const raw = flowForBand(blueprint, band)?.hops?.[sectionScrollHopKey(fromId, toId)];
   return isSectionScrollKind(raw) && raw !== "natural" ? raw : "natural";
 }
 
-export function listSectionScrollHops(blueprint: SiteBlueprintV1): SectionScrollHop[] {
+export function listSectionScrollHops(
+  blueprint: SiteBlueprintV1,
+  band: SiteSectionScrollBand = "wide",
+): SectionScrollHop[] {
   const sections = listDocumentSections(blueprint);
   if (sections.length === 0) return [];
   const hops: SectionScrollHop[] = [
-    { fromId: null, toId: sections[0]!.id, kind: resolveEntryScroll(blueprint) },
+    { fromId: null, toId: sections[0]!.id, kind: resolveEntryScroll(blueprint, band) },
   ];
   for (let i = 0; i < sections.length - 1; i += 1) {
     const fromId = sections[i]!.id;
     const toId = sections[i + 1]!.id;
-    hops.push({ fromId, toId, kind: resolveSectionScrollHop(blueprint, fromId, toId) });
+    hops.push({ fromId, toId, kind: resolveSectionScrollHop(blueprint, fromId, toId, band) });
   }
   return hops;
 }
 
-function compactFlow(flow: SiteBlueprintScrollFlowV1): SiteBlueprintScrollFlowV1 | undefined {
+function compactFlow(
+  flow: SiteBlueprintScrollFlowBandV1,
+): SiteBlueprintScrollFlowBandV1 | undefined {
   const hops: Record<string, SiteSectionScrollKind> = {};
   for (const [key, kind] of Object.entries(flow.hops ?? {})) {
     if (isSectionScrollKind(kind) && kind !== "natural") hops[key] = kind;
@@ -93,6 +111,41 @@ function compactFlow(flow: SiteBlueprintScrollFlowV1): SiteBlueprintScrollFlowV1
   };
 }
 
+function writeBandFlows(
+  blueprint: SiteBlueprintV1,
+  flows: Partial<Record<SiteSectionScrollBand, SiteBlueprintScrollFlowBandV1 | undefined>>,
+): void {
+  const wide = flows.wide;
+  const byBand = {
+    ...(flows.tablet ? { tablet: flows.tablet } : {}),
+    ...(flows.mobile ? { mobile: flows.mobile } : {}),
+  };
+  if (!wide && Object.keys(byBand).length === 0) {
+    delete blueprint.scrollFlow;
+    return;
+  }
+  blueprint.scrollFlow = {
+    ...(wide ?? {}),
+    ...(Object.keys(byBand).length > 0 ? { byBand } : {}),
+  };
+}
+
+function pruneBandFlow(
+  flow: SiteBlueprintScrollFlowBandV1 | undefined,
+  allowed: Set<string>,
+  hasSections: boolean,
+): SiteBlueprintScrollFlowBandV1 | undefined {
+  const hops: Record<string, SiteSectionScrollKind> = {};
+  for (const [key, kind] of Object.entries(flow?.hops ?? {})) {
+    if (allowed.has(key) && isSectionScrollKind(kind) && kind !== "natural") hops[key] = kind;
+  }
+  const entry =
+    hasSections && isSectionScrollKind(flow?.entry) && flow.entry !== "natural"
+      ? flow.entry
+      : undefined;
+  return compactFlow({ entry, hops });
+}
+
 export function pruneScrollFlow(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
   const next = cloneBlueprint(blueprint);
   const allowed = new Set<string>();
@@ -100,32 +153,32 @@ export function pruneScrollFlow(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
   for (let i = 0; i < sections.length - 1; i += 1) {
     allowed.add(sectionScrollHopKey(sections[i]!.id, sections[i + 1]!.id));
   }
-  const hops: Record<string, SiteSectionScrollKind> = {};
-  for (const [key, kind] of Object.entries(next.scrollFlow?.hops ?? {})) {
-    if (allowed.has(key) && isSectionScrollKind(kind) && kind !== "natural") hops[key] = kind;
-  }
-  const entry =
-    sections.length > 0 && isSectionScrollKind(next.scrollFlow?.entry) && next.scrollFlow?.entry !== "natural"
-      ? next.scrollFlow.entry
-      : undefined;
-  const flow = compactFlow({ entry, hops });
-  if (flow) next.scrollFlow = flow;
-  else delete next.scrollFlow;
+  writeBandFlows(next, {
+    wide: pruneBandFlow(next.scrollFlow, allowed, sections.length > 0),
+    tablet: pruneBandFlow(next.scrollFlow?.byBand?.tablet, allowed, sections.length > 0),
+    mobile: pruneBandFlow(next.scrollFlow?.byBand?.mobile, allowed, sections.length > 0),
+  });
   return next;
 }
 
 export function setEntryScrollKind(
   blueprint: SiteBlueprintV1,
   kind: SiteSectionScrollKind,
+  band: SiteSectionScrollBand = "wide",
 ): SiteBlueprintV1 {
   const next = pruneScrollFlow(blueprint);
   if (listDocumentSections(next).length === 0) return next;
-  const flow: SiteBlueprintScrollFlowV1 = { ...(next.scrollFlow ?? {}) };
+  const flow: SiteBlueprintScrollFlowBandV1 = { ...(flowForBand(next, band) ?? {}) };
   if (kind === "natural") delete flow.entry;
   else flow.entry = kind;
   const compact = compactFlow(flow);
-  if (compact) next.scrollFlow = compact;
-  else delete next.scrollFlow;
+  writeBandFlows(next, {
+    wide: band === "wide" ? compact : compactFlow(next.scrollFlow ?? {}),
+    tablet:
+      band === "tablet" ? compact : compactFlow(next.scrollFlow?.byBand?.tablet ?? {}),
+    mobile:
+      band === "mobile" ? compact : compactFlow(next.scrollFlow?.byBand?.mobile ?? {}),
+  });
   return next;
 }
 
@@ -134,33 +187,49 @@ export function setSectionScrollHop(
   fromId: string,
   toId: string,
   kind: SiteSectionScrollKind,
+  band: SiteSectionScrollBand = "wide",
 ): SiteBlueprintV1 {
   const next = pruneScrollFlow(blueprint);
   const sections = listDocumentSections(next);
   const fromIndex = sections.findIndex((section) => section.id === fromId);
   if (fromIndex < 0 || sections[fromIndex + 1]?.id !== toId) return next;
   const key = sectionScrollHopKey(fromId, toId);
-  const hops = { ...(next.scrollFlow?.hops ?? {}) };
+  const currentFlow = flowForBand(next, band);
+  const hops = { ...(currentFlow?.hops ?? {}) };
   if (kind === "natural") delete hops[key];
   else hops[key] = kind;
-  const flow = compactFlow({ entry: next.scrollFlow?.entry, hops });
-  if (flow) next.scrollFlow = flow;
-  else delete next.scrollFlow;
+  const compact = compactFlow({ entry: currentFlow?.entry, hops });
+  writeBandFlows(next, {
+    wide: band === "wide" ? compact : compactFlow(next.scrollFlow ?? {}),
+    tablet:
+      band === "tablet" ? compact : compactFlow(next.scrollFlow?.byBand?.tablet ?? {}),
+    mobile:
+      band === "mobile" ? compact : compactFlow(next.scrollFlow?.byBand?.mobile ?? {}),
+  });
   return next;
 }
 
 export function scrollFlowUsesKind(
   blueprint: SiteBlueprintV1,
   kind: SiteSectionScrollKind,
+  band?: SiteSectionScrollBand,
 ): boolean {
-  if (kind === "natural") return listSectionScrollHops(blueprint).some((hop) => hop.kind === "natural");
-  return listSectionScrollHops(blueprint).some((hop) => hop.kind === kind);
+  const bands: SiteSectionScrollBand[] = band ? [band] : ["wide", "tablet", "mobile"];
+  return bands.some((item) =>
+    listSectionScrollHops(blueprint, item).some((hop) => hop.kind === kind),
+  );
 }
 
 /** Hay suave/ancla: hace falta poder alinear el inicio de una sección con el borde superior. */
-export function sectionScrollNeedsViewportPad(blueprint: SiteBlueprintV1): boolean {
+export function sectionScrollNeedsViewportPad(
+  blueprint: SiteBlueprintV1,
+  band?: SiteSectionScrollBand,
+): boolean {
   if (listDocumentSections(blueprint).length < 2) return false;
-  return scrollFlowUsesKind(blueprint, "smooth") || scrollFlowUsesKind(blueprint, "snap");
+  return (
+    scrollFlowUsesKind(blueprint, "smooth", band) ||
+    scrollFlowUsesKind(blueprint, "snap", band)
+  );
 }
 
 export function lastDocumentSection(blueprint: SiteBlueprintV1): SiteBlueprintSectionNode | null {
@@ -171,7 +240,8 @@ export function lastDocumentSection(blueprint: SiteBlueprintV1): SiteBlueprintSe
 export function destinationScrollKind(
   blueprint: SiteBlueprintV1,
   sectionId: string,
+  band: SiteSectionScrollBand = "wide",
 ): SiteSectionScrollKind {
-  const hop = listSectionScrollHops(blueprint).find((item) => item.toId === sectionId);
+  const hop = listSectionScrollHops(blueprint, band).find((item) => item.toId === sectionId);
   return hop?.kind ?? "natural";
 }

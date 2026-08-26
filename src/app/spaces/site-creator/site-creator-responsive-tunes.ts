@@ -106,7 +106,8 @@ function isEmptyContainerTune(tune: ResponsiveContainerTuneV1 | undefined): bool
   if (typeof tune.maxContentWidth === "number") return false;
   if (typeof tune.minHeight === "number") return false;
   if (tune.autoHeight === false) return false;
-  if (tune.heightMode === "viewport") return false;
+  if (tune.heightMode === "viewport" || tune.heightMode === "custom") return false;
+  if (typeof tune.customHeight === "number") return false;
   return true;
 }
 
@@ -178,7 +179,14 @@ function cleanContainerTune(tune: ResponsiveContainerTuneV1): ResponsiveContaine
     next.minHeight = Math.max(0, Math.round(tune.minHeight));
   }
   if (tune.autoHeight === false) next.autoHeight = false;
-  if (tune.heightMode === "viewport") next.heightMode = "viewport";
+  if (tune.heightMode === "viewport") {
+    next.heightMode = "viewport";
+  } else if (tune.heightMode === "custom") {
+    next.heightMode = "custom";
+    if (typeof tune.customHeight === "number" && Number.isFinite(tune.customHeight)) {
+      next.customHeight = Math.max(1, Math.round(tune.customHeight));
+    }
+  }
   return isEmptyContainerTune(next) ? null : next;
 }
 

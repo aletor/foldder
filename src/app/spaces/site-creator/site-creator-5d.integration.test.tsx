@@ -2,7 +2,7 @@
  * Fase 5D — navegación continua, radiografía, árbol de presentación, microbarra.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
@@ -491,12 +491,22 @@ describe("5D outline tree", () => {
         reviewCount={0}
       />,
     );
+    expect(screen.getByTestId("site-creator-outline-panel").getAttribute("data-state")).toBe(
+      "closed",
+    );
+    expect(screen.queryByText(/Hero/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar panel Página" }));
     expect(screen.getByText("Página")).toBeTruthy();
     expect(screen.getByText(/Hero/)).toBeTruthy();
     expect(screen.getByText(/Botón/)).toBeTruthy();
     expect(screen.getByText(/Contenido sin organizar/)).toBeTruthy();
     expect(screen.queryByText(/Grupo recortado/)).toBeNull();
     expect(screen.queryByText(/Clip 1/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar panel Página" }));
+    expect(screen.getByTestId("site-creator-outline-panel").getAttribute("data-state")).toBe(
+      "closed",
+    );
+    expect(screen.queryByText(/Hero/)).toBeNull();
   });
 });
 

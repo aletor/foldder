@@ -949,27 +949,49 @@ export function setSectionHeightMode(
   sectionId: string,
   heightMode: SiteSectionHeightMode,
   band: "wide" | "tablet" | "mobile" = "wide",
+  customHeight?: number,
 ): BlueprintOpResult {
   const node = blueprint.nodes[sectionId];
   if (!node || !isSiteSectionNode(node)) {
     return fail("invalid_target", "Selecciona una sección.");
   }
+  const designed = Math.max(1, node.sourceRange.bottom - node.sourceRange.top);
+  const requestedPx =
+    typeof customHeight === "number" && Number.isFinite(customHeight)
+      ? Math.max(1, Math.round(customHeight))
+      : band === "wide"
+        ? designed
+        : 1;
+  const px = band === "wide" ? Math.max(designed, requestedPx) : requestedPx;
+
   if (band === "tablet" || band === "mobile") {
+    const patch =
+      heightMode === "viewport"
+        ? { heightMode: "viewport" as const, customHeight: undefined }
+        : heightMode === "custom"
+          ? { heightMode: "custom" as const, customHeight: px }
+          : { heightMode: undefined, customHeight: undefined };
     const next = patchContainerTune({
       blueprint,
       target: { kind: "blueprintNode", nodeId: sectionId },
       band,
-      patch: { heightMode: heightMode === "viewport" ? "viewport" : undefined },
+      patch,
     }).blueprint;
     return { ok: true, blueprint: next };
   }
-  const nextMode: SiteSectionHeightMode | undefined = heightMode === "viewport" ? "viewport" : undefined;
-  if ((node.heightMode ?? "content") === (nextMode ?? "content")) {
-    return { ok: true, blueprint };
-  }
+
   const next = cloneBlueprint(blueprint);
-  const updated: SiteBlueprintSectionNode = { ...node, heightMode: nextMode };
-  if (!nextMode) delete updated.heightMode;
+  const updated: SiteBlueprintSectionNode = { ...node };
+  if (heightMode === "viewport") {
+    updated.heightMode = "viewport";
+    delete updated.customHeight;
+  } else if (heightMode === "custom") {
+    updated.heightMode = "custom";
+    updated.customHeight = px;
+  } else {
+    delete updated.heightMode;
+    delete updated.customHeight;
+  }
   next.nodes[sectionId] = updated;
   return { ok: true, blueprint: next };
 }

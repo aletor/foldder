@@ -51,11 +51,6 @@ export function planScrollStep(args: {
     return { kind, toId: to.id, targetY: to.y };
   }
   const current = stations[index] ?? stations[0]!;
-  if (args.scrollY > current.y + AT_STATION) {
-    const kind = hopKindBetween(args.hops, stations[index - 1]?.id ?? null, current.id);
-    if (kind === "natural") return null;
-    return { kind, toId: current.id, targetY: current.y };
-  }
   const prev = stations[index - 1];
   if (!prev) return null;
   const kind = hopKindBetween(args.hops, prev.id, current.id);
@@ -67,47 +62,57 @@ export function scrollBehaviorForKind(kind: SiteSectionScrollKind): ScrollBehavi
   return kind === "smooth" ? "smooth" : "auto";
 }
 
-export type SectionScrollCue = {
-  sectionId: string;
-  kind: Exclude<SiteSectionScrollKind, "natural">;
-  token: number;
-};
-
 export function bindSectionScroller(args: {
   scroller: HTMLElement | Window;
   hops: SectionScrollHop[];
   stations: () => ScrollStation[];
 }): () => void {
   let locked = false;
+  let lockedDirection: 1 | -1 | null = null;
   let unlockTimer = 0;
   let anchoredId: string | null = null;
   const isWindow = args.scroller === window;
   const target = isWindow ? window : (args.scroller as HTMLElement);
   const readY = () => (isWindow ? window.scrollY : (args.scroller as HTMLElement).scrollTop);
-  const go = (top: number, kind: Exclude<SiteSectionScrollKind, "natural">, toId: string) => {
+  const go = (
+    top: number,
+    kind: Exclude<SiteSectionScrollKind, "natural">,
+    toId: string,
+    direction: 1 | -1,
+  ) => {
     locked = true;
+    lockedDirection = direction;
     anchoredId = toId;
     window.clearTimeout(unlockTimer);
     target.scrollTo({ top: Math.max(0, top), behavior: scrollBehaviorForKind(kind) });
     unlockTimer = window.setTimeout(() => {
       locked = false;
+      lockedDirection = null;
       realignAnchored();
     }, kind === "smooth" ? 900 : 120);
   };
   const interceptDelta = (delta: number): boolean => {
     if (!(Math.abs(delta) > 0.5)) return false;
-    if (locked) return true;
+    const direction: 1 | -1 = delta > 0 ? 1 : -1;
+    if (locked) {
+      if (lockedDirection === direction) return true;
+      window.clearTimeout(unlockTimer);
+      locked = false;
+      lockedDirection = null;
+      anchoredId = null;
+      return false;
+    }
     const planned = planScrollStep({
       stations: args.stations(),
       hops: args.hops,
       scrollY: readY(),
-      direction: delta > 0 ? 1 : -1,
+      direction,
     });
     if (!planned) {
       anchoredId = null;
       return false;
     }
-    go(planned.targetY, planned.kind, planned.toId);
+    go(planned.targetY, planned.kind, planned.toId, direction);
     return true;
   };
   const realignAnchored = () => {
@@ -168,18 +173,49 @@ export function bindSectionScroller(args: {
   };
 }
 
-export function compilePublishedScrollScript(hops: SectionScrollHop[]): string {
-  const active = hops.filter((hop) => hop.kind === "smooth" || hop.kind === "snap");
-  if (active.length === 0) return `"use strict";\n`;
-  const payload = JSON.stringify(
-    hops.map((hop) => ({ fromId: hop.fromId, toId: hop.toId, kind: hop.kind })),
+export type PublishedScrollFlows = {
+  wide: SectionScrollHop[];
+  tablet: SectionScrollHop[];
+  mobile: SectionScrollHop[];
+  tabletMax: number;
+  mobileMax: number;
+};
+
+export function compilePublishedScrollScript(
+  hops: SectionScrollHop[],
+  responsive?: PublishedScrollFlows,
+): string {
+  const flows = responsive ?? {
+    wide: hops,
+    tablet: hops,
+    mobile: hops,
+    tabletMax: Number.POSITIVE_INFINITY,
+    mobileMax: Number.NEGATIVE_INFINITY,
+  };
+  const active = [...flows.wide, ...flows.tablet, ...flows.mobile].filter(
+    (hop) => hop.kind === "smooth" || hop.kind === "snap",
   );
+  if (active.length === 0) return `"use strict";\n`;
+  const payload = JSON.stringify({
+    wide: flows.wide.map((hop) => ({ fromId: hop.fromId, toId: hop.toId, kind: hop.kind })),
+    tablet: flows.tablet.map((hop) => ({ fromId: hop.fromId, toId: hop.toId, kind: hop.kind })),
+    mobile: flows.mobile.map((hop) => ({ fromId: hop.fromId, toId: hop.toId, kind: hop.kind })),
+  });
   return `"use strict";
 (function () {
-  var hops = ${payload};
+  var flows = ${payload};
+  var tabletMax = ${Number.isFinite(flows.tabletMax) ? flows.tabletMax : 1e9};
+  var mobileMax = ${Number.isFinite(flows.mobileMax) ? flows.mobileMax : -1};
   var locked = false;
+  var lockedDirection = 0;
   var unlockTimer = 0;
   var anchoredId = null;
+  function activeHops() {
+    var width = document.documentElement.clientWidth || window.innerWidth;
+    if (width <= mobileMax) return flows.mobile;
+    if (width <= tabletMax) return flows.tablet;
+    return flows.wide;
+  }
   function stations() {
     return Array.prototype.slice
       .call(document.querySelectorAll("[data-section]"))
@@ -191,6 +227,7 @@ export function compilePublishedScrollScript(hops: SectionScrollHop[]): string {
       .sort(function (a, b) { return a.y - b.y; });
   }
   function hopKind(fromId, toId) {
+    var hops = activeHops();
     for (var i = 0; i < hops.length; i++) {
       if (hops[i].fromId === fromId && hops[i].toId === toId) return hops[i].kind;
     }
@@ -217,33 +254,41 @@ export function compilePublishedScrollScript(hops: SectionScrollHop[]): string {
       return { kind: kind, id: to.id, y: to.y };
     }
     var current = list[index] || list[0];
-    if (y > current.y + 16) {
-      var backKind = hopKind(index > 0 ? list[index - 1].id : null, current.id);
-      if (backKind === "natural") return null;
-      return { kind: backKind, id: current.id, y: current.y };
-    }
     var prev = list[index - 1];
     if (!prev) return null;
     var upKind = hopKind(prev.id, current.id);
     if (upKind === "natural") return null;
     return { kind: upKind, id: prev.id, y: prev.y };
   }
-  function go(top, kind, toId) {
+  function go(top, kind, toId, direction) {
     locked = true;
+    lockedDirection = direction;
     anchoredId = toId;
     window.clearTimeout(unlockTimer);
     window.scrollTo({ top: Math.max(0, top), behavior: kind === "smooth" ? "smooth" : "auto" });
-    unlockTimer = window.setTimeout(function () { locked = false; realign(); }, kind === "smooth" ? 900 : 120);
+    unlockTimer = window.setTimeout(function () {
+      locked = false;
+      lockedDirection = 0;
+      realign();
+    }, kind === "smooth" ? 900 : 120);
   }
   function intercept(delta) {
     if (Math.abs(delta) <= 0.5) return false;
-    if (locked) return true;
-    var next = plan(delta > 0 ? 1 : -1);
+    var direction = delta > 0 ? 1 : -1;
+    if (locked) {
+      if (lockedDirection === direction) return true;
+      window.clearTimeout(unlockTimer);
+      locked = false;
+      lockedDirection = 0;
+      anchoredId = null;
+      return false;
+    }
+    var next = plan(direction);
     if (!next) {
       anchoredId = null;
       return false;
     }
-    go(next.y, next.kind, next.id);
+    go(next.y, next.kind, next.id, direction);
     return true;
   }
   function realign() {

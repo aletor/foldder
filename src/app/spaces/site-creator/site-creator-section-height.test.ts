@@ -9,8 +9,10 @@ import {
   describeSectionHeightOpportunity,
   liveViewportHeightInPageUnits,
   planSectionHeightLayout,
+  sectionCustomHeightForBand,
   sectionHeightMode,
   sectionHeightModeForBand,
+  sectionScrollStationsFromDisplay,
 } from "./site-creator-section-height";
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
@@ -76,6 +78,22 @@ describe("section height mode", () => {
     expect(hero.height).toBe(1080);
     expect(hero.extra).toBeGreaterThan(600);
     expect(next.top).toBeGreaterThan(hero.top + 400);
+  });
+
+  it("plans custom height without treating it as viewport fit", () => {
+    const { blueprint, heroId, sectionId } = twoSections();
+    const custom = setSectionHeightMode(blueprint, heroId, "custom", "wide", 900);
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+    expect(sectionHeightMode(custom.blueprint.nodes[heroId] as never)).toBe("custom");
+    const layout = planSectionHeightLayout(custom.blueprint, 1080);
+    const hero = layout.ranges.find((r) => r.id === heroId)!;
+    const next = layout.ranges.find((r) => r.id === sectionId)!;
+    expect(hero.fitted).toBe(false);
+    expect(hero.height).toBe(900);
+    expect(hero.extra).toBe(500);
+    // El hueco de diseño entre hero (0–400) y body (500) se conserva al empujar.
+    expect(next.top).toBe(1000);
   });
 
   it("shows expand arrow for content and restore for viewport", () => {
@@ -223,6 +241,130 @@ describe("section height mode", () => {
     if (!restored.ok) return;
     expect(sectionHeightMode(restored.blueprint.nodes[heroId] as never)).toBe("viewport");
     expect(sectionHeightModeForBand(restored.blueprint, section, "tablet")).toBe("content");
+  });
+
+  it("switches from custom to viewport and clears the custom value per band", () => {
+    const { blueprint, heroId } = twoSections();
+    const section = blueprint.nodes[heroId];
+    if (!section || section.kind !== "section") throw new Error("section");
+
+    const customWide = setSectionHeightMode(blueprint, heroId, "custom", "wide", 900);
+    expect(customWide.ok).toBe(true);
+    if (!customWide.ok) return;
+    const viewportWide = setSectionHeightMode(customWide.blueprint, heroId, "viewport", "wide");
+    expect(viewportWide.ok).toBe(true);
+    if (!viewportWide.ok) return;
+    const viewportWideSection = viewportWide.blueprint.nodes[heroId];
+    if (!viewportWideSection || viewportWideSection.kind !== "section") throw new Error("section");
+    expect(sectionHeightModeForBand(viewportWide.blueprint, viewportWideSection, "wide")).toBe(
+      "viewport",
+    );
+    expect(
+      sectionCustomHeightForBand(viewportWide.blueprint, viewportWideSection, "wide"),
+    ).toBeNull();
+
+    const customTablet = setSectionHeightMode(
+      viewportWide.blueprint,
+      heroId,
+      "custom",
+      "tablet",
+      900,
+    );
+    expect(customTablet.ok).toBe(true);
+    if (!customTablet.ok) return;
+    const viewportTablet = setSectionHeightMode(
+      customTablet.blueprint,
+      heroId,
+      "viewport",
+      "tablet",
+    );
+    expect(viewportTablet.ok).toBe(true);
+    if (!viewportTablet.ok) return;
+    expect(sectionHeightModeForBand(viewportTablet.blueprint, section, "tablet")).toBe("viewport");
+    expect(sectionCustomHeightForBand(viewportTablet.blueprint, section, "tablet")).toBeNull();
+  });
+
+  it("does not clamp Tablet or Mobile custom height to the Original section height", () => {
+    const { blueprint, heroId } = twoSections();
+    const section = blueprint.nodes[heroId];
+    if (!section || section.kind !== "section") throw new Error("section");
+
+    const tablet = setSectionHeightMode(blueprint, heroId, "custom", "tablet", 240);
+    expect(tablet.ok).toBe(true);
+    if (!tablet.ok) return;
+    expect(sectionCustomHeightForBand(tablet.blueprint, section, "tablet")).toBe(240);
+
+    const wide = setSectionHeightMode(blueprint, heroId, "custom", "wide", 240);
+    expect(wide.ok).toBe(true);
+    if (!wide.ok) return;
+    const wideSection = wide.blueprint.nodes[heroId];
+    if (!wideSection || wideSection.kind !== "section") throw new Error("section");
+    expect(sectionCustomHeightForBand(wide.blueprint, wideSection, "wide")).toBe(400);
+  });
+
+  it("keeps the natural responsive height separate from a custom expansion", () => {
+    const { page, index, blueprint, heroId } = twoSections();
+    const baseline = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const baselineRegion = baseline.resolvedLayout?.regions.find(
+      (region) => region.sectionId === heroId,
+    );
+    expect(baselineRegion).toBeTruthy();
+    if (!baselineRegion) return;
+
+    const custom = setSectionHeightMode(
+      blueprint,
+      heroId,
+      "custom",
+      "tablet",
+      baselineRegion.naturalHeight + 120,
+    );
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+    const expanded = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: custom.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const expandedRegion = expanded.resolvedLayout?.regions.find(
+      (region) => region.sectionId === heroId,
+    );
+    expect(expandedRegion?.layoutRect.height).toBe(baselineRegion.naturalHeight + 120);
+    expect(expandedRegion?.naturalHeight).toBe(baselineRegion.naturalHeight);
+
+    const stations = sectionScrollStationsFromDisplay({
+      blueprint: custom.blueprint,
+      viewportHeight: 1000,
+      band: "tablet",
+      regions: expanded.resolvedLayout?.regions,
+    });
+    expect(stations.find((station) => station.id === heroId)?.naturalHeight).toBe(
+      baselineRegion.naturalHeight,
+    );
+  });
+
+  it("applies tablet viewport height to the live responsive region", () => {
+    const { page, index, blueprint, heroId } = twoSections();
+    const fitted = setSectionHeightMode(blueprint, heroId, "viewport", "tablet");
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: fitted.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      viewportHeight: 1000,
+      band: "tablet",
+    });
+    const heroRegion = resolved.resolvedLayout?.regions.find((region) => region.sectionId === heroId);
+    expect(heroRegion?.layoutRect.height).toBeGreaterThanOrEqual(1000);
   });
 
   it("does not double-offset leftover layers when creating a section on tablet", () => {

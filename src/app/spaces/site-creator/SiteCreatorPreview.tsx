@@ -28,15 +28,19 @@ import type {
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorPrimaryAction } from "./site-creator-contextual-actions";
-import type { SiteBlueprintV1 } from "./site-creator-types";
-import { isSiteSectionNode } from "./site-creator-types";
+import type { SiteBlueprintV1, SiteSectionHeightMode, SiteSectionScrollKind } from "./site-creator-types";
+import {
+  SiteCreatorSectionSpine,
+  SITE_CREATOR_SECTION_SPINE_GUTTER_PX,
+  type SectionSpineStation,
+} from "./SiteCreatorSectionSpine";
 import {
   lastDocumentSection,
   listDocumentSections,
   listSectionScrollHops,
   sectionScrollNeedsViewportPad,
 } from "./site-creator-section-scroll";
-import { bindSectionScroller, scrollBehaviorForKind } from "./site-creator-section-scroll-runtime";
+import { bindSectionScroller } from "./site-creator-section-scroll-runtime";
 import {
   liveViewportHeightInPageUnits,
   planSectionHeightLayout,
@@ -112,7 +116,18 @@ export interface SiteCreatorPreviewProps {
   heightBand?: SectionHeightBand;
   /** Tops de sección en el espacio del display (preview P / publicación). */
   sectionScrollStations?: SectionScrollStationPoint[];
-  sectionScrollCue?: { sectionId: string; kind: "smooth" | "snap"; token: number } | null;
+  /** Rail vertical de secciones (edición). */
+  sectionSpine?: {
+    stations: SectionSpineStation[];
+    addSectionY: number | null;
+    canAddSection: boolean;
+  } | null;
+  onSpineSelectSection?: (sectionId: string) => void;
+  onSpineRemoveSection?: (sectionId: string) => void;
+  onSpineAddSection?: () => void;
+  onSpineScrollChange?: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
+  onSpineHeightModeChange?: (sectionId: string, mode: SiteSectionHeightMode) => void;
+  onSpineCustomHeightChange?: (sectionId: string, heightPx: number) => void;
 }
 
 function ResizeHandle({
@@ -183,7 +198,13 @@ export function SiteCreatorPreview({
   pageScreenHeight,
   heightBand = "wide",
   sectionScrollStations = [],
-  sectionScrollCue = null,
+  sectionSpine = null,
+  onSpineSelectSection,
+  onSpineRemoveSection,
+  onSpineAddSection,
+  onSpineScrollChange,
+  onSpineHeightModeChange,
+  onSpineCustomHeightChange,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -191,15 +212,21 @@ export function SiteCreatorPreview({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
+  const [deviceScrollTop, setDeviceScrollTop] = useState(0);
   const [frameTick, setFrameTick] = useState(0);
   const [scrollPad, setScrollPad] = useState(0);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
+  const lastAvailableSizeRef = useRef<{ width: number; height: number } | null>(null);
   const dragRef = useRef<{
     side: "left" | "right";
     startClientX: number;
     startWidth: number;
     pointerId: number;
   } | null>(null);
+  const setDeviceScrollRef = useCallback((el: HTMLDivElement | null) => {
+    deviceScrollRef.current = el;
+    setDeviceScrollTop(el?.scrollTop ?? 0);
+  }, []);
 
   const { width: pageWidth, height: pageHeight } = getPageDimensions(page);
   const objects = page.objects ?? [];
@@ -211,6 +238,10 @@ export function SiteCreatorPreview({
   const screenScale = zoom;
   const contentDisplayWidth = Math.max(1, Math.round(layoutWidth * zoom));
   const contentDisplayHeight = Math.max(1, Math.round(layoutHeight * zoom));
+  const showSpine = Boolean(
+    !readOnly && sectionSpine && onSpineSelectSection && onSpineAddSection,
+  );
+  const spineGutterPx = showSpine ? SITE_CREATOR_SECTION_SPINE_GUTTER_PX : 0;
   const displayWidth = deviceMode
     ? Math.max(1, Math.round(deviceFrame.width * zoom))
     : contentDisplayWidth;
@@ -235,6 +266,9 @@ export function SiteCreatorPreview({
         clientHeight: measureEl.clientHeight,
         fillViewport: readOnly,
       });
+      const previous = lastAvailableSizeRef.current;
+      if (previous && previous.width === size.width && previous.height === size.height) return;
+      lastAvailableSizeRef.current = size;
       onAvailableSizeChange?.(size);
     };
     update();
@@ -246,17 +280,23 @@ export function SiteCreatorPreview({
 
   useEffect(() => {
     const bump = () => setScrollTick((n) => n + 1);
+    const bumpDevice = () => {
+      setDeviceScrollTop(deviceScrollRef.current?.scrollTop ?? 0);
+      bump();
+    };
     const outer = scrollRef.current;
     const inner = deviceScrollRef.current;
     outer?.addEventListener("scroll", bump, { passive: true });
-    inner?.addEventListener("scroll", bump, { passive: true });
+    inner?.addEventListener("scroll", bumpDevice, { passive: true });
     return () => {
       outer?.removeEventListener("scroll", bump);
-      inner?.removeEventListener("scroll", bump);
+      inner?.removeEventListener("scroll", bumpDevice);
     };
   }, [deviceMode]);
 
-  const needsSectionScrollPad = Boolean(blueprint && sectionScrollNeedsViewportPad(blueprint));
+  const needsSectionScrollPad = Boolean(
+    blueprint && sectionScrollNeedsViewportPad(blueprint, heightBand),
+  );
   const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
 
   const liveScreenHeight = useCallback((): number => {
@@ -325,39 +365,6 @@ export function SiteCreatorPreview({
       />
     ) : null;
 
-  const sectionScrollTop = useCallback(
-    (sectionId: string): number | null => {
-      const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
-      const stage = stageRef.current;
-      const node = blueprint?.nodes[sectionId];
-      if (!scroller || !stage || !node || !isSiteSectionNode(node)) return null;
-      const stageBox = stage.getBoundingClientRect();
-      const scrollerBox = scroller.getBoundingClientRect();
-      const screenH = liveScreenHeight();
-      const yDoc =
-        sectionScrollStations.find((item) => item.id === sectionId)?.y ??
-        sectionDisplayTop(blueprint, sectionId, screenH, heightBand) ??
-        node.sourceRange.top;
-      const yOnStage = (yDoc / Math.max(1, pageHeight)) * stageBox.height;
-      return scroller.scrollTop + (stageBox.top + yOnStage - scrollerBox.top);
-    },
-    [blueprint, deviceMode, heightBand, liveScreenHeight, pageHeight, sectionScrollStations],
-  );
-
-  useEffect(() => {
-    if (!sectionScrollCue) return;
-    const frame = window.requestAnimationFrame(() => {
-      const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
-      const top = sectionScrollTop(sectionScrollCue.sectionId);
-      if (!scroller || top == null) return;
-      scroller.scrollTo({
-        top: Math.max(0, top),
-        behavior: scrollBehaviorForKind(sectionScrollCue.kind),
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [deviceMode, scrollPad, sectionScrollCue, sectionScrollTop]);
-
   stationsFnRef.current = () => {
     const boxScroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
     const stage = stageRef.current;
@@ -384,10 +391,10 @@ export function SiteCreatorPreview({
     if (!scroller) return;
     return bindSectionScroller({
       scroller,
-      hops: listSectionScrollHops(blueprint),
+      hops: listSectionScrollHops(blueprint, heightBand),
       stations: () => stationsFnRef.current(),
     });
-  }, [blueprint, deviceMode, needsSectionScrollPad, readOnly]);
+  }, [blueprint, deviceMode, heightBand, needsSectionScrollPad, readOnly]);
 
   useEffect(() => {
     const onWin = () => setFrameTick((n) => n + 1);
@@ -399,13 +406,34 @@ export function SiteCreatorPreview({
     const stage = stageRef.current;
     const studio = viewportRef.current;
     if (!stage || !studio) return;
-    const bump = () => setFrameTick((n) => n + 1);
+    let frame = 0;
+    let lastGeometry = "";
+    const bump = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const geometry = [
+          stage.offsetWidth,
+          stage.offsetHeight,
+          studio.clientWidth,
+          studio.clientHeight,
+          deviceScrollRef.current?.clientWidth ?? 0,
+          deviceScrollRef.current?.clientHeight ?? 0,
+        ].join(":");
+        if (geometry === lastGeometry) return;
+        lastGeometry = geometry;
+        setFrameTick((n) => n + 1);
+      });
+    };
     const ro = new ResizeObserver(bump);
     ro.observe(stage);
     ro.observe(studio);
     if (deviceScrollRef.current) ro.observe(deviceScrollRef.current);
     bump();
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [contentDisplayHeight, contentDisplayWidth, deviceMode, displayHeight, displayWidth, viewportWidth, zoom]);
 
   const floatingGeometry = useMemo((): FloatingChromeGeometry | null => {
@@ -580,6 +608,46 @@ export function SiteCreatorPreview({
     </div>
   );
 
+  const spineLayer =
+    showSpine && sectionSpine && onSpineSelectSection && onSpineAddSection ? (
+      <div
+        className="pointer-events-none relative z-[45] shrink-0 overflow-visible"
+        style={{
+          width: spineGutterPx,
+          height: deviceMode ? displayHeight : contentDisplayHeight,
+          clipPath: deviceMode ? "inset(0 -100vw 0 -100vw)" : undefined,
+        }}
+        data-testid="site-creator-section-spine-gutter"
+        data-site-creator-floating-ui="true"
+      >
+        <div
+          className="relative"
+          style={{
+            height: contentDisplayHeight,
+            transform: deviceMode ? `translate3d(0, ${-deviceScrollTop}px, 0)` : undefined,
+            willChange: deviceMode ? "transform" : undefined,
+          }}
+          data-testid="site-creator-section-spine-scroll-content"
+          data-spine-scroll-offset={deviceMode ? deviceScrollTop : 0}
+        >
+          <SiteCreatorSectionSpine
+            pageHeight={pageHeight}
+            scale={zoom}
+            stations={sectionSpine.stations}
+            addSectionY={sectionSpine.addSectionY}
+            canAddSection={sectionSpine.canAddSection}
+            portalHost={floatingPortalHost}
+            onSelectSection={onSpineSelectSection}
+            onRemoveSection={(id) => onSpineRemoveSection?.(id)}
+            onAddSection={onSpineAddSection}
+            onScrollChange={(fromId, toId, kind) => onSpineScrollChange?.(fromId, toId, kind)}
+            onHeightModeChange={(id, mode) => onSpineHeightModeChange?.(id, mode)}
+            onCustomHeightChange={(id, px) => onSpineCustomHeightChange?.(id, px)}
+          />
+        </div>
+      </div>
+    ) : null;
+
   return (
     <div
       ref={viewportRef}
@@ -617,76 +685,79 @@ export function SiteCreatorPreview({
             readOnly ? "items-stretch justify-stretch px-0 py-0" : "items-center px-8 py-8"
           }`}
         >
-          <div
-            className={`site-creator-preview-stage relative ${
-              readOnly
-                ? "overflow-hidden border-0 bg-transparent shadow-none"
-                : "border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
-            }`}
-            style={
-              readOnly
-                ? { width: "100%", height: contentDisplayHeight }
-                : { width: displayWidth, height: displayHeight }
-            }
-            data-site-creator-preview-scale={screenScale}
-            data-testid="site-creator-preview-stage"
-          >
-            {!readOnly && !deviceMode ? (
-              <>
-                <ResizeHandle
-                  side="left"
-                  onPointerDown={onResizePointerDown}
-                  onPointerMove={onResizePointerMove}
-                  onPointerUp={endResize}
-                />
-                <ResizeHandle
-                  side="right"
-                  onPointerDown={onResizePointerDown}
-                  onPointerMove={onResizePointerMove}
-                  onPointerUp={endResize}
-                />
-              </>
-            ) : null}
-            {deviceMode ? (
-              <div
-                ref={deviceScrollRef}
-                className="site-creator-device-scroll h-full w-full overflow-x-hidden overflow-y-auto [scrollbar-width:thin]"
-                data-testid="site-creator-device-scroll"
-              >
+          <div className="relative flex items-start">
+            {spineLayer}
+            <div
+              className={`site-creator-preview-stage relative ${
+                readOnly
+                  ? "overflow-hidden border-0 bg-transparent shadow-none"
+                  : "border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
+              }`}
+              style={
+                readOnly
+                  ? { width: "100%", height: contentDisplayHeight }
+                  : { width: displayWidth, height: displayHeight }
+              }
+              data-site-creator-preview-scale={screenScale}
+              data-testid="site-creator-preview-stage"
+            >
+              {!readOnly && !deviceMode ? (
+                <>
+                  <ResizeHandle
+                    side="left"
+                    onPointerDown={onResizePointerDown}
+                    onPointerMove={onResizePointerMove}
+                    onPointerUp={endResize}
+                  />
+                  <ResizeHandle
+                    side="right"
+                    onPointerDown={onResizePointerDown}
+                    onPointerMove={onResizePointerMove}
+                    onPointerUp={endResize}
+                  />
+                </>
+              ) : null}
+              {deviceMode ? (
                 <div
-                  ref={stageRef}
-                  className="site-creator-preview-page-host relative"
-                  style={{ width: contentDisplayWidth, height: contentDisplayHeight }}
+                  ref={setDeviceScrollRef}
+                  className="site-creator-device-scroll h-full w-full overflow-x-hidden overflow-y-auto [scrollbar-width:thin]"
+                  data-testid="site-creator-device-scroll"
                 >
+                  <div
+                    ref={stageRef}
+                    className="site-creator-preview-page-host relative"
+                    style={{ width: contentDisplayWidth, height: contentDisplayHeight }}
+                  >
+                    {pageContent}
+                  </div>
+                  {sectionScrollPadEl}
+                </div>
+              ) : (
+                <div ref={stageRef} className="relative h-full w-full">
                   {pageContent}
                 </div>
-                {sectionScrollPadEl}
-              </div>
-            ) : (
-              <div ref={stageRef} className="relative h-full w-full">
-                {pageContent}
-              </div>
-            )}
-            {!readOnly ? (
-            <SiteCreatorObjectMicrobar
-              scale={screenScale}
-              stageWidth={displayWidth}
-              stageHeight={displayHeight}
-              model={microbar}
-              floatingGeometry={floatingGeometry}
-              portalHost={floatingPortalHost}
-              onNavigate={onMicrobarNavigate}
-              onAction={onMicrobarAction}
-            />
-            ) : null}
-            {dragLabel ? (
-              <div
-                data-testid="site-creator-resize-label"
-                className="pointer-events-none absolute left-1/2 top-2 z-[8] -translate-x-1/2 rounded border border-white/15 bg-[#101820]/95 px-2 py-0.5 text-[10px] font-semibold text-white/80"
-              >
-                {dragLabel}
-              </div>
-            ) : null}
+              )}
+              {!readOnly ? (
+              <SiteCreatorObjectMicrobar
+                scale={screenScale}
+                stageWidth={displayWidth}
+                stageHeight={displayHeight}
+                model={microbar}
+                floatingGeometry={floatingGeometry}
+                portalHost={floatingPortalHost}
+                onNavigate={onMicrobarNavigate}
+                onAction={onMicrobarAction}
+              />
+              ) : null}
+              {dragLabel ? (
+                <div
+                  data-testid="site-creator-resize-label"
+                  className="pointer-events-none absolute left-1/2 top-2 z-[8] -translate-x-1/2 rounded border border-white/15 bg-[#101820]/95 px-2 py-0.5 text-[10px] font-semibold text-white/80"
+                >
+                  {dragLabel}
+                </div>
+              ) : null}
+            </div>
           </div>
           {deviceMode ? null : sectionScrollPadEl}
         </div>

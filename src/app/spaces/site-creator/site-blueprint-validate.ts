@@ -203,6 +203,19 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
     next.scrollFlow = {
       ...(blueprint.scrollFlow.entry ? { entry: blueprint.scrollFlow.entry } : {}),
       ...(blueprint.scrollFlow.hops ? { hops: { ...blueprint.scrollFlow.hops } } : {}),
+      ...(blueprint.scrollFlow.byBand
+        ? {
+            byBand: Object.fromEntries(
+              Object.entries(blueprint.scrollFlow.byBand).map(([band, flow]) => [
+                band,
+                {
+                  ...(flow?.entry ? { entry: flow.entry } : {}),
+                  ...(flow?.hops ? { hops: { ...flow.hops } } : {}),
+                },
+              ]),
+            ),
+          }
+        : {}),
     };
   }
   if (blueprint.canvasLocks) {
@@ -231,7 +244,14 @@ function cloneNode(node: SiteBlueprintNode): SiteBlueprintNode {
       parentId: null,
       sourceRange: { ...node.sourceRange },
       ...(node.promotedFromGroupId ? { promotedFromGroupId: node.promotedFromGroupId } : {}),
-      ...(node.heightMode === "viewport" ? { heightMode: "viewport" as const } : {}),
+      ...(node.heightMode === "viewport" || node.heightMode === "custom"
+        ? { heightMode: node.heightMode }
+        : {}),
+      ...(node.heightMode === "custom" &&
+      typeof node.customHeight === "number" &&
+      Number.isFinite(node.customHeight)
+        ? { customHeight: Math.max(1, Math.round(node.customHeight)) }
+        : {}),
     };
   }
   return {

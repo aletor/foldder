@@ -7,7 +7,12 @@ import type { DesignerPageState } from "../designer/DesignerNode";
 import { getPageDimensions } from "../indesign/page-formats";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
-import { sourceWorldBoundsOfIds, sourceWorldVisualBounds } from "./site-creator-layer-world-bounds";
+import {
+  isWorldSpaceLayerId,
+  sourceWorldBoundsOfIds,
+  sourceWorldVisualBounds,
+  worldSpaceAncestorId,
+} from "./site-creator-layer-world-bounds";
 import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteBlueprintV1 } from "./site-creator-types";
@@ -67,7 +72,7 @@ import {
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
-import { applySectionViewportHeights, sectionHeightModeForBand } from "./site-creator-section-height";
+import { applySectionViewportHeights, sectionCustomHeightForBand, sectionHeightModeForBand } from "./site-creator-section-height";
 
 export type ResponsiveBand = "wide" | "tablet" | "mobile";
 
@@ -76,6 +81,8 @@ export type ResolvedResponsiveRegion = {
   sectionId: string;
   sectionType: "hero" | "generic";
   layoutRect: PageRect;
+  /** Alto de contenido de esta banda antes de aplicar viewport/custom. */
+  naturalHeight: number;
   /** Clip efectivo de la región (coincide con layoutRect). */
   clipRect: PageRect;
   backgroundLayerIds: string[];
@@ -364,7 +371,7 @@ function transformWorldSpaceGroupTree(
   const children = (obj as { children?: FreehandObject[] }).children ?? [];
   const uniform = Math.min(target.scaleX, target.scaleY);
   for (const ch of children) {
-    const b = sourceWorldVisualBounds(ch.id, index);
+    const b = layoutSourceRect(ch, index);
     if (b) {
       const world = mapSourceRectToTarget(b, origin, target);
       ch.x = world.x;
@@ -385,6 +392,29 @@ function transformWorldSpaceGroupTree(
   }
 }
 
+function liftClipBooleanRoots(layerIds: string[], index: SiteCreatorSelectionIndex): string[] {
+  const lifted = layerIds.map((id) => {
+    const worldId = worldSpaceAncestorId(id, index);
+    const type = index.byId[worldId]?.type;
+    if (type === "clippingContainer" || type === "booleanGroup") return worldId;
+    return id;
+  });
+  return [...new Set(lifted)];
+}
+
+/** Caja de layout: el clip usa su marco, no el AABB de la máscara. */
+function layoutSourceRect(obj: FreehandObject, index: SiteCreatorSelectionIndex): PageRect | null {
+  if (obj.type === "clippingContainer" && isWorldSpaceLayerId(obj.id, index)) {
+    return {
+      x: obj.x,
+      y: obj.y,
+      width: Math.max(1, obj.width),
+      height: Math.max(1, obj.height),
+    };
+  }
+  return sourceWorldVisualBounds(obj.id, index);
+}
+
 /** Escala uniforme relativa a un origen (preserva composición). */
 function transformLayersRelative(
   byId: Map<string, FreehandObject>,
@@ -393,8 +423,8 @@ function transformLayersRelative(
   origin: PageRect,
   target: { x: number; y: number; scaleX: number; scaleY: number; minFont: number },
 ): PageRect | null {
-  const set = new Set(layerIds);
-  const roots = layerIds.filter((id) => {
+  const set = new Set(liftClipBooleanRoots(layerIds, index));
+  const roots = [...set].filter((id) => {
     const parent = index.byId[id]?.parentLayerId;
     return !parent || !set.has(parent);
   });
@@ -404,7 +434,7 @@ function transformLayersRelative(
     const obj = byId.get(id);
     const entry = index.byId[id];
     if (!obj || !entry) continue;
-    const b = sourceWorldVisualBounds(id, index);
+    const b = layoutSourceRect(obj, index);
     if (!b) continue;
     const world: PageRect = {
       x: target.x + (b.x - origin.x) * target.scaleX,
@@ -543,6 +573,17 @@ function placeBackgroundLayers(args: {
     }
 
     // Formas de fondo: estirar al marco de la región.
+    if (obj.type === "clippingContainer") {
+      const source = layoutSourceRect(obj, args.index) ?? sourceRect;
+      const sx = args.layoutRect.width / Math.max(1, source.width);
+      const sy = args.layoutRect.height / Math.max(1, source.height);
+      obj.x = args.layoutRect.x;
+      obj.y = args.layoutRect.y;
+      obj.width = args.layoutRect.width;
+      obj.height = args.layoutRect.height;
+      scaleSubtreeLocal(obj, Math.min(sx, sy), 0);
+      continue;
+    }
     obj.x = args.layoutRect.x;
     obj.y = args.layoutRect.y;
     obj.width = args.layoutRect.width;
@@ -1091,6 +1132,7 @@ function layoutSectionPreserveMode(args: {
     sectionId: analysis.sectionId,
     sectionType,
     layoutRect,
+    naturalHeight: layoutRect.height,
     clipRect: { ...layoutRect },
     backgroundLayerIds: [...analysis.background.backgroundLayerIds],
     backgroundFocals,
@@ -1382,6 +1424,7 @@ function layoutSectionStackMode(args: {
     sectionId: analysis.sectionId,
     sectionType,
     layoutRect,
+    naturalHeight: layoutRect.height,
     clipRect: { ...layoutRect },
     backgroundLayerIds: [...analysis.background.backgroundLayerIds],
     backgroundFocals,
@@ -1648,6 +1691,7 @@ function layoutSectionAutoMode(args: {
     sectionId: analysis.sectionId,
     sectionType,
     layoutRect,
+    naturalHeight: layoutRect.height,
     clipRect: { ...layoutRect },
     backgroundLayerIds: [...analysis.background.backgroundLayerIds],
     backgroundFocals,
@@ -1972,6 +2016,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       sectionId: "__page__",
       sectionType: "generic",
       layoutRect: { x: 0, y: 0, width: viewportWidth, height: preserved.layoutHeight },
+      naturalHeight: preserved.layoutHeight,
       clipRect: { x: 0, y: 0, width: viewportWidth, height: preserved.layoutHeight },
       backgroundLayerIds: [],
       backgroundFocals: {},
@@ -2105,26 +2150,34 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         });
       }
     }
+    region.naturalHeight = Math.max(1, region.layoutRect.height);
     regions.push(region);
 
-    if (
-      sectionViewport.expandViewportSections &&
-      sectionHeightModeForBand(args.blueprint, section, band === "mobile" ? "mobile" : "tablet") === "viewport"
-    ) {
-      const pageScreen = sectionViewport.viewportHeight;
-      const extra = Math.max(0, pageScreen - region.layoutRect.height);
-      if (extra > 0.5) {
-        region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
-        region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
-        placeBackgroundLayers({
-          byId,
-          backgroundLayerIds: region.backgroundLayerIds,
-          layoutRect: region.layoutRect,
-          sourceRegion: analysis.containerBounds,
-          index,
-          blueprint: args.blueprint,
-          band,
-        });
+    if (sectionViewport.expandViewportSections && (band === "tablet" || band === "mobile")) {
+      const heightBand = band === "mobile" ? "mobile" : "tablet";
+      const mode = sectionHeightModeForBand(args.blueprint, section, heightBand);
+      let targetH: number | null = null;
+      if (mode === "viewport") {
+        targetH = Math.max(region.layoutRect.height, sectionViewport.viewportHeight);
+      } else if (mode === "custom") {
+        const custom = sectionCustomHeightForBand(args.blueprint, section, heightBand);
+        if (custom != null) targetH = Math.max(region.layoutRect.height, custom);
+      }
+      if (targetH != null) {
+        const extra = Math.max(0, targetH - region.layoutRect.height);
+        if (extra > 0.5) {
+          region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
+          region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
+          placeBackgroundLayers({
+            byId,
+            backgroundLayerIds: region.backgroundLayerIds,
+            layoutRect: region.layoutRect,
+            sourceRegion: analysis.containerBounds,
+            index,
+            blueprint: args.blueprint,
+            band,
+          });
+        }
       }
     }
 
@@ -2173,7 +2226,6 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         e.selectableFromCanvas &&
         !owned.has(e.layerId) &&
         e.parentLayerId == null &&
-        e.type !== "clippingContainer" &&
         e.type !== "adjustmentLayer",
     )
     .map((e) => e.layerId);

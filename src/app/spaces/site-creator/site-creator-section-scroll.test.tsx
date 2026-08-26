@@ -4,8 +4,12 @@ import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import { compilePublishedSite } from "./site-creator-publish-compile";
-import { SiteCreatorSectionFlowRail } from "./SiteCreatorSectionFlowRail";
-import { compilePublishedScrollScript, planScrollStep } from "./site-creator-section-scroll-runtime";
+import { SiteCreatorSectionSpine } from "./SiteCreatorSectionSpine";
+import {
+  bindSectionScroller,
+  compilePublishedScrollScript,
+  planScrollStep,
+} from "./site-creator-section-scroll-runtime";
 import {
   listDocumentSections,
   listSectionScrollHops,
@@ -64,6 +68,33 @@ describe("site-creator section scroll flow", () => {
     expect(setSectionScrollHop(next, heroId, sectionId, "natural").scrollFlow).toBeUndefined();
   });
 
+  it("stores Original, Tablet and Mobile scroll independently", () => {
+    const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const wide = setSectionScrollHop(blueprint, heroId, sectionId, "snap", "wide");
+    const tablet = setSectionScrollHop(wide, heroId, sectionId, "smooth", "tablet");
+
+    expect(resolveSectionScrollHop(tablet, heroId, sectionId, "wide")).toBe("snap");
+    expect(resolveSectionScrollHop(tablet, heroId, sectionId, "tablet")).toBe("smooth");
+    expect(resolveSectionScrollHop(tablet, heroId, sectionId, "mobile")).toBe("natural");
+    expect(tablet.scrollFlow?.hops?.[`${heroId}>${sectionId}`]).toBe("snap");
+    expect(tablet.scrollFlow?.byBand?.tablet?.hops?.[`${heroId}>${sectionId}`]).toBe(
+      "smooth",
+    );
+
+    const restoredTablet = setSectionScrollHop(
+      tablet,
+      heroId,
+      sectionId,
+      "natural",
+      "tablet",
+    );
+    expect(resolveSectionScrollHop(restoredTablet, heroId, sectionId, "wide")).toBe("snap");
+    expect(resolveSectionScrollHop(restoredTablet, heroId, sectionId, "tablet")).toBe(
+      "natural",
+    );
+    expect(restoredTablet.scrollFlow?.byBand).toBeUndefined();
+  });
+
   it("defaults missing hops to natural and prunes stale keys", () => {
     const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
     const dirty = {
@@ -80,32 +111,184 @@ describe("site-creator section scroll flow", () => {
 
   it("clones scrollFlow with the blueprint", () => {
     const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
-    const withHop = setSectionScrollHop(blueprint, heroId, sectionId, "smooth");
+    const withHop = setSectionScrollHop(
+      setSectionScrollHop(blueprint, heroId, sectionId, "smooth"),
+      heroId,
+      sectionId,
+      "snap",
+      "mobile",
+    );
     const cloned = cloneBlueprint(withHop);
     expect(cloned.scrollFlow?.hops?.[`${heroId}>${sectionId}`]).toBe("smooth");
+    expect(cloned.scrollFlow?.byBand?.mobile?.hops?.[`${heroId}>${sectionId}`]).toBe(
+      "snap",
+    );
     cloned.scrollFlow!.hops![`${heroId}>${sectionId}`] = "snap";
+    cloned.scrollFlow!.byBand!.mobile!.hops![`${heroId}>${sectionId}`] = "smooth";
     expect(withHop.scrollFlow?.hops?.[`${heroId}>${sectionId}`]).toBe("smooth");
+    expect(withHop.scrollFlow?.byBand?.mobile?.hops?.[`${heroId}>${sectionId}`]).toBe(
+      "snap",
+    );
   });
 
-  it("renders section boxes and hop menus", () => {
+  it("renders section spine stations and hop menus", () => {
     const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const withHop = setSectionScrollHop(blueprint, heroId, sectionId, "snap");
+    const hops = listSectionScrollHops(withHop);
+    const sections = listDocumentSections(withHop);
     const onSelect = vi.fn();
-    const onHop = vi.fn();
+    const onScroll = vi.fn();
     render(
-      <SiteCreatorSectionFlowRail
-        blueprint={setSectionScrollHop(blueprint, heroId, sectionId, "snap")}
-        selectedNodeId={heroId}
-        onSelectSection={onSelect}
-        onEntryKindChange={() => undefined}
-        onHopKindChange={onHop}
+      <div style={{ position: "relative", height: 1200 }}>
+        <SiteCreatorSectionSpine
+          pageHeight={1200}
+          scale={1}
+          stations={sections.map((section, index) => ({
+            sectionId: section.id,
+            label: section.label,
+            top: section.sourceRange.top,
+            bottom: section.sourceRange.bottom,
+            height: section.sourceRange.bottom - section.sourceRange.top,
+            designedHeight: section.sourceRange.bottom - section.sourceRange.top,
+            heightMode: "content" as const,
+            customHeight: null,
+            selected: section.id === heroId,
+            outgoing: hops[index + 1]
+              ? {
+                  fromId: section.id,
+                  toId: sections[index + 1]!.id,
+                  kind: hops[index + 1]!.kind,
+                }
+              : null,
+          }))}
+          addSectionY={null}
+          canAddSection={false}
+          onSelectSection={onSelect}
+          onRemoveSection={() => undefined}
+          onAddSection={() => undefined}
+          onScrollChange={onScroll}
+          onHeightModeChange={() => undefined}
+          onCustomHeightChange={() => undefined}
+        />
+      </div>,
+    );
+    expect(screen.getByTestId("site-creator-section-spine")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(sections.find((s) => s.id === sectionId)!.label));
+    expect(onSelect).toHaveBeenCalledWith(sectionId);
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}`));
+    expect(screen.getByRole("presentation").className).toContain("pointer-events-auto");
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}-smooth`));
+    expect(onScroll).toHaveBeenCalledWith(heroId, sectionId, "smooth");
+    expect(
+      screen.queryByTestId(`site-creator-section-spine-hop-${sectionId}-${heroId}`),
+    ).toBeNull();
+  });
+
+  it("offers Custom in the height menu", () => {
+    const { blueprint, heroId } = twoSectionsBlueprint();
+    const hops = listSectionScrollHops(blueprint);
+    const sections = listDocumentSections(blueprint);
+    const onHeight = vi.fn();
+    render(
+      <div style={{ position: "relative", height: 1200 }}>
+        <SiteCreatorSectionSpine
+          pageHeight={1200}
+          scale={1}
+          stations={sections.map((section, index) => ({
+            sectionId: section.id,
+            label: section.label,
+            top: section.sourceRange.top,
+            bottom: section.sourceRange.bottom,
+            height: section.sourceRange.bottom - section.sourceRange.top,
+            designedHeight: section.sourceRange.bottom - section.sourceRange.top,
+            heightMode: "content" as const,
+            customHeight: null,
+            selected: section.id === heroId,
+            outgoing: hops[index + 1]
+              ? {
+                  fromId: section.id,
+                  toId: sections[index + 1]!.id,
+                  kind: hops[index + 1]!.kind,
+                }
+              : null,
+          }))}
+          addSectionY={null}
+          canAddSection={false}
+          onSelectSection={() => undefined}
+          onRemoveSection={() => undefined}
+          onAddSection={() => undefined}
+          onScrollChange={() => undefined}
+          onHeightModeChange={onHeight}
+          onCustomHeightChange={() => undefined}
+        />
+      </div>,
+    );
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}`));
+    expect(
+      screen.getByTestId(`site-creator-section-spine-height-${heroId}-custom`),
+    ).toBeTruthy();
+    fireEvent.scroll(window);
+    expect(
+      screen.queryByTestId(`site-creator-section-spine-height-${heroId}-custom`),
+    ).toBeNull();
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}`));
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}-custom`));
+    expect(onHeight).toHaveBeenCalledWith(heroId, "custom");
+  });
+
+  it("marks Toda la página after the controlled mode changes", () => {
+    const { blueprint, heroId } = twoSectionsBlueprint();
+    const hero = listDocumentSections(blueprint)[0]!;
+    const onHeight = vi.fn();
+    const station = {
+      sectionId: hero.id,
+      label: hero.label,
+      top: hero.sourceRange.top,
+      bottom: hero.sourceRange.bottom,
+      height: hero.sourceRange.bottom - hero.sourceRange.top,
+      designedHeight: hero.sourceRange.bottom - hero.sourceRange.top,
+      customHeight: null,
+      selected: true,
+      outgoing: null,
+    };
+    const commonProps = {
+      pageHeight: 1200,
+      scale: 1,
+      addSectionY: null,
+      canAddSection: false,
+      onSelectSection: () => undefined,
+      onRemoveSection: () => undefined,
+      onAddSection: () => undefined,
+      onScrollChange: () => undefined,
+      onHeightModeChange: onHeight,
+      onCustomHeightChange: () => undefined,
+    } as const;
+    const { rerender } = render(
+      <SiteCreatorSectionSpine
+        {...commonProps}
+        stations={[{ ...station, heightMode: "custom" as const, customHeight: 900 }]}
       />,
     );
-    expect(screen.getByTestId("site-creator-section-flow")).toBeTruthy();
-    fireEvent.click(screen.getByTestId(`site-creator-section-flow-node-${sectionId}`));
-    expect(onSelect).toHaveBeenCalledWith(sectionId);
-    fireEvent.click(screen.getByTestId(`site-creator-section-flow-hop-${heroId}-${sectionId}`));
-    fireEvent.click(screen.getByTestId(`site-creator-section-flow-hop-${heroId}-${sectionId}-smooth`));
-    expect(onHop).toHaveBeenCalledWith(heroId, sectionId, "smooth");
+
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}`));
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}-viewport`));
+    expect(onHeight).toHaveBeenCalledWith(heroId, "viewport");
+
+    rerender(
+      <SiteCreatorSectionSpine
+        {...commonProps}
+        stations={[{ ...station, heightMode: "viewport" as const, height: 1080 }]}
+      />,
+    );
+    expect(screen.getByTestId(`site-creator-section-spine-height-${heroId}`).textContent).toContain(
+      "Toda la página",
+    );
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}`));
+    expect(
+      screen.getByTestId(`site-creator-section-spine-height-${heroId}-viewport`).getAttribute(
+        "aria-selected",
+      ),
+    ).toBe("true");
   });
 
   it("emits snap CSS and anchors when a hop is ancla", () => {
@@ -125,6 +308,34 @@ describe("site-creator section scroll flow", () => {
     expect(compiled.js).toContain("scrollTo");
     expect(compiled.js).toContain('"kind":"snap"');
     expect(compiled.js).not.toMatch(/foldder/i);
+  });
+
+  it("publishes a different scroll flow for each responsive band", () => {
+    const { page, blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const perBand = setSectionScrollHop(
+      setSectionScrollHop(blueprint, heroId, sectionId, "snap", "wide"),
+      heroId,
+      sectionId,
+      "smooth",
+      "tablet",
+    );
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: perBand,
+      title: "Recorrido responsive",
+      imageHrefByLayerId: {},
+    });
+
+    expect(compiled.html).toContain("s-snap-wide");
+    expect(compiled.html).not.toContain("s-snap-tablet");
+    expect(compiled.html).not.toContain("s-snap-mobile");
+    expect(compiled.css).toContain(".s-sec-anchor.s-snap-wide");
+    expect(compiled.js).toContain(`"wide":[`);
+    expect(compiled.js).toContain(`"tablet":[`);
+    expect(compiled.js).toContain(`"mobile":[`);
+    expect(compiled.js).toContain("function activeHops()");
+    expect(compiled.js).toContain("lockedDirection");
+    expect(compiled.js).not.toContain("y > current.y + 16");
   });
 
   it("emits intercept script when a hop is suave", () => {
@@ -196,13 +407,13 @@ describe("planScrollStep", () => {
     expect(planScrollStep({ stations, hops, scrollY: 900, direction: 1 })).toBeNull();
   });
 
-  it("returns to the current section start when scrolling up from mid-section", () => {
+  it("moves directly to the previous section when scrolling up from mid-section", () => {
     expect(
       planScrollStep({ stations, hops, scrollY: 1200, direction: -1 }),
     ).toEqual({
       kind: "smooth",
-      toId: "products",
-      targetY: 900,
+      toId: "hero",
+      targetY: 0,
     });
   });
 
@@ -215,5 +426,38 @@ describe("planScrollStep", () => {
       toId: "products",
       targetY: 900,
     });
+  });
+});
+
+describe("bindSectionScroller", () => {
+  it("releases a smooth-scroll lock when the user reverses direction", () => {
+    const scroller = document.createElement("div");
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 900 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+    });
+
+    const down = new WheelEvent("wheel", { deltaY: 120, cancelable: true });
+    scroller.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: "smooth" });
+
+    scroller.scrollTop = 450;
+    const up = new WheelEvent("wheel", { deltaY: -120, cancelable: true });
+    scroller.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(false);
+
+    dispose();
   });
 });

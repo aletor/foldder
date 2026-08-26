@@ -40,6 +40,7 @@ export type PublishTreeGroup = {
   widthMode: LayoutGroupWidthMode;
   world: Record<PublishBand, PublishBox | null>;
   children: PublishTreeNode[];
+  clipOverflow?: boolean;
 };
 
 export type PublishTreeRow = {
@@ -73,6 +74,7 @@ type RawNode = {
   role?: "full" | "rest";
   box: PublishBox;
   children?: RawNode[];
+  clipOverflow?: boolean;
 };
 
 const BANDS: PublishBand[] = ["wide", "tablet", "mobile"];
@@ -230,13 +232,31 @@ function visitDesignerList(
     }
     if (obj.type === "clippingContainer") {
       const clip = obj as { content?: FreehandObject[] };
-      raw.push(...visitDesignerList(clip.content, z * 100, blueprint, index));
+      const children = visitDesignerList(clip.content, z * 100, blueprint, index).map((child) =>
+        offsetRawNode(child, obj.x, obj.y),
+      );
+      raw.push({
+        kind: "group",
+        id: obj.id,
+        z,
+        box: boxFromObject(obj),
+        children,
+        clipOverflow: true,
+      });
       return;
     }
     if (!isPaintable(obj)) return;
     raw.push({ kind: "layer", id: obj.id, z, box: boxFromObject(obj) });
   });
   return wrapSiblingUnits(raw, blueprint, index);
+}
+
+function offsetRawNode(node: RawNode, dx: number, dy: number): RawNode {
+  return {
+    ...node,
+    box: { ...node.box, x: node.box.x + dx, y: node.box.y + dy },
+    children: node.children?.map((child) => offsetRawNode(child, dx, dy)),
+  };
 }
 
 function wrapSiblingUnits(
@@ -450,6 +470,7 @@ function rawToTree(node: RawNode, band: PublishBand): PublishTreeNode {
     widthMode: node.widthMode ?? "content",
     world: withBand(emptyBands(), band, node.box),
     children,
+    clipOverflow: node.clipOverflow,
   };
 }
 
@@ -457,14 +478,30 @@ function fillBandBoxes(
   nodes: PublishTreeNode[],
   band: PublishBand,
   map: Map<string, FreehandObject>,
+  clipOrigin: { x: number; y: number } | null = null,
 ): void {
   for (const node of nodes) {
     if (node.kind === "layer") {
       const obj = map.get(node.id);
-      node.world[band] = obj ? boxFromObject(obj) : null;
+      if (!obj) {
+        node.world[band] = null;
+        continue;
+      }
+      const box = boxFromObject(obj);
+      node.world[band] = clipOrigin
+        ? { ...box, x: box.x + clipOrigin.x, y: box.y + clipOrigin.y }
+        : box;
       continue;
     }
-    fillBandBoxes(node.children, band, map);
+    const host = map.get(node.id);
+    fillBandBoxes(
+      node.children,
+      band,
+      map,
+      host?.type === "clippingContainer"
+        ? { x: (clipOrigin?.x ?? 0) + host.x, y: (clipOrigin?.y ?? 0) + host.y }
+        : clipOrigin,
+    );
     const childBoxes = node.children
       .map((child) => child.world[band])
       .filter((box): box is PublishBox => Boolean(box));

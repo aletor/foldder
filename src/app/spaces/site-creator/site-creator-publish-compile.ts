@@ -345,7 +345,12 @@ function emitSectionScrollEndPad(
   band: SectionHeightBand,
   hints: SectionLayoutHint[] | null | undefined,
 ): void {
-  if (!sectionScrollNeedsViewportPad(blueprint)) return;
+  if (!sectionScrollNeedsViewportPad(blueprint, band)) {
+    if (band !== "wide") {
+      lines.push("html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:0}");
+    }
+    return;
+  }
   const last = lastDocumentSection(blueprint);
   if (!last) return;
   if (sectionHeightModeForBand(blueprint, last, band) === "viewport") {
@@ -519,7 +524,18 @@ export function compilePublishedSite(args: {
     layers,
     blueprint: args.blueprint,
   });
-  return { html, css, js: compilePublishedScrollScript(listSectionScrollHops(args.blueprint)) };
+  const tabletMax = siteCreatorTabletMediaMaxWidth(reference.width);
+  return {
+    html,
+    css,
+    js: compilePublishedScrollScript(listSectionScrollHops(args.blueprint, "wide"), {
+      wide: listSectionScrollHops(args.blueprint, "wide"),
+      tablet: listSectionScrollHops(args.blueprint, "tablet"),
+      mobile: listSectionScrollHops(args.blueprint, "mobile"),
+      tabletMax,
+      mobileMax: SITE_CREATOR_TABLET_WIDTH - 1,
+    }),
+  };
 }
 
 function compilePaintLayer(
@@ -609,6 +625,7 @@ function buildCss(args: {
     `.s-page{position:relative;width:100%;overflow:${flow ? "visible" : "hidden"};container-type:inline-size}`,
     ".s-el,.s-group{position:absolute;display:block;margin:0;border:0;padding:0;max-width:none}",
     ".s-group{container-type:inline-size;overflow:visible}",
+    ".s-group.s-clip{overflow:hidden}",
     ".s-row{position:relative;display:flex;flex-wrap:wrap;align-items:flex-start;width:100%;left:auto;top:auto;box-sizing:border-box}",
     ".s-row>.s-flow-item{position:relative;flex:0 0 auto;top:auto;left:auto}",
     ".s-row-full>.s-flow-item{flex:0 0 100%;width:100%}",
@@ -622,13 +639,7 @@ function buildCss(args: {
     bandPageCss(args.layouts.wide, flow),
   ];
 
-  if (scrollFlowUsesKind(args.blueprint, "smooth")) {
-    lines.push("html.s-scroll-smooth{scroll-behavior:smooth}");
-  }
-  if (scrollFlowUsesKind(args.blueprint, "snap")) {
-    lines.push("html.s-scroll-snap{scroll-snap-type:y proximity}");
-    lines.push(".s-sec-anchor.s-snap{scroll-snap-align:start;scroll-snap-stop:always}");
-  }
+  emitBandScrollCss(lines, args.blueprint, "wide");
   const sections = listDocumentSections(args.blueprint);
   if (sections.length > 0) {
     lines.push(".s-sec-anchor{position:absolute;left:0;width:100%;height:0;pointer-events:none}");
@@ -656,6 +667,7 @@ function buildCss(args: {
 
   lines.push(`@media (max-width:${tabletMax}px) and (min-width:${SITE_CREATOR_TABLET_WIDTH}px){`);
   lines.push(bandPageCss(args.layouts.tablet, flow));
+  emitBandScrollCss(lines, args.blueprint, "tablet");
   emitSectionViewportCss(
     lines,
     args.blueprint,
@@ -679,6 +691,7 @@ function buildCss(args: {
 
   lines.push(`@media (max-width:${SITE_CREATOR_TABLET_WIDTH - 1}px){`);
   lines.push(bandPageCss(args.layouts.mobile, flow));
+  emitBandScrollCss(lines, args.blueprint, "mobile");
   emitSectionViewportCss(
     lines,
     args.blueprint,
@@ -701,6 +714,22 @@ function buildCss(args: {
   lines.push("}");
 
   return `${lines.filter(Boolean).join("\n")}\n`;
+}
+
+function emitBandScrollCss(
+  lines: string[],
+  blueprint: SiteBlueprintV1,
+  band: SectionHeightBand,
+): void {
+  const usesSmooth = scrollFlowUsesKind(blueprint, "smooth", band);
+  const usesSnap = scrollFlowUsesKind(blueprint, "snap", band);
+  lines.push(`html.s-scroll-smooth{scroll-behavior:${usesSmooth ? "smooth" : "auto"}}`);
+  lines.push(`html.s-scroll-snap{scroll-snap-type:${usesSnap ? "y proximity" : "none"}}`);
+  if (usesSnap) {
+    lines.push(
+      `.s-sec-anchor.s-snap-${band}{scroll-snap-align:start;scroll-snap-stop:always}`,
+    );
+  }
 }
 
 function bandPageCss(layout: { width: number; height: number }, flow: boolean): string {
@@ -800,6 +829,7 @@ function groupBoxCss(
     `z-index:${node.z}`,
     box.opacity < 1 ? `opacity:${box.opacity}` : "",
     box.rotation ? `transform:rotate(${box.rotation}deg)` : "",
+    node.clipOverflow ? "overflow:hidden" : "",
   ].filter(Boolean);
   return `${sel}{${rules.join(";")}}`;
 }
@@ -887,8 +917,9 @@ function serializeTreeHtml(
         const hasFlow = node.children.some((c) => c.kind === "row" || (c.kind === "group" && c.widthMode === "full"));
         const flowHost = hasFlow ? " s-has-flow" : "";
         const flowItem = inRow ? " s-flow-item" : "";
+        const clip = node.kind === "group" && node.clipOverflow ? " s-clip" : "";
         const inner = serializeTreeHtml(node.children, layers, `${indent}  `, false);
-        return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}" data-group="${escapeHtml(node.id)}">\n${inner}\n${indent}</div>`;
+        return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}${clip}" data-group="${escapeHtml(node.id)}">\n${inner}\n${indent}</div>`;
       }
       const layer = layers.get(node.id);
       if (!layer) return "";
@@ -945,7 +976,12 @@ function buildHtml(args: {
     .join(" ");
   const anchors = listDocumentSections(args.blueprint)
     .map((section) => {
-      const snap = destinationScrollKind(args.blueprint, section.id) === "snap" ? " s-snap" : "";
+      const snapBands: SectionHeightBand[] = ["wide", "tablet", "mobile"];
+      const snapClasses = snapBands
+        .filter((band) => destinationScrollKind(args.blueprint, section.id, band) === "snap")
+        .map((band) => `s-snap-${band}`)
+        .join(" ");
+      const snap = snapClasses ? ` ${snapClasses}` : "";
       return `    <div class="s-sec-anchor s-sec-anchor-${cssSafeId(section.id)}${snap}" id="s-sec-${cssSafeId(section.id)}" data-section="${escapeHtml(section.id)}"></div>`;
     })
     .join("\n");

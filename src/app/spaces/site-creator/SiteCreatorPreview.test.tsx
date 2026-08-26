@@ -4,6 +4,7 @@ import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
+import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 
 vi.mock("@/app/spaces/presenter/DesignerPageCanvasView", () => ({
   DesignerPageCanvasView: ({
@@ -87,6 +88,87 @@ describe("SiteCreatorPreview", () => {
 
     expect(livePage.objects[0]!.id).toBe("live_layer");
     expect(snapshotPage.objects[0]!.id).toBe("snap_layer");
+  });
+
+  it("keeps the page stage at design size and paints the spine outside it", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 800,
+      customHeight: 600,
+      objects: [],
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={800}
+        referenceWidth={800}
+        previewZoom={1}
+        blueprint={createEmptySiteBlueprintV1()}
+        sectionSpine={{
+          stations: [],
+          addSectionY: null,
+          canAddSection: false,
+        }}
+        onSpineSelectSection={() => undefined}
+        onSpineAddSection={() => undefined}
+      />,
+    );
+
+    const stage = screen.getByTestId("site-creator-preview-stage");
+    expect(stage.getAttribute("style")).toContain("width: 800px");
+    expect(stage.getAttribute("style")).toContain("height: 600px");
+    const gutter = screen.getByTestId("site-creator-section-spine-gutter");
+    expect(stage.contains(gutter)).toBe(false);
+    expect(gutter.parentElement?.contains(stage)).toBe(true);
+  });
+
+  it("mirrors the device scroll in the external spine and clips it to the frame", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "story916",
+      customWidth: 390,
+      customHeight: 1200,
+      objects: [],
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={390}
+        referenceWidth={390}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 300 }}
+        blueprint={createEmptySiteBlueprintV1()}
+        sectionSpine={{
+          stations: [],
+          addSectionY: null,
+          canAddSection: false,
+        }}
+        onSpineSelectSection={() => undefined}
+        onSpineAddSection={() => undefined}
+      />,
+    );
+
+    const gutter = screen.getByTestId("site-creator-section-spine-gutter");
+    const spineContent = screen.getByTestId("site-creator-section-spine-scroll-content");
+    const deviceScroll = screen.getByTestId("site-creator-device-scroll");
+
+    expect(gutter.className).toContain("overflow-visible");
+    expect(gutter.getAttribute("style")).toContain("height: 300px");
+    expect(gutter.getAttribute("style")).toContain("clip-path: inset(0 -100vw 0 -100vw)");
+    expect(spineContent.getAttribute("data-spine-scroll-offset")).toBe("0");
+
+    Object.defineProperty(deviceScroll, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 240,
+    });
+    fireEvent.scroll(deviceScroll);
+
+    expect(spineContent.getAttribute("data-spine-scroll-offset")).toBe("240");
+    expect(spineContent.getAttribute("style")).toContain("translate3d(0, -240px, 0)");
   });
 
   it("click on dark preview chrome clears selection", () => {

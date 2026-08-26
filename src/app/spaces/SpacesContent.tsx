@@ -473,11 +473,29 @@ function classifyProjectSaveError(err: unknown): {
     };
   }
 
+  if (isTransientNetworkSaveError(err)) {
+    return {
+      alertMessage: "Network interrupted while saving. Your local changes remain open; try again shortly.",
+      healthMessage: "Network interrupted. Retrying on the next change.",
+      state: "error",
+    };
+  }
+
   return {
     alertMessage: "Error saving project. Check console for details.",
     healthMessage: "Save failed. Retrying on the next change.",
     state: "error",
   };
+}
+
+/** Fetch abortado / HMR stale / Wi‑Fi: no merece overlay rojo de Next. */
+function isTransientNetworkSaveError(err: unknown): boolean {
+  if (!(err instanceof TypeError)) return false;
+  const message = err.message || "";
+  return (
+    message === "Failed to fetch" ||
+    /network|fetch|load failed|aborted|connection/i.test(message)
+  );
 }
 
 function defaultCanvasNodeStyleForType(type: string): React.CSSProperties | undefined {
@@ -4069,6 +4087,9 @@ export function SpacesContent() {
         }
         projectSaveBlockedByConflictRef.current = true;
         console.warn("[FOLDDER save] Conflicto de revisión persistente. Recarga el proyecto antes de volver a guardar.");
+      } else if (options?.silentError || isTransientNetworkSaveError(err)) {
+        // Autosave / red intermitente: warn (no console.error → evita overlay Next).
+        console.warn("[FOLDDER save]", classifiedSaveError.healthMessage, err);
       } else {
         console.error("Save error:", err);
       }

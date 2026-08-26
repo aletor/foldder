@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -362,6 +362,8 @@ export interface SiteCreatorOutlinePanelProps {
   canvasLockForUnit?: (unit: SiteCreatorSelectionUnit) => { locked: boolean; inherited: boolean };
   onToggleCanvasLock?: (unit: SiteCreatorSelectionUnit) => void;
   selectionIndex?: SiteCreatorSelectionIndex | null;
+  /** Cerrado por defecto en Studio; útil abierto en vistas embebidas. */
+  defaultOpen?: boolean;
 }
 
 function ancestorSemanticIds(
@@ -404,9 +406,12 @@ export function SiteCreatorOutlinePanel({
   canvasLockForUnit,
   onToggleCanvasLock,
   selectionIndex,
+  defaultOpen = false,
 }: SiteCreatorOutlinePanelProps) {
   const [dragSource, setDragSource] = useState<SiteCreatorPresentationNode | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(defaultOpen);
+  const treeId = useId();
 
   const toggle = (id: string) => {
     onExpandedIdsChange({
@@ -416,58 +421,93 @@ export function SiteCreatorOutlinePanel({
   };
 
   return (
-    <aside className="site-creator-studio__sidebar flex w-[240px] shrink-0 flex-col border-r border-white/10 bg-[#101820] px-2 py-3">
-      <p className="mb-2 px-1.5 text-[10px] font-normal uppercase tracking-[0.16em] text-white/35">
-        Página
-      </p>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {tree.roots.length === 0 ? (
-          <p className="px-1.5 text-[11px] font-normal leading-relaxed text-white/35">
-            Selecciona elementos en el diseño. Usa Ctrl/Cmd para añadir varios.
-          </p>
+    <aside
+      className={`site-creator-studio__sidebar flex shrink-0 flex-col border-r border-white/10 bg-[#101820] transition-[width,padding] duration-150 ${
+        panelOpen ? "w-[240px] px-2 py-3" : "w-11 px-1.5 py-2"
+      }`}
+      data-testid="site-creator-outline-panel"
+      data-state={panelOpen ? "open" : "closed"}
+    >
+      <button
+        type="button"
+        aria-expanded={panelOpen}
+        aria-controls={treeId}
+        aria-label={panelOpen ? "Ocultar panel Página" : "Mostrar panel Página"}
+        title={panelOpen ? "Ocultar Página" : "Mostrar Página"}
+        onClick={() => setPanelOpen((open) => !open)}
+        className={`flex h-8 shrink-0 items-center rounded-md text-white/45 transition-colors hover:bg-white/6 hover:text-white/80 ${
+          panelOpen ? "w-full gap-2 px-2" : "w-8 justify-center"
+        }`}
+      >
+        <LayoutTemplate className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} aria-hidden />
+        {panelOpen ? (
+          <>
+            <span className="min-w-0 flex-1 truncate text-left text-[10px] font-semibold uppercase tracking-[0.16em]">
+              Página
+            </span>
+            <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+          </>
         ) : (
-          tree.roots.map((node) => (
-            <OutlineTreeRow
-              key={node.id}
-              node={node}
-              depth={0}
-              selectedUnits={selectedUnits}
-              hoveredKey={hoveredKey}
-              expanded={expandedIds}
-              onToggle={toggle}
-              onSelect={(unit, additive, n) => {
-                const path = ancestorSemanticIds(tree, n);
-                onSelectUnit(unit, additive, path);
-              }}
-              onHover={(key, unit) => onHoverUnit(unit, key)}
-              onDragStart={(n) => setDragSource(n)}
-              onDropOn={(target) => {
-                if (dragSource && target.kind === "semantic") {
-                  onReparentToSemantic?.(target.nodeId, dragSource);
-                }
-                setDragSource(null);
-                setDragOverId(null);
-              }}
-              onDragOverTarget={setDragOverId}
-              dragOverId={dragOverId}
-              resolveOverride={resolveOverride}
-              canvasLockForUnit={canvasLockForUnit}
-              onToggleCanvasLock={onToggleCanvasLock}
-              selectionIndex={selectionIndex}
-            />
-          ))
+          <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-55" aria-hidden />
         )}
-      </div>
+      </button>
 
-      <div className="mt-3 border-t border-white/10 px-1.5 pt-3">
-        <p className="text-[11px] font-normal text-white/40">{visualLayerCount} capas</p>
-        {reviewCount > 0 ? (
-          <p className="mt-2 text-[10px] font-normal tracking-wide text-amber-300/80">
-            Por revisar · {reviewCount}
-          </p>
-        ) : null}
-        {emptyHint ? <p className="mt-3 text-[11px] font-normal leading-relaxed text-white/35">{emptyHint}</p> : null}
-      </div>
+      {panelOpen ? (
+        <>
+          <div id={treeId} className="mt-2 min-h-0 flex-1 overflow-auto">
+            {tree.roots.length === 0 ? (
+              <p className="px-1.5 text-[11px] font-normal leading-relaxed text-white/35">
+                Selecciona elementos en el diseño. Usa Ctrl/Cmd para añadir varios.
+              </p>
+            ) : (
+              tree.roots.map((node) => (
+                <OutlineTreeRow
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  selectedUnits={selectedUnits}
+                  hoveredKey={hoveredKey}
+                  expanded={expandedIds}
+                  onToggle={toggle}
+                  onSelect={(unit, additive, n) => {
+                    const path = ancestorSemanticIds(tree, n);
+                    onSelectUnit(unit, additive, path);
+                  }}
+                  onHover={(key, unit) => onHoverUnit(unit, key)}
+                  onDragStart={(n) => setDragSource(n)}
+                  onDropOn={(target) => {
+                    if (dragSource && target.kind === "semantic") {
+                      onReparentToSemantic?.(target.nodeId, dragSource);
+                    }
+                    setDragSource(null);
+                    setDragOverId(null);
+                  }}
+                  onDragOverTarget={setDragOverId}
+                  dragOverId={dragOverId}
+                  resolveOverride={resolveOverride}
+                  canvasLockForUnit={canvasLockForUnit}
+                  onToggleCanvasLock={onToggleCanvasLock}
+                  selectionIndex={selectionIndex}
+                />
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 border-t border-white/10 px-1.5 pt-3">
+            <p className="text-[11px] font-normal text-white/40">{visualLayerCount} capas</p>
+            {reviewCount > 0 ? (
+              <p className="mt-2 text-[10px] font-normal tracking-wide text-amber-300/80">
+                Por revisar · {reviewCount}
+              </p>
+            ) : null}
+            {emptyHint ? (
+              <p className="mt-3 text-[11px] font-normal leading-relaxed text-white/35">
+                {emptyHint}
+              </p>
+            ) : null}
+          </div>
+        </>
+      ) : null}
     </aside>
   );
 }

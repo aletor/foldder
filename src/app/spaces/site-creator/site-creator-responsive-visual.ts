@@ -4,7 +4,7 @@
  */
 import type { FreehandObject } from "../FreehandStudio";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
-import { sourceWorldBoundsOfIds, sourceWorldVisualBounds } from "./site-creator-layer-world-bounds";
+import { isWorldSpaceLayerId, sourceWorldBoundsOfIds, sourceWorldVisualBounds, worldSpaceAncestorId } from "./site-creator-layer-world-bounds";
 import {
   pageRectFullyContains,
   unionPageRects,
@@ -240,6 +240,29 @@ export function classifyContainerBackground(args: {
   return { backgroundLayerIds, reasons };
 }
 
+function markDescendantsUsed(rootId: string, index: SiteCreatorSelectionIndex, used: Set<string>): void {
+  used.add(rootId);
+  for (const entry of index.entries) {
+    if (entry.ancestorIds.includes(rootId)) used.add(entry.layerId);
+  }
+}
+
+function clipLayoutBounds(
+  entry: { layerId: string; object?: FreehandObject | null; visualBounds: PageRect },
+  index: SiteCreatorSelectionIndex,
+): PageRect {
+  const obj = entry.object;
+  if (obj?.type === "clippingContainer" && isWorldSpaceLayerId(entry.layerId, index)) {
+    return {
+      x: obj.x,
+      y: obj.y,
+      width: Math.max(0, obj.width),
+      height: Math.max(0, obj.height),
+    };
+  }
+  return entry.visualBounds;
+}
+
 function expandDesignerGroupLayers(
   rootId: string,
   index: SiteCreatorSelectionIndex,
@@ -343,6 +366,30 @@ export function buildSectionPresentationUnits(args: {
     if (used.has(id) || excludeLayerIds.has(id)) continue;
     const entry = index.byId[id];
     if (!entry?.visible) continue;
+    const clipId =
+      entry.type === "clippingContainer"
+        ? id
+        : index.byId[worldSpaceAncestorId(id, index)]?.type === "clippingContainer"
+          ? worldSpaceAncestorId(id, index)
+          : null;
+    if (!clipId || used.has(clipId) || excludeLayerIds.has(clipId)) continue;
+    const clipEntry = index.byId[clipId];
+    if (!clipEntry?.visible) continue;
+    markDescendantsUsed(clipId, index, used);
+    units.push({
+      id: `layer:${clipId}`,
+      kind: "layer",
+      layerIds: [clipId],
+      bounds: clipLayoutBounds(clipEntry, index),
+      zOrder: clipEntry.zOrderPath,
+      role: "content",
+    });
+  }
+
+  for (const id of coverage) {
+    if (used.has(id) || excludeLayerIds.has(id)) continue;
+    const entry = index.byId[id];
+    if (!entry?.visible) continue;
     if (TECHNICAL_TYPES.has(entry.type)) continue;
     // Hojas bajo grupo ya capturado
     if (entry.ancestorIds.some((a) => used.has(a))) continue;
@@ -378,6 +425,18 @@ export function buildUnorganizedPresentationUnits(args: {
     if (used.has(id)) continue;
     const entry = index.byId[id];
     if (!entry?.visible) continue;
+    if (entry.type === "clippingContainer") {
+      markDescendantsUsed(id, index, used);
+      units.push({
+        id: `layer:${id}`,
+        kind: "layer",
+        layerIds: [id],
+        bounds: clipLayoutBounds(entry, index),
+        zOrder: entry.zOrderPath,
+        role: "content",
+      });
+      continue;
+    }
     if (TECHNICAL_TYPES.has(entry.type)) continue;
 
     if (entry.containerKind === "groupContainer" || entry.containerKind === "booleanGroup") {
