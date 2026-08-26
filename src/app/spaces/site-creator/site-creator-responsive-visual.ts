@@ -124,7 +124,7 @@ function isShapeType(type: string): boolean {
 }
 
 function isBackgroundCandidateType(type: string): boolean {
-  return type === "image" || isShapeType(type);
+  return type === "image" || type === "clippingContainer" || isShapeType(type);
 }
 
 function unique(ids: string[]): string[] {
@@ -163,7 +163,7 @@ export function classifyContainerBackground(args: {
     const e = index.byId[id];
     if (!e?.visible) return false;
     if (buttonLayerIds.has(id)) return false;
-    if (TECHNICAL_TYPES.has(e.type)) return false;
+    if (TECHNICAL_TYPES.has(e.type) && e.type !== "clippingContainer") return false;
     return true;
   });
 
@@ -173,7 +173,10 @@ export function classifyContainerBackground(args: {
   for (const id of contentIds) {
     const entry = index.byId[id];
     if (!entry || !isBackgroundCandidateType(entry.type)) continue;
-    const b = sourceWorldVisualBounds(id, index);
+    const b =
+      entry.type === "clippingContainer"
+        ? clipLayoutBounds(entry, index)
+        : sourceWorldVisualBounds(id, index);
     if (!b) continue;
     const cover = area(b) / containerA;
     const widthRatio = b.width / Math.max(1, containerBounds.width);

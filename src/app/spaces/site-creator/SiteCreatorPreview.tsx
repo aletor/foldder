@@ -8,6 +8,7 @@ import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { DesignerPageCanvasView } from "@/app/spaces/presenter/DesignerPageCanvasView";
 import {
   SiteCreatorSelectionSurface,
+  type SiteCreatorClipImageEdit,
   type SiteCreatorUnitOutline,
 } from "./SiteCreatorSelectionSurface";
 import type { GroupFitOpportunity } from "./site-creator-group-fit";
@@ -104,6 +105,14 @@ export interface SiteCreatorPreviewProps {
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
+  clipImageEdit?: SiteCreatorClipImageEdit | null;
+  onEnterClipImageEdit?: (edit: { clipId: string; imageId: string }) => void;
+  onClipImageTuneChange?: (
+    tune: { focal: { x: number; y: number }; zoom: number },
+    commit: boolean,
+  ) => void;
+  onResetClipImageEdit?: () => void;
+  onExitClipImageEdit?: () => void;
   /** Vista de página: sin selección, edición, ni chrome de diseño. */
   readOnly?: boolean;
   groupFit?: { opportunity: GroupFitOpportunity; displayBounds: PageRect } | null;
@@ -190,6 +199,11 @@ export function SiteCreatorPreview({
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
+  clipImageEdit = null,
+  onEnterClipImageEdit,
+  onClipImageTuneChange,
+  onResetClipImageEdit,
+  onExitClipImageEdit,
   readOnly = false,
   groupFit = null,
   onGroupFit,
@@ -597,6 +611,11 @@ export function SiteCreatorPreview({
             focalLayerId={focalLayerId}
             onFocalPoint={onFocalPoint}
             onCancelFocal={onCancelFocal}
+            clipImageEdit={clipImageEdit}
+            onEnterClipImageEdit={onEnterClipImageEdit}
+            onClipImageTuneChange={onClipImageTuneChange}
+            onResetClipImageEdit={onResetClipImageEdit}
+            onExitClipImageEdit={onExitClipImageEdit}
             groupFit={groupFit}
             onGroupFit={onGroupFit}
             sectionHeight={sectionHeight}

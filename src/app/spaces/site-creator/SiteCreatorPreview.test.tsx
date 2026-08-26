@@ -275,6 +275,117 @@ describe("SiteCreatorPreview", () => {
     });
   });
 
+  it("opens mask framing on double click and clamps the dragged image", () => {
+    const clip = {
+      id: "clip",
+      type: "clippingContainer",
+      x: 20,
+      y: 20,
+      width: 100,
+      height: 50,
+      rotation: 0,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      mask: {
+        id: "mask",
+        type: "rect",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+        rotation: 0,
+        visible: true,
+        locked: false,
+        opacity: 1,
+      },
+      content: [
+        {
+          id: "photo",
+          type: "image",
+          x: -10,
+          y: 0,
+          width: 120,
+          height: 50,
+          rotation: 0,
+          visible: true,
+          locked: false,
+          opacity: 1,
+          src: "https://cdn.example/photo.jpg",
+        },
+      ],
+    } as FreehandObject;
+    const page: DesignerPageState = {
+      id: "mask_page",
+      format: "web169",
+      customWidth: 400,
+      customHeight: 300,
+      objects: [clip],
+    };
+    const onEnterClipImageEdit = vi.fn();
+    const onClipImageTuneChange = vi.fn();
+    const index = buildSiteSelectionIndex(page);
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={400}
+        referenceWidth={400}
+        previewZoom={1}
+        blueprint={createEmptySiteBlueprintV1()}
+        selection={{
+          selectedIds: ["clip"],
+          hoverId: null,
+          isolationIds: [],
+          overlapCycle: null,
+        }}
+        selectionIndex={index}
+        onSelectionAction={() => undefined}
+        onEnterClipImageEdit={onEnterClipImageEdit}
+        clipImageEdit={{
+          clipId: "clip",
+          imageId: "photo",
+          focal: { x: 0.5, y: 0.5 },
+          zoom: 1,
+        }}
+        onClipImageTuneChange={onClipImageTuneChange}
+      />,
+    );
+
+    const svg = document.querySelector(".site-creator-selection-surface > svg");
+    expect(svg).toBeTruthy();
+    fireEvent.dblClick(svg!, { clientX: 30, clientY: 30 });
+    expect(onEnterClipImageEdit).toHaveBeenCalledWith({
+      clipId: "clip",
+      imageId: "photo",
+    });
+
+    fireNativePointer("pointerdown", svg!, {
+      clientX: 50,
+      clientY: 40,
+      pointerId: 9,
+    });
+    fireNativePointer("pointermove", svg!, {
+      clientX: 100,
+      clientY: 40,
+      pointerId: 9,
+    });
+    fireNativePointer("pointerup", svg!, {
+      clientX: 100,
+      clientY: 40,
+      pointerId: 9,
+    });
+
+    expect(onClipImageTuneChange).toHaveBeenLastCalledWith(
+      {
+        focal: { x: 50 / 120, y: 0.5 },
+        zoom: 1,
+      },
+      true,
+    );
+    expect(screen.getByTestId("site-creator-clip-image-toolbar")).toBeTruthy();
+  });
+
   it("double click on dark preview chrome triggers fit callback", () => {
     const snapshotPage: DesignerPageState = {
       id: "snap_pg",

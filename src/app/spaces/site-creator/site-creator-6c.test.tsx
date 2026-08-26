@@ -728,6 +728,23 @@ describe("site-creator 6C visible layout effects", () => {
     expect(resolveMediaTune(bp, "photo", "mobile")?.focal).toEqual({ x: 0.9, y: 0.1 });
   });
 
+  it("stores mask framing and zoom independently in Original", () => {
+    const fx = fixtureHeroPanelButton();
+    const bp = patchMediaTune({
+      blueprint: fx.blueprint,
+      layerId: "photo",
+      band: "wide",
+      patch: { focal: { x: 0.15, y: 0.7 }, zoom: 1.4 },
+    }).blueprint;
+
+    expect(resolveMediaTune(bp, "photo", "wide")).toEqual({
+      focal: { x: 0.15, y: 0.7 },
+      zoom: 1.4,
+    });
+    expect(resolveMediaTune(bp, "photo", "tablet")).toBeNull();
+    expect(resolveMediaTune(bp, "photo", "mobile")).toBeNull();
+  });
+
   it("applies item controls on a page without Hero or Section", () => {
     const fx = fixtureRealEightLayersGrouped();
     const index = buildSiteSelectionIndex(fx.page);

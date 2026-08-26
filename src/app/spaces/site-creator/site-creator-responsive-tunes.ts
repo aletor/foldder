@@ -1,6 +1,7 @@
 /**
  * Fase 6C — ajustes contextuales por vista (puro, sin UI).
- * Original (wide) nunca persiste ni aplica estas excepciones.
+ * Original (wide) solo persiste el encuadre de medios; el resto de excepciones
+ * siguen siendo exclusivas de Tablet y Móvil.
  */
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
@@ -16,6 +17,7 @@ import {
   type ResponsiveItemRuleV1,
   type ResponsiveItemTuneV1,
   type ResponsiveMediaFit,
+  type ResponsiveMediaBand,
   type ResponsiveMediaRuleV1,
   type ResponsiveMediaTuneV1,
   type ResponsiveTargetRef,
@@ -162,6 +164,7 @@ function isEmptyMediaTune(tune: ResponsiveMediaTuneV1 | undefined): boolean {
   if (!tune) return true;
   if (tune.fit) return false;
   if (tune.focal && (tune.focal.x !== 0.5 || tune.focal.y !== 0.5)) return false;
+  if (typeof tune.zoom === "number" && tune.zoom !== 1) return false;
   return true;
 }
 
@@ -247,6 +250,10 @@ function cleanMediaTune(tune: ResponsiveMediaTuneV1): ResponsiveMediaTuneV1 | nu
     const y = Number.isFinite(tune.focal.y) ? Math.min(1, Math.max(0, tune.focal.y)) : 0.5;
     if (x !== 0.5 || y !== 0.5) next.focal = { x, y };
   }
+  if (typeof tune.zoom === "number" && Number.isFinite(tune.zoom)) {
+    const zoom = Math.min(4, Math.max(1, tune.zoom));
+    if (zoom !== 1) next.zoom = zoom;
+  }
   return isEmptyMediaTune(next) ? null : next;
 }
 
@@ -293,8 +300,10 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
   const media: ResponsiveMediaRuleV1[] = [];
   for (const rule of [...(doc.media ?? [])].sort((a, b) => a.layerId.localeCompare(b.layerId))) {
     const byBand: ResponsiveMediaRuleV1["byBand"] = {};
+    const wide = rule.byBand.wide ? cleanMediaTune(rule.byBand.wide) : null;
     const tablet = rule.byBand.tablet ? cleanMediaTune(rule.byBand.tablet) : null;
     const mobile = rule.byBand.mobile ? cleanMediaTune(rule.byBand.mobile) : null;
+    if (wide) byBand.wide = wide;
     if (tablet) byBand.tablet = tablet;
     if (mobile) byBand.mobile = mobile;
     if (Object.keys(byBand).length === 0) continue;
@@ -373,7 +382,7 @@ export function resolveContainerTune(
 export function resolveMediaTune(
   blueprint: SiteBlueprintV1,
   layerId: string,
-  band: ResponsiveEditableBand,
+  band: ResponsiveMediaBand,
 ): ResponsiveMediaTuneV1 | null {
   const rule = blueprint.responsive?.media?.find((r) => r.layerId === layerId);
   const tune = rule?.byBand[band];
@@ -453,7 +462,7 @@ export function patchContainerTune(args: {
 export function patchMediaTune(args: {
   blueprint: SiteBlueprintV1;
   layerId: string;
-  band: ResponsiveEditableBand;
+  band: ResponsiveMediaBand;
   patch: Partial<ResponsiveMediaTuneV1> | null;
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
   const current = resolveMediaTune(args.blueprint, args.layerId, args.band);
@@ -541,7 +550,7 @@ export function resetContainerTuneToAuto(args: {
 export function resetMediaToAuto(args: {
   blueprint: SiteBlueprintV1;
   layerId: string;
-  band: ResponsiveEditableBand;
+  band: ResponsiveMediaBand;
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
   return patchMediaTune({ ...args, patch: null });
 }

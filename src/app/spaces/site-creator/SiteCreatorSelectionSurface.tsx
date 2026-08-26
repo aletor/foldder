@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { ClippingContainerObject, FreehandObject } from "../FreehandStudio";
 import {
   canEnterContainer,
   canvasHitTestUnits,
@@ -32,6 +33,22 @@ import {
 import { isSiteCreatorPreviewChromeBackgroundTarget } from "./site-creator-viewport";
 
 const MARQUEE_THRESHOLD_PX = 4;
+
+export type SiteCreatorClipImageEdit = {
+  clipId: string;
+  imageId: string;
+  focal: { x: number; y: number };
+  zoom: number;
+};
+
+type ClipImageDrag = {
+  pointerId: number;
+  start: PagePoint;
+  rotation: number;
+  mask: { x: number; y: number; width: number; height: number };
+  image: { x: number; y: number; width: number; height: number };
+  lastFocal: { x: number; y: number };
+};
 
 type PointerLike = {
   button: number;
@@ -96,6 +113,40 @@ function isPointOnPage(point: PagePoint, pageWidth: number, pageHeight: number):
   return point.x >= 0 && point.y >= 0 && point.x <= pageWidth && point.y <= pageHeight;
 }
 
+function clamp(min: number, value: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function directClipImage(
+  entry: SiteCreatorSelectionIndex["entries"][number] | undefined,
+): FreehandObject | null {
+  if (!entry || entry.type !== "clippingContainer") return null;
+  const clip = entry.object as ClippingContainerObject;
+  return clip.content.find((child) => child.type === "image") ?? null;
+}
+
+function focalForClipDrag(drag: ClipImageDrag, point: PagePoint): { x: number; y: number } {
+  const dx = point.x - drag.start.x;
+  const dy = point.y - drag.start.y;
+  const radians = (drag.rotation * Math.PI) / 180;
+  const localDx = dx * Math.cos(radians) + dy * Math.sin(radians);
+  const localDy = -dx * Math.sin(radians) + dy * Math.cos(radians);
+  const maskRight = drag.mask.x + drag.mask.width;
+  const maskBottom = drag.mask.y + drag.mask.height;
+  const x = clamp(maskRight - drag.image.width, drag.image.x + localDx, drag.mask.x);
+  const y = clamp(maskBottom - drag.image.height, drag.image.y + localDy, drag.mask.y);
+  return {
+    x:
+      drag.image.width <= drag.mask.width + 0.01
+        ? 0.5
+        : clamp(0, (drag.mask.x + drag.mask.width / 2 - x) / drag.image.width, 1),
+    y:
+      drag.image.height <= drag.mask.height + 0.01
+        ? 0.5
+        : clamp(0, (drag.mask.y + drag.mask.height / 2 - y) / drag.image.height, 1),
+  };
+}
+
 export interface SiteCreatorUnitOutline {
   bounds: { x: number; y: number; width: number; height: number };
   label?: string | null;
@@ -126,6 +177,14 @@ export interface SiteCreatorSelectionSurfaceProps {
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
+  clipImageEdit?: SiteCreatorClipImageEdit | null;
+  onEnterClipImageEdit?: (edit: { clipId: string; imageId: string }) => void;
+  onClipImageTuneChange?: (
+    tune: { focal: { x: number; y: number }; zoom: number },
+    commit: boolean,
+  ) => void;
+  onResetClipImageEdit?: () => void;
+  onExitClipImageEdit?: () => void;
   groupFit?: { opportunity: GroupFitOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
   onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
   sectionHeight?: { opportunity: SectionHeightOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
@@ -158,6 +217,11 @@ export function SiteCreatorSelectionSurface({
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
+  clipImageEdit = null,
+  onEnterClipImageEdit,
+  onClipImageTuneChange,
+  onResetClipImageEdit,
+  onExitClipImageEdit,
   groupFit = null,
   onGroupFit,
   sectionHeight = null,
@@ -185,6 +249,7 @@ export function SiteCreatorSelectionSurface({
     startBounds: { x: number; y: number; width: number; height: number };
     handle: "se" | "e" | "s";
   } | null>(null);
+  const clipImageDragRef = useRef<ClipImageDrag | null>(null);
   const pointerSessionRef = useRef<{
     pointerId: number;
     start: PagePoint;
@@ -224,6 +289,16 @@ export function SiteCreatorSelectionSurface({
 
   const handlePointerMove = useCallback(
     (event: PointerLike) => {
+      const clipDrag = clipImageDragRef.current;
+      if (clipDrag && event.pointerId === clipDrag.pointerId) {
+        const point = toPage(event.clientX, event.clientY);
+        if (!point || !clipImageEdit || !onClipImageTuneChange) return;
+        event.preventDefault();
+        const focal = focalForClipDrag(clipDrag, point);
+        clipDrag.lastFocal = focal;
+        onClipImageTuneChange({ focal, zoom: clipImageEdit.zoom }, false);
+        return;
+      }
       const drag = transformDragRef.current;
       if (drag && event.pointerId === drag.pointerId) {
         return;
@@ -268,7 +343,19 @@ export function SiteCreatorSelectionSurface({
         dispatch({ type: "hover", layerId: pending });
       });
     },
-    [blueprint, dispatch, index, marqueeStart, pageHeight, pageWidth, scale, selection.isolationIds, toPage],
+    [
+      blueprint,
+      clipImageEdit,
+      dispatch,
+      index,
+      marqueeStart,
+      onClipImageTuneChange,
+      pageHeight,
+      pageWidth,
+      scale,
+      selection.isolationIds,
+      toPage,
+    ],
   );
 
   const onPointerMove = useCallback(
@@ -292,6 +379,15 @@ export function SiteCreatorSelectionSurface({
 
   const finishPointer = useCallback(
     (event: PointerLike) => {
+      const clipDrag = clipImageDragRef.current;
+      if (clipDrag && event.pointerId === clipDrag.pointerId) {
+        const point = toPage(event.clientX, event.clientY);
+        clipImageDragRef.current = null;
+        if (!clipImageEdit || !onClipImageTuneChange) return;
+        const focal = point ? focalForClipDrag(clipDrag, point) : clipDrag.lastFocal;
+        onClipImageTuneChange({ focal, zoom: clipImageEdit.zoom }, true);
+        return;
+      }
       const drag = transformDragRef.current;
       if (drag && event.pointerId === drag.pointerId) {
         const end = toPage(event.clientX, event.clientY);
@@ -344,7 +440,19 @@ export function SiteCreatorSelectionSurface({
         dispatch({ type: "click", layerId: null, additive: false });
       }
     },
-    [blueprint, dispatch, index, marqueeNow, marqueeStart, onTransformCommit, scale, selection.isolationIds, toPage],
+    [
+      blueprint,
+      clipImageEdit,
+      dispatch,
+      index,
+      marqueeNow,
+      marqueeStart,
+      onClipImageTuneChange,
+      onTransformCommit,
+      scale,
+      selection.isolationIds,
+      toPage,
+    ],
   );
 
   const finishMarquee = useCallback(
@@ -405,6 +513,48 @@ export function SiteCreatorSelectionSurface({
 
       const front = resolveFrontHit(point);
 
+      if (clipImageEdit) {
+        const clipEntry = index.byId[clipImageEdit.clipId];
+        const imageEntry = index.byId[clipImageEdit.imageId];
+        const clip = clipEntry?.object as ClippingContainerObject | undefined;
+        const image = imageEntry?.object;
+        if (
+          clipEntry &&
+          clip &&
+          image?.type === "image" &&
+          point.x >= clipEntry.visualBounds.x &&
+          point.y >= clipEntry.visualBounds.y &&
+          point.x <= clipEntry.visualBounds.x + clipEntry.visualBounds.width &&
+          point.y <= clipEntry.visualBounds.y + clipEntry.visualBounds.height
+        ) {
+          event.preventDefault();
+          clipImageDragRef.current = {
+            pointerId: event.pointerId,
+            start: point,
+            rotation: clip.rotation ?? 0,
+            mask: {
+              x: clip.mask.x,
+              y: clip.mask.y,
+              width: Math.max(1, clip.mask.width),
+              height: Math.max(1, clip.mask.height),
+            },
+            image: {
+              x: image.x,
+              y: image.y,
+              width: Math.max(1, image.width),
+              height: Math.max(1, image.height),
+            },
+            lastFocal: clipImageEdit.focal,
+          };
+          if (typeof captureEl.setPointerCapture === "function") {
+            captureEl.setPointerCapture(event.pointerId);
+          }
+        } else {
+          onExitClipImageEdit?.();
+        }
+        return;
+      }
+
       if (focalLayerId) {
         event.preventDefault();
         const bounds = index.byId[focalLayerId]?.visualBounds;
@@ -447,12 +597,14 @@ export function SiteCreatorSelectionSurface({
     [
       beginPointerSession,
       blueprint,
+      clipImageEdit,
       dispatch,
       focalLayerId,
       index,
       onCancelFocal,
       onCanvasInteraction,
       onFocalPoint,
+      onExitClipImageEdit,
       onTransformCommit,
       pageHeight,
       pageWidth,
@@ -484,6 +636,15 @@ export function SiteCreatorSelectionSurface({
         onCanvasBackgroundDoubleClick?.();
         return;
       }
+      if (hit.type === "clippingContainer" && onEnterClipImageEdit) {
+        const image = directClipImage(hit);
+        if (image) {
+          event.preventDefault();
+          event.stopPropagation();
+          onEnterClipImageEdit({ clipId: hit.layerId, imageId: image.id });
+          return;
+        }
+      }
       // Designer groupContainer dive OR Studio handles blueprint inspect via special action
       if (canEnterContainer(hit, blueprint)) {
         const childHit = frontmostDirectHit(index, [...selection.isolationIds, hit.layerId], point, blueprint);
@@ -499,7 +660,15 @@ export function SiteCreatorSelectionSurface({
       }
       dispatch({ type: "doubleClickLayer", layerId: hit.layerId });
     },
-    [blueprint, dispatch, index, onCanvasBackgroundDoubleClick, selection.isolationIds, toPage],
+    [
+      blueprint,
+      dispatch,
+      index,
+      onCanvasBackgroundDoubleClick,
+      onEnterClipImageEdit,
+      selection.isolationIds,
+      toPage,
+    ],
   );
 
   const onContextMenu = useCallback(
@@ -560,6 +729,10 @@ export function SiteCreatorSelectionSurface({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (clipImageEdit) {
+          onExitClipImageEdit?.();
+          return;
+        }
         if (focalLayerId) {
           onCancelFocal?.();
           return;
@@ -579,7 +752,14 @@ export function SiteCreatorSelectionSurface({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dispatch, focalLayerId, onCancelFocal, picker]);
+  }, [
+    clipImageEdit,
+    dispatch,
+    focalLayerId,
+    onCancelFocal,
+    onExitClipImageEdit,
+    picker,
+  ]);
 
   useEffect(() => {
     if (!picker) return;
@@ -591,6 +771,13 @@ export function SiteCreatorSelectionSurface({
     };
   }, [picker]);
 
+  const selectedClipEntry =
+    selection.selectedIds.length === 1 ? index.byId[selection.selectedIds[0]!] : undefined;
+  const selectedClipImage = directClipImage(selectedClipEntry);
+  const activeClipBounds = clipImageEdit
+    ? index.byId[clipImageEdit.clipId]?.visualBounds ?? null
+    : null;
+
   return (
     <div
       ref={stageRef}
@@ -599,7 +786,9 @@ export function SiteCreatorSelectionSurface({
     >
       <svg
         ref={svgRef}
-        className="absolute inset-0 z-[2] block h-full w-full cursor-crosshair"
+        className={`absolute inset-0 z-[2] block h-full w-full ${
+          clipImageEdit ? "cursor-grab active:cursor-grabbing" : "cursor-crosshair"
+        }`}
         viewBox={`0 0 ${pageWidth} ${pageHeight}`}
         preserveAspectRatio="none"
         onPointerDown={onPointerDown}
@@ -624,6 +813,30 @@ export function SiteCreatorSelectionSurface({
         sectionOutlines={sectionOutlines}
         ghostOutlines={ghostOutlines}
       />
+      {clipImageEdit && activeClipBounds ? (
+        <svg
+          className="pointer-events-none absolute inset-0 z-[3] block h-full w-full"
+          viewBox={`0 0 ${pageWidth} ${pageHeight}`}
+          preserveAspectRatio="none"
+          data-testid="site-creator-clip-image-overlay"
+        >
+          <path
+            d={`M0 0H${pageWidth}V${pageHeight}H0Z M${activeClipBounds.x} ${activeClipBounds.y}H${activeClipBounds.x + activeClipBounds.width}V${activeClipBounds.y + activeClipBounds.height}H${activeClipBounds.x}Z`}
+            fill="rgba(7,12,18,0.48)"
+            fillRule="evenodd"
+          />
+          <rect
+            x={activeClipBounds.x}
+            y={activeClipBounds.y}
+            width={activeClipBounds.width}
+            height={activeClipBounds.height}
+            fill="none"
+            stroke="#A8FF32"
+            strokeWidth={Math.max(1, 1 / Math.max(0.25, scale))}
+            strokeDasharray={`${4 / Math.max(0.25, scale)} ${3 / Math.max(0.25, scale)}`}
+          />
+        </svg>
+      ) : null}
       {groupFit && onGroupFit ? (
         <SiteCreatorGroupFitHandles
           opportunity={groupFit.opportunity}
@@ -649,6 +862,85 @@ export function SiteCreatorSelectionSurface({
         >
           Clic en la imagen para el punto focal · Esc cancela
         </div>
+      ) : null}
+      {clipImageEdit ? (
+        <div
+          className="pointer-events-auto absolute left-1/2 top-3 z-[6] flex -translate-x-1/2 items-center gap-1 rounded-md border border-white/15 bg-[#101820]/95 p-1 text-[10px] font-semibold text-white shadow-xl"
+          data-testid="site-creator-clip-image-toolbar"
+          data-site-creator-floating-ui="true"
+        >
+          <span className="px-1.5 text-white/75">Arrastra para encuadrar</span>
+          <button
+            type="button"
+            aria-label="Alejar imagen"
+            disabled={clipImageEdit.zoom <= 1}
+            className="rounded px-1.5 py-0.5 text-white/70 hover:bg-white/10 disabled:opacity-30"
+            onClick={() =>
+              onClipImageTuneChange?.(
+                {
+                  focal: clipImageEdit.focal,
+                  zoom: clamp(1, clipImageEdit.zoom - 0.1, 4),
+                },
+                true,
+              )
+            }
+          >
+            −
+          </button>
+          <span className="min-w-9 text-center tabular-nums text-white/60">
+            {Math.round(clipImageEdit.zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            aria-label="Acercar imagen"
+            disabled={clipImageEdit.zoom >= 4}
+            className="rounded px-1.5 py-0.5 text-white/70 hover:bg-white/10 disabled:opacity-30"
+            onClick={() =>
+              onClipImageTuneChange?.(
+                {
+                  focal: clipImageEdit.focal,
+                  zoom: clamp(1, clipImageEdit.zoom + 0.1, 4),
+                },
+                true,
+              )
+            }
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="rounded px-2 py-0.5 text-white/65 hover:bg-white/10 hover:text-white"
+            onClick={onResetClipImageEdit}
+          >
+            Restablecer
+          </button>
+          <button
+            type="button"
+            className="rounded bg-[#A8FF32] px-2 py-0.5 text-[#101820]"
+            onClick={onExitClipImageEdit}
+          >
+            Hecho
+          </button>
+        </div>
+      ) : selectedClipEntry && selectedClipImage && onEnterClipImageEdit ? (
+        <button
+          type="button"
+          className="pointer-events-auto absolute z-[5] rounded border border-white/15 bg-[#101820]/92 px-2 py-1 text-[10px] font-semibold text-white/80 shadow-lg hover:bg-[#18212c] hover:text-white"
+          style={{
+            left: selectedClipEntry.visualBounds.x + 8,
+            top: selectedClipEntry.visualBounds.y + 8,
+          }}
+          data-testid="site-creator-edit-clip-image"
+          data-site-creator-floating-ui="true"
+          onClick={() =>
+            onEnterClipImageEdit({
+              clipId: selectedClipEntry.layerId,
+              imageId: selectedClipImage.id,
+            })
+          }
+        >
+          Editar encuadre
+        </button>
       ) : null}
       {transformEnabled && transformBounds ? (
         <div className="pointer-events-none absolute inset-0 z-[4]" data-testid="site-creator-transform">

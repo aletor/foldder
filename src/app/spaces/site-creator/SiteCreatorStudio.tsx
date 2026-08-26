@@ -64,7 +64,10 @@ import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visu
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
 import { SiteCreatorOutlinePanel, expandPathForUnit } from "./SiteCreatorOutlinePanel";
 import { SiteCreatorButtonLabelPrompt } from "./SiteCreatorSelectionToolbar";
-import type { SiteCreatorUnitOutline } from "./SiteCreatorSelectionSurface";
+import type {
+  SiteCreatorClipImageEdit,
+  SiteCreatorUnitOutline,
+} from "./SiteCreatorSelectionSurface";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorMicrobarModel } from "./SiteCreatorObjectMicrobar";
 import { createPortal } from "react-dom";
@@ -101,6 +104,7 @@ import type {
   DesignerSourceSnapshotV1,
   ResponsiveEditableBand,
   ResponsiveItemRef,
+  ResponsiveMediaBand,
   SiteBlueprintV1,
   SiteCreatorPublishStateV1,
   SiteSectionHeightMode,
@@ -391,6 +395,17 @@ export function SiteCreatorStudio({
     defaultDeviceConfig("mobile"),
   );
   const [focalLayerId, setFocalLayerId] = useState<string | null>(null);
+  const [clipImageEditTarget, setClipImageEditTarget] = useState<{
+    clipId: string;
+    imageId: string;
+    band: ResponsiveMediaBand;
+  } | null>(null);
+  const [clipImageDraft, setClipImageDraft] = useState<{
+    imageId: string;
+    band: ResponsiveMediaBand;
+    focal: { x: number; y: number };
+    zoom: number;
+  } | null>(null);
   const [availablePreviewSize, setAvailablePreviewSize] = useState<{
     width: number;
     height: number;
@@ -473,6 +488,43 @@ export function SiteCreatorStudio({
   const responsiveBand = pagePreviewMode
     ? bandForViewportWidth(effectiveViewportWidth, referenceWidth)
     : bandForEditorDevice(viewportBand, effectiveViewportWidth, referenceWidth);
+  const mediaBand: ResponsiveMediaBand = responsiveBand;
+  const displayBlueprint = useMemo(() => {
+    if (
+      !clipImageDraft ||
+      clipImageDraft.band !== mediaBand
+    ) {
+      return blueprint;
+    }
+    return patchMediaTune({
+      blueprint,
+      layerId: clipImageDraft.imageId,
+      band: clipImageDraft.band,
+      patch: {
+        focal: clipImageDraft.focal,
+        zoom: clipImageDraft.zoom,
+      },
+    }).blueprint;
+  }, [blueprint, clipImageDraft, mediaBand]);
+  const clipImageEdit = useMemo((): SiteCreatorClipImageEdit | null => {
+    if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return null;
+    const draft =
+      clipImageDraft?.imageId === clipImageEditTarget.imageId &&
+      clipImageDraft.band === mediaBand
+        ? clipImageDraft
+        : null;
+    const saved = resolveMediaTune(
+      blueprint,
+      clipImageEditTarget.imageId,
+      mediaBand,
+    );
+    return {
+      clipId: clipImageEditTarget.clipId,
+      imageId: clipImageEditTarget.imageId,
+      focal: draft?.focal ?? saved?.focal ?? { x: 0.5, y: 0.5 },
+      zoom: draft?.zoom ?? saved?.zoom ?? 1,
+    };
+  }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand]);
   const showPreview = Boolean(page);
 
   const referenceIndex = useMemo(() => (page ? buildSiteSelectionIndex(page) : null), [page]);
@@ -500,13 +552,20 @@ export function SiteCreatorStudio({
     if (!page || !referenceIndex) return null;
     return resolveSiteCreatorResponsiveDisplay({
       page,
-      blueprint,
+      blueprint: displayBlueprint,
       referenceIndex,
       viewportWidth: effectiveViewportWidth,
       viewportHeight: liveViewportHeight,
       band: responsiveBand,
     });
-  }, [blueprint, effectiveViewportWidth, liveViewportHeight, page, referenceIndex, responsiveBand]);
+  }, [
+    displayBlueprint,
+    effectiveViewportWidth,
+    liveViewportHeight,
+    page,
+    referenceIndex,
+    responsiveBand,
+  ]);
 
   const displayPage = responsive?.displayPage ?? page;
   const objectClipById = responsive?.resolvedLayout?.objectClipById;
@@ -2323,7 +2382,11 @@ export function SiteCreatorStudio({
         );
       },
       onEnterFocal: () => {
-        if (refineModel?.layerId) setFocalLayerId(refineModel.layerId);
+        if (refineModel?.layerId) {
+          setClipImageDraft(null);
+          setClipImageEditTarget(null);
+          setFocalLayerId(refineModel.layerId);
+        }
       },
     }),
     [blueprint, commitBlueprint, commitTune, editableBand, refineModel],
@@ -2871,14 +2934,14 @@ export function SiteCreatorStudio({
               onAvailableSizeChange={setAvailablePreviewSize}
               selection={pagePreviewMode ? undefined : displayShadow}
               selectionIndex={pagePreviewMode ? undefined : selectionIndex ?? undefined}
-              blueprint={blueprint}
+              blueprint={displayBlueprint}
               onSelectionAction={pagePreviewMode ? undefined : dispatchSelection}
               unitOutlines={pagePreviewMode ? undefined : unitOutlines}
               hoverOutline={pagePreviewMode ? undefined : hoverOutline}
               contextOutlines={pagePreviewMode ? undefined : contextOutlines}
               sectionOutlines={pagePreviewMode ? undefined : sectionOutlines}
               ghostOutlines={pagePreviewMode ? undefined : ghostOutlines}
-              groupFit={pagePreviewMode ? null : groupFitModel}
+              groupFit={pagePreviewMode || clipImageEdit ? null : groupFitModel}
               onGroupFit={pagePreviewMode ? undefined : handleGroupFit}
               sectionHeight={null}
               onSectionHeight={undefined}
@@ -2897,13 +2960,17 @@ export function SiteCreatorStudio({
               onSpineScrollChange={handleSpineScrollChange}
               onSpineHeightModeChange={handleSpineHeightModeChange}
               onSpineCustomHeightChange={handleSpineCustomHeightChange}
-              microbar={pagePreviewMode ? null : microbarModel}
+              microbar={pagePreviewMode || clipImageEdit ? null : microbarModel}
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}
               onCanvasInteraction={() => undefined}
               objectClipById={objectClipById}
               floatingPortalHost={pagePreviewMode ? null : floatingHostEl}
-              transformEnabled={!pagePreviewMode && Boolean(editableBand && refineModel?.kind === "item")}
+              transformEnabled={
+                !pagePreviewMode &&
+                !clipImageEdit &&
+                Boolean(editableBand && refineModel?.kind === "item")
+              }
               transformBounds={
                 !pagePreviewMode && editableBand && refineModel?.kind === "item"
                   ? unitOutlines[0]?.bounds ?? null
@@ -2924,6 +2991,48 @@ export function SiteCreatorStudio({
                 setFocalLayerId(null);
               }}
               onCancelFocal={() => setFocalLayerId(null)}
+              clipImageEdit={pagePreviewMode ? null : clipImageEdit}
+              onEnterClipImageEdit={({ clipId, imageId }) => {
+                setFocalLayerId(null);
+                setClipImageDraft(null);
+                setClipImageEditTarget({ clipId, imageId, band: mediaBand });
+              }}
+              onClipImageTuneChange={(tune, commit) => {
+                if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return;
+                if (!commit) {
+                  setClipImageDraft({
+                    imageId: clipImageEditTarget.imageId,
+                    band: mediaBand,
+                    focal: tune.focal,
+                    zoom: tune.zoom,
+                  });
+                  return;
+                }
+                setClipImageDraft(null);
+                commitTune(
+                  patchMediaTune({
+                    blueprint,
+                    layerId: clipImageEditTarget.imageId,
+                    band: mediaBand,
+                    patch: tune,
+                  }),
+                );
+              }}
+              onResetClipImageEdit={() => {
+                if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return;
+                setClipImageDraft(null);
+                commitTune(
+                  resetMediaToAuto({
+                    blueprint,
+                    layerId: clipImageEditTarget.imageId,
+                    band: mediaBand,
+                  }),
+                );
+              }}
+              onExitClipImageEdit={() => {
+                setClipImageDraft(null);
+                setClipImageEditTarget(null);
+              }}
             />
           ) : (
             <div className="flex flex-1 items-center justify-center px-8">

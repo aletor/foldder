@@ -119,6 +119,8 @@ export type SiteDismissedDesignerMirrorsV1 = {
 };
 
 export type ResponsiveEditableBand = "tablet" | "mobile";
+/** El encuadre de medios también puede personalizarse en la vista Original. */
+export type ResponsiveMediaBand = SiteSectionScrollBand;
 export type ResponsiveOverrideMode = "preserve" | "stack";
 export type ResponsiveAlignX = "start" | "center" | "end";
 export type ResponsiveAlignY = "start" | "center" | "end";
@@ -179,11 +181,13 @@ export type ResponsiveContainerTuneRuleV1 = {
 export type ResponsiveMediaTuneV1 = {
   fit?: ResponsiveMediaFit;
   focal?: { x: number; y: number };
+  /** Ampliación adicional del contenido recortado. 1 = cover mínimo. */
+  zoom?: number;
 };
 
 export type ResponsiveMediaRuleV1 = {
   layerId: string;
-  byBand: Partial<Record<ResponsiveEditableBand, ResponsiveMediaTuneV1>>;
+  byBand: Partial<Record<ResponsiveMediaBand, ResponsiveMediaTuneV1>>;
 };
 
 export type SiteResponsiveV1 = {

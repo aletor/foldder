@@ -886,7 +886,10 @@ function groupBoxCss(
     box.rotation ? `transform:rotate(${box.rotation}deg)` : "",
     node.clipOverflow ? "overflow:hidden" : "",
   ].filter(Boolean);
-  return `${sel}{${rules.join(";")}}`;
+  const clipContent = node.clipOverflow
+    ? `\n${sel}>.s-clip-content{position:absolute;left:50%;top:50%;height:max(100%,calc(100cqw * ${Math.max(1, box.height)} / ${Math.max(1, box.width)}));width:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)};transform:translate(-50%,-50%)}`
+    : "";
+  return `${sel}{${rules.join(";")}}${clipContent}`;
 }
 
 function layerBoxCss(
@@ -974,7 +977,10 @@ function serializeTreeHtml(
         const flowItem = inRow ? " s-flow-item" : "";
         const clip = node.kind === "group" && node.clipOverflow ? " s-clip" : "";
         const inner = serializeTreeHtml(node.children, layers, `${indent}  `, false);
-        return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}${clip}" data-group="${escapeHtml(node.id)}">\n${inner}\n${indent}</div>`;
+        const content = node.clipOverflow
+          ? `${indent}  <div class="s-clip-content">\n${inner}\n${indent}  </div>`
+          : inner;
+        return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}${clip}" data-group="${escapeHtml(node.id)}">\n${content}\n${indent}</div>`;
       }
       const layer = layers.get(node.id);
       if (!layer) return "";

@@ -2,7 +2,11 @@
  * Fase 6B.1 — layout responsive por contenedores + clusters visuales.
  * No modifica Designer ni persiste reglas responsive.
  */
-import type { FreehandObject, PathObject } from "../FreehandStudio";
+import type {
+  ClippingContainerObject,
+  FreehandObject,
+  PathObject,
+} from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { getPageDimensions } from "../indesign/page-formats";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
@@ -73,6 +77,10 @@ import {
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
 import { applySectionViewportHeights, sectionCustomHeightForBand, sectionHeightModeForBand } from "./site-creator-section-height";
+import {
+  reframeClippingImage,
+  resizeSectionCoverClip,
+} from "./site-creator-clipping-resize";
 
 export type ResponsiveBand = "wide" | "tablet" | "mobile";
 
@@ -574,14 +582,7 @@ function placeBackgroundLayers(args: {
 
     // Formas de fondo: estirar al marco de la región.
     if (obj.type === "clippingContainer") {
-      const source = layoutSourceRect(obj, args.index) ?? sourceRect;
-      const sx = args.layoutRect.width / Math.max(1, source.width);
-      const sy = args.layoutRect.height / Math.max(1, source.height);
-      obj.x = args.layoutRect.x;
-      obj.y = args.layoutRect.y;
-      obj.width = args.layoutRect.width;
-      obj.height = args.layoutRect.height;
-      scaleSubtreeLocal(obj, Math.min(sx, sy), 0);
+      resizeSectionCoverClip(obj as ClippingContainerObject, args.layoutRect);
       continue;
     }
     obj.x = args.layoutRect.x;
@@ -1919,6 +1920,29 @@ function shiftSectionContentY(args: {
   }
 }
 
+function applyClippingMediaTunes(args: {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  index: SiteCreatorSelectionIndex;
+  band: ResponsiveBand;
+}): void {
+  const byId = new Map<string, FreehandObject>();
+  walkObjects(args.page.objects ?? [], byId);
+  for (const rule of args.blueprint.responsive?.media ?? []) {
+    const tune = resolveMediaTune(args.blueprint, rule.layerId, args.band);
+    if (!tune) continue;
+    const source = args.index.byId[rule.layerId];
+    if (!source || source.type !== "image") continue;
+    const clipId = [...source.ancestorIds]
+      .reverse()
+      .find((id) => args.index.byId[id]?.type === "clippingContainer");
+    if (!clipId) continue;
+    const clip = byId.get(clipId);
+    if (!clip || clip.type !== "clippingContainer") continue;
+    reframeClippingImage(clip as ClippingContainerObject, rule.layerId, tune);
+  }
+}
+
 /**
  * Resuelve la página de preview para un ancho dado.
  * `wide` → identidad. `tablet`/`mobile` → Automático con clusters visuales.
@@ -1952,6 +1976,12 @@ function withLayoutGroupWidthModes(
     page = sectioned.page;
     layoutHeight = Math.max(layoutHeight, sectioned.layout.pageHeight);
   }
+  applyClippingMediaTunes({
+    page,
+    blueprint,
+    index,
+    band: result.band,
+  });
   if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
     return result;
   }

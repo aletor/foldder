@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { createSectionFromSelection } from "./site-blueprint-ops";
 import { cloneBlueprint } from "./site-blueprint-validate";
@@ -203,6 +204,99 @@ describe("section height mode", () => {
     expect(subtitle.y).toBe(520);
     expect(subtitle.y - title.y).toBe(120);
     expect(body.y).toBe(1100);
+  });
+
+  it("expands a wide section mask while preserving inner content proportions", () => {
+    const clip = {
+      ...makeLayer({ id: "clip", type: "rect", x: 0, y: 0, width: 1920, height: 400 }),
+      type: "clippingContainer",
+      mask: makeLayer({ id: "mask", type: "rect", x: 0, y: 0, width: 1920, height: 400 }),
+      content: [
+        makeLayer({ id: "photo", type: "image", x: 0, y: 0, width: 1920, height: 400 }),
+      ],
+    } as FreehandObject;
+    const page = makePage([clip]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["clip"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const custom = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: custom.blueprint,
+      index,
+      viewportHeight: 1080,
+    }).page;
+    const expanded = findDisplayObject(laidOut, "clip") as
+      | (FreehandObject & { mask?: FreehandObject; content?: FreehandObject[] })
+      | undefined;
+    const photo = expanded?.content?.find((child) => child.id === "photo");
+    expect(expanded?.height).toBe(1000);
+    expect(expanded?.mask?.height).toBe(1000);
+    expect(photo?.width / (photo?.height ?? 1)).toBeCloseTo(1920 / 400, 8);
+    expect(photo?.height).toBeGreaterThanOrEqual(1000);
+
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: custom.blueprint,
+      title: "Máscara adaptable",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.html).toContain('<div class="s-clip-content">');
+    expect(compiled.css).toContain(
+      ".s-group-clip>.s-clip-content{position:absolute;left:50%;top:50%;height:max(100%,calc(100cqw * 400 / 1920));width:auto;aspect-ratio:1920 / 400",
+    );
+  });
+
+  it("centers a local mask without stretching its frame or contents", () => {
+    const clip = {
+      ...makeLayer({ id: "clip", type: "rect", x: 200, y: 100, width: 600, height: 200 }),
+      type: "clippingContainer",
+      mask: makeLayer({ id: "mask", type: "rect", x: 0, y: 0, width: 600, height: 200 }),
+      content: [
+        makeLayer({ id: "photo", type: "image", x: 0, y: 0, width: 600, height: 200 }),
+      ],
+    } as FreehandObject;
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 400 }),
+      clip,
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "clip"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const custom = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: custom.blueprint,
+      index,
+      viewportHeight: 1080,
+    }).page;
+    const centered = findDisplayObject(laidOut, "clip") as
+      | (FreehandObject & { mask?: FreehandObject; content?: FreehandObject[] })
+      | undefined;
+    const photo = centered?.content?.find((child) => child.id === "photo");
+    expect(centered).toMatchObject({ y: 400, width: 600, height: 200 });
+    expect(centered?.mask).toMatchObject({ width: 600, height: 200 });
+    expect(photo).toMatchObject({ x: 0, y: 0, width: 600, height: 200 });
   });
 
   it("centers responsive content while backgrounds keep covering the expanded section", () => {
