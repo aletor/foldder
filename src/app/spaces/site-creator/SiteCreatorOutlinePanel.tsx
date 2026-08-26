@@ -12,8 +12,11 @@ import {
   Layers,
   LayoutTemplate,
   Lock,
+  Monitor,
   PenTool,
+  Smartphone,
   Square,
+  Tablet,
   Type,
   Unlock,
 } from "lucide-react";
@@ -24,6 +27,93 @@ import type {
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { imageFrameHasPhoto, isDesignerImageFrame, sameSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
+import type { ResponsiveVisibilityBand } from "./site-creator-types";
+
+type OutlineVisibilityState = {
+  hidden: boolean;
+  inherited?: boolean;
+};
+
+const VISIBILITY_BANDS: Array<{
+  band: ResponsiveVisibilityBand;
+  label: string;
+  Icon: typeof Monitor;
+}> = [
+  { band: "wide", label: "Original", Icon: Monitor },
+  { band: "tablet", label: "Tablet", Icon: Tablet },
+  { band: "mobile", label: "Móvil", Icon: Smartphone },
+];
+
+function OutlineDeviceVisibility({
+  node,
+  activeBand,
+  resolveVisibility,
+  onToggleVisibility,
+}: {
+  node: SiteCreatorPresentationNode;
+  activeBand: ResponsiveVisibilityBand;
+  resolveVisibility: (
+    node: SiteCreatorPresentationNode,
+    band: ResponsiveVisibilityBand,
+  ) => OutlineVisibilityState | null;
+  onToggleVisibility?: (
+    node: SiteCreatorPresentationNode,
+    band: ResponsiveVisibilityBand,
+  ) => void;
+}) {
+  if (!node.unit) return null;
+  return (
+    <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
+      {VISIBILITY_BANDS.map(({ band, label, Icon }) => {
+        const state = resolveVisibility(node, band);
+        const active = band === activeBand;
+        const hidden = state?.hidden === true;
+        const inherited = state?.inherited === true;
+        const enabled = active && !inherited && Boolean(onToggleVisibility);
+        const action = hidden ? "Mostrar" : "Ocultar";
+        const title = inherited
+          ? `${label}: oculto por una agrupación superior`
+          : active
+            ? `${action} en ${label}`
+            : `${label}: ${hidden ? "oculto" : "visible"}`;
+        return (
+          <span
+            key={band}
+            role="button"
+            aria-label={title}
+            aria-pressed={!hidden}
+            aria-disabled={!enabled}
+            data-testid={`outline-visibility-${node.id}-${band}`}
+            title={title}
+            className={`relative inline-flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border transition-colors ${
+              active
+                ? hidden
+                  ? "border-white/20 bg-white/[0.04] text-white/30"
+                  : "border-[#A8FF32]/45 bg-[#A8FF32]/10 text-[#A8FF32]/85"
+                : hidden
+                  ? "border-transparent text-white/10"
+                  : "border-transparent text-white/25"
+            } ${enabled ? "cursor-pointer hover:border-white/35 hover:text-white" : "cursor-default"}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!enabled) return;
+              onToggleVisibility?.(node, band);
+            }}
+          >
+            <Icon className="h-2.5 w-2.5" strokeWidth={1.7} aria-hidden />
+            {hidden ? (
+              <span
+                className="pointer-events-none absolute h-px w-3 rotate-45 bg-current"
+                aria-hidden
+              />
+            ) : null}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 function solidFillCss(fill: unknown): string | null {
   if (typeof fill === "string") {
@@ -142,6 +232,9 @@ function OutlineTreeRow({
   resolveOverride,
   canvasLockForUnit,
   onToggleCanvasLock,
+  activeVisibilityBand,
+  resolveVisibility,
+  onToggleVisibility,
   selectionIndex,
 }: {
   node: SiteCreatorPresentationNode;
@@ -161,6 +254,15 @@ function OutlineTreeRow({
   ) => { dot: "current" | "other"; title: string; hidden?: boolean } | null;
   canvasLockForUnit?: (unit: SiteCreatorSelectionUnit) => { locked: boolean; inherited: boolean };
   onToggleCanvasLock?: (unit: SiteCreatorSelectionUnit) => void;
+  activeVisibilityBand: ResponsiveVisibilityBand;
+  resolveVisibility?: (
+    node: SiteCreatorPresentationNode,
+    band: ResponsiveVisibilityBand,
+  ) => OutlineVisibilityState | null;
+  onToggleVisibility?: (
+    node: SiteCreatorPresentationNode,
+    band: ResponsiveVisibilityBand,
+  ) => void;
   selectionIndex?: SiteCreatorSelectionIndex | null;
 }) {
   const rowRef = useRef<HTMLButtonElement | null>(null);
@@ -245,7 +347,7 @@ function OutlineTreeRow({
         )}
         <OutlineGlyph node={node} selectionIndex={selectionIndex} />
         <span
-          className={`min-w-0 truncate font-normal ${overrideInfo?.hidden ? "opacity-40" : ""}`}
+          className={`min-w-0 flex-1 truncate font-normal ${overrideInfo?.hidden ? "opacity-40" : ""}`}
         >
           {rowLabel(node, open, closedCount)}
         </span>
@@ -269,8 +371,16 @@ function OutlineTreeRow({
             aria-hidden
           />
         ) : null}
+        {resolveVisibility ? (
+          <OutlineDeviceVisibility
+            node={node}
+            activeBand={activeVisibilityBand}
+            resolveVisibility={resolveVisibility}
+            onToggleVisibility={onToggleVisibility}
+          />
+        ) : null}
         {dropTarget || lockInfo ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1">
+          <span className="flex shrink-0 items-center gap-1">
             {dropTarget ? (
               <span className="text-[9px] font-normal text-white/45">
                 {`Añadir a ${node.label.split(" · ")[0]}`}
@@ -336,6 +446,9 @@ function OutlineTreeRow({
               resolveOverride={resolveOverride}
               canvasLockForUnit={canvasLockForUnit}
               onToggleCanvasLock={onToggleCanvasLock}
+              activeVisibilityBand={activeVisibilityBand}
+              resolveVisibility={resolveVisibility}
+              onToggleVisibility={onToggleVisibility}
               selectionIndex={selectionIndex}
             />
           ))
@@ -361,6 +474,15 @@ export interface SiteCreatorOutlinePanelProps {
   ) => { dot: "current" | "other"; title: string; hidden?: boolean } | null;
   canvasLockForUnit?: (unit: SiteCreatorSelectionUnit) => { locked: boolean; inherited: boolean };
   onToggleCanvasLock?: (unit: SiteCreatorSelectionUnit) => void;
+  activeVisibilityBand?: ResponsiveVisibilityBand;
+  resolveVisibility?: (
+    node: SiteCreatorPresentationNode,
+    band: ResponsiveVisibilityBand,
+  ) => OutlineVisibilityState | null;
+  onToggleVisibility?: (
+    node: SiteCreatorPresentationNode,
+    band: ResponsiveVisibilityBand,
+  ) => void;
   selectionIndex?: SiteCreatorSelectionIndex | null;
   /** Cerrado por defecto en Studio; útil abierto en vistas embebidas. */
   defaultOpen?: boolean;
@@ -405,6 +527,9 @@ export function SiteCreatorOutlinePanel({
   resolveOverride,
   canvasLockForUnit,
   onToggleCanvasLock,
+  activeVisibilityBand = "wide",
+  resolveVisibility,
+  onToggleVisibility,
   selectionIndex,
   defaultOpen = false,
 }: SiteCreatorOutlinePanelProps) {
@@ -487,6 +612,9 @@ export function SiteCreatorOutlinePanel({
                   resolveOverride={resolveOverride}
                   canvasLockForUnit={canvasLockForUnit}
                   onToggleCanvasLock={onToggleCanvasLock}
+                  activeVisibilityBand={activeVisibilityBand}
+                  resolveVisibility={resolveVisibility}
+                  onToggleVisibility={onToggleVisibility}
                   selectionIndex={selectionIndex}
                 />
               ))

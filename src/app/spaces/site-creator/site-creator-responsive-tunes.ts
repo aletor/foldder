@@ -1,7 +1,7 @@
 /**
  * Fase 6C — ajustes contextuales por vista (puro, sin UI).
- * Original (wide) solo persiste el encuadre de medios; el resto de excepciones
- * siguen siendo exclusivas de Tablet y Móvil.
+ * Original (wide) persiste encuadre y visibilidad; los ajustes de composición
+ * siguen siendo exclusivos de Tablet y Móvil.
  */
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
@@ -10,6 +10,8 @@ import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import {
   isSiteSectionNode,
   type ResponsiveAlignX,
+  type ResponsiveBackgroundPlacementV1,
+  type ResponsiveBackgroundRuleV1,
   type ResponsiveContainerTuneRuleV1,
   type ResponsiveContainerTuneV1,
   type ResponsiveEditableBand,
@@ -21,6 +23,7 @@ import {
   type ResponsiveMediaRuleV1,
   type ResponsiveMediaTuneV1,
   type ResponsiveTargetRef,
+  type ResponsiveVisibilityBand,
   type ResponsiveWidthMode,
   type SiteBlueprintV1,
   type SiteResponsiveV1,
@@ -257,6 +260,38 @@ function cleanMediaTune(tune: ResponsiveMediaTuneV1): ResponsiveMediaTuneV1 | nu
   return isEmptyMediaTune(next) ? null : next;
 }
 
+function cleanBackgroundPlacement(
+  placement: ResponsiveBackgroundPlacementV1,
+): ResponsiveBackgroundPlacementV1 | null {
+  if (!placement.imageLayerId) return null;
+  const target =
+    placement.target.kind === "blueprintNode" && placement.target.nodeId
+      ? { kind: "blueprintNode" as const, nodeId: placement.target.nodeId }
+      : placement.target.kind === "designerGroup" && placement.target.layerId
+        ? { kind: "designerGroup" as const, layerId: placement.target.layerId }
+        : null;
+  if (!target) return null;
+  const focal = placement.focal
+    ? {
+        x: Math.min(1, Math.max(0, placement.focal.x)),
+        y: Math.min(1, Math.max(0, placement.focal.y)),
+      }
+    : { x: 0.5, y: 0.5 };
+  const zoom =
+    typeof placement.zoom === "number" && Number.isFinite(placement.zoom)
+      ? Math.min(4, Math.max(1, placement.zoom))
+      : 1;
+  return {
+    target,
+    imageLayerId: placement.imageLayerId,
+    ...(placement.surfaceLayerId
+      ? { surfaceLayerId: placement.surfaceLayerId }
+      : {}),
+    focal,
+    zoom,
+  };
+}
+
 export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 | undefined {
   const rules: SiteResponsiveV1["rules"] = [];
   for (const rule of [...doc.rules].sort((a, b) => targetKey(a.target).localeCompare(targetKey(b.target)))) {
@@ -276,8 +311,10 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
     itemRefKey(a.target).localeCompare(itemRefKey(b.target)),
   )) {
     const byBand: ResponsiveItemRuleV1["byBand"] = {};
+    const wide = rule.byBand.wide ? cleanItemTune(rule.byBand.wide) : null;
     const tablet = rule.byBand.tablet ? cleanItemTune(rule.byBand.tablet) : null;
     const mobile = rule.byBand.mobile ? cleanItemTune(rule.byBand.mobile) : null;
+    if (wide) byBand.wide = wide;
     if (tablet) byBand.tablet = tablet;
     if (mobile) byBand.mobile = mobile;
     if (Object.keys(byBand).length === 0) continue;
@@ -310,7 +347,35 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
     media.push({ layerId: rule.layerId, byBand });
   }
 
-  if (rules.length === 0 && items.length === 0 && containerTunes.length === 0 && media.length === 0) {
+  const backgrounds: ResponsiveBackgroundRuleV1[] = [];
+  for (const rule of [...(doc.backgrounds ?? [])].sort((a, b) =>
+    a.sourceLayerId.localeCompare(b.sourceLayerId),
+  )) {
+    const byBand: ResponsiveBackgroundRuleV1["byBand"] = {};
+    const wide = rule.byBand.wide
+      ? cleanBackgroundPlacement(rule.byBand.wide)
+      : null;
+    const tablet = rule.byBand.tablet
+      ? cleanBackgroundPlacement(rule.byBand.tablet)
+      : null;
+    const mobile = rule.byBand.mobile
+      ? cleanBackgroundPlacement(rule.byBand.mobile)
+      : null;
+    if (wide) byBand.wide = wide;
+    if (tablet) byBand.tablet = tablet;
+    if (mobile) byBand.mobile = mobile;
+    if (Object.keys(byBand).length > 0) {
+      backgrounds.push({ sourceLayerId: rule.sourceLayerId, byBand });
+    }
+  }
+
+  if (
+    rules.length === 0 &&
+    items.length === 0 &&
+    containerTunes.length === 0 &&
+    media.length === 0 &&
+    backgrounds.length === 0
+  ) {
     return undefined;
   }
   return {
@@ -319,6 +384,7 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
     ...(items.length ? { items } : {}),
     ...(containerTunes.length ? { containerTunes } : {}),
     ...(media.length ? { media } : {}),
+    ...(backgrounds.length ? { backgrounds } : {}),
   };
 }
 
@@ -332,7 +398,7 @@ function writeResponsive(blueprint: SiteBlueprintV1, doc: SiteResponsiveV1 | und
 export function resolveItemTune(
   blueprint: SiteBlueprintV1,
   target: ResponsiveItemRef,
-  band: ResponsiveEditableBand,
+  band: ResponsiveVisibilityBand,
 ): ResponsiveItemTuneV1 | null {
   const rule = blueprint.responsive?.items?.find((r) => sameItemRef(r.target, target));
   const tune = rule?.byBand[band];
@@ -342,7 +408,7 @@ export function resolveItemTune(
 export function isHiddenItemTune(
   blueprint: SiteBlueprintV1,
   target: ResponsiveItemRef,
-  band: ResponsiveEditableBand,
+  band: ResponsiveVisibilityBand,
 ): boolean {
   return resolveItemTune(blueprint, target, band)?.hidden === true;
 }
@@ -351,7 +417,7 @@ export function isHiddenItemTune(
 export function isLayerHiddenInBand(args: {
   blueprint: SiteBlueprintV1;
   layerId: string;
-  band: ResponsiveEditableBand;
+  band: ResponsiveVisibilityBand;
   nodeId?: string | null;
 }): boolean {
   if (isHiddenItemTune(args.blueprint, { kind: "layer", layerId: args.layerId }, args.band)) {
@@ -392,7 +458,7 @@ export function resolveMediaTune(
 export function patchItemTune(args: {
   blueprint: SiteBlueprintV1;
   target: ResponsiveItemRef;
-  band: ResponsiveEditableBand;
+  band: ResponsiveVisibilityBand;
   patch: Partial<ResponsiveItemTuneV1> | null;
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
   const current = resolveItemTune(args.blueprint, args.target, args.band);
@@ -420,6 +486,7 @@ export function patchItemTune(args: {
     items,
     containerTunes: next.responsive?.containerTunes,
     media: next.responsive?.media,
+    backgrounds: next.responsive?.backgrounds,
   });
   return { blueprint: writeResponsive(next, compact), changed: true };
 }
@@ -455,6 +522,7 @@ export function patchContainerTune(args: {
     items: next.responsive?.items,
     containerTunes,
     media: next.responsive?.media,
+    backgrounds: next.responsive?.backgrounds,
   });
   return { blueprint: writeResponsive(next, compact), changed: true };
 }
@@ -490,6 +558,7 @@ export function patchMediaTune(args: {
     items: next.responsive?.items,
     containerTunes: next.responsive?.containerTunes,
     media,
+    backgrounds: next.responsive?.backgrounds,
   });
   return { blueprint: writeResponsive(next, compact), changed: true };
 }
@@ -589,6 +658,11 @@ export function resetResponsiveBand(args: {
       delete byBand[args.band];
       return { layerId: r.layerId, byBand };
     }),
+    backgrounds: doc.backgrounds?.map((r) => {
+      const byBand = { ...r.byBand };
+      delete byBand[args.band];
+      return { sourceLayerId: r.sourceLayerId, byBand };
+    }),
   };
   for (const node of Object.values(args.blueprint.nodes)) {
     if (!isSiteSectionNode(node)) continue;
@@ -652,6 +726,7 @@ export function bandHasCustomizations(
     return true;
   }
   if (doc.media?.some((r) => r.byBand[band])) return true;
+  if (doc.backgrounds?.some((r) => r.byBand[band])) return true;
   return false;
 }
 
@@ -696,12 +771,22 @@ export function unitHasCustomization(args: {
     if (node) {
       for (const layerId of node.layerIds) {
         if (resolveMediaTune(blueprint, layerId, band)) return true;
+        if (blueprint.responsive?.backgrounds?.some(
+          (rule) => rule.sourceLayerId === layerId && rule.byBand[band],
+        )) {
+          return true;
+        }
       }
     }
     return false;
   }
   if (resolveItemTune(blueprint, { kind: "layer", layerId: unit.layerId }, band)) return true;
   if (resolveMediaTune(blueprint, unit.layerId, band)) return true;
+  if (blueprint.responsive?.backgrounds?.some(
+    (rule) => rule.sourceLayerId === unit.layerId && rule.byBand[band],
+  )) {
+    return true;
+  }
   const entry = index?.byId[unit.layerId];
   if (entry?.containerKind === "groupContainer") {
     const target: ResponsiveTargetRef = { kind: "designerGroup", layerId: unit.layerId };

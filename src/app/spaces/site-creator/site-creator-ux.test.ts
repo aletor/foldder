@@ -29,6 +29,7 @@ import {
 import {
   looksLikeButtonCandidate,
   resolveContextualModel,
+  selectionContainsUnitInsideSection,
 } from "./site-creator-contextual-actions";
 import {
   createEmptySiteBlueprintV1,
@@ -437,6 +438,42 @@ describe("site creator UX contextual actions", () => {
     expect(model.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup"]);
     expect(model.primaryActions.find((a) => a.id === "groupWidthFull")?.label).toBe("Ancho completo");
     expect(model.primaryActions.find((a) => a.id === "separateGroup")?.label).toBe("Desagrupar");
+  });
+
+  it("recognizes a nested group and its layers as already inside a section", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok || !group.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: group.blueprint,
+      selectedLayerIds: ["bg", "title"],
+      index,
+      committedPage: snap.page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+    expect(
+      selectionContainsUnitInsideSection(
+        [{ kind: "blueprintNode", nodeId: group.createdNodeId }],
+        section.blueprint,
+        index,
+      ),
+    ).toBe(true);
+    expect(
+      selectionContainsUnitInsideSection(
+        [{ kind: "layer", layerId: "title" }],
+        section.blueprint,
+        index,
+      ),
+    ).toBe(true);
   });
 
   it("inner layer of Button shows no structure ops (ruta vía microbarra)", () => {

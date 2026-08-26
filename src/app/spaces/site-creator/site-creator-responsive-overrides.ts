@@ -125,7 +125,10 @@ function sortRules(rules: ResponsiveContainerRuleV1[]): ResponsiveContainerRuleV
 
 function normalizeResponsive(
   rules: ResponsiveContainerRuleV1[],
-  extras?: Pick<SiteResponsiveV1, "items" | "containerTunes" | "media">,
+  extras?: Pick<
+    SiteResponsiveV1,
+    "items" | "containerTunes" | "media" | "backgrounds"
+  >,
 ): SiteResponsiveV1 | undefined {
   const cleaned: ResponsiveContainerRuleV1[] = [];
   for (const rule of sortRules(rules)) {
@@ -143,13 +146,26 @@ function normalizeResponsive(
   const containerTunes =
     extras?.containerTunes && extras.containerTunes.length > 0 ? extras.containerTunes : undefined;
   const media = extras?.media && extras.media.length > 0 ? extras.media : undefined;
-  if (cleaned.length === 0 && !items && !containerTunes && !media) return undefined;
+  const backgrounds =
+    extras?.backgrounds && extras.backgrounds.length > 0
+      ? extras.backgrounds
+      : undefined;
+  if (
+    cleaned.length === 0 &&
+    !items &&
+    !containerTunes &&
+    !media &&
+    !backgrounds
+  ) {
+    return undefined;
+  }
   return {
     version: 1,
     rules: cleaned,
     ...(items ? { items } : {}),
     ...(containerTunes ? { containerTunes } : {}),
     ...(media ? { media } : {}),
+    ...(backgrounds ? { backgrounds } : {}),
   };
 }
 

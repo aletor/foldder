@@ -121,6 +121,8 @@ export type SiteDismissedDesignerMirrorsV1 = {
 export type ResponsiveEditableBand = "tablet" | "mobile";
 /** El encuadre de medios también puede personalizarse en la vista Original. */
 export type ResponsiveMediaBand = SiteSectionScrollBand;
+/** La visibilidad puede decidirse de forma independiente en los tres dispositivos. */
+export type ResponsiveVisibilityBand = ResponsiveMediaBand;
 export type ResponsiveOverrideMode = "preserve" | "stack";
 export type ResponsiveAlignX = "start" | "center" | "end";
 export type ResponsiveAlignY = "start" | "center" | "end";
@@ -153,7 +155,7 @@ export type ResponsiveItemTuneV1 = {
 
 export type ResponsiveItemRuleV1 = {
   target: ResponsiveItemRef;
-  byBand: Partial<Record<ResponsiveEditableBand, ResponsiveItemTuneV1>>;
+  byBand: Partial<Record<ResponsiveVisibilityBand, ResponsiveItemTuneV1>>;
 };
 
 /** Ajustes 6C de un contenedor (Hero / Sección / Grupo). */
@@ -190,12 +192,30 @@ export type ResponsiveMediaRuleV1 = {
   byBand: Partial<Record<ResponsiveMediaBand, ResponsiveMediaTuneV1>>;
 };
 
+/** Fondo explícito y reversible de un contenedor en una vista concreta. */
+export type ResponsiveBackgroundPlacementV1 = {
+  target: ResponsiveTargetRef;
+  /** Imagen real que se encuadra; puede vivir dentro de una clippingContainer. */
+  imageLayerId: string;
+  /** Forma decorativa inferior reutilizada como máscara y color de respaldo. */
+  surfaceLayerId?: string;
+  focal?: { x: number; y: number };
+  zoom?: number;
+};
+
+export type ResponsiveBackgroundRuleV1 = {
+  /** Imagen o clippingContainer que deja de participar en el flujo. */
+  sourceLayerId: string;
+  byBand: Partial<Record<ResponsiveMediaBand, ResponsiveBackgroundPlacementV1>>;
+};
+
 export type SiteResponsiveV1 = {
   version: 1;
   rules: ResponsiveContainerRuleV1[];
   items?: ResponsiveItemRuleV1[];
   containerTunes?: ResponsiveContainerTuneRuleV1[];
   media?: ResponsiveMediaRuleV1[];
+  backgrounds?: ResponsiveBackgroundRuleV1[];
 };
 
 export interface DesignerSourceSnapshotV1 {

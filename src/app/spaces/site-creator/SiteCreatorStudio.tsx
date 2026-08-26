@@ -61,6 +61,13 @@ import {
   unitCustomizationTooltip,
 } from "./site-creator-responsive-tunes";
 import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
+import {
+  assignExplicitBackground,
+  inferExplicitBackgroundCandidate,
+  patchExplicitBackgroundCrop,
+  resolveExplicitBackground,
+  restoreExplicitBackground,
+} from "./site-creator-background-assignment";
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
 import { SiteCreatorOutlinePanel, expandPathForUnit } from "./SiteCreatorOutlinePanel";
 import { SiteCreatorButtonLabelPrompt } from "./SiteCreatorSelectionToolbar";
@@ -80,6 +87,7 @@ import {
 } from "./site-creator-presentation-tree";
 import {
   resolveContextualModel,
+  selectionContainsUnitInsideSection,
   unitStructureParentId,
   type SiteCreatorPrimaryAction,
 } from "./site-creator-contextual-actions";
@@ -105,6 +113,7 @@ import type {
   ResponsiveEditableBand,
   ResponsiveItemRef,
   ResponsiveMediaBand,
+  ResponsiveVisibilityBand,
   SiteBlueprintV1,
   SiteCreatorPublishStateV1,
   SiteSectionHeightMode,
@@ -358,6 +367,14 @@ function unitHiddenInCurrentBand(
   return isLayerHiddenInBand({ blueprint, layerId: unit.layerId, band });
 }
 
+function visibilityRefForUnit(
+  unit: SiteCreatorSelectionUnit,
+): ResponsiveItemRef {
+  return unit.kind === "blueprintNode"
+    ? { kind: "blueprintNode", nodeId: unit.nodeId }
+    : { kind: "layer", layerId: unit.layerId };
+}
+
 export function SiteCreatorStudio({
   nodeLabel,
   designerLabel,
@@ -496,6 +513,23 @@ export function SiteCreatorStudio({
     ) {
       return blueprint;
     }
+    const explicit =
+      clipImageEditTarget?.band === mediaBand
+        ? resolveExplicitBackground(
+            blueprint,
+            clipImageEditTarget.clipId,
+            mediaBand,
+          )
+        : null;
+    if (explicit && clipImageEditTarget) {
+      return patchExplicitBackgroundCrop({
+        blueprint,
+        sourceLayerId: clipImageEditTarget.clipId,
+        band: mediaBand,
+        focal: clipImageDraft.focal,
+        zoom: clipImageDraft.zoom,
+      }).blueprint;
+    }
     return patchMediaTune({
       blueprint,
       layerId: clipImageDraft.imageId,
@@ -505,7 +539,7 @@ export function SiteCreatorStudio({
         zoom: clipImageDraft.zoom,
       },
     }).blueprint;
-  }, [blueprint, clipImageDraft, mediaBand]);
+  }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand]);
   const clipImageEdit = useMemo((): SiteCreatorClipImageEdit | null => {
     if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return null;
     const draft =
@@ -518,11 +552,20 @@ export function SiteCreatorStudio({
       clipImageEditTarget.imageId,
       mediaBand,
     );
+    const explicit = resolveExplicitBackground(
+      blueprint,
+      clipImageEditTarget.clipId,
+      mediaBand,
+    );
     return {
       clipId: clipImageEditTarget.clipId,
       imageId: clipImageEditTarget.imageId,
-      focal: draft?.focal ?? saved?.focal ?? { x: 0.5, y: 0.5 },
-      zoom: draft?.zoom ?? saved?.zoom ?? 1,
+      focal:
+        draft?.focal ??
+        explicit?.focal ??
+        saved?.focal ??
+        { x: 0.5, y: 0.5 },
+      zoom: draft?.zoom ?? explicit?.zoom ?? saved?.zoom ?? 1,
     };
   }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand]);
   const showPreview = Boolean(page);
@@ -822,12 +865,31 @@ export function SiteCreatorStudio({
     () => unitsToStructureLayerIds(displayUnits, blueprint),
     [blueprint, displayUnits],
   );
+  const selectionInsideSection = useMemo(
+    () =>
+      Boolean(
+        selectionIndex &&
+          selectionContainsUnitInsideSection(
+            displayUnits,
+            blueprint,
+            selectionIndex,
+          ),
+      ),
+    [blueprint, displayUnits, selectionIndex],
+  );
 
   const applySection = useCallback(
     (sectionType: "hero" | "generic") => {
       if (!committedPage || !committedIndex) return;
       if (!persistGate.allowed) {
         setStructureError(persistGate.message);
+        return;
+      }
+      if (selectionInsideSection) {
+        setStructureError(
+          "Este elemento ya pertenece a una sección. No se puede crear otra sección dentro.",
+        );
+        setSectionMenuOpen(false);
         return;
       }
       const result = createSectionFromSelection({
@@ -855,6 +917,7 @@ export function SiteCreatorStudio({
       committedIndex,
       committedPage,
       persistGate,
+      selectionInsideSection,
       selectCreatedNode,
       structureLayerIds,
     ],
@@ -1392,6 +1455,32 @@ export function SiteCreatorStudio({
     ],
   );
 
+  const backgroundAction = useMemo((): SiteCreatorPrimaryAction | null => {
+    if (!persistGate.allowed || displayUnits.length !== 1 || !referenceIndex) {
+      return null;
+    }
+    const unit = displayUnits[0]!;
+    if (unit.kind !== "layer") return null;
+    if (resolveExplicitBackground(blueprint, unit.layerId, mediaBand)) {
+      return {
+        id: "restoreBackground",
+        label: "Restaurar",
+      };
+    }
+    const candidate = inferExplicitBackgroundCandidate({
+      blueprint,
+      index: referenceIndex,
+      layerId: unit.layerId,
+    });
+    return candidate
+      ? {
+          id: "useAsBackground",
+          label: "Usar como fondo",
+          primary: true,
+        }
+      : null;
+  }, [blueprint, displayUnits, mediaBand, persistGate.allowed, referenceIndex]);
+
   const contextualModel = useMemo(() => {
     const model = resolveContextualModel({
       units: displayUnits,
@@ -1402,13 +1491,30 @@ export function SiteCreatorStudio({
       persistGate,
       band: fitLayoutBandFromViewport(viewportBand),
     });
+    const structural = model.primaryActions.filter(
+      (action) => action.id !== "editContent" && action.id !== "exitInspect",
+    );
     return {
       ...model,
-      primaryActions: model.primaryActions
-        .filter((a) => a.id !== "editContent" && a.id !== "exitInspect")
-        .slice(0, 3),
+      primaryActions: [
+        ...(backgroundAction ? [backgroundAction] : []),
+        ...structural,
+      ].slice(0, 3),
+      summary:
+        backgroundAction?.id === "restoreBackground"
+          ? `Fondo · ${model.summary ?? "Imagen"}`
+          : model.summary,
     };
-  }, [blueprint, contextualInspectId, displayUnits, persistGate, selectionIndex, snapshot, viewportBand]);
+  }, [
+    backgroundAction,
+    blueprint,
+    contextualInspectId,
+    displayUnits,
+    persistGate,
+    selectionIndex,
+    snapshot,
+    viewportBand,
+  ]);
 
   const handleMicrobarAction = useCallback(
     (action: SiteCreatorPrimaryAction) => {
@@ -1439,6 +1545,36 @@ export function SiteCreatorStudio({
         case "chooseAddTarget":
           setAddTargetMenuOpen(true);
           return;
+        case "useAsBackground": {
+          const unit = displayUnits[0];
+          if (!unit || unit.kind !== "layer" || !referenceIndex) return;
+          const candidate = inferExplicitBackgroundCandidate({
+            blueprint,
+            index: referenceIndex,
+            layerId: unit.layerId,
+          });
+          if (!candidate) return;
+          const result = assignExplicitBackground({
+            blueprint,
+            candidate,
+            band: mediaBand,
+          });
+          if (result.changed) commitBlueprint(result.blueprint);
+          return;
+        }
+        case "restoreBackground": {
+          const unit = displayUnits[0];
+          if (!unit || unit.kind !== "layer") return;
+          setClipImageDraft(null);
+          setClipImageEditTarget(null);
+          const result = restoreExplicitBackground({
+            blueprint,
+            sourceLayerId: unit.layerId,
+            band: mediaBand,
+          });
+          if (result.changed) commitBlueprint(result.blueprint);
+          return;
+        }
         case "groupWidthFull":
         case "groupWidthContent": {
           const unit = displayUnits[0];
@@ -1479,7 +1615,9 @@ export function SiteCreatorStudio({
       commitBlueprint,
       committedPage,
       displayUnits,
+      mediaBand,
       openReviewDialog,
+      referenceIndex,
       removeSelectedStructure,
       selectionIndex,
       viewportBand,
@@ -1704,6 +1842,7 @@ export function SiteCreatorStudio({
       Boolean(persistGate.allowed) &&
       structureLayerIds.length > 0 &&
       displayUnits.length >= 1 &&
+      !selectionInsideSection &&
       !displayUnits.every(
         (u) => u.kind === "blueprintNode" && isSiteSectionNode(blueprint.nodes[u.nodeId]!),
       );
@@ -1722,6 +1861,7 @@ export function SiteCreatorStudio({
     presentationTree,
     sectionScrollStations,
     selectionIndex,
+    selectionInsideSection,
     structureLayerIds.length,
   ]);
 
@@ -2460,6 +2600,14 @@ export function SiteCreatorStudio({
       const segments = buildBreadcrumbSegments(unit, blueprint, selectionIndex, snapshot).map(
         (s) => ({ unit: s.unit, label: s.label, current: s.current }),
       );
+      const explicitBackground =
+        unit.kind === "layer"
+          ? resolveExplicitBackground(blueprint, unit.layerId, mediaBand)
+          : null;
+      if (explicitBackground) {
+        const current = segments.find((segment) => segment.current);
+        if (current) current.label = `Fondo · ${current.label}`;
+      }
       return {
         bounds,
         segments,
@@ -2505,6 +2653,7 @@ export function SiteCreatorStudio({
     contextualModel.summary,
     displayUnits,
     hoverUnit,
+    mediaBand,
     onAdaptationFocusController,
     onAdaptationSelectMode,
     presentationTree,
@@ -2618,6 +2767,61 @@ export function SiteCreatorStudio({
       };
     },
     [blueprint, responsiveBand, selectionIndex],
+  );
+
+  const resolveOutlineVisibility = useCallback(
+    (
+      node: SiteCreatorPresentationNode,
+      band: ResponsiveVisibilityBand,
+    ): { hidden: boolean; inherited?: boolean } | null => {
+      if (!node.unit) return null;
+      const target = visibilityRefForUnit(node.unit);
+      const direct = isHiddenItemTune(blueprint, target, band);
+      if (direct) return { hidden: true, inherited: false };
+      if (node.unit.kind === "layer") {
+        const inherited = isLayerHiddenInBand({
+          blueprint,
+          layerId: node.unit.layerId,
+          band,
+        });
+        return { hidden: inherited, inherited };
+      }
+      const coverage = collectSemanticCoverageLayerIds(
+        blueprint,
+        node.unit.nodeId,
+      );
+      const inherited =
+        coverage.length > 0 &&
+        coverage.every((layerId) =>
+          isLayerHiddenInBand({ blueprint, layerId, band }),
+        );
+      return { hidden: inherited, inherited };
+    },
+    [blueprint],
+  );
+
+  const toggleOutlineVisibility = useCallback(
+    (
+      node: SiteCreatorPresentationNode,
+      band: ResponsiveVisibilityBand,
+    ) => {
+      if (!node.unit) return;
+      const state = resolveOutlineVisibility(node, band);
+      if (state?.inherited) return;
+      const current = blueprintRef.current;
+      const target = visibilityRefForUnit(node.unit);
+      commitTune(
+        patchItemTune({
+          blueprint: current,
+          target,
+          band,
+          patch: {
+            hidden: !isHiddenItemTune(current, target, band),
+          },
+        }),
+      );
+    },
+    [commitTune, resolveOutlineVisibility],
   );
 
   useEffect(() => {
@@ -2897,6 +3101,9 @@ export function SiteCreatorStudio({
           visualLayerCount={visualLayerCount}
           reviewCount={reviewCount}
           resolveOverride={resolveOutlineOverride}
+          activeVisibilityBand={responsiveBand}
+          resolveVisibility={resolveOutlineVisibility}
+          onToggleVisibility={toggleOutlineVisibility}
           selectionIndex={selectionIndex}
           canvasLockForUnit={(unit) => {
             const own = isUnitOwnCanvasLocked(blueprint, unit);
@@ -3009,24 +3216,50 @@ export function SiteCreatorStudio({
                   return;
                 }
                 setClipImageDraft(null);
+                const explicit = resolveExplicitBackground(
+                  blueprint,
+                  clipImageEditTarget.clipId,
+                  mediaBand,
+                );
                 commitTune(
-                  patchMediaTune({
-                    blueprint,
-                    layerId: clipImageEditTarget.imageId,
-                    band: mediaBand,
-                    patch: tune,
-                  }),
+                  explicit
+                    ? patchExplicitBackgroundCrop({
+                        blueprint,
+                        sourceLayerId: clipImageEditTarget.clipId,
+                        band: mediaBand,
+                        focal: tune.focal,
+                        zoom: tune.zoom,
+                      })
+                    : patchMediaTune({
+                        blueprint,
+                        layerId: clipImageEditTarget.imageId,
+                        band: mediaBand,
+                        patch: tune,
+                      }),
                 );
               }}
               onResetClipImageEdit={() => {
                 if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return;
                 setClipImageDraft(null);
+                const explicit = resolveExplicitBackground(
+                  blueprint,
+                  clipImageEditTarget.clipId,
+                  mediaBand,
+                );
                 commitTune(
-                  resetMediaToAuto({
-                    blueprint,
-                    layerId: clipImageEditTarget.imageId,
-                    band: mediaBand,
-                  }),
+                  explicit
+                    ? patchExplicitBackgroundCrop({
+                        blueprint,
+                        sourceLayerId: clipImageEditTarget.clipId,
+                        band: mediaBand,
+                        focal: { x: 0.5, y: 0.5 },
+                        zoom: 1,
+                      })
+                    : resetMediaToAuto({
+                        blueprint,
+                        layerId: clipImageEditTarget.imageId,
+                        band: mediaBand,
+                      }),
                 );
               }}
               onExitClipImageEdit={() => {

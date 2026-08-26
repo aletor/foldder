@@ -18,6 +18,7 @@ import {
   resolveBackgroundCoverTransform,
   resolveBackgroundPreserveTransform,
 } from "./site-creator-background-cover";
+import { isLayerExplicitBackground } from "./site-creator-background-assignment";
 import {
   contentBoxX,
   contentBoxY,
@@ -28,6 +29,18 @@ import {
   resolveMediaTune,
   sameItemRef,
 } from "./site-creator-responsive-tunes";
+
+function isLayerExcludedFromFlow(args: {
+  blueprint: SiteBlueprintV1;
+  layerId: string;
+  band: ResponsiveEditableBand;
+  nodeId?: string | null;
+}): boolean {
+  return (
+    isLayerExplicitBackground(args.blueprint, args.layerId, args.band) ||
+    isLayerHiddenInBand(args)
+  );
+}
 
 export type ResolvedRegionBox = {
   sectionId: string;
@@ -110,12 +123,12 @@ export function countContainerReflowUnits(args: {
       let count = 0;
       for (const childId of node.childIds) {
         const layerIds = collectSemanticCoverageLayerIds(args.blueprint, childId).filter(
-          (id) => !isLayerHiddenInBand({ blueprint: args.blueprint, layerId: id, band: args.band, nodeId: childId }),
+          (id) => !isLayerExcludedFromFlow({ blueprint: args.blueprint, layerId: id, band: args.band, nodeId: childId }),
         );
         if (layerIds.length) count += 1;
       }
       for (const layerId of node.layerIds ?? []) {
-        if (isLayerHiddenInBand({ blueprint: args.blueprint, layerId, band: args.band })) continue;
+        if (isLayerExcludedFromFlow({ blueprint: args.blueprint, layerId, band: args.band })) continue;
         count += 1;
       }
       return count;
@@ -134,7 +147,7 @@ export function countContainerReflowUnits(args: {
       .filter(
         (id) =>
           !bg.has(id) &&
-          !isLayerHiddenInBand({ blueprint: args.blueprint, layerId: id, band: args.band }),
+          !isLayerExcludedFromFlow({ blueprint: args.blueprint, layerId: id, band: args.band }),
       );
     return childIds.length;
   }
@@ -565,7 +578,7 @@ function displayChildUnitsForGroup(args: {
   const used = new Set<string>();
   for (const childId of group.childIds) {
     const layerIds = collectSemanticCoverageLayerIds(args.blueprint, childId).filter(
-      (id) => !isLayerHiddenInBand({ blueprint: args.blueprint, layerId: id, band: args.band, nodeId: childId }),
+      (id) => !isLayerExcludedFromFlow({ blueprint: args.blueprint, layerId: id, band: args.band, nodeId: childId }),
     );
     if (layerIds.length === 0 || isBackgroundUnit(layerIds, backgroundIds)) continue;
     layerIds.forEach((id) => used.add(id));
@@ -576,7 +589,7 @@ function displayChildUnitsForGroup(args: {
   }
   for (const layerId of group.layerIds) {
     if (used.has(layerId) || backgroundIds.has(layerId)) continue;
-    if (isLayerHiddenInBand({ blueprint: args.blueprint, layerId, band: args.band })) continue;
+    if (isLayerExcludedFromFlow({ blueprint: args.blueprint, layerId, band: args.band })) continue;
     const display = currentBounds(args.byId, [layerId], args.index);
     const source = sourceBoundsOfIds([layerId], args.index);
     if (!display || !source) continue;
@@ -793,7 +806,7 @@ export function applyResponsiveContainerTunes(args: {
         .filter(
           (id) =>
             !backgroundIds.has(id) &&
-            !isLayerHiddenInBand({ blueprint: args.blueprint, layerId: id, band: args.band }),
+            !isLayerExcludedFromFlow({ blueprint: args.blueprint, layerId: id, band: args.band }),
         );
       const units = (childIds.length ? childIds : [])
         .map((layerId) => {
@@ -845,11 +858,11 @@ export function sortClustersByItemOrder<T extends { cluster: ResponsiveVisualClu
         (ref ? resolveItemTune(blueprint, ref, band)?.hidden === true : false) ||
         (item.cluster.kind === "solo"
           ? item.cluster.allLayerIds.some((layerId) =>
-              isLayerHiddenInBand({ blueprint, layerId, band, nodeId }),
+              isLayerExcludedFromFlow({ blueprint, layerId, band, nodeId }),
             )
           : item.cluster.allLayerIds.length > 0 &&
             item.cluster.allLayerIds.every((layerId) =>
-              isLayerHiddenInBand({ blueprint, layerId, band, nodeId }),
+              isLayerExcludedFromFlow({ blueprint, layerId, band, nodeId }),
             ));
       return { item, index, order: order ?? index, hidden };
     })

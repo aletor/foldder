@@ -19,7 +19,10 @@ import {
 } from "./site-creator-layer-world-bounds";
 import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
-import type { SiteBlueprintV1 } from "./site-creator-types";
+import type {
+  ResponsiveBackgroundPlacementV1,
+  SiteBlueprintV1,
+} from "./site-creator-types";
 import { isSiteSectionNode, type SiteBlueprintSectionNode } from "./site-creator-types";
 import {
   SITE_CREATOR_TABLET_WIDTH,
@@ -54,6 +57,7 @@ import type { EffectiveResponsiveMode } from "./site-creator-responsive-override
 import {
   contentBoxX,
   contentBoxY,
+  coverageLayerIdsForItem,
   itemRefForCluster,
   resolveContainerTune,
   resolveMediaTune,
@@ -81,6 +85,9 @@ import {
   reframeClippingImage,
   resizeSectionCoverClip,
 } from "./site-creator-clipping-resize";
+import {
+  resolveExplicitBackground,
+} from "./site-creator-background-assignment";
 
 export type ResponsiveBand = "wide" | "tablet" | "mobile";
 
@@ -1943,6 +1950,290 @@ function applyClippingMediaTunes(args: {
   }
 }
 
+function moveDisplayLayerAboveSurface(
+  objects: FreehandObject[],
+  layerId: string,
+  surfaceLayerId: string,
+): boolean {
+  const direct = objects.findIndex((object) => object.id === layerId);
+  const surface = objects.findIndex((object) => object.id === surfaceLayerId);
+  if (direct >= 0 && surface >= 0) {
+    const [object] = objects.splice(direct, 1);
+    const nextSurface = objects.findIndex(
+      (candidate) => candidate.id === surfaceLayerId,
+    );
+    if (object) objects.splice(nextSurface + 1, 0, object);
+    return true;
+  }
+  for (const object of objects) {
+    if (object.type === "groupContainer" || object.type === "booleanGroup") {
+      if (
+        moveDisplayLayerAboveSurface(
+          object.children ?? [],
+          layerId,
+          surfaceLayerId,
+        )
+      ) {
+        return true;
+      }
+    } else if (object.type === "clippingContainer") {
+      if (
+        moveDisplayLayerAboveSurface(
+          object.content ?? [],
+          layerId,
+          surfaceLayerId,
+        )
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function moveDisplayLayerToBack(
+  objects: FreehandObject[],
+  layerId: string,
+): boolean {
+  const direct = objects.findIndex((object) => object.id === layerId);
+  if (direct >= 0) {
+    const [object] = objects.splice(direct, 1);
+    if (object) objects.unshift(object);
+    return true;
+  }
+  for (const object of objects) {
+    if (object.type === "groupContainer" || object.type === "booleanGroup") {
+      if (moveDisplayLayerToBack(object.children ?? [], layerId)) return true;
+    } else if (object.type === "clippingContainer") {
+      if (moveDisplayLayerToBack(object.content ?? [], layerId)) return true;
+    }
+  }
+  return false;
+}
+
+function explicitBackgroundTargetRect(args: {
+  placement: ResponsiveBackgroundPlacementV1;
+  blueprint: SiteBlueprintV1;
+  byId: Map<string, FreehandObject>;
+  regions: ResolvedResponsiveRegion[];
+  sourceLayerId: string;
+  layoutWidth: number;
+}): PageRect | null {
+  if (args.placement.surfaceLayerId) {
+    const surface = args.byId.get(args.placement.surfaceLayerId);
+    if (surface) {
+      return {
+        x: surface.x,
+        y: surface.y,
+        width: Math.max(1, surface.width),
+        height: Math.max(1, surface.height),
+      };
+    }
+  }
+  const target = args.placement.target;
+  if (target.kind === "designerGroup") {
+    const group = args.byId.get(target.layerId);
+    if (!group) return null;
+    return {
+      x: 0,
+      y: 0,
+      width: Math.max(1, group.width),
+      height: Math.max(1, group.height),
+    };
+  }
+
+  const node = args.blueprint.nodes[target.nodeId];
+  if (!node) return null;
+  if (isSiteSectionNode(node)) {
+    const region = args.regions.find((candidate) => candidate.sectionId === node.id);
+    return (
+      region?.layoutRect ?? {
+        x: 0,
+        y: node.sourceRange.top,
+        width: args.layoutWidth,
+        height: Math.max(1, node.sourceRange.bottom - node.sourceRange.top),
+      }
+    );
+  }
+
+  const ids = collectSemanticCoverageLayerIds(args.blueprint, node.id).filter(
+    (id) => id !== args.sourceLayerId,
+  );
+  const rects = ids
+    .map((id) => args.byId.get(id))
+    .filter((object): object is FreehandObject => Boolean(object))
+    .map((object) => ({
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+    }));
+  const fallback = args.byId.get(args.sourceLayerId);
+  return (
+    unionPageRects(rects) ??
+    (fallback
+      ? {
+          x: fallback.x,
+          y: fallback.y,
+          width: fallback.width,
+          height: fallback.height,
+        }
+      : null)
+  );
+}
+
+function convertSourceToBackgroundClip(
+  source: FreehandObject,
+  imageLayerId: string,
+  target: PageRect,
+  surface?: FreehandObject | null,
+): { clip: ClippingContainerObject; imageId: string } {
+  const originalImage =
+    source.type === "image"
+      ? source
+      : source.type === "clippingContainer"
+        ? source.content.find(
+            (child) => child.id === imageLayerId && child.type === "image",
+          )
+        : null;
+  if (!originalImage) {
+    throw new Error(`La capa ${source.id} no contiene una imagen de fondo.`);
+  }
+  const imageId =
+    source.type === "image"
+      ? `${source.id}__background_image`
+      : originalImage.id;
+  const content = structuredClone(originalImage) as FreehandObject;
+  content.id = imageId;
+  content.x = 0;
+  content.y = 0;
+  const mask = {
+    ...structuredClone(surface ?? originalImage),
+    id: `${source.id}__background_mask`,
+    type:
+      surface?.type === "ellipse"
+        ? ("ellipse" as const)
+        : ("rect" as const),
+    x: 0,
+    y: 0,
+    width: Math.max(1, target.width),
+    height: Math.max(1, target.height),
+    rotation: 0,
+  };
+  const clip = source as ClippingContainerObject;
+  Object.assign(clip, {
+    type: "clippingContainer",
+    x: target.x,
+    y: target.y,
+    width: Math.max(1, target.width),
+    height: Math.max(1, target.height),
+    rotation: 0,
+    mask,
+    content: [content],
+  });
+  return { clip, imageId };
+}
+
+function applyExplicitContainerBackgrounds(args: {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  band: ResponsiveBand;
+  regions: ResolvedResponsiveRegion[];
+  layoutWidth: number;
+  hideMaskSurfaces?: boolean;
+}): void {
+  const byId = new Map<string, FreehandObject>();
+  walkObjects(args.page.objects ?? [], byId);
+  for (const rule of args.blueprint.responsive?.backgrounds ?? []) {
+    const source = byId.get(rule.sourceLayerId);
+    if (!source) continue;
+    const placement = resolveExplicitBackground(
+      args.blueprint,
+      rule.sourceLayerId,
+      args.band,
+    );
+    if (!placement) {
+      if (source.type === "image") {
+        convertSourceToBackgroundClip(
+          source,
+          rule.sourceLayerId,
+          {
+            x: source.x,
+            y: source.y,
+            width: source.width,
+            height: source.height,
+          },
+          null,
+        );
+      }
+      continue;
+    }
+    const target = explicitBackgroundTargetRect({
+      placement,
+      blueprint: args.blueprint,
+      byId,
+      regions: args.regions,
+      sourceLayerId: rule.sourceLayerId,
+      layoutWidth: args.layoutWidth,
+    });
+    if (!target) continue;
+    if (source.type !== "image" && source.type !== "clippingContainer") {
+      continue;
+    }
+    const surface = placement.surfaceLayerId
+      ? byId.get(placement.surfaceLayerId) ?? null
+      : null;
+    const converted = convertSourceToBackgroundClip(
+      source,
+      placement.imageLayerId,
+      target,
+      surface,
+    );
+    const clip = converted.clip;
+    const displayImageId = converted.imageId;
+    reframeClippingImage(clip, displayImageId, placement);
+    if (placement.surfaceLayerId) {
+      if (surface && args.hideMaskSurfaces !== false) {
+        surface.visible = false;
+      }
+      moveDisplayLayerAboveSurface(
+        args.page.objects ?? [],
+        rule.sourceLayerId,
+        placement.surfaceLayerId,
+      );
+    } else {
+      moveDisplayLayerToBack(
+        args.page.objects ?? [],
+        rule.sourceLayerId,
+      );
+    }
+  }
+}
+
+function applyDeviceVisibility(args: {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  index: SiteCreatorSelectionIndex;
+  band: ResponsiveBand;
+}): void {
+  const byId = new Map<string, FreehandObject>();
+  walkObjects(args.page.objects ?? [], byId);
+  for (const rule of args.blueprint.responsive?.items ?? []) {
+    if (rule.byBand[args.band]?.hidden !== true) continue;
+    for (const layerId of coverageLayerIdsForItem(
+      args.blueprint,
+      rule.target,
+      args.index,
+    )) {
+      const object = byId.get(layerId);
+      if (!object) continue;
+      object.opacity = 0;
+      object.width = 1;
+      object.height = 1;
+    }
+  }
+}
+
 /**
  * Resuelve la página de preview para un ancho dado.
  * `wide` → identidad. `tablet`/`mobile` → Automático con clusters visuales.
@@ -1952,6 +2243,7 @@ function withLayoutGroupWidthModes(
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
   sectionViewport?: { viewportHeight?: number; expandViewportSections?: boolean },
+  preserveExplicitBackgroundSurfaces?: boolean,
 ): SiteCreatorResponsiveResolveResult {
   const laidOut = applyLayoutGroupWidthModes({
     page: result.displayPage,
@@ -1982,6 +2274,20 @@ function withLayoutGroupWidthModes(
     index,
     band: result.band,
   });
+  applyExplicitContainerBackgrounds({
+    page,
+    blueprint,
+    band: result.band,
+    regions: result.resolvedLayout?.regions ?? [],
+    layoutWidth: result.layout.layoutWidth,
+    hideMaskSurfaces: preserveExplicitBackgroundSurfaces !== true,
+  });
+  applyDeviceVisibility({
+    page,
+    blueprint,
+    index,
+    band: result.band,
+  });
   if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
     return result;
   }
@@ -2003,6 +2309,8 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   viewportHeight?: number;
   /** false al publicar: el CSS usa 100dvh en vivo, sin congelar píxeles. */
   expandViewportSections?: boolean;
+  /** Mantiene en el árbol de publicación las superficies que CSS ocultará por banda. */
+  preserveExplicitBackgroundSurfaces?: boolean;
   /**
    * Fuerza la banda (editor en marco de dispositivo). Si falta, se infiere del ancho.
    * El CSS publicado sigue infiriendo por media query.
@@ -2045,6 +2353,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.blueprint,
       args.referenceIndex,
       sectionViewport,
+      args.preserveExplicitBackgroundSurfaces,
     );
   }
 
@@ -2142,6 +2451,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.blueprint,
       args.referenceIndex,
       sectionViewport,
+      args.preserveExplicitBackgroundSurfaces,
     );
   }
 
@@ -2348,6 +2658,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     args.blueprint,
     args.referenceIndex,
     sectionViewport,
+    args.preserveExplicitBackgroundSurfaces,
   );
 }
 

@@ -56,6 +56,40 @@ describe("site-creator 6C contextual refine", () => {
     expect(display?.opacity).toBe(src?.opacity);
   });
 
+  it("stores and applies section visibility independently in Original", () => {
+    const fx = fixtureHeroPanelButton();
+    const hiddenWide = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "blueprintNode", nodeId: fx.heroId },
+      band: "wide",
+      patch: { hidden: true },
+    }).blueprint;
+    expect(
+      resolveItemTune(
+        hiddenWide,
+        { kind: "blueprintNode", nodeId: fx.heroId },
+        "wide",
+      )?.hidden,
+    ).toBe(true);
+    const index = buildSiteSelectionIndex(fx.page);
+    const original = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: hiddenWide,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+    });
+    expect(findDisplayObject(original.displayPage, "title")?.opacity).toBe(0);
+    const tablet = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: hiddenWide,
+      referenceIndex: index,
+      viewportWidth: 768,
+      band: "tablet",
+    });
+    expect(findDisplayObject(tablet.displayPage, "title")?.opacity).not.toBe(0);
+  });
+
   it("tablet item tune does not change mobile", () => {
     const fx = fixtureHeroPanelButton();
     const tablet = patchItemTune({

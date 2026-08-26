@@ -479,6 +479,7 @@ describe("5D outline tree", () => {
       [`node:${btn.createdNodeId}`]: true,
       unorganized: true,
     };
+    const visibilityToggles: string[] = [];
     render(
       <SiteCreatorOutlinePanel
         tree={tree}
@@ -489,6 +490,13 @@ describe("5D outline tree", () => {
         onHoverUnit={() => {}}
         visualLayerCount={1}
         reviewCount={0}
+        activeVisibilityBand="tablet"
+        resolveVisibility={(_node, band) => ({
+          hidden: band === "mobile",
+        })}
+        onToggleVisibility={(node, band) => {
+          visibilityToggles.push(`${node.id}:${band}`);
+        }}
       />,
     );
     expect(screen.getByTestId("site-creator-outline-panel").getAttribute("data-state")).toBe(
@@ -502,6 +510,27 @@ describe("5D outline tree", () => {
     expect(screen.getByText(/Contenido sin organizar/)).toBeTruthy();
     expect(screen.queryByText(/Grupo recortado/)).toBeNull();
     expect(screen.queryByText(/Clip 1/)).toBeNull();
+    const heroNode = tree.roots.find(
+      (node) => node.kind === "semantic" && node.nodeId === hero.createdNodeId,
+    );
+    expect(heroNode).toBeTruthy();
+    if (!heroNode) return;
+    const originalVisibility = screen.getByTestId(
+      `outline-visibility-${heroNode.id}-wide`,
+    );
+    const tabletVisibility = screen.getByTestId(
+      `outline-visibility-${heroNode.id}-tablet`,
+    );
+    const mobileVisibility = screen.getByTestId(
+      `outline-visibility-${heroNode.id}-mobile`,
+    );
+    expect(originalVisibility.getAttribute("aria-disabled")).toBe("true");
+    expect(tabletVisibility.getAttribute("aria-disabled")).toBe("false");
+    expect(mobileVisibility.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(originalVisibility);
+    expect(visibilityToggles).toEqual([]);
+    fireEvent.click(tabletVisibility);
+    expect(visibilityToggles).toEqual([`${heroNode.id}:tablet`]);
     fireEvent.click(screen.getByRole("button", { name: "Ocultar panel Página" }));
     expect(screen.getByTestId("site-creator-outline-panel").getAttribute("data-state")).toBe(
       "closed",

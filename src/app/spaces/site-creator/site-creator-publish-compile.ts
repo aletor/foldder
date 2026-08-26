@@ -7,6 +7,7 @@ import { collectDesignerPageFontFamilies } from "@/app/spaces/designer/designer-
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
+import { isLayerExplicitBackgroundSurface } from "./site-creator-background-assignment";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import {
   isSiteButtonNode,
@@ -495,6 +496,7 @@ export function compilePublishedSite(args: {
     referenceIndex,
     viewportWidth: reference.width,
     expandViewportSections: false,
+    preserveExplicitBackgroundSurfaces: true,
   });
   const tablet = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -502,6 +504,7 @@ export function compilePublishedSite(args: {
     referenceIndex,
     viewportWidth: SITE_CREATOR_TABLET_WIDTH,
     expandViewportSections: false,
+    preserveExplicitBackgroundSurfaces: true,
   });
   const mobile = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -509,6 +512,7 @@ export function compilePublishedSite(args: {
     referenceIndex,
     viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
     expandViewportSections: false,
+    preserveExplicitBackgroundSurfaces: true,
   });
 
   const layouts: Record<BandName, { width: number; height: number; objects: FreehandObject[] }> = {
@@ -530,9 +534,16 @@ export function compilePublishedSite(args: {
 
   const buttonLabels = buttonLabelByLayerId(args.blueprint);
   const layers = new Map<string, CompiledLayer>();
+  const imageHrefByLayerId = { ...args.imageHrefByLayerId };
+  for (const rule of args.blueprint.responsive?.backgrounds ?? []) {
+    const source = referenceIndex.byId[rule.sourceLayerId];
+    if (source?.type !== "image") continue;
+    const href = args.imageHrefByLayerId[rule.sourceLayerId];
+    if (href) imageHrefByLayerId[`${rule.sourceLayerId}__background_image`] = href;
+  }
   const wideMap = collectObjectMap(layouts.wide.objects);
   for (const obj of wideMap.values()) {
-    const layer = compilePaintLayer(obj, args.imageHrefByLayerId, buttonLabels);
+    const layer = compilePaintLayer(obj, imageHrefByLayerId, buttonLabels);
     if (!layer) continue;
     layers.set(obj.id, layer);
   }
@@ -540,7 +551,14 @@ export function compilePublishedSite(args: {
     const map = collectObjectMap(layouts[band].objects);
     for (const [id, layer] of layers) {
       const obj = map.get(id);
-      if (!obj) {
+      if (
+        !obj ||
+        isLayerExplicitBackgroundSurface(
+          args.blueprint,
+          id,
+          band,
+        )
+      ) {
         layer.boxes[band] = null;
         continue;
       }
@@ -903,8 +921,8 @@ function layerBoxCss(
   hints: SectionLayoutHint[] | null = null,
 ): string {
   const sel = `.s-el-${layer.cssId}`;
+  if (layer.boxes[band] === null) return `${sel}{display:none}`;
   const box = world ?? layer.boxes[band];
-  if (!box) return `${sel}{display:none}`;
   const local = toLocalBox(box, parent);
   const pageParent =
     !inRow && Boolean(blueprint) && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;

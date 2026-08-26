@@ -32,7 +32,9 @@ export type SiteCreatorPrimaryAction = {
     | "removeFromContainer"
     | "chooseAddTarget"
     | "groupWidthFull"
-    | "groupWidthContent";
+    | "groupWidthContent"
+    | "useAsBackground"
+    | "restoreBackground";
   label: string;
   primary?: boolean;
   /** Destino implícito para addToContainer. */
@@ -304,7 +306,11 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
   const layerOnly = units.every((u) => u.kind === "layer");
   const n = units.length;
   const summary = summarizeUnits(units, blueprint, index, snapshot);
-  const insideSection = allUnitsInsideSameSection(units, blueprint, index);
+  const insideSection = selectionContainsUnitInsideSection(
+    units,
+    blueprint,
+    index,
+  );
 
   const actions: SiteCreatorPrimaryAction[] = [];
   const canButton = looksLikeButtonCandidate(units, index);
@@ -525,20 +531,24 @@ function breadcrumbForUnits(
   return `${deriveBlueprintNodeDisplayLabel(parent, snapshot, index)} / ${deriveBlueprintNodeDisplayLabel(node, snapshot, index)}`;
 }
 
-function allUnitsInsideSameSection(
+export function selectionContainsUnitInsideSection(
   units: SiteCreatorSelectionUnit[],
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
 ): boolean {
-  if (units.length === 0) return false;
-  let sectionId: string | null = null;
   for (const u of units) {
-    const parent = unitStructureParentId(u, blueprint, index);
-    if (!parent || !isSiteSectionNode(blueprint.nodes[parent]!)) return false;
-    if (sectionId == null) sectionId = parent;
-    else if (sectionId !== parent) return false;
+    let nodeId =
+      u.kind === "blueprintNode"
+        ? u.nodeId
+        : unitStructureParentId(u, blueprint, index);
+    while (nodeId) {
+      const node = blueprint.nodes[nodeId];
+      if (!node) break;
+      if (isSiteSectionNode(node)) return true;
+      nodeId = node.parentId;
+    }
   }
-  return sectionId != null;
+  return false;
 }
 
 function buttonParentHint(
