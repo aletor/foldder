@@ -57,6 +57,33 @@ function twoSections() {
   };
 }
 
+function rectangularPath(id = "path-bg"): FreehandObject {
+  const point = (x: number, y: number) => ({
+    anchor: { x, y },
+    handleIn: { x, y },
+    handleOut: { x, y },
+  });
+  return {
+    ...makeLayer({
+      id,
+      type: "path",
+      x: 0,
+      y: 0,
+      width: 1920,
+      height: 400,
+      fill: "#111",
+    }),
+    type: "path",
+    closed: true,
+    points: [
+      point(0, 0),
+      point(1920, 0),
+      point(1920, 400),
+      point(0, 400),
+    ],
+  } as FreehandObject;
+}
+
 describe("section height mode", () => {
   it("stores viewport height on the section and clones it", () => {
     const { blueprint, heroId } = twoSections();
@@ -206,6 +233,56 @@ describe("section height mode", () => {
     expect(body.y).toBe(1100);
   });
 
+  it("stretches path geometry used as a section background", () => {
+    const path = rectangularPath();
+    const title = makeLayer({
+      id: "title",
+      type: "text",
+      x: 240,
+      y: 120,
+      width: 600,
+      height: 60,
+      text: "Title",
+    });
+    const page = makePage([path, title]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: [path.id, title.id],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const custom = setSectionHeightMode(
+      hero.blueprint,
+      hero.createdNodeId,
+      "custom",
+      "wide",
+      1000,
+    );
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: custom.blueprint,
+      index,
+      viewportHeight: 1080,
+    }).page;
+    const expanded = findDisplayObject(laidOut, path.id) as
+      | (FreehandObject & {
+          points?: Array<{ anchor: { x: number; y: number } }>;
+        })
+      | undefined;
+
+    expect(expanded?.height).toBeCloseTo(1000, 6);
+    expect(
+      Math.max(...(expanded?.points ?? []).map((item) => item.anchor.y)),
+    ).toBeCloseTo(1000, 6);
+  });
+
   it("expands a wide section mask while preserving inner content proportions", () => {
     const clip = {
       ...makeLayer({ id: "clip", type: "rect", x: 0, y: 0, width: 1920, height: 400 }),
@@ -349,6 +426,74 @@ describe("section height mode", () => {
     expect(photo.y).toBeCloseTo(expandedRegion.layoutRect.y, 4);
     expect(photo.height).toBeCloseTo(expandedRegion.layoutRect.height, 4);
     expect(photo.y).toBeCloseTo(baselinePhoto.y, 4);
+  });
+
+  it("keeps a path background fitted after responsive custom-height expansion", () => {
+    const path = rectangularPath("responsive-path-bg");
+    const title = makeLayer({
+      id: "responsive-title",
+      type: "text",
+      x: 240,
+      y: 120,
+      width: 600,
+      height: 60,
+      text: "Title",
+    });
+    const page = makePage([path, title]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: [path.id, title.id],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const baseline = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: hero.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const baselineRegion = baseline.resolvedLayout?.regions.find(
+      (region) => region.sectionId === hero.createdNodeId,
+    );
+    expect(baselineRegion).toBeTruthy();
+    if (!baselineRegion) return;
+    const custom = setSectionHeightMode(
+      hero.blueprint,
+      hero.createdNodeId,
+      "custom",
+      "tablet",
+      baselineRegion.naturalHeight + 200,
+    );
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+
+    const expanded = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: custom.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const region = expanded.resolvedLayout?.regions.find(
+      (item) => item.sectionId === hero.createdNodeId,
+    );
+    const expandedPath = findDisplayObject(expanded.displayPage, path.id) as
+      | (FreehandObject & {
+          points?: Array<{ anchor: { x: number; y: number } }>;
+        })
+      | undefined;
+    const ys = (expandedPath?.points ?? []).map((item) => item.anchor.y);
+
+    expect(region).toBeTruthy();
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(
+      region?.layoutRect.height ?? 0,
+      4,
+    );
   });
 
   it("emits exact 100dvh height in published CSS", () => {

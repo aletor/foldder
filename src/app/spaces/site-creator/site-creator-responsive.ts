@@ -86,6 +86,10 @@ import {
   resizeSectionCoverClip,
 } from "./site-creator-clipping-resize";
 import {
+  adaptDesignerImageFrameForSiteCreator,
+  reframeDesignerImageFrameForSiteCreator,
+} from "./site-creator-image-frame";
+import {
   resolveExplicitBackground,
 } from "./site-creator-background-assignment";
 
@@ -591,6 +595,20 @@ function placeBackgroundLayers(args: {
     if (obj.type === "clippingContainer") {
       resizeSectionCoverClip(obj as ClippingContainerObject, args.layoutRect);
       continue;
+    }
+    if (obj.type === "path") {
+      const currentRect = {
+        x: obj.x,
+        y: obj.y,
+        width: Math.max(1, obj.width),
+        height: Math.max(1, obj.height),
+      };
+      transformPathObjectRelative(obj as PathObject, currentRect, {
+        x: args.layoutRect.x,
+        y: args.layoutRect.y,
+        scaleX: args.layoutRect.width / currentRect.width,
+        scaleY: args.layoutRect.height / currentRect.height,
+      });
     }
     obj.x = args.layoutRect.x;
     obj.y = args.layoutRect.y;
@@ -1950,6 +1968,28 @@ function applyClippingMediaTunes(args: {
   }
 }
 
+function applyImageFrameMediaTunes(args: {
+  page: DesignerPageState;
+  blueprint: SiteBlueprintV1;
+  band: ResponsiveBand;
+  index: SiteCreatorSelectionIndex;
+}): void {
+  const byId = new Map<string, FreehandObject>();
+  walkObjects(args.page.objects ?? [], byId);
+  for (const [layerId, object] of byId) {
+    if (!object.imageFrameContent) continue;
+    const tune = resolveMediaTune(args.blueprint, layerId, args.band);
+    if (tune) {
+      reframeDesignerImageFrameForSiteCreator(object, tune);
+      continue;
+    }
+    if (args.band === "wide") continue;
+    const source = args.index.byId[layerId]?.object;
+    if (!source?.imageFrameContent) continue;
+    adaptDesignerImageFrameForSiteCreator(object, source);
+  }
+}
+
 function moveDisplayLayerAboveSurface(
   objects: FreehandObject[],
   layerId: string,
@@ -2087,7 +2127,35 @@ function convertSourceToBackgroundClip(
   imageLayerId: string,
   target: PageRect,
   surface?: FreehandObject | null,
+  preserveImageFrameCrop = false,
 ): { clip: ClippingContainerObject; imageId: string } {
+  const frameContent = source.imageFrameContent;
+  const frameImage =
+    frameContent?.src
+      ? ({
+          ...structuredClone(source),
+          type: "image",
+          src: frameContent.src,
+          s3Key: frameContent.s3Key,
+          s3KeyHr: frameContent.s3KeyHr,
+          s3KeyOpt: frameContent.s3KeyOpt,
+          isImageFrame: false,
+          imageFrameContent: undefined,
+          rotation: 0,
+          x: preserveImageFrameCrop ? frameContent.offsetX : 0,
+          y: preserveImageFrameCrop ? frameContent.offsetY : 0,
+          width: Math.max(
+            1,
+            frameContent.originalWidth *
+              (preserveImageFrameCrop ? frameContent.scaleX : 1),
+          ),
+          height: Math.max(
+            1,
+            frameContent.originalHeight *
+              (preserveImageFrameCrop ? frameContent.scaleY : 1),
+          ),
+        } as unknown as FreehandObject)
+      : null;
   const originalImage =
     source.type === "image"
       ? source
@@ -2095,18 +2163,20 @@ function convertSourceToBackgroundClip(
         ? source.content.find(
             (child) => child.id === imageLayerId && child.type === "image",
           )
-        : null;
+        : frameImage;
   if (!originalImage) {
     throw new Error(`La capa ${source.id} no contiene una imagen de fondo.`);
   }
   const imageId =
-    source.type === "image"
+    source.type === "image" || frameImage
       ? `${source.id}__background_image`
       : originalImage.id;
   const content = structuredClone(originalImage) as FreehandObject;
   content.id = imageId;
-  content.x = 0;
-  content.y = 0;
+  if (!frameImage || !preserveImageFrameCrop) {
+    content.x = 0;
+    content.y = 0;
+  }
   const mask = {
     ...structuredClone(surface ?? originalImage),
     id: `${source.id}__background_mask`,
@@ -2153,7 +2223,7 @@ function applyExplicitContainerBackgrounds(args: {
       args.band,
     );
     if (!placement) {
-      if (source.type === "image") {
+      if (source.type === "image" || source.imageFrameContent?.src) {
         convertSourceToBackgroundClip(
           source,
           rule.sourceLayerId,
@@ -2164,6 +2234,7 @@ function applyExplicitContainerBackgrounds(args: {
             height: source.height,
           },
           null,
+          Boolean(source.imageFrameContent?.src),
         );
       }
       continue;
@@ -2177,7 +2248,11 @@ function applyExplicitContainerBackgrounds(args: {
       layoutWidth: args.layoutWidth,
     });
     if (!target) continue;
-    if (source.type !== "image" && source.type !== "clippingContainer") {
+    if (
+      source.type !== "image" &&
+      source.type !== "clippingContainer" &&
+      !source.imageFrameContent?.src
+    ) {
       continue;
     }
     const surface = placement.surfaceLayerId
@@ -2273,6 +2348,12 @@ function withLayoutGroupWidthModes(
     blueprint,
     index,
     band: result.band,
+  });
+  applyImageFrameMediaTunes({
+    page,
+    blueprint,
+    band: result.band,
+    index,
   });
   applyExplicitContainerBackgrounds({
     page,

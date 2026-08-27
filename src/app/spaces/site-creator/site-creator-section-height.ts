@@ -2,7 +2,11 @@
  * Alto de sección: contenido real o al menos el alto de página / ventana.
  * No reescribe el Designer; es presentación (lienzo + publicación).
  */
-import type { ClippingContainerObject, FreehandObject } from "../FreehandStudio";
+import type {
+  ClippingContainerObject,
+  FreehandObject,
+  PathObject,
+} from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
 import { listDocumentSections } from "./site-creator-section-scroll";
@@ -21,6 +25,7 @@ import type {
 } from "./site-creator-types";
 import { isSiteSectionNode } from "./site-creator-types";
 import { resizeSectionCoverClip } from "./site-creator-clipping-resize";
+import { transformPathObjectRelative } from "./site-creator-responsive-matrix";
 
 const FIT_EPSILON = 8;
 
@@ -289,6 +294,23 @@ export function applySectionViewportHeights(args: {
               height: obj.height + extra,
             });
           } else {
+            if (obj.type === "path") {
+              transformPathObjectRelative(
+                obj as PathObject,
+                {
+                  x: obj.x,
+                  y: obj.y,
+                  width: obj.width,
+                  height: obj.height,
+                },
+                {
+                  x: obj.x,
+                  y: obj.y,
+                  scaleX: 1,
+                  scaleY: (obj.height + extra) / Math.max(1, obj.height),
+                },
+              );
+            }
             obj.height = Math.max(1, obj.height + extra);
           }
         } else if (sectionWorldIds.has(id)) {

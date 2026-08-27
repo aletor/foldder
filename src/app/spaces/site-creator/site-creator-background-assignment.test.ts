@@ -509,4 +509,138 @@ describe("explicit responsive container backgrounds", () => {
       surfaceLayerId: "card-surface",
     });
   });
+
+  it("uses a Designer Image Frame photo as a reversible group background", () => {
+    const surface = makeLayer({
+      id: "frame-surface",
+      type: "rect",
+      x: 0,
+      y: 0,
+      width: 1000,
+      height: 600,
+      fill: "#203040",
+    });
+    const frame = {
+      ...makeLayer({
+        id: "image-frame",
+        type: "rect",
+        x: 80,
+        y: 90,
+        width: 420,
+        height: 360,
+      }),
+      isImageFrame: true,
+      imageFrameContent: {
+        src: "https://cdn.example/frame-background.jpg",
+        originalWidth: 1600,
+        originalHeight: 900,
+        scaleX: 0.47,
+        scaleY: 0.47,
+        offsetX: -55,
+        offsetY: 0,
+        fittingMode: "fill-proportional",
+      },
+    } as FreehandObject;
+    const group = {
+      ...makeLayer({
+        id: "frame-group",
+        type: "rect",
+        x: 240,
+        y: 100,
+        width: 1000,
+        height: 600,
+      }),
+      type: "groupContainer",
+      children: [
+        surface,
+        frame,
+        makeLayer({
+        id: "frame-copy",
+        type: "text",
+        x: 560,
+        y: 180,
+        width: 360,
+        height: 140,
+        text: "Marco como fondo",
+      }),
+      ],
+    } as FreehandObject;
+    const page = makePage([group]);
+    const index = buildSiteSelectionIndex(page);
+    const created = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["frame-group"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok || !created.createdNodeId) return;
+    const blueprint = applyNewSectionResponsiveDefaults(
+      created.blueprint,
+      created.createdNodeId,
+    );
+    const candidate = inferExplicitBackgroundCandidate({
+      blueprint,
+      index,
+      layerId: "image-frame",
+    });
+    expect(candidate).toMatchObject({
+      sourceLayerId: "image-frame",
+      imageLayerId: "image-frame",
+      surfaceLayerId: "frame-surface",
+      target: { kind: "designerGroup", layerId: "frame-group" },
+    });
+    if (!candidate) return;
+    const assigned = assignExplicitBackground({
+      blueprint,
+      candidate,
+      band: "mobile",
+    }).blueprint;
+    const mobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: assigned,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const background = findDisplayObject(
+      mobile.displayPage,
+      "image-frame",
+    ) as ClippingContainerObject | undefined;
+    expect(background?.type).toBe("clippingContainer");
+    expect(background?.content[0]?.id).toBe(
+      "image-frame__background_image",
+    );
+    expect(background?.content[0]?.type).toBe("image");
+    expect(
+      findDisplayObject(mobile.displayPage, "frame-surface")?.visible,
+    ).toBe(false);
+    const restored = restoreExplicitBackground({
+      blueprint: assigned,
+      sourceLayerId: "image-frame",
+      band: "mobile",
+    }).blueprint;
+    const restoredMobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: restored,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    expect(findDisplayObject(restoredMobile.displayPage, "image-frame")?.type).toBe(
+      "rect",
+    );
+    const published = compilePublishedSite({
+      page,
+      blueprint: assigned,
+      title: "Frame background",
+      imageHrefByLayerId: {
+        "image-frame": "https://cdn.example/frame-background.jpg",
+      },
+    });
+    expect(published.html).toContain(
+      'src="https://cdn.example/frame-background.jpg"',
+    );
+  });
 });

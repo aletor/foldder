@@ -21,6 +21,19 @@ import {
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
 
+function fireNativePointer(
+  target: EventTarget,
+  type: string,
+  values: { clientY: number; pointerId: number },
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    clientY: { value: values.clientY },
+    pointerId: { value: values.pointerId },
+  });
+  target.dispatchEvent(event);
+}
+
 function twoSectionsBlueprint() {
   const page = makePage([
     makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
@@ -234,6 +247,51 @@ describe("site-creator section scroll flow", () => {
     fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}`));
     fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}-custom`));
     expect(onHeight).toHaveBeenCalledWith(heroId, "custom");
+  });
+
+  it("keeps the drag scale stable while custom height rerenders the preview", () => {
+    const { blueprint, heroId } = twoSectionsBlueprint();
+    const hero = listDocumentSections(blueprint)[0]!;
+    const onCustomHeightChange = vi.fn();
+    const station = {
+      sectionId: heroId,
+      label: hero.label,
+      top: hero.sourceRange.top,
+      bottom: hero.sourceRange.bottom,
+      height: 400,
+      designedHeight: 400,
+      heightMode: "custom" as const,
+      customHeight: 400,
+      selected: true,
+      outgoing: null,
+    };
+    const commonProps = {
+      pageHeight: 1200,
+      stations: [station],
+      addSectionY: null,
+      canAddSection: false,
+      onSelectSection: () => undefined,
+      onRemoveSection: () => undefined,
+      onAddSection: () => undefined,
+      onScrollChange: () => undefined,
+      onHeightModeChange: () => undefined,
+      onCustomHeightChange,
+    };
+    const { rerender } = render(
+      <SiteCreatorSectionSpine {...commonProps} scale={1} />,
+    );
+    const handle = screen.getByTestId(
+      `site-creator-section-spine-drag-${heroId}`,
+    );
+
+    fireNativePointer(handle, "pointerdown", { clientY: 100, pointerId: 7 });
+    rerender(<SiteCreatorSectionSpine {...commonProps} scale={0.5} />);
+    fireNativePointer(window, "pointermove", { clientY: 200, pointerId: 7 });
+    fireNativePointer(window, "pointermove", { clientY: 200, pointerId: 7 });
+
+    expect(onCustomHeightChange).toHaveBeenCalledTimes(1);
+    expect(onCustomHeightChange).toHaveBeenLastCalledWith(heroId, 500);
+    fireNativePointer(window, "pointerup", { clientY: 200, pointerId: 7 });
   });
 
   it("marks Toda la página after the controlled mode changes", () => {

@@ -106,7 +106,11 @@ export interface SiteCreatorPreviewProps {
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
   clipImageEdit?: SiteCreatorClipImageEdit | null;
-  onEnterClipImageEdit?: (edit: { clipId: string; imageId: string }) => void;
+  onEnterClipImageEdit?: (edit: {
+    kind?: "clip" | "imageFrame";
+    clipId: string;
+    imageId: string;
+  }) => void;
   onClipImageTuneChange?: (
     tune: { focal: { x: number; y: number }; zoom: number },
     commit: boolean,

@@ -1,9 +1,22 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, Globe, Loader2 } from "lucide-react";
+import {
+  ExternalLink,
+  Eye,
+  Globe,
+  Loader2,
+  Monitor,
+  RotateCcw,
+  Smartphone,
+  Tablet,
+  Trash2,
+} from "lucide-react";
 import { getPageDimensions } from "../indesign/page-formats";
-import { FoldderStudioHeader, foldderStudioHeaderActionClassName } from "../FoldderStudioHeader";
+import {
+  FoldderStudioHeader,
+  foldderStudioHeaderIconActionClassName,
+} from "../FoldderStudioHeader";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
 import {
   SiteCreatorDeviceSelector,
@@ -68,6 +81,7 @@ import {
   resolveExplicitBackground,
   restoreExplicitBackground,
 } from "./site-creator-background-assignment";
+import { imageFrameTuneForSiteCreator } from "./site-creator-image-frame";
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
 import { SiteCreatorOutlinePanel, expandPathForUnit } from "./SiteCreatorOutlinePanel";
 import { SiteCreatorButtonLabelPrompt } from "./SiteCreatorSelectionToolbar";
@@ -413,9 +427,12 @@ export function SiteCreatorStudio({
   );
   const [focalLayerId, setFocalLayerId] = useState<string | null>(null);
   const [clipImageEditTarget, setClipImageEditTarget] = useState<{
+    kind: "clip" | "imageFrame";
     clipId: string;
     imageId: string;
     band: ResponsiveMediaBand;
+    initialFocal?: { x: number; y: number };
+    initialZoom?: number;
   } | null>(null);
   const [clipImageDraft, setClipImageDraft] = useState<{
     imageId: string;
@@ -558,14 +575,21 @@ export function SiteCreatorStudio({
       mediaBand,
     );
     return {
+      kind: clipImageEditTarget.kind,
       clipId: clipImageEditTarget.clipId,
       imageId: clipImageEditTarget.imageId,
       focal:
         draft?.focal ??
         explicit?.focal ??
         saved?.focal ??
+        clipImageEditTarget.initialFocal ??
         { x: 0.5, y: 0.5 },
-      zoom: draft?.zoom ?? explicit?.zoom ?? saved?.zoom ?? 1,
+      zoom:
+        draft?.zoom ??
+        explicit?.zoom ??
+        saved?.zoom ??
+        clipImageEditTarget.initialZoom ??
+        1,
     };
   }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand]);
   const showPreview = Boolean(page);
@@ -2912,6 +2936,126 @@ export function SiteCreatorStudio({
         })()
       : null;
 
+  const PreviewDeviceIcon =
+    responsiveBand === "wide"
+      ? Monitor
+      : responsiveBand === "tablet"
+        ? Tablet
+        : Smartphone;
+  const canResetBand = Boolean(
+    editableBand && bandHasCustomizations(blueprint, editableBand),
+  );
+  const resetBandLabel =
+    !editableBand
+      ? "Restablecer vista"
+      : editableBand === "mobile"
+      ? "Restablecer en Móvil"
+      : "Restablecer en Tablet";
+  const headerDeviceControls = pagePreviewMode ? (
+    <span
+      data-testid="site-creator-preview-live-band"
+      title={`${responsiveBand === "wide" ? "Original" : responsiveBand === "tablet" ? "Tablet" : "Móvil"} · ${Math.round(effectiveViewportWidth)} px`}
+      className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center bg-white/10 text-white/80"
+    >
+      <PreviewDeviceIcon className="h-3.5 w-3.5" aria-hidden />
+    </span>
+  ) : (
+    <div
+      data-testid="site-creator-header-device-controls"
+      className="pointer-events-auto flex h-8 items-center border border-white/12 bg-black/25 px-0.5"
+    >
+      <button
+        type="button"
+        data-testid="site-creator-preset-original"
+        aria-label="Original"
+        title={`Original · ${Math.round(referenceWidth)} px`}
+        className={`flex h-7 w-7 items-center justify-center transition ${
+          viewportBand === "original"
+            ? "bg-white/12 text-white"
+            : "text-white/40 hover:bg-white/6 hover:text-white/80"
+        }`}
+        onClick={() => {
+          setViewportBand("original");
+          setOriginalViewportWidth(referenceWidth);
+        }}
+      >
+        <Monitor className="h-3.5 w-3.5" aria-hidden />
+      </button>
+      <SiteCreatorDeviceSelector
+        band="tablet"
+        bandLabel="Tablet"
+        active={viewportBand === "tablet"}
+        config={tabletDevice}
+        referenceWidth={referenceWidth}
+        resolvedWidth={tabletDimensions.width}
+        resolvedHeight={tabletDimensions.height}
+        sizeLabel={tabletDimensions.sizeLabel}
+        portalHost={floatingHostEl}
+        compact
+        onActivate={() => setViewportBand("tablet")}
+        onConfigChange={(config) => {
+          setTabletDevice(config);
+          setViewportBand("tablet");
+        }}
+      />
+      <SiteCreatorDeviceSelector
+        band="mobile"
+        bandLabel="Móvil"
+        active={viewportBand === "mobile"}
+        config={mobileDevice}
+        referenceWidth={referenceWidth}
+        resolvedWidth={mobileDimensions.width}
+        resolvedHeight={mobileDimensions.height}
+        sizeLabel={mobileDimensions.sizeLabel}
+        portalHost={floatingHostEl}
+        compact
+        onActivate={() => setViewportBand("mobile")}
+        onConfigChange={(config) => {
+          setMobileDevice(config);
+          setViewportBand("mobile");
+        }}
+      />
+      <SiteCreatorOrientationToggle
+        compact
+        visible={viewportBand === "tablet" || viewportBand === "mobile"}
+        orientation={
+          viewportBand === "tablet"
+            ? tabletDevice.orientation
+            : mobileDevice.orientation
+        }
+        onChange={(orientation) => {
+          if (viewportBand === "tablet") {
+            setTabletDevice((prev) => ({ ...prev, orientation }));
+          } else if (viewportBand === "mobile") {
+            setMobileDevice((prev) => ({ ...prev, orientation }));
+          }
+        }}
+      />
+      <button
+        type="button"
+        data-testid="site-creator-reset-band"
+        disabled={!canResetBand}
+        aria-label={resetBandLabel}
+        title={
+          canResetBand
+            ? resetBandLabel
+            : editableBand
+              ? "Esta vista no tiene personalizaciones"
+              : "Restablecer está disponible en Tablet y Móvil"
+        }
+        className={`flex h-7 w-7 items-center justify-center border-l border-white/10 text-white/40 transition hover:bg-white/[0.06] hover:text-white ${
+          canResetBand ? "" : "cursor-default opacity-20"
+        }`}
+        onClick={() => {
+          if (!editableBand) return;
+          commitTune(resetResponsiveBand({ blueprint, band: editableBand }));
+        }}
+      >
+        <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+      </button>
+    </div>
+  );
+
   const headerTitleSlot = (
     <div className="flex min-w-0 w-full flex-1 items-center gap-3 text-[10px]">
       <div className="flex min-w-0 shrink items-center gap-3">
@@ -2929,6 +3073,9 @@ export function SiteCreatorStudio({
         ) : (
           <span className="truncate font-medium text-white/55">{originLabel}</span>
         )}
+      </div>
+      <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+        {headerDeviceControls}
       </div>
       <div className="min-w-0 flex-1" />
       {publishError ||
@@ -2974,9 +3121,16 @@ export function SiteCreatorStudio({
               type="button"
               data-testid="site-creator-publish"
               title={publish ? "Publicar de nuevo" : "Publicar sitio"}
+              aria-label={
+                publishing
+                  ? "Publicando"
+                  : publish
+                    ? "Publicar de nuevo"
+                    : "Publicar"
+              }
               disabled={!canPublish}
               onClick={() => void handlePublish()}
-              className={foldderStudioHeaderActionClassName(
+              className={foldderStudioHeaderIconActionClassName(
                 publish ? "bg-[#22d3ee]/20 text-[#22d3ee] hover:bg-[#22d3ee]/30" : "",
               )}
             >
@@ -2985,7 +3139,6 @@ export function SiteCreatorStudio({
               ) : (
                 <Globe className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
               )}
-              {publishing ? "Publicando" : publish ? "Publicar de nuevo" : "Publicar"}
             </button>
             {publishedUrl ? (
               <a
@@ -2993,10 +3146,11 @@ export function SiteCreatorStudio({
                 href={publishedUrl}
                 target="_blank"
                 rel="noreferrer"
-                title={publishedUrl}
-                className={foldderStudioHeaderActionClassName("")}
+                title="Abrir web publicada"
+                aria-label="Abrir web publicada"
+                className={foldderStudioHeaderIconActionClassName()}
               >
-                Abrir web
+                <ExternalLink className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
               </a>
             ) : null}
             {publish ? (
@@ -3004,25 +3158,26 @@ export function SiteCreatorStudio({
                 type="button"
                 data-testid="site-creator-unpublish"
                 title="Quitar la web publicada"
+                aria-label="Despublicar"
                 disabled={publishing}
                 onClick={() => void handleUnpublish()}
-                className={foldderStudioHeaderActionClassName("text-white/55")}
+                className={foldderStudioHeaderIconActionClassName("text-white/55")}
               >
-                Despublicar
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={2.1} aria-hidden />
               </button>
             ) : null}
             <button
               type="button"
               data-testid="site-creator-page-preview-toggle"
               aria-pressed={pagePreviewMode}
+              aria-label={pagePreviewMode ? "Salir de Preview" : "Preview"}
               title={pagePreviewMode ? "Salir de Preview (P)" : "Preview (P)"}
               onClick={togglePagePreview}
-              className={foldderStudioHeaderActionClassName(
+              className={foldderStudioHeaderIconActionClassName(
                 pagePreviewMode ? "bg-[#a3e635]/20 text-[#a3e635] hover:bg-[#a3e635]/30" : "",
               )}
             >
               <Eye className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
-              Preview
             </button>
           </div>
         }
@@ -3199,10 +3354,27 @@ export function SiteCreatorStudio({
               }}
               onCancelFocal={() => setFocalLayerId(null)}
               clipImageEdit={pagePreviewMode ? null : clipImageEdit}
-              onEnterClipImageEdit={({ clipId, imageId }) => {
+              onEnterClipImageEdit={({ kind = "clip", clipId, imageId }) => {
                 setFocalLayerId(null);
                 setClipImageDraft(null);
-                setClipImageEditTarget({ clipId, imageId, band: mediaBand });
+                const initial =
+                  kind === "imageFrame"
+                    ? imageFrameTuneForSiteCreator(
+                        selectionIndex?.byId[clipId]?.object,
+                      )
+                    : null;
+                setClipImageEditTarget({
+                  kind,
+                  clipId,
+                  imageId,
+                  band: mediaBand,
+                  ...(initial
+                    ? {
+                        initialFocal: initial.focal,
+                        initialZoom: initial.zoom,
+                      }
+                    : {}),
+                });
               }}
               onClipImageTuneChange={(tune, commit) => {
                 if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return;
@@ -3273,117 +3445,6 @@ export function SiteCreatorStudio({
             </div>
           )}
 
-          <footer className="site-creator-studio__footer flex h-11 shrink-0 items-center gap-3 border-t border-white/10 bg-[#101820] px-4 text-[11px] text-white/65">
-            {pagePreviewMode ? (
-              <span
-                data-testid="site-creator-preview-live-band"
-                className="shrink-0 rounded bg-white/12 px-2.5 py-1 text-[10px] font-semibold tracking-wide text-white"
-              >
-                {responsiveBand === "wide"
-                  ? "Original"
-                  : responsiveBand === "tablet"
-                    ? "Tablet"
-                    : "Móvil"}{" "}
-                {Math.round(effectiveViewportWidth)}
-              </span>
-            ) : (
-            <div className="flex min-w-0 items-center gap-1">
-              <button
-                type="button"
-                data-testid="site-creator-preset-original"
-                className={`shrink-0 rounded px-2.5 py-1 text-[10px] font-semibold tracking-wide transition ${
-                  viewportBand === "original"
-                    ? "bg-white/12 text-white"
-                    : "text-white/50 hover:bg-white/6 hover:text-white/80"
-                }`}
-                onClick={() => {
-                  setViewportBand("original");
-                  setOriginalViewportWidth(referenceWidth);
-                }}
-              >
-                Original {Math.round(referenceWidth)}
-              </button>
-              <SiteCreatorDeviceSelector
-                band="tablet"
-                bandLabel="Tablet"
-                active={viewportBand === "tablet"}
-                config={tabletDevice}
-                referenceWidth={referenceWidth}
-                resolvedWidth={tabletDimensions.width}
-                resolvedHeight={tabletDimensions.height}
-                sizeLabel={tabletDimensions.sizeLabel}
-                portalHost={floatingHostEl}
-                onActivate={() => {
-                  setViewportBand("tablet");
-                }}
-                onConfigChange={(config) => {
-                  setTabletDevice(config);
-                  setViewportBand("tablet");
-                }}
-              />
-              <SiteCreatorDeviceSelector
-                band="mobile"
-                bandLabel="Móvil"
-                active={viewportBand === "mobile"}
-                config={mobileDevice}
-                referenceWidth={referenceWidth}
-                resolvedWidth={mobileDimensions.width}
-                resolvedHeight={mobileDimensions.height}
-                sizeLabel={mobileDimensions.sizeLabel}
-                portalHost={floatingHostEl}
-                onActivate={() => {
-                  setViewportBand("mobile");
-                }}
-                onConfigChange={(config) => {
-                  setMobileDevice(config);
-                  setViewportBand("mobile");
-                }}
-              />
-            </div>
-            )}
-
-            {pagePreviewMode ? null : (
-            <SiteCreatorOrientationToggle
-              visible={viewportBand === "tablet" || viewportBand === "mobile"}
-              orientation={
-                viewportBand === "tablet" ? tabletDevice.orientation : mobileDevice.orientation
-              }
-              onChange={(orientation) => {
-                if (viewportBand === "tablet") {
-                  setTabletDevice((prev) => ({ ...prev, orientation }));
-                } else if (viewportBand === "mobile") {
-                  setMobileDevice((prev) => ({ ...prev, orientation }));
-                }
-              }}
-            />
-            )}
-
-            <div className="ml-auto flex items-center gap-3">
-              {!pagePreviewMode && editableBand && bandHasCustomizations(blueprint, editableBand) ? (
-                <button
-                  type="button"
-                  data-testid="site-creator-reset-band"
-                  className="rounded border border-white/12 px-2 py-0.5 text-[10px] font-semibold text-white/70 hover:border-white/25 hover:text-white"
-                  title={`Quita todas las personalizaciones de ${editableBand === "mobile" ? "Móvil" : "Tablet"} (alineación, anchura, separación, visibilidad y adaptación). No cambia la otra vista ni Original.`}
-                  onClick={() =>
-                    commitTune(resetResponsiveBand({ blueprint, band: editableBand }))
-                  }
-                >
-                  {editableBand === "mobile" ? "Restablecer en Móvil" : "Restablecer en Tablet"}
-                </button>
-              ) : null}
-              <span className="tabular-nums text-white/40">
-                {deviceFrame
-                  ? `${Math.round(deviceFrame.width)} × ${Math.round(deviceFrame.height)} px`
-                  : `${Math.round(layoutWidth)} × ${Math.round(layoutHeight)} px`}
-              </span>
-              {pagePreviewMode ? (
-                <span className="text-white/40">Esc para salir</span>
-              ) : (
-                <span className="text-emerald-400/90">{showPreview ? "Sin errores" : "—"}</span>
-              )}
-            </div>
-          </footer>
         </main>
       </div>
 

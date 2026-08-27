@@ -386,6 +386,69 @@ describe("SiteCreatorPreview", () => {
     expect(screen.getByTestId("site-creator-clip-image-toolbar")).toBeTruthy();
   });
 
+  it("opens framing for a filled Designer Image Frame without editing Designer", () => {
+    const frame = {
+      id: "designer-frame",
+      type: "rect",
+      x: 20,
+      y: 20,
+      width: 160,
+      height: 90,
+      rotation: 0,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      isImageFrame: true,
+      imageFrameContent: {
+        src: "https://cdn.example/frame.jpg",
+        originalWidth: 1200,
+        originalHeight: 800,
+        scaleX: 0.15,
+        scaleY: 0.15,
+        offsetX: -10,
+        offsetY: -15,
+        fittingMode: "fill-proportional",
+      },
+    } as FreehandObject;
+    const page: DesignerPageState = {
+      id: "frame_page",
+      format: "web169",
+      customWidth: 400,
+      customHeight: 300,
+      objects: [frame],
+    };
+    const onEnterClipImageEdit = vi.fn();
+    const index = buildSiteSelectionIndex(page);
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={400}
+        referenceWidth={400}
+        previewZoom={1}
+        blueprint={createEmptySiteBlueprintV1()}
+        selection={{
+          selectedIds: ["designer-frame"],
+          hoverId: null,
+          isolationIds: [],
+          overlapCycle: null,
+        }}
+        selectionIndex={index}
+        onSelectionAction={() => undefined}
+        onEnterClipImageEdit={onEnterClipImageEdit}
+      />,
+    );
+
+    const svg = document.querySelector(".site-creator-selection-surface > svg");
+    expect(svg).toBeTruthy();
+    fireEvent.dblClick(svg!, { clientX: 40, clientY: 40 });
+    expect(onEnterClipImageEdit).toHaveBeenCalledWith({
+      kind: "imageFrame",
+      clipId: "designer-frame",
+      imageId: "designer-frame",
+    });
+    expect(screen.getByTestId("site-creator-edit-clip-image")).toBeTruthy();
+  });
+
   it("double click on dark preview chrome triggers fit callback", () => {
     const snapshotPage: DesignerPageState = {
       id: "snap_pg",

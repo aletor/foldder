@@ -6,6 +6,10 @@ import {
 } from "./site-blueprint-ownership";
 import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
 import { sourceWorldVisualBounds } from "./site-creator-layer-world-bounds";
+import {
+  imageFrameHasPhoto,
+  isDesignerImageFrame,
+} from "./site-creator-display-labels";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type {
   ResponsiveBackgroundPlacementV1,
@@ -125,7 +129,11 @@ export function inferExplicitBackgroundCandidate(args: {
   const imageLayerId =
     entry.type === "image"
       ? entry.layerId
-      : directClipImageId(entry);
+      : directClipImageId(entry) ??
+        (isDesignerImageFrame(entry.object) &&
+        imageFrameHasPhoto(entry.object)
+          ? entry.layerId
+          : null);
   if (!imageLayerId) return null;
 
   const designerParent = [...sourceEntry.ancestorIds]

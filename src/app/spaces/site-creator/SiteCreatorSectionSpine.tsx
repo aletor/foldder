@@ -332,6 +332,8 @@ function StationModule({
   const dragRef = useRef<{
     startClientY: number;
     startHeight: number;
+    startScale: number;
+    minimumHeight: number;
     pointerId: number;
     lastSent: number;
   } | null>(null);
@@ -345,18 +347,26 @@ function StationModule({
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || event.pointerId !== drag.pointerId) return;
-      const deltaPage = (event.clientY - drag.startClientY) / Math.max(0.0001, scale);
-      const next = Math.max(station.designedHeight, Math.round(drag.startHeight + deltaPage));
-      setLiveCustom(next);
+      const deltaPage =
+        (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
+      const next = Math.max(
+        drag.minimumHeight,
+        Math.round(drag.startHeight + deltaPage),
+      );
       if (next === drag.lastSent) return;
       drag.lastSent = next;
+      setLiveCustom(next);
       onCustomRef.current(next);
     };
     const onUp = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || event.pointerId !== drag.pointerId) return;
-      const deltaPage = (event.clientY - drag.startClientY) / Math.max(0.0001, scale);
-      const next = Math.max(station.designedHeight, Math.round(drag.startHeight + deltaPage));
+      const deltaPage =
+        (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
+      const next = Math.max(
+        drag.minimumHeight,
+        Math.round(drag.startHeight + deltaPage),
+      );
       dragRef.current = null;
       if (next !== drag.lastSent) onCustomRef.current(next);
       setLiveCustom(null);
@@ -369,7 +379,7 @@ function StationModule({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [scale, station.designedHeight]);
+  }, []);
 
   const onDragPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -382,6 +392,8 @@ function StationModule({
     dragRef.current = {
       startClientY: event.clientY,
       startHeight,
+      startScale: scale,
+      minimumHeight: station.designedHeight,
       pointerId: event.pointerId,
       lastSent: startHeight,
     };

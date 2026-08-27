@@ -40,6 +40,7 @@ import {
   type PublishTreeNode,
 } from "./site-creator-publish-tree";
 import { containerIsFullWidthForBand } from "./site-creator-group-width-layout";
+import { resolveMediaTune } from "./site-creator-responsive-tunes";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
@@ -93,6 +94,10 @@ type CompiledLayer = {
   strokeWidth?: number;
   borderRadius?: string;
   objectFit?: string;
+  imageFrame?: boolean;
+  imageFrameCrop?: Partial<
+    Record<BandName, { focal: { x: number; y: number }; zoom: number }>
+  >;
   pathD?: string;
   buttonLabel?: string;
 };
@@ -537,7 +542,12 @@ export function compilePublishedSite(args: {
   const imageHrefByLayerId = { ...args.imageHrefByLayerId };
   for (const rule of args.blueprint.responsive?.backgrounds ?? []) {
     const source = referenceIndex.byId[rule.sourceLayerId];
-    if (source?.type !== "image") continue;
+    if (
+      source?.type !== "image" &&
+      !source?.object.imageFrameContent?.src
+    ) {
+      continue;
+    }
     const href = args.imageHrefByLayerId[rule.sourceLayerId];
     if (href) imageHrefByLayerId[`${rule.sourceLayerId}__background_image`] = href;
   }
@@ -566,6 +576,15 @@ export function compilePublishedSite(args: {
       if (layer.kind === "text") {
         const size = (obj as { fontSize?: number }).fontSize;
         if (typeof size === "number") layer.fontSize![band] = size;
+      }
+      if (layer.imageFrame) {
+        const tune = resolveMediaTune(args.blueprint, id, band);
+        if (tune?.focal || tune?.zoom) {
+          layer.imageFrameCrop![band] = {
+            focal: tune.focal ?? { x: 0.5, y: 0.5 },
+            zoom: tune.zoom ?? 1,
+          };
+        }
       }
     }
   });
@@ -671,6 +690,10 @@ function compilePaintLayer(
     }
   } else if (kind === "image") {
     layer.objectFit = objectFitForFrame(obj);
+    if (obj.imageFrameContent) {
+      layer.imageFrame = true;
+      layer.imageFrameCrop = {};
+    }
   } else if (kind === "path") {
     const path = obj as { svgPathD?: string };
     layer.pathD = path.svgPathD;
@@ -962,9 +985,18 @@ function layerBoxCss(
     layer.kind === "text" && layer.textAlign ? `text-align:${layer.textAlign}` : "",
     layer.kind === "text" && layer.color ? `color:${layer.color}` : "",
     layer.kind === "shape" && layer.background ? `background:${layer.background}` : "",
-    layer.objectFit ? `object-fit:${layer.objectFit}` : "",
+    layer.imageFrame ? "overflow:hidden" : "",
+    !layer.imageFrame && layer.objectFit ? `object-fit:${layer.objectFit}` : "",
   ].filter(Boolean);
-  return `${sel}{${rules.join(";")}}`;
+  const crop = layer.imageFrameCrop?.[band];
+  const frameImage = layer.imageFrame
+    ? `${sel}>img{width:100%;height:100%;display:block;object-fit:${crop ? "cover" : layer.objectFit ?? "cover"};${
+        crop
+          ? `object-position:${crop.focal.x * 100}% ${crop.focal.y * 100}%;transform:scale(${crop.zoom});transform-origin:${crop.focal.x * 100}% ${crop.focal.y * 100}%`
+          : ""
+      }}`
+    : "";
+  return `${sel}{${rules.join(";")}}${frameImage}`;
 }
 
 function cssFontFamily(family: string): string {
@@ -1014,6 +1046,13 @@ function serializeLayerHtml(layer: CompiledLayer, inRow = false): string {
   const labelAttr = layer.buttonLabel ? ` aria-label="${escapeHtml(layer.buttonLabel)}"` : "";
   if (layer.kind === "image") {
     const src = layer.imageHref ? escapeHtml(layer.imageHref) : "";
+    if (layer.imageFrame) {
+      const tag = layer.buttonLabel ? "button" : "div";
+      const typeAttr = layer.buttonLabel ? ` type="button"` : "";
+      return src
+        ? `<${tag}${typeAttr} class="${cls} s-image-frame"${labelAttr}><img src="${src}" alt="${escapeHtml(layer.alt)}" /></${tag}>`
+        : `<${tag}${typeAttr} class="${cls} s-image-frame"${labelAttr} aria-hidden="true"></${tag}>`;
+    }
     if (layer.buttonLabel) {
       return src
         ? `<button type="button" class="${cls}"${labelAttr}><img src="${src}" alt=""></button>`

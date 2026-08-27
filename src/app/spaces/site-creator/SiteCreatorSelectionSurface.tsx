@@ -31,10 +31,15 @@ import {
   type PagePoint,
 } from "./site-creator-coordinate-space";
 import { isSiteCreatorPreviewChromeBackgroundTarget } from "./site-creator-viewport";
+import {
+  imageFrameGeometryForSiteCreator,
+  imageFrameContentForSiteCreator,
+} from "./site-creator-image-frame";
 
 const MARQUEE_THRESHOLD_PX = 4;
 
 export type SiteCreatorClipImageEdit = {
+  kind?: "clip" | "imageFrame";
   clipId: string;
   imageId: string;
   focal: { x: number; y: number };
@@ -125,6 +130,30 @@ function directClipImage(
   return clip.content.find((child) => child.type === "image") ?? null;
 }
 
+function imageEditTarget(
+  entry: SiteCreatorSelectionIndex["entries"][number] | undefined,
+): {
+  kind?: "clip" | "imageFrame";
+  clipId: string;
+  imageId: string;
+} | null {
+  const clipImage = directClipImage(entry);
+  if (entry && clipImage) {
+    return {
+      clipId: entry.layerId,
+      imageId: clipImage.id,
+    };
+  }
+  if (entry && imageFrameContentForSiteCreator(entry.object)) {
+    return {
+      kind: "imageFrame",
+      clipId: entry.layerId,
+      imageId: entry.layerId,
+    };
+  }
+  return null;
+}
+
 function focalForClipDrag(drag: ClipImageDrag, point: PagePoint): { x: number; y: number } {
   const dx = point.x - drag.start.x;
   const dy = point.y - drag.start.y;
@@ -178,7 +207,11 @@ export interface SiteCreatorSelectionSurfaceProps {
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
   clipImageEdit?: SiteCreatorClipImageEdit | null;
-  onEnterClipImageEdit?: (edit: { clipId: string; imageId: string }) => void;
+  onEnterClipImageEdit?: (edit: {
+    kind?: "clip" | "imageFrame";
+    clipId: string;
+    imageId: string;
+  }) => void;
   onClipImageTuneChange?: (
     tune: { focal: { x: number; y: number }; zoom: number },
     commit: boolean,
@@ -518,10 +551,34 @@ export function SiteCreatorSelectionSurface({
         const imageEntry = index.byId[clipImageEdit.imageId];
         const clip = clipEntry?.object as ClippingContainerObject | undefined;
         const image = imageEntry?.object;
+        const frameGeometry =
+          clipImageEdit.kind === "imageFrame"
+            ? imageFrameGeometryForSiteCreator(clipEntry?.object)
+            : null;
+        const editGeometry = frameGeometry
+          ? frameGeometry
+          : clipEntry &&
+              clip &&
+              image?.type === "image"
+            ? {
+                rotation: clip.rotation ?? 0,
+                mask: {
+                  x: clip.mask.x,
+                  y: clip.mask.y,
+                  width: Math.max(1, clip.mask.width),
+                  height: Math.max(1, clip.mask.height),
+                },
+                image: {
+                  x: image.x,
+                  y: image.y,
+                  width: Math.max(1, image.width),
+                  height: Math.max(1, image.height),
+                },
+              }
+            : null;
         if (
           clipEntry &&
-          clip &&
-          image?.type === "image" &&
+          editGeometry &&
           point.x >= clipEntry.visualBounds.x &&
           point.y >= clipEntry.visualBounds.y &&
           point.x <= clipEntry.visualBounds.x + clipEntry.visualBounds.width &&
@@ -531,19 +588,9 @@ export function SiteCreatorSelectionSurface({
           clipImageDragRef.current = {
             pointerId: event.pointerId,
             start: point,
-            rotation: clip.rotation ?? 0,
-            mask: {
-              x: clip.mask.x,
-              y: clip.mask.y,
-              width: Math.max(1, clip.mask.width),
-              height: Math.max(1, clip.mask.height),
-            },
-            image: {
-              x: image.x,
-              y: image.y,
-              width: Math.max(1, image.width),
-              height: Math.max(1, image.height),
-            },
+            rotation: editGeometry.rotation,
+            mask: editGeometry.mask,
+            image: editGeometry.image,
             lastFocal: clipImageEdit.focal,
           };
           if (typeof captureEl.setPointerCapture === "function") {
@@ -636,14 +683,14 @@ export function SiteCreatorSelectionSurface({
         onCanvasBackgroundDoubleClick?.();
         return;
       }
-      if (hit.type === "clippingContainer" && onEnterClipImageEdit) {
-        const image = directClipImage(hit);
-        if (image) {
-          event.preventDefault();
-          event.stopPropagation();
-          onEnterClipImageEdit({ clipId: hit.layerId, imageId: image.id });
-          return;
-        }
+      const editTarget = onEnterClipImageEdit
+        ? imageEditTarget(hit)
+        : null;
+      if (editTarget && onEnterClipImageEdit) {
+        event.preventDefault();
+        event.stopPropagation();
+        onEnterClipImageEdit(editTarget);
+        return;
       }
       // Designer groupContainer dive OR Studio handles blueprint inspect via special action
       if (canEnterContainer(hit, blueprint)) {
@@ -773,7 +820,7 @@ export function SiteCreatorSelectionSurface({
 
   const selectedClipEntry =
     selection.selectedIds.length === 1 ? index.byId[selection.selectedIds[0]!] : undefined;
-  const selectedClipImage = directClipImage(selectedClipEntry);
+  const selectedImageEditTarget = imageEditTarget(selectedClipEntry);
   const activeClipBounds = clipImageEdit
     ? index.byId[clipImageEdit.clipId]?.visualBounds ?? null
     : null;
@@ -922,7 +969,7 @@ export function SiteCreatorSelectionSurface({
             Hecho
           </button>
         </div>
-      ) : selectedClipEntry && selectedClipImage && onEnterClipImageEdit ? (
+      ) : selectedClipEntry && selectedImageEditTarget && onEnterClipImageEdit ? (
         <button
           type="button"
           className="pointer-events-auto absolute z-[5] rounded border border-white/15 bg-[#101820]/92 px-2 py-1 text-[10px] font-semibold text-white/80 shadow-lg hover:bg-[#18212c] hover:text-white"
@@ -933,10 +980,7 @@ export function SiteCreatorSelectionSurface({
           data-testid="site-creator-edit-clip-image"
           data-site-creator-floating-ui="true"
           onClick={() =>
-            onEnterClipImageEdit({
-              clipId: selectedClipEntry.layerId,
-              imageId: selectedClipImage.id,
-            })
+            onEnterClipImageEdit(selectedImageEditTarget)
           }
         >
           Editar encuadre
