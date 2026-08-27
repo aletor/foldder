@@ -66,6 +66,8 @@ export function bindSectionScroller(args: {
   scroller: HTMLElement | Window;
   hops: SectionScrollHop[];
   stations: () => ScrollStation[];
+  /** En edición, la rueda basta; las flechas no deben pelear con el lienzo. */
+  bindKeyboard?: boolean;
 }): () => void {
   let locked = false;
   let lockedDirection: 1 | -1 | null = null;
@@ -140,6 +142,16 @@ export function bindSectionScroller(args: {
   };
   const onKey = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      const typing =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable ||
+        Boolean(target.closest("[contenteditable='true'], input, textarea, select"));
+      if (typing) return;
+    }
     const down = event.key === "ArrowDown" || event.key === "PageDown" || event.key === " ";
     const up = event.key === "ArrowUp" || event.key === "PageUp";
     if (!down && !up) return;
@@ -153,7 +165,9 @@ export function bindSectionScroller(args: {
   };
   const wheelTarget: EventTarget = args.scroller;
   wheelTarget.addEventListener("wheel", onWheel, { passive: false, capture: true });
-  window.addEventListener("keydown", onKey, { capture: true });
+  if (args.bindKeyboard !== false) {
+    window.addEventListener("keydown", onKey, { capture: true });
+  }
   (target as EventTarget).addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("resize", realignAnchored);
   window.visualViewport?.addEventListener("resize", realignAnchored);
@@ -165,7 +179,9 @@ export function bindSectionScroller(args: {
   return () => {
     window.clearTimeout(unlockTimer);
     wheelTarget.removeEventListener("wheel", onWheel, true);
-    window.removeEventListener("keydown", onKey, true);
+    if (args.bindKeyboard !== false) {
+      window.removeEventListener("keydown", onKey, true);
+    }
     (target as EventTarget).removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", realignAnchored);
     window.visualViewport?.removeEventListener("resize", realignAnchored);

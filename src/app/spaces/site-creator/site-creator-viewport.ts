@@ -329,3 +329,22 @@ export function applyWorkAreaWheelDelta(
   scroller.scrollTop += delta.deltaY;
   scroller.scrollLeft += delta.deltaX;
 }
+
+/** Reenvía la rueda al scroller interior para que Suave/Fijo puedan interceptarla. */
+export function forwardWorkAreaWheelToScroller(
+  scroller: HTMLElement,
+  delta: { deltaX: number; deltaY: number; ctrlKey?: boolean; metaKey?: boolean },
+): void {
+  const forwarded = new WheelEvent("wheel", {
+    deltaX: delta.deltaX,
+    deltaY: delta.deltaY,
+    ctrlKey: Boolean(delta.ctrlKey),
+    metaKey: Boolean(delta.metaKey),
+    cancelable: true,
+    bubbles: true,
+  });
+  scroller.dispatchEvent(forwarded);
+  if (!forwarded.defaultPrevented) {
+    applyWorkAreaWheelDelta(scroller, { deltaX: delta.deltaX, deltaY: delta.deltaY });
+  }
+}

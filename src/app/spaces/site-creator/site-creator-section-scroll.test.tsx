@@ -10,6 +10,7 @@ import {
   compilePublishedScrollScript,
   planScrollStep,
 } from "./site-creator-section-scroll-runtime";
+import { forwardWorkAreaWheelToScroller } from "./site-creator-viewport";
 import {
   listDocumentSections,
   listSectionScrollHops,
@@ -555,6 +556,36 @@ describe("bindSectionScroller", () => {
     const up = new WheelEvent("wheel", { deltaY: -120, cancelable: true });
     scroller.dispatchEvent(up);
     expect(up.defaultPrevented).toBe(false);
+
+    dispose();
+  });
+
+  it("lets Suave intercept a forwarded work-area wheel without binding keys", () => {
+    const scroller = document.createElement("div");
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      bindKeyboard: false,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 900 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+    });
+
+    forwardWorkAreaWheelToScroller(scroller, { deltaX: 0, deltaY: 120 });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: "smooth" });
+
+    const key = new KeyboardEvent("keydown", { key: "ArrowDown", cancelable: true, bubbles: true });
+    window.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+    expect(scrollTo).toHaveBeenCalledTimes(1);
 
     dispose();
   });

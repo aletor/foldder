@@ -52,8 +52,8 @@ import {
   type SectionScrollStationPoint,
 } from "./site-creator-section-height";
 import {
-  applyWorkAreaWheelDelta,
   clampViewportWidth,
+  forwardWorkAreaWheelToScroller,
   isSiteCreatorPreviewChromeBackgroundTarget,
   measureSiteCreatorPreviewAvailableSize,
   resolveSiteCreatorDeviceChromeKind,
@@ -340,7 +340,12 @@ export function SiteCreatorPreview({
         return;
       }
       event.preventDefault();
-      applyWorkAreaWheelDelta(inner, { deltaX: event.deltaX, deltaY: event.deltaY });
+      forwardWorkAreaWheelToScroller(inner, {
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+      });
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
@@ -364,8 +369,10 @@ export function SiteCreatorPreview({
     return Math.max(1, pageScreenHeight ?? pageHeight);
   }, [deviceFrame, deviceMode, pageHeight, pageScreenHeight, pageWidth]);
 
+  const liveSectionScroll = Boolean(blueprint && needsSectionScrollPad);
+
   useLayoutEffect(() => {
-    if (!readOnly || !blueprint || !needsSectionScrollPad) {
+    if (!liveSectionScroll || !blueprint) {
       setScrollPad(0);
       return;
     }
@@ -403,12 +410,12 @@ export function SiteCreatorPreview({
     liveScreenHeight,
     needsSectionScrollPad,
     pageHeight,
-    readOnly,
+    liveSectionScroll,
     sectionScrollStations,
   ]);
 
   const sectionScrollPadEl =
-    readOnly && needsSectionScrollPad && scrollPad > 0 ? (
+    liveSectionScroll && scrollPad > 0 ? (
       <div
         aria-hidden
         data-testid="site-creator-section-scroll-pad"
@@ -438,15 +445,16 @@ export function SiteCreatorPreview({
   };
 
   useEffect(() => {
-    if (!readOnly || !blueprint || !needsSectionScrollPad) return;
+    if (!liveSectionScroll || !blueprint) return;
     const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
     if (!scroller) return;
     return bindSectionScroller({
       scroller,
       hops: listSectionScrollHops(blueprint, heightBand),
       stations: () => stationsFnRef.current(),
+      bindKeyboard: readOnly,
     });
-  }, [blueprint, deviceMode, heightBand, needsSectionScrollPad, readOnly]);
+  }, [blueprint, deviceMode, heightBand, liveSectionScroll, readOnly]);
 
   useEffect(() => {
     const onWin = () => setFrameTick((n) => n + 1);
@@ -730,8 +738,8 @@ export function SiteCreatorPreview({
       <div
         ref={scrollRef}
         className={`site-creator-preview-scroll min-h-0 flex-1 ${
-          readOnly
-            ? "cursor-default overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+          readOnly || (!deviceMode && liveSectionScroll)
+            ? `${readOnly ? "cursor-default" : "cursor-crosshair"} overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]`
             : "cursor-crosshair overflow-hidden"
         }`}
         onDoubleClick={(event) => {

@@ -4,7 +4,10 @@ import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
+import { createSectionFromSelection } from "./site-blueprint-ops";
+import { setSectionScrollHop } from "./site-creator-section-scroll";
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
+import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
 
 vi.mock("@/app/spaces/presenter/DesignerPageCanvasView", () => ({
   DesignerPageCanvasView: ({
@@ -130,6 +133,53 @@ describe("SiteCreatorPreview", () => {
     expect(gutter.parentElement?.contains(stage)).toBe(true);
     expect(gutter.className).toContain("absolute");
     expect(gutter.getAttribute("style")).toContain("right: 100%");
+  });
+
+  it("keeps Suave/Fijo active in the Original work area without Preview", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+    const blueprint = setSectionScrollHop(
+      section.blueprint,
+      hero.createdNodeId,
+      section.createdNodeId,
+      "smooth",
+    );
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1920}
+        referenceWidth={1920}
+        previewZoom={1}
+        blueprint={blueprint}
+      />,
+    );
+
+    const canvas = document.querySelector(".site-creator-preview-scroll");
+    expect(canvas?.className).toContain("overflow-y-auto");
+    expect(canvas?.className).not.toContain("overflow-hidden");
+    expect(screen.queryByTestId("site-creator-device-scroll")).toBeNull();
   });
 
   it("mirrors the device scroll in the external spine and clips it to the frame", () => {

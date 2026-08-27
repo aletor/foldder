@@ -23,6 +23,7 @@ import {
   siteCreatorTabletMediaMaxWidth,
   viewportWidthDeltaFromCenteredEdgeDrag,
   applyWorkAreaWheelDelta,
+  forwardWorkAreaWheelToScroller,
   shouldRedirectCanvasWheelToWorkArea,
   resolveSiteCreatorDeviceChromeKind,
   siteCreatorDeviceChrome,
@@ -250,6 +251,15 @@ describe("site-creator-viewport", () => {
     applyWorkAreaWheelDelta(inner, { deltaX: 4, deltaY: 80 });
     expect(inner.scrollTop).toBe(80);
     expect(inner.scrollLeft).toBe(4);
+  });
+
+  it("forwards work-area wheel unless the inner scroller prevents it", () => {
+    const inner = document.createElement("div");
+    forwardWorkAreaWheelToScroller(inner, { deltaX: 0, deltaY: 40 });
+    expect(inner.scrollTop).toBe(40);
+    inner.addEventListener("wheel", (event) => event.preventDefault(), { capture: true });
+    forwardWorkAreaWheelToScroller(inner, { deltaX: 0, deltaY: 25 });
+    expect(inner.scrollTop).toBe(40);
   });
 
   it("resolves a thicker rounded bezel for mobile than tablet", () => {
