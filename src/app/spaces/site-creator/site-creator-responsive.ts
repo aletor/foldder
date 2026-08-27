@@ -80,7 +80,11 @@ import {
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
-import { applySectionViewportHeights, sectionCustomHeightForBand, sectionHeightModeForBand } from "./site-creator-section-height";
+import {
+  applySectionViewportHeights,
+  resolveBandSectionTargetHeight,
+  scaledDesignedSectionGap,
+} from "./site-creator-section-height";
 import {
   reframeClippingImage,
   resizeSectionCoverClip,
@@ -537,11 +541,30 @@ function compositionKeepsUsability(
   return true;
 }
 
+function backgroundTargetRect(args: {
+  layoutRect: PageRect;
+  sourceRect: PageRect;
+  sourcePageWidth: number;
+}): PageRect {
+  const pageW = Math.max(1, args.sourcePageWidth);
+  const leftFrac = Math.max(0, args.sourceRect.x) / pageW;
+  const rightFrac = Math.max(0, pageW - args.sourceRect.x - args.sourceRect.width) / pageW;
+  if (leftFrac <= 0.02 && rightFrac <= 0.02) return { ...args.layoutRect };
+  const scaleX = args.layoutRect.width / pageW;
+  return {
+    x: args.layoutRect.x + args.sourceRect.x * scaleX,
+    y: args.layoutRect.y,
+    width: Math.max(1, args.sourceRect.width * scaleX),
+    height: args.layoutRect.height,
+  };
+}
+
 function placeBackgroundLayers(args: {
   byId: Map<string, FreehandObject>;
   backgroundLayerIds: string[];
   layoutRect: PageRect;
   sourceRegion: PageRect;
+  sourcePageWidth: number;
   index: SiteCreatorSelectionIndex;
   blueprint?: SiteBlueprintV1;
   band?: ResponsiveBand;
@@ -554,6 +577,11 @@ function placeBackgroundLayers(args: {
     if (!obj || !entry) continue;
     const sourceRect =
       sourceWorldVisualBounds(bgId, args.index) ?? entry.visualBounds;
+    const targetRect = backgroundTargetRect({
+      layoutRect: args.layoutRect,
+      sourceRect,
+      sourcePageWidth: args.sourcePageWidth,
+    });
 
     if (obj.type === "image") {
       const media = editable && args.blueprint ? resolveMediaTune(args.blueprint, bgId, editable) : null;
@@ -563,23 +591,24 @@ function placeBackgroundLayers(args: {
           imageRect: sourceRect,
           regionRect: args.sourceRegion,
         });
-      const fit = media?.fit ?? "cover";
+      const insetHorizontally = targetRect.width < args.layoutRect.width - 1;
+      const fit = media?.fit ?? (insetHorizontally ? "preserve" : "cover");
       const placed =
         fit === "contain"
           ? resolveBackgroundContainTransform({
               sourceRect,
-              targetRect: args.layoutRect,
+              targetRect,
               focalPoint: focal,
             })
           : fit === "preserve"
             ? resolveBackgroundPreserveTransform({
                 sourceRect,
                 sourceRegion: args.sourceRegion,
-                targetRect: args.layoutRect,
+                targetRect,
               })
             : resolveBackgroundCoverTransform({
                 sourceRect,
-                targetRect: args.layoutRect,
+                targetRect,
                 focalPoint: focal,
               });
       obj.x = placed.x;
@@ -591,9 +620,9 @@ function placeBackgroundLayers(args: {
       continue;
     }
 
-    // Formas de fondo: estirar al marco de la región.
+    // Formas de fondo: estirar al marco de destino (respeta márgenes laterales de Original).
     if (obj.type === "clippingContainer") {
-      resizeSectionCoverClip(obj as ClippingContainerObject, args.layoutRect);
+      resizeSectionCoverClip(obj as ClippingContainerObject, targetRect);
       continue;
     }
     if (obj.type === "path") {
@@ -604,16 +633,16 @@ function placeBackgroundLayers(args: {
         height: Math.max(1, obj.height),
       };
       transformPathObjectRelative(obj as PathObject, currentRect, {
-        x: args.layoutRect.x,
-        y: args.layoutRect.y,
-        scaleX: args.layoutRect.width / currentRect.width,
-        scaleY: args.layoutRect.height / currentRect.height,
+        x: targetRect.x,
+        y: targetRect.y,
+        scaleX: targetRect.width / currentRect.width,
+        scaleY: targetRect.height / currentRect.height,
       });
     }
-    obj.x = args.layoutRect.x;
-    obj.y = args.layoutRect.y;
-    obj.width = args.layoutRect.width;
-    obj.height = args.layoutRect.height;
+    obj.x = targetRect.x;
+    obj.y = targetRect.y;
+    obj.width = targetRect.width;
+    obj.height = targetRect.height;
   }
   return focals;
 }
@@ -1099,6 +1128,7 @@ function layoutSectionPreserveMode(args: {
     backgroundLayerIds: analysis.background.backgroundLayerIds,
     layoutRect,
     sourceRegion: analysis.containerBounds,
+    sourcePageWidth: args.sourceWidth,
     index,
     blueprint: args.blueprint,
     band,
@@ -1182,6 +1212,7 @@ function layoutSectionStackMode(args: {
   index: SiteCreatorSelectionIndex;
   band: ResponsiveBand;
   viewportWidth: number;
+  sourceWidth: number;
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
@@ -1334,6 +1365,7 @@ function layoutSectionStackMode(args: {
     backgroundLayerIds: analysis.background.backgroundLayerIds,
     layoutRect,
     sourceRegion: analysis.containerBounds,
+    sourcePageWidth: args.sourceWidth,
     index,
     blueprint: args.blueprint,
     band,
@@ -1465,6 +1497,7 @@ function layoutSectionAutoMode(args: {
   index: SiteCreatorSelectionIndex;
   band: ResponsiveBand;
   viewportWidth: number;
+  sourceWidth: number;
   yCursor: number;
 }): ResolvedResponsiveRegion {
   const { analysis, index, band, viewportWidth } = args;
@@ -1599,6 +1632,7 @@ function layoutSectionAutoMode(args: {
     backgroundLayerIds: analysis.background.backgroundLayerIds,
     layoutRect,
     sourceRegion: analysis.containerBounds,
+    sourcePageWidth: args.sourceWidth,
     index,
     blueprint: args.blueprint,
     band,
@@ -2556,6 +2590,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     }
   }
 
+  const layoutScale = viewportWidth / Math.max(1, reference.width);
   let yCursor = 0;
   for (let i = 0; i < sections.length; i += 1) {
     const section = sections[i]!;
@@ -2598,39 +2633,39 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     region.naturalHeight = Math.max(1, region.layoutRect.height);
     regions.push(region);
 
-    if (sectionViewport.expandViewportSections && (band === "tablet" || band === "mobile")) {
+    if (band === "tablet" || band === "mobile") {
       const heightBand = band === "mobile" ? "mobile" : "tablet";
-      const mode = sectionHeightModeForBand(args.blueprint, section, heightBand);
-      let targetH: number | null = null;
-      if (mode === "viewport") {
-        targetH = Math.max(region.layoutRect.height, sectionViewport.viewportHeight);
-      } else if (mode === "custom") {
-        const custom = sectionCustomHeightForBand(args.blueprint, section, heightBand);
-        if (custom != null) targetH = Math.max(region.layoutRect.height, custom);
-      }
-      if (targetH != null) {
-        const extra = Math.max(0, targetH - region.layoutRect.height);
-        if (extra > 0.5) {
-          shiftSectionContentY({
-            byId,
-            blueprint: args.blueprint,
-            index,
-            sectionId: section.id,
-            backgroundLayerIds: region.backgroundLayerIds,
-            deltaY: extra / 2,
-          });
-          region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
-          region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
-          placeBackgroundLayers({
-            byId,
-            backgroundLayerIds: region.backgroundLayerIds,
-            layoutRect: region.layoutRect,
-            sourceRegion: analysis.containerBounds,
-            index,
-            blueprint: args.blueprint,
-            band,
-          });
-        }
+      const targetH = resolveBandSectionTargetHeight({
+        blueprint: args.blueprint,
+        section,
+        band: heightBand,
+        contentHeight: region.layoutRect.height,
+        viewportHeight: sectionViewport.viewportHeight,
+        layoutScale,
+        expandViewportSections: sectionViewport.expandViewportSections,
+      });
+      const extra = Math.max(0, targetH - region.layoutRect.height);
+      if (extra > 0.5) {
+        shiftSectionContentY({
+          byId,
+          blueprint: args.blueprint,
+          index,
+          sectionId: section.id,
+          backgroundLayerIds: region.backgroundLayerIds,
+          deltaY: extra / 2,
+        });
+        region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
+        region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
+        placeBackgroundLayers({
+          byId,
+          backgroundLayerIds: region.backgroundLayerIds,
+          layoutRect: region.layoutRect,
+          sourceRegion: analysis.containerBounds,
+          sourcePageWidth: reference.width,
+          index,
+          blueprint: args.blueprint,
+          band,
+        });
       }
     }
 
@@ -2643,7 +2678,12 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     }
 
     yCursor = region.layoutRect.y + region.layoutRect.height;
-    if (i < sections.length - 1) yCursor += TOP_LEVEL_REGION_GAP;
+    if (i < sections.length - 1) {
+      yCursor += Math.max(
+        TOP_LEVEL_REGION_GAP,
+        scaledDesignedSectionGap(section, sections[i + 1]!, viewportWidth, reference.width),
+      );
+    }
   }
 
   if (band === "tablet" || band === "mobile") {

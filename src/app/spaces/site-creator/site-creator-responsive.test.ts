@@ -26,6 +26,7 @@ import {
   makePage,
 } from "./site-creator-responsive-fixtures";
 import { defaultDeviceConfig, resolveDeviceDimensions } from "./site-creator-viewport";
+import { scaledDesignedSectionGap } from "./site-creator-section-height";
 
 describe("site-creator-responsive 6B.1", () => {
   beforeEach(() => {
@@ -105,8 +106,14 @@ describe("site-creator-responsive 6B.1", () => {
     )).toBe(true);
     expect(btn.height).toBeGreaterThanOrEqual(44);
     expect((title as { fontSize?: number }).fontSize ?? 0).toBeGreaterThanOrEqual(15);
-    // Section contigua al Hero
-    expect(secBg.y).toBe(hero.layoutRect.y + hero.layoutRect.height);
+    // Conserva el hueco de diseño entre Hero y Section, a la escala de la banda.
+    const heroNode = fx.blueprint.nodes[fx.heroId];
+    const sectionNode = fx.blueprint.nodes[fx.sectionId];
+    const designedGap =
+      heroNode?.kind === "section" && sectionNode?.kind === "section"
+        ? scaledDesignedSectionGap(heroNode, sectionNode, 390, 1920)
+        : 0;
+    expect(secBg.y).toBe(hero.layoutRect.y + hero.layoutRect.height + designedGap);
     expect(title.y).toBeLessThan(panel.y + panel.height);
     expect(
       assertNoHorizontalOverflow(mobile.displayPage, 390, hero.backgroundLayerIds),

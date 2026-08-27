@@ -24,6 +24,7 @@ import {
   TOP_LEVEL_REGION_GAP,
 } from "./site-creator-responsive";
 import { fixtureHeroPanelButton } from "./site-creator-responsive-fixtures";
+import { scaledDesignedSectionGap } from "./site-creator-section-height";
 
 describe("6B.1 visual close", () => {
   beforeEach(() => {
@@ -139,7 +140,13 @@ describe("6B.1 visual close", () => {
       });
       const hero = result.resolvedLayout!.regions.find((r) => r.sectionType === "hero")!;
       const section = result.resolvedLayout!.regions.find((r) => r.sectionId === fx.sectionId)!;
-      expect(section.layoutRect.y).toBe(hero.layoutRect.y + hero.layoutRect.height);
+      const heroNode = fx.blueprint.nodes[fx.heroId];
+      const sectionNode = fx.blueprint.nodes[fx.sectionId];
+      const designedGap =
+        heroNode?.kind === "section" && sectionNode?.kind === "section"
+          ? scaledDesignedSectionGap(heroNode, sectionNode, width, 1920)
+          : 0;
+      expect(section.layoutRect.y).toBe(hero.layoutRect.y + hero.layoutRect.height + designedGap);
       expect(section.clipRect.y).toBe(section.layoutRect.y);
       const last = section.layoutRect.y + section.layoutRect.height;
       expect(result.resolvedLayout!.pageRect.height).toBe(last);

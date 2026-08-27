@@ -52,9 +52,11 @@ import {
   type SectionScrollStationPoint,
 } from "./site-creator-section-height";
 import {
+  applyWorkAreaWheelDelta,
   clampViewportWidth,
   isSiteCreatorPreviewChromeBackgroundTarget,
   measureSiteCreatorPreviewAvailableSize,
+  shouldRedirectCanvasWheelToWorkArea,
   viewportWidthDeltaFromCenteredEdgeDrag,
 } from "./site-creator-viewport";
 
@@ -312,6 +314,30 @@ export function SiteCreatorPreview({
       inner?.removeEventListener("scroll", bumpDevice);
     };
   }, [deviceMode]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    const canvas = scrollRef.current;
+    if (!canvas) return;
+    const onWheel = (event: WheelEvent) => {
+      const inner = deviceScrollRef.current;
+      if (
+        !inner ||
+        !shouldRedirectCanvasWheelToWorkArea({
+          readOnly,
+          ctrlOrMeta: event.ctrlKey || event.metaKey,
+          innerScroller: inner,
+          eventTarget: event.target,
+        })
+      ) {
+        return;
+      }
+      event.preventDefault();
+      applyWorkAreaWheelDelta(inner, { deltaX: event.deltaX, deltaY: event.deltaY });
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [deviceMode, readOnly]);
 
   const needsSectionScrollPad = Boolean(
     blueprint && sectionScrollNeedsViewportPad(blueprint, heightBand),
@@ -695,8 +721,10 @@ export function SiteCreatorPreview({
       ) : null}
       <div
         ref={scrollRef}
-        className={`site-creator-preview-scroll min-h-0 flex-1 overflow-auto ${
-          readOnly ? "cursor-default overflow-x-hidden [scrollbar-gutter:stable]" : "cursor-crosshair"
+        className={`site-creator-preview-scroll min-h-0 flex-1 ${
+          readOnly
+            ? "cursor-default overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+            : "cursor-crosshair overflow-hidden"
         }`}
         onDoubleClick={(event) => {
           if (readOnly) return;

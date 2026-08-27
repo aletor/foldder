@@ -119,6 +119,9 @@ describe("SiteCreatorPreview", () => {
     const stage = screen.getByTestId("site-creator-preview-stage");
     expect(stage.getAttribute("style")).toContain("width: 800px");
     expect(stage.getAttribute("style")).toContain("height: 600px");
+    const canvas = document.querySelector(".site-creator-preview-scroll");
+    expect(canvas?.className).toContain("overflow-hidden");
+    expect(screen.queryByTestId("site-creator-device-scroll")).toBeNull();
     const gutter = screen.getByTestId("site-creator-section-spine-gutter");
     expect(stage.contains(gutter)).toBe(false);
     expect(gutter.parentElement?.contains(stage)).toBe(true);
@@ -589,6 +592,12 @@ describe("SiteCreatorPreview", () => {
     const stage = screen.getByTestId("site-creator-preview-stage");
     expect(stage.getAttribute("style")).toContain("width: 390px");
     expect(stage.getAttribute("style")).toContain("height: 844px");
+    const canvas = document.querySelector(".site-creator-preview-scroll")!;
+    expect(canvas.className).toContain("overflow-hidden");
+    const inner = screen.getByTestId("site-creator-device-scroll");
+    Object.defineProperty(inner, "scrollTop", { configurable: true, writable: true, value: 0 });
+    fireEvent.wheel(canvas, { deltaY: 120 });
+    expect(inner.scrollTop).toBe(120);
   });
 
   it("readOnly hides selection, resize handles and does not dispatch clicks", () => {
@@ -622,6 +631,7 @@ describe("SiteCreatorPreview", () => {
     expect(document.querySelector("[data-site-creator-page-preview='1']")).toBeTruthy();
     const scroll = document.querySelector(".site-creator-preview-scroll");
     expect(scroll).toBeTruthy();
+    expect(scroll!.className).toContain("overflow-y-auto");
     fireNativePointer("pointerdown", scroll!, { clientX: 12, clientY: 12, button: 0, pointerId: 1 });
     fireNativePointer("pointerup", scroll!, { clientX: 12, clientY: 12, button: 0, pointerId: 1 });
     expect(onSelectionAction).not.toHaveBeenCalled();

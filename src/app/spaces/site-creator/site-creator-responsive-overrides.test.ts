@@ -31,6 +31,7 @@ import {
   treeOverrideDotState,
 } from "./site-creator-responsive-overrides";
 import { buildDesignerSourceSnapshot } from "./designer-source-snapshot";
+import { scaledDesignedSectionGap } from "./site-creator-section-height";
 
 describe("site-creator-responsive-overrides 6B.2", () => {
   beforeEach(() => {
@@ -274,7 +275,13 @@ describe("site-creator-responsive-overrides 6B.2", () => {
     });
     const hero = result.resolvedLayout!.regions.find((r) => r.sectionType === "hero")!;
     const section = result.resolvedLayout!.regions.find((r) => r.sectionId === fx.sectionId)!;
-    expect(section.layoutRect.y).toBeCloseTo(hero.layoutRect.y + hero.layoutRect.height, 0);
+    const heroNode = fx.blueprint.nodes[fx.heroId];
+    const sectionNode = fx.blueprint.nodes[fx.sectionId];
+    const designedGap =
+      heroNode?.kind === "section" && sectionNode?.kind === "section"
+        ? scaledDesignedSectionGap(heroNode, sectionNode, 390, 1920)
+        : 0;
+    expect(section.layoutRect.y).toBeCloseTo(hero.layoutRect.y + hero.layoutRect.height + designedGap, 0);
   });
 
   it("R/S — Ancestro Preserve controla; Auto reactiva descendiente", () => {

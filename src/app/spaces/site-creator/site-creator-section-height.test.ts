@@ -8,8 +8,11 @@ import { setSectionHeightMode } from "./site-blueprint-ops";
 import {
   applySectionViewportHeights,
   describeSectionHeightOpportunity,
+  designedSectionGapPx,
   liveViewportHeightInPageUnits,
   planSectionHeightLayout,
+  resolveBandSectionTargetHeight,
+  scaledDesignedSectionGap,
   sectionCustomHeightForBand,
   sectionHeightMode,
   sectionHeightModeForBand,
@@ -126,6 +129,114 @@ describe("section height mode", () => {
     expect(hero.extra).toBe(500);
     // El hueco de diseño entre hero (0–400) y body (500) se conserva al empujar.
     expect(next.top).toBe(1000);
+  });
+
+  it("keeps the original gap between sections on tablet and mobile", () => {
+    const { page, index, blueprint, heroId, sectionId } = twoSections();
+    const hero = blueprint.nodes[heroId];
+    const section = blueprint.nodes[sectionId];
+    expect(hero?.kind).toBe("section");
+    expect(section?.kind).toBe("section");
+    if (hero?.kind !== "section" || section?.kind !== "section") return;
+    expect(designedSectionGapPx(hero, section)).toBe(100);
+
+    for (const width of [SITE_CREATOR_TABLET_WIDTH, 390]) {
+      const resolved = resolveSiteCreatorResponsiveDisplay({
+        page,
+        blueprint,
+        referenceIndex: index,
+        viewportWidth: width,
+      });
+      const heroRegion = resolved.resolvedLayout?.regions.find((region) => region.sectionId === heroId);
+      const nextRegion = resolved.resolvedLayout?.regions.find((region) => region.sectionId === sectionId);
+      expect(heroRegion).toBeTruthy();
+      expect(nextRegion).toBeTruthy();
+      if (!heroRegion || !nextRegion) return;
+      const gap = scaledDesignedSectionGap(hero, section, width, 1920);
+      expect(gap).toBeGreaterThan(0);
+      expect(nextRegion.layoutRect.y).toBe(heroRegion.layoutRect.y + heroRegion.layoutRect.height + gap);
+    }
+  });
+
+  it("inherits Original custom extra onto tablet when that band has no override", () => {
+    const { page, index, blueprint, sectionId } = twoSections();
+    const custom = setSectionHeightMode(blueprint, sectionId, "custom", "wide", 900);
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+    const section = custom.blueprint.nodes[sectionId];
+    expect(section?.kind).toBe("section");
+    if (section?.kind !== "section") return;
+
+    const baseline = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const expanded = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: custom.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const baselineRegion = baseline.resolvedLayout?.regions.find((region) => region.sectionId === sectionId);
+    const expandedRegion = expanded.resolvedLayout?.regions.find((region) => region.sectionId === sectionId);
+    expect(baselineRegion).toBeTruthy();
+    expect(expandedRegion).toBeTruthy();
+    if (!baselineRegion || !expandedRegion) return;
+
+    const scale = SITE_CREATOR_TABLET_WIDTH / 1920;
+    const target = resolveBandSectionTargetHeight({
+      blueprint: custom.blueprint,
+      section,
+      band: "tablet",
+      contentHeight: baselineRegion.layoutRect.height,
+      viewportHeight: 1080,
+      layoutScale: scale,
+      expandViewportSections: true,
+    });
+    expect(expandedRegion.layoutRect.height).toBeCloseTo(target, 4);
+    expect(expandedRegion.layoutRect.height).toBeGreaterThan(baselineRegion.layoutRect.height);
+  });
+
+  it("keeps original side insets of a section background on tablet and mobile", () => {
+    const page = makePage([
+      makeLayer({
+        id: "photo",
+        type: "image",
+        x: 120,
+        y: 40,
+        width: 1680,
+        height: 700,
+      }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["photo"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+
+    for (const width of [SITE_CREATOR_TABLET_WIDTH, 390]) {
+      const resolved = resolveSiteCreatorResponsiveDisplay({
+        page,
+        blueprint: hero.blueprint,
+        referenceIndex: index,
+        viewportWidth: width,
+      });
+      const photo = findDisplayObject(resolved.displayPage, "photo")!;
+      const scale = width / 1920;
+      expect(photo.x).toBeCloseTo(120 * scale, 1);
+      expect(photo.width).toBeCloseTo(1680 * scale, 1);
+      expect(photo.x).toBeGreaterThan(4);
+      expect(photo.x + photo.width).toBeLessThan(width - 4);
+    }
   });
 
   it("shows expand arrow for content and restore for viewport", () => {

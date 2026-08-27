@@ -16,6 +16,7 @@ import {
   resolveSiteCreatorResponsiveDisplay,
 } from "./site-creator-responsive";
 import { fixtureHeroPanelButton } from "./site-creator-responsive-fixtures";
+import { scaledDesignedSectionGap } from "./site-creator-section-height";
 
 describe("site-creator-responsive 6B.1 QA", () => {
   beforeEach(() => {
@@ -159,8 +160,14 @@ describe("site-creator-responsive 6B.1 QA", () => {
     expect(photo.y).toBeGreaterThanOrEqual(hero.layoutRect.y - 0.01);
     expect(resolved.objectClipById.photo).toEqual(hero.clipRect);
 
-    // Section contigua: sin franja
-    expect(section.layoutRect.y).toBe(hero.layoutRect.y + hero.layoutRect.height);
+    // Conserva el hueco de diseño entre secciones (escala de la banda)
+    const heroNode = fx.blueprint.nodes[fx.heroId];
+    const sectionNode = fx.blueprint.nodes[fx.sectionId];
+    const designedGap =
+      heroNode?.kind === "section" && sectionNode?.kind === "section"
+        ? scaledDesignedSectionGap(heroNode, sectionNode, 390, 1920)
+        : 0;
+    expect(section.layoutRect.y).toBe(hero.layoutRect.y + hero.layoutRect.height + designedGap);
 
     expect(section.backgroundLayerIds).toContain("sec_bg");
     const secBg = findDisplayObject(mobile.displayPage, "sec_bg")!;

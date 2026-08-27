@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
 import { cloneBlueprint } from "./site-blueprint-validate";
@@ -32,6 +32,14 @@ function fireNativePointer(
     pointerId: { value: values.pointerId },
   });
   fireEvent(target, event);
+}
+
+async function flushAnimationFrame(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
 }
 
 function twoSectionsBlueprint() {
@@ -257,7 +265,7 @@ describe("site-creator section scroll flow", () => {
     expect(onHeight).toHaveBeenCalledWith(heroId, "custom");
   });
 
-  it("keeps the drag scale stable while custom height rerenders the preview", () => {
+  it("keeps the drag scale stable while custom height rerenders the preview", async () => {
     const { blueprint, heroId } = twoSectionsBlueprint();
     const hero = listDocumentSections(blueprint)[0]!;
     const onCustomHeightChange = vi.fn();
@@ -313,6 +321,7 @@ describe("site-creator section scroll flow", () => {
     rerender(<SiteCreatorSectionSpine {...commonProps} scale={0.5} />);
     fireNativePointer(window, "pointermove", { clientY: 200, pointerId: 7 });
     fireNativePointer(window, "pointermove", { clientY: 200, pointerId: 7 });
+    await flushAnimationFrame();
 
     expect(onCustomHeightChange).toHaveBeenCalledTimes(1);
     expect(onCustomHeightChange).toHaveBeenLastCalledWith(heroId, 500);

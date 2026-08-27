@@ -99,6 +99,66 @@ export function sectionCustomHeightForBand(
   return null;
 }
 
+/** Hueco vertical de diseño entre dos secciones consecutivas, en px de Original. */
+export function designedSectionGapPx(
+  from: SiteBlueprintSectionNode,
+  to: SiteBlueprintSectionNode,
+): number {
+  return Math.max(0, to.sourceRange.top - from.sourceRange.bottom);
+}
+
+export function scaleOriginalPxToBand(
+  px: number,
+  viewportWidth: number,
+  sourceWidth: number,
+): number {
+  return Math.max(0, px) * (Math.max(1, viewportWidth) / Math.max(1, sourceWidth));
+}
+
+export function scaledDesignedSectionGap(
+  from: SiteBlueprintSectionNode,
+  to: SiteBlueprintSectionNode,
+  viewportWidth: number,
+  sourceWidth: number,
+): number {
+  return Math.round(scaleOriginalPxToBand(designedSectionGapPx(from, to), viewportWidth, sourceWidth));
+}
+
+/**
+ * Alto objetivo en tablet/móvil: custom de esa banda, o el custom de Original
+ * escalado si la banda no tiene override. Viewport solo se congela en el editor.
+ */
+export function resolveBandSectionTargetHeight(args: {
+  blueprint: SiteBlueprintV1;
+  section: SiteBlueprintSectionNode;
+  band: SectionHeightBand;
+  contentHeight: number;
+  viewportHeight: number;
+  layoutScale: number;
+  expandViewportSections: boolean;
+}): number {
+  let target = Math.max(1, args.contentHeight);
+  const mode = sectionHeightModeForBand(args.blueprint, args.section, args.band);
+  if (mode === "viewport") {
+    if (args.expandViewportSections) {
+      target = Math.max(target, Math.max(1, args.viewportHeight));
+    }
+    return target;
+  }
+  if (mode === "custom") {
+    const custom = sectionCustomHeightForBand(args.blueprint, args.section, args.band);
+    if (custom != null) return Math.max(target, custom);
+    return target;
+  }
+  if (sectionHeightMode(args.section) === "custom") {
+    const wideCustom = args.section.customHeight;
+    if (typeof wideCustom === "number" && wideCustom > 0) {
+      target = Math.max(target, wideCustom * Math.max(0, args.layoutScale));
+    }
+  }
+  return target;
+}
+
 export function sectionHeightModeForBand(
   blueprint: SiteBlueprintV1,
   section: SiteBlueprintSectionNode,

@@ -359,6 +359,8 @@ function StationModule({
     minimumHeight: number;
     pointerId: number;
     lastSent: number;
+    pending: number | null;
+    raf: number;
   } | null>(null);
   const onCustomRef = useRef(onCustomHeightChange);
 
@@ -367,23 +369,35 @@ function StationModule({
   }, [onCustomHeightChange]);
 
   useEffect(() => {
+    const flush = () => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      drag.raf = 0;
+      const next = drag.pending;
+      if (next == null || next === drag.lastSent) return;
+      drag.lastSent = next;
+      setLiveCustom(next);
+      onCustomRef.current(next);
+    };
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || event.pointerId !== drag.pointerId) return;
       const deltaPage =
         (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
-      const next = Math.max(
+      drag.pending = Math.max(
         drag.minimumHeight,
         Math.round(drag.startHeight + deltaPage),
       );
-      if (next === drag.lastSent) return;
-      drag.lastSent = next;
-      setLiveCustom(next);
-      onCustomRef.current(next);
+      if (drag.raf) return;
+      drag.raf = window.requestAnimationFrame(flush);
     };
     const onUp = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || event.pointerId !== drag.pointerId) return;
+      if (drag.raf) {
+        window.cancelAnimationFrame(drag.raf);
+        drag.raf = 0;
+      }
       const deltaPage =
         (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
       const next = Math.max(
@@ -398,6 +412,8 @@ function StationModule({
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
     return () => {
+      const drag = dragRef.current;
+      if (drag?.raf) window.cancelAnimationFrame(drag.raf);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -407,6 +423,7 @@ function StationModule({
   const onDragPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    if (dragRef.current?.pointerId === event.pointerId) return;
     const configuredHeight =
       station.heightMode === "custom" && station.customHeight != null
         ? station.customHeight
@@ -419,6 +436,8 @@ function StationModule({
       minimumHeight: station.designedHeight,
       pointerId: event.pointerId,
       lastSent: startHeight,
+      pending: null,
+      raf: 0,
     };
     setLiveCustom(startHeight);
     try {

@@ -22,6 +22,8 @@ import {
   cycleViewportBand,
   siteCreatorTabletMediaMaxWidth,
   viewportWidthDeltaFromCenteredEdgeDrag,
+  applyWorkAreaWheelDelta,
+  shouldRedirectCanvasWheelToWorkArea,
 } from "./site-creator-viewport";
 
 describe("site-creator-viewport", () => {
@@ -196,5 +198,55 @@ describe("site-creator-viewport", () => {
     });
     expect(dims.width).toBe(1180);
     expect(dims.height).toBe(820);
+  });
+
+  it("redirects canvas wheel to the work scroller except when it already started there", () => {
+    const inner = document.createElement("div");
+    const child = document.createElement("span");
+    inner.appendChild(child);
+    expect(
+      shouldRedirectCanvasWheelToWorkArea({
+        readOnly: false,
+        ctrlOrMeta: false,
+        innerScroller: inner,
+        eventTarget: document.createElement("div"),
+      }),
+    ).toBe(true);
+    expect(
+      shouldRedirectCanvasWheelToWorkArea({
+        readOnly: false,
+        ctrlOrMeta: false,
+        innerScroller: inner,
+        eventTarget: child,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRedirectCanvasWheelToWorkArea({
+        readOnly: true,
+        ctrlOrMeta: false,
+        innerScroller: inner,
+        eventTarget: document.createElement("div"),
+      }),
+    ).toBe(false);
+    expect(
+      shouldRedirectCanvasWheelToWorkArea({
+        readOnly: false,
+        ctrlOrMeta: true,
+        innerScroller: inner,
+        eventTarget: document.createElement("div"),
+      }),
+    ).toBe(false);
+    expect(
+      shouldRedirectCanvasWheelToWorkArea({
+        readOnly: false,
+        ctrlOrMeta: false,
+        innerScroller: null,
+        eventTarget: document.createElement("div"),
+      }),
+    ).toBe(false);
+
+    applyWorkAreaWheelDelta(inner, { deltaX: 4, deltaY: 80 });
+    expect(inner.scrollTop).toBe(80);
+    expect(inner.scrollLeft).toBe(4);
   });
 });

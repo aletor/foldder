@@ -257,3 +257,24 @@ export function isSiteCreatorPreviewChromeBackgroundTarget(target: EventTarget |
   if (target.closest(".site-creator-preview-stage")) return false;
   return Boolean(target.closest(".site-creator-preview-scroll"));
 }
+
+/** Rueda en el lienzo: si hay scroller interior, reenviar ahí. No cambia el recuadro. */
+export function shouldRedirectCanvasWheelToWorkArea(args: {
+  readOnly: boolean;
+  ctrlOrMeta: boolean;
+  innerScroller: EventTarget | null;
+  eventTarget: EventTarget | null;
+}): boolean {
+  if (args.readOnly || args.ctrlOrMeta) return false;
+  if (!(args.innerScroller instanceof Element)) return false;
+  if (args.eventTarget instanceof Node && args.innerScroller.contains(args.eventTarget)) return false;
+  return true;
+}
+
+export function applyWorkAreaWheelDelta(
+  scroller: HTMLElement,
+  delta: { deltaX: number; deltaY: number },
+): void {
+  scroller.scrollTop += delta.deltaY;
+  scroller.scrollLeft += delta.deltaX;
+}

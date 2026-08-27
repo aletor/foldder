@@ -93,7 +93,9 @@ describe("clip images resize with the page", () => {
     });
     const photo = photoOf(tablet.displayPage)!;
     const clip = findDisplayObject(tablet.displayPage, "clip")!;
-    expect(clip.width).toBeCloseTo(SITE_CREATOR_TABLET_WIDTH, 1);
+    const scale = SITE_CREATOR_TABLET_WIDTH / 1920;
+    expect(clip.x).toBeCloseTo(200 * scale, 1);
+    expect(clip.width).toBeCloseTo(800 * scale, 1);
     expect(photo.width / photo.height).toBeCloseTo(960 / 640, 6);
     expect(photo.width).toBeGreaterThanOrEqual(clip.width - 0.5);
     expect(photo.height).toBeGreaterThanOrEqual(clip.height - 0.5);
