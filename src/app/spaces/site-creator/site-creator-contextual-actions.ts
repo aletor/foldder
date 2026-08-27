@@ -62,7 +62,7 @@ export interface ResolveContextualArgs {
   index: SiteCreatorSelectionIndex;
   snapshot: DesignerSourceSnapshotV1 | null;
   persistGate: PersistentStructureGate;
-  /** Vista activa: el microbar Ancho completo/natural sigue la banda, no Original. */
+  /** Vista activa: Original no muestra Ancho completo ni layout de dispositivo. */
   band?: ResponsiveBandLike;
 }
 
@@ -160,6 +160,10 @@ function isAncestor(blueprint: SiteBlueprintV1, ancestorId: string, nodeId: stri
   return false;
 }
 
+function isStructureWorkshopBand(band?: ResponsiveBandLike): boolean {
+  return band == null || band === "wide";
+}
+
 export function resolveContextualModel(args: ResolveContextualArgs): SiteCreatorContextualModel {
   const { units, inspectNodeId, blueprint, index, snapshot, persistGate } = args;
 
@@ -201,17 +205,19 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
       };
     }
     if (node.kind === "layoutGroup") {
-      const fitted = resolveLayoutGroupFitForBand(blueprint, node, args.band ?? "wide") != null;
+      const actions: SiteCreatorPrimaryAction[] = [];
+      if (!isStructureWorkshopBand(args.band)) {
+        const fitted = resolveLayoutGroupFitForBand(blueprint, node, args.band) != null;
+        actions.push({
+          id: fitted ? "groupWidthContent" : "groupWidthFull",
+          label: fitted ? "Ancho natural" : "Ancho completo",
+          primary: true,
+        });
+      }
+      actions.push({ id: "separateGroup", label: "Desagrupar" });
       return {
         summary: label,
-        primaryActions: [
-          {
-            id: fitted ? "groupWidthContent" : "groupWidthFull",
-            label: fitted ? "Ancho natural" : "Ancho completo",
-            primary: true,
-          },
-          { id: "separateGroup", label: "Desagrupar" },
-        ],
+        primaryActions: actions,
         overflowActions: [],
         canvasLabel: label,
         breadcrumb: null,

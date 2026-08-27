@@ -50,7 +50,7 @@ describe("site creator section defaults", () => {
     const sectionId = result.createdNodeId!;
     const target = { kind: "blueprintNode" as const, nodeId: sectionId };
 
-    for (const band of ["tablet", "mobile"] as const) {
+    for (const band of ["monitor", "tablet", "mobile"] as const) {
       expect(resolveEffectiveResponsiveMode({ blueprint, target, band }).mode).toBe(
         "preserve",
       );

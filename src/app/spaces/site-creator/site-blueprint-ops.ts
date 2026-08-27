@@ -25,7 +25,7 @@ import type {
   SiteSectionHeightMode,
   SiteSectionType,
 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isResponsiveEditableBand, isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import { getPageDimensions } from "../indesign/page-formats";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { unitsToStructureLayerIds, type SiteCreatorSelectionUnit } from "./site-creator-display-labels";
@@ -948,7 +948,7 @@ export function setSectionHeightMode(
   blueprint: SiteBlueprintV1,
   sectionId: string,
   heightMode: SiteSectionHeightMode,
-  band: "wide" | "tablet" | "mobile" = "wide",
+  band: "wide" | "monitor" | "tablet" | "mobile" = "wide",
   customHeight?: number,
 ): BlueprintOpResult {
   const node = blueprint.nodes[sectionId];
@@ -964,7 +964,7 @@ export function setSectionHeightMode(
         : 1;
   const px = band === "wide" ? Math.max(designed, requestedPx) : requestedPx;
 
-  if (band === "tablet" || band === "mobile") {
+  if (isResponsiveEditableBand(band)) {
     const patch =
       heightMode === "viewport"
         ? { heightMode: "viewport" as const, customHeight: undefined }

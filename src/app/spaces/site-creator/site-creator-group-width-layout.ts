@@ -24,6 +24,7 @@ import type { ResponsiveBandLike } from "./site-creator-responsive-overrides";
 import { resolveContainerTune } from "./site-creator-responsive-tunes";
 import { getObjectFontSize } from "./site-creator-responsive-visual";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
+import { isResponsiveEditableBand } from "./site-creator-types";
 import type { SiteBlueprintLayoutGroupNode, SiteBlueprintV1 } from "./site-creator-types";
 
 const ROW_GAP = 16;
@@ -820,7 +821,7 @@ export function resolveLayoutGroupFitForBand(
     }
     return null;
   }
-  if (band !== "tablet" && band !== "mobile") return null;
+  if (!isResponsiveEditableBand(band)) return null;
   const nodeTune = resolveContainerTune(blueprint, { kind: "blueprintNode", nodeId: group.id }, band);
   const fromNode = tuneToFit(nodeTune);
   if (fromNode) return fromNode;
@@ -854,7 +855,7 @@ export function containerIsFullWidthForBand(
       return layoutGroupIsFullWidthForBand(blueprint, node, band);
     }
   }
-  if (band === "tablet" || band === "mobile") {
+  if (isResponsiveEditableBand(band)) {
     const dgTune = resolveContainerTune(blueprint, { kind: "designerGroup", layerId: containerId }, band);
     if (dgTune?.contentWidthMode === "full" || dgTune?.contentWidthMode === "scale") return true;
   }

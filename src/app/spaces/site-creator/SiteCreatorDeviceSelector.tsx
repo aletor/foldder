@@ -4,6 +4,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
+  Monitor,
   RotateCw,
   Smartphone,
   Tablet,
@@ -14,6 +15,7 @@ import {
   clampDeviceHeight,
   clampViewportWidth,
   devicePresetsForBand,
+  type SiteCreatorDeviceBand,
   type SiteCreatorDeviceConfig,
   type SiteCreatorDeviceOrientation,
   type SiteCreatorDeviceSizeId,
@@ -21,7 +23,7 @@ import {
 } from "./site-creator-viewport";
 
 export interface SiteCreatorDeviceSelectorProps {
-  band: "tablet" | "mobile";
+  band: SiteCreatorDeviceBand;
   bandLabel: string;
   active: boolean;
   config: SiteCreatorDeviceConfig;
@@ -75,7 +77,7 @@ export function SiteCreatorDeviceSelector({
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{ left: number; top: number } | null>(null);
   const presets = devicePresetsForBand(band);
-  const DeviceIcon = band === "tablet" ? Tablet : Smartphone;
+  const DeviceIcon = band === "monitor" ? Monitor : band === "tablet" ? Tablet : Smartphone;
 
   useEffect(() => {
     if (!open) return;
@@ -346,7 +348,7 @@ export function SiteCreatorOrientationToggle({
           ? orientation === "portrait"
             ? "Cambiar a horizontal"
             : "Cambiar a vertical"
-          : "Rotación disponible en Tablet y Móvil"
+          : "Rotación disponible en Monitor, Tablet y Móvil"
       }
       className={`font-semibold text-white/55 transition hover:bg-white/[0.06] hover:text-white ${
         compact
@@ -360,7 +362,7 @@ export function SiteCreatorOrientationToggle({
           ? orientation === "portrait"
             ? "Cambiar a horizontal"
             : "Cambiar a vertical"
-          : "Rotación disponible en Tablet y Móvil"
+          : "Rotación disponible en Monitor, Tablet y Móvil"
       }
       onClick={() => onChange(next)}
     >

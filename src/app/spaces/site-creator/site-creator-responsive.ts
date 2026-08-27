@@ -23,7 +23,11 @@ import type {
   ResponsiveBackgroundPlacementV1,
   SiteBlueprintV1,
 } from "./site-creator-types";
-import { isSiteSectionNode, type SiteBlueprintSectionNode } from "./site-creator-types";
+import {
+  isResponsiveEditableBand,
+  isSiteSectionNode,
+  type SiteBlueprintSectionNode,
+} from "./site-creator-types";
 import {
   SITE_CREATOR_TABLET_WIDTH,
   siteCreatorTabletMediaMaxWidth,
@@ -97,7 +101,7 @@ import {
   resolveExplicitBackground,
 } from "./site-creator-background-assignment";
 
-export type ResponsiveBand = "wide" | "tablet" | "mobile";
+export type ResponsiveBand = "wide" | "monitor" | "tablet" | "mobile";
 
 /** Cluster / región resuelta solo en memoria de preview — no se persiste. */
 export type ResolvedResponsiveRegion = {
@@ -207,7 +211,9 @@ export function bandForEditorDevice(
   viewportWidth: number,
   referenceWidth: number,
 ): ResponsiveBand {
-  if (viewportBand === "tablet" || viewportBand === "mobile") return viewportBand;
+  if (viewportBand === "monitor" || viewportBand === "tablet" || viewportBand === "mobile") {
+    return viewportBand;
+  }
   return bandForViewportWidth(viewportWidth, referenceWidth);
 }
 
@@ -240,7 +246,7 @@ function resolveSectionLayoutMetrics(args: {
   viewportWidth: number;
   sectionType: "hero" | "generic";
 }): SectionLayoutMetrics {
-  const editable = args.band === "tablet" || args.band === "mobile" ? args.band : null;
+  const editable = isResponsiveEditableBand(args.band) ? args.band : null;
   const tune = editable
     ? resolveContainerTune(args.blueprint, { kind: "blueprintNode", nodeId: args.sectionId }, editable)
     : null;
@@ -570,7 +576,7 @@ function placeBackgroundLayers(args: {
   band?: ResponsiveBand;
 }): Record<string, NormalizedFocalPoint> {
   const focals: Record<string, NormalizedFocalPoint> = {};
-  const editable = args.band === "tablet" || args.band === "mobile" ? args.band : null;
+  const editable = isResponsiveEditableBand(args.band) ? args.band : null;
   for (const bgId of args.backgroundLayerIds) {
     const obj = args.byId.get(bgId);
     const entry = args.index.byId[bgId];
@@ -1108,7 +1114,7 @@ function layoutSectionPreserveMode(args: {
   const containerH = analysis.containerBounds.height * scale;
   const anchor = clusterNormalizedAnchor(origin, analysis.containerBounds);
 
-  const editableBand = band === "tablet" || band === "mobile" ? band : null;
+  const editableBand = isResponsiveEditableBand(band) ? band : null;
   const tune = editableBand
     ? resolveContainerTune(args.blueprint, { kind: "blueprintNode", nodeId: analysis.sectionId }, editableBand)
     : null;
@@ -1323,7 +1329,7 @@ function layoutSectionStackMode(args: {
       };
     });
 
-  const editableBand = band === "tablet" || band === "mobile" ? band : null;
+  const editableBand = isResponsiveEditableBand(band) ? band : null;
   if (editableBand) {
     measured = sortClustersByItemOrder(measured, args.blueprint, editableBand, (item) =>
       itemRefForCluster(item.cluster),
@@ -1609,7 +1615,7 @@ function layoutSectionAutoMode(args: {
     });
   }
 
-  const autoEditable = band === "tablet" || band === "mobile" ? band : null;
+  const autoEditable = isResponsiveEditableBand(band) ? band : null;
   if (autoEditable) {
     const ordered = sortClustersByItemOrder(measured, args.blueprint, autoEditable, (item) =>
       itemRefForCluster(item.cluster),
@@ -2345,7 +2351,7 @@ function applyDeviceVisibility(args: {
 
 /**
  * Resuelve la página de preview para un ancho dado.
- * `wide` → identidad. `tablet`/`mobile` → Automático con clusters visuales.
+ * `wide` → identidad. `monitor`/`tablet`/`mobile` → layout de dispositivo.
  */
 function withLayoutGroupWidthModes(
   result: SiteCreatorResponsiveResolveResult,
@@ -2500,7 +2506,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       backgroundFocals: {},
       ephemeralClusters: [],
     };
-    if (band === "tablet" || band === "mobile") {
+    if (isResponsiveEditableBand(band)) {
       applyResponsiveContainerTunes({
         byId,
         blueprint: args.blueprint,
@@ -2612,7 +2618,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       sourceWidth: reference.width,
       yCursor,
     });
-    if (band === "tablet" || band === "mobile") {
+    if (isResponsiveEditableBand(band)) {
       const sectionMode = resolveEffectiveResponsiveMode({
         blueprint: args.blueprint,
         target: { kind: "blueprintNode", nodeId: section.id },
@@ -2633,12 +2639,11 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     region.naturalHeight = Math.max(1, region.layoutRect.height);
     regions.push(region);
 
-    if (band === "tablet" || band === "mobile") {
-      const heightBand = band === "mobile" ? "mobile" : "tablet";
+    if (isResponsiveEditableBand(band)) {
       const targetH = resolveBandSectionTargetHeight({
         blueprint: args.blueprint,
         section,
-        band: heightBand,
+        band,
         contentHeight: region.layoutRect.height,
         viewportHeight: sectionViewport.viewportHeight,
         layoutScale,
@@ -2686,7 +2691,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     }
   }
 
-  if (band === "tablet" || band === "mobile") {
+  if (isResponsiveEditableBand(band)) {
     applyResponsiveItemTunes({
       byId,
       blueprint: args.blueprint,

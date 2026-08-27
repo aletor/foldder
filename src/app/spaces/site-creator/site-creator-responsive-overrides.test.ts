@@ -50,6 +50,32 @@ describe("site-creator-responsive-overrides 6B.2", () => {
     expect(r.blueprint.responsive).toBeUndefined();
   });
 
+  it("Monitor sin regla usa composición, y Automática sí se guarda", () => {
+    const fx = fixtureHeroPanelButton();
+    expect(
+      resolveEffectiveResponsiveMode({
+        blueprint: fx.blueprint,
+        target: { kind: "blueprintNode", nodeId: fx.heroId },
+        band: "monitor",
+      }).mode,
+    ).toBe("preserve");
+    const auto = setResponsiveOverride({
+      blueprint: fx.blueprint,
+      target: { kind: "blueprintNode", nodeId: fx.heroId },
+      band: "monitor",
+      mode: "auto",
+    });
+    expect(auto.changed).toBe(true);
+    expect(auto.blueprint.responsive?.rules[0]?.byBand).toEqual({ monitor: "auto" });
+    expect(
+      resolveEffectiveResponsiveMode({
+        blueprint: auto.blueprint,
+        target: { kind: "blueprintNode", nodeId: fx.heroId },
+        band: "monitor",
+      }).mode,
+    ).toBe("auto");
+  });
+
   it("B — Preserve se guarda solo en Tablet", () => {
     const fx = fixtureHeroPanelButton();
     const r = setResponsiveOverride({

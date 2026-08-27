@@ -12,13 +12,14 @@ import {
   type ResponsiveOverrideMode,
   type ResponsiveTargetRef,
   type SiteResponsiveV1,
+  isResponsiveEditableBand,
 } from "./site-creator-types";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { looksTechnicalName } from "./site-creator-display-labels";
 
 /** Alineado con site-creator-responsive (evita import circular). */
-export type ResponsiveBandLike = "wide" | "tablet" | "mobile";
+export type ResponsiveBandLike = "wide" | "monitor" | "tablet" | "mobile";
 
 export type EffectiveResponsiveMode = {
   mode: "auto" | "preserve" | "stack";
@@ -29,13 +30,19 @@ export type EffectiveResponsiveMode = {
 export function bandToEditable(
   band: ResponsiveBandLike,
 ): ResponsiveEditableBand | null {
-  if (band === "tablet") return "tablet";
-  if (band === "mobile") return "mobile";
-  return null;
+  return isResponsiveEditableBand(band) ? band : null;
 }
 
 export function editableBandLabel(band: ResponsiveEditableBand): string {
-  return band === "tablet" ? "TABLET" : "MÓVIL";
+  if (band === "monitor") return "MONITOR";
+  if (band === "tablet") return "TABLET";
+  return "MÓVIL";
+}
+
+export function editableBandResetLabel(band: ResponsiveEditableBand): string {
+  if (band === "monitor") return "Restablecer en Monitor";
+  if (band === "tablet") return "Restablecer en Tablet";
+  return "Restablecer en Móvil";
 }
 
 export function modeMicrobarLabel(mode: "auto" | "preserve" | "stack"): string {
@@ -116,7 +123,7 @@ export function resolveResponsiveOverride(
 ): ResponsiveOverrideMode | null {
   const rule = findRule(blueprint.responsive, target);
   const mode = rule?.byBand[band];
-  return mode === "preserve" || mode === "stack" ? mode : null;
+  return mode === "preserve" || mode === "stack" || mode === "auto" ? mode : null;
 }
 
 function sortRules(rules: ResponsiveContainerRuleV1[]): ResponsiveContainerRuleV1[] {
@@ -133,6 +140,9 @@ function normalizeResponsive(
   const cleaned: ResponsiveContainerRuleV1[] = [];
   for (const rule of sortRules(rules)) {
     const byBand: ResponsiveContainerRuleV1["byBand"] = {};
+    if (rule.byBand.monitor === "preserve" || rule.byBand.monitor === "stack" || rule.byBand.monitor === "auto") {
+      byBand.monitor = rule.byBand.monitor;
+    }
     if (rule.byBand.tablet === "preserve" || rule.byBand.tablet === "stack") {
       byBand.tablet = rule.byBand.tablet;
     }
@@ -170,8 +180,9 @@ function normalizeResponsive(
 }
 
 /**
- * Escribe o elimina un override. `mode: "auto"` elimina la banda.
- * No-op si el valor efectivo no cambia.
+ * Escribe o elimina un override.
+ * Tablet/Móvil: `auto` elimina la banda (ausencia = automática).
+ * Monitor: `auto` se persiste (ausencia = composición, como Original).
  */
 export function setResponsiveOverride(args: {
   blueprint: SiteBlueprintV1;
@@ -180,8 +191,9 @@ export function setResponsiveOverride(args: {
   mode: "auto" | "preserve" | "stack";
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
   const current = resolveResponsiveOverride(args.blueprint, args.target, args.band);
-  const nextMode = args.mode === "auto" ? null : args.mode;
-  if ((current ?? null) === (nextMode ?? null)) {
+  const persistMode: ResponsiveOverrideMode | null =
+    args.mode === "auto" && args.band !== "monitor" ? null : args.mode;
+  if ((current ?? null) === persistMode) {
     return { blueprint: args.blueprint, changed: false };
   }
 
@@ -193,10 +205,10 @@ export function setResponsiveOverride(args: {
       ? { target: rules[idx]!.target, byBand: { ...rules[idx]!.byBand } }
       : { target: args.target, byBand: {} };
 
-  if (nextMode == null) {
+  if (persistMode == null) {
     delete rule.byBand[args.band];
   } else {
-    rule.byBand[args.band] = nextMode;
+    rule.byBand[args.band] = persistMode;
   }
 
   if (idx >= 0) rules[idx] = rule;
@@ -287,6 +299,9 @@ export function resolveEffectiveResponsiveMode(args: {
   if (explicit) {
     return { mode: explicit, source: "explicit", controller: args.target };
   }
+  if (editable === "monitor") {
+    return { mode: "preserve", source: "default" };
+  }
   return { mode: "auto", source: "default" };
 }
 
@@ -315,9 +330,8 @@ export function treeOverrideDotState(args: {
   const rule = findRule(args.blueprint.responsive, args.target);
   if (!rule) return null;
   const editable = bandToEditable(args.currentBand);
-  const hasTablet = rule.byBand.tablet === "preserve" || rule.byBand.tablet === "stack";
-  const hasMobile = rule.byBand.mobile === "preserve" || rule.byBand.mobile === "stack";
-  if (!hasTablet && !hasMobile) return null;
+  const hasAny = Boolean(rule.byBand.monitor || rule.byBand.tablet || rule.byBand.mobile);
+  if (!hasAny) return null;
   if (editable && rule.byBand[editable]) return "current";
   return "other";
 }
@@ -329,15 +343,16 @@ export function treeOverrideTooltip(args: {
   const rule = findRule(args.blueprint.responsive, args.target);
   if (!rule) return null;
   const lines: string[] = [];
-  if (rule.byBand.tablet) {
-    lines.push(`Tablet: ${modeOptionLabel(rule.byBand.tablet)}`);
-  } else {
-    lines.push("Tablet: Automática");
-  }
-  if (rule.byBand.mobile) {
-    lines.push(`Móvil: ${modeOptionLabel(rule.byBand.mobile)}`);
-  } else {
-    lines.push("Móvil: Automática");
+  for (const { band, label } of [
+    { band: "monitor" as const, label: "Monitor" },
+    { band: "tablet" as const, label: "Tablet" },
+    { band: "mobile" as const, label: "Móvil" },
+  ]) {
+    if (rule.byBand[band]) {
+      lines.push(`${label}: ${modeOptionLabel(rule.byBand[band]!)}`);
+    } else {
+      lines.push(`${label}: ${band === "monitor" ? "Composición" : "Automática"}`);
+    }
   }
   return lines.join("\n");
 }

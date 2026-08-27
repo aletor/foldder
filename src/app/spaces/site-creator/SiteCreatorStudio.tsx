@@ -9,6 +9,7 @@ import {
   Monitor,
   RotateCcw,
   Smartphone,
+  Square,
   Tablet,
   Trash2,
 } from "lucide-react";
@@ -18,6 +19,10 @@ import {
   foldderStudioHeaderIconActionClassName,
 } from "../FoldderStudioHeader";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
+import {
+  SITE_CREATOR_SECTION_SPINE_GUTTER_PX,
+  SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX,
+} from "./SiteCreatorSectionSpine";
 import {
   SiteCreatorDeviceSelector,
   SiteCreatorOrientationToggle,
@@ -46,6 +51,7 @@ import { SiteCreatorRefineControl } from "./SiteCreatorRefineControl";
 import { resolveAdaptationCapability } from "./site-creator-adaptation-capability";
 import {
   bandToEditable,
+  editableBandResetLabel,
   isAdaptationEligibleUnit,
   isResponsiveTargetBroken,
   resolveEffectiveResponsiveMode,
@@ -134,7 +140,7 @@ import type {
   SiteSectionHeightMode,
   SiteSectionScrollKind,
 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isResponsiveEditableBand, isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import {
   collectPublishImageRefs,
   compilePublishedSite,
@@ -420,6 +426,9 @@ export function SiteCreatorStudio({
   }, []);
   const [viewportBand, setViewportBand] = useState<SiteCreatorViewportBand>("original");
   const [originalViewportWidth, setOriginalViewportWidth] = useState<number | null>(null);
+  const [monitorDevice, setMonitorDevice] = useState<SiteCreatorDeviceConfig>(() =>
+    defaultDeviceConfig("monitor"),
+  );
   const [tabletDevice, setTabletDevice] = useState<SiteCreatorDeviceConfig>(() =>
     defaultDeviceConfig("tablet"),
   );
@@ -496,6 +505,10 @@ export function SiteCreatorStudio({
   const pageDimensions = page ? getPageDimensions(page) : null;
   const referenceWidth = pageDimensions?.width ?? 1920;
   const referenceHeight = pageDimensions?.height ?? 1080;
+  const monitorDimensions = useMemo(
+    () => resolveDeviceDimensions({ band: "monitor", config: monitorDevice, referenceWidth }),
+    [monitorDevice, referenceWidth],
+  );
   const tabletDimensions = useMemo(
     () => resolveDeviceDimensions({ band: "tablet", config: tabletDevice, referenceWidth }),
     [referenceWidth, tabletDevice],
@@ -505,7 +518,13 @@ export function SiteCreatorStudio({
     [mobileDevice, referenceWidth],
   );
   const activeDeviceDimensions =
-    viewportBand === "tablet" ? tabletDimensions : viewportBand === "mobile" ? mobileDimensions : null;
+    viewportBand === "monitor"
+      ? monitorDimensions
+      : viewportBand === "tablet"
+        ? tabletDimensions
+        : viewportBand === "mobile"
+          ? mobileDimensions
+          : null;
   const livePreviewWidth = clampViewportWidth(
     availablePreviewSize?.width ??
       (typeof window !== "undefined" ? window.innerWidth : referenceWidth),
@@ -522,7 +541,12 @@ export function SiteCreatorStudio({
       : {
           width: activeDeviceDimensions.width,
           height: activeDeviceDimensions.height,
-          kind: viewportBand === "tablet" ? ("tablet" as const) : ("mobile" as const),
+          kind:
+            viewportBand === "monitor"
+              ? ("monitor" as const)
+              : viewportBand === "tablet"
+                ? ("tablet" as const)
+                : ("mobile" as const),
         };
   const responsiveBand = pagePreviewMode
     ? bandForViewportWidth(effectiveViewportWidth, referenceWidth)
@@ -647,8 +671,9 @@ export function SiteCreatorStudio({
   );
   const layoutWidth = responsive?.layout.layoutWidth ?? referenceWidth;
   const layoutHeight = responsive?.layout.layoutHeight ?? referenceHeight;
-  const liveHeightBand: SectionHeightBand =
-    responsiveBand === "tablet" || responsiveBand === "mobile" ? responsiveBand : "wide";
+  const liveHeightBand: SectionHeightBand = isResponsiveEditableBand(responsiveBand)
+    ? responsiveBand
+    : "wide";
   const sectionScrollStations = useMemo(
     () =>
       sectionScrollStationsFromDisplay({
@@ -681,15 +706,19 @@ export function SiteCreatorStudio({
       );
       return;
     }
+    const spineReserve = deviceFrame
+      ? SITE_CREATOR_SECTION_SPINE_GUTTER_PX + SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX
+      : 0;
     const z = computeFitPreviewZoom({
       layoutWidth: fitTargetWidth,
       layoutHeight: fitTargetHeight,
-      availableWidth: availablePreviewSize.width,
+      availableWidth: Math.max(1, availablePreviewSize.width - spineReserve),
       availableHeight: availablePreviewSize.height,
     });
     setPreviewZoom(z);
   }, [
     availablePreviewSize,
+    deviceFrame,
     fitTargetHeight,
     fitTargetWidth,
     layoutWidth,
@@ -1493,6 +1522,7 @@ export function SiteCreatorStudio({
   );
 
   const backgroundAction = useMemo((): SiteCreatorPrimaryAction | null => {
+    if (viewportBand === "original") return null;
     if (!persistGate.allowed || displayUnits.length !== 1 || !referenceIndex) {
       return null;
     }
@@ -1516,7 +1546,7 @@ export function SiteCreatorStudio({
           primary: true,
         }
       : null;
-  }, [blueprint, displayUnits, mediaBand, persistGate.allowed, referenceIndex]);
+  }, [blueprint, displayUnits, mediaBand, persistGate.allowed, referenceIndex, viewportBand]);
 
   const contextualModel = useMemo(() => {
     const model = resolveContextualModel({
@@ -1737,7 +1767,7 @@ export function SiteCreatorStudio({
   }, [blueprint, displayUnits, hoverUnit, presentationTree, selectionIndex, snapshot]);
 
   const groupFitModel = useMemo(() => {
-    if (pagePreviewMode || !selectionIndex || !committedPage) return null;
+    if (pagePreviewMode || viewportBand === "original" || !selectionIndex || !committedPage) return null;
     let selectedGroupId: string | null = null;
     if (displayUnits.length === 1 && displayUnits[0]?.kind === "blueprintNode") {
       const node = blueprint.nodes[displayUnits[0].nodeId];
@@ -1888,6 +1918,7 @@ export function SiteCreatorStudio({
       stations,
       addSectionY: canAdd && selectionBounds ? selectionBounds.y + selectionBounds.height : null,
       canAddSection: canAdd,
+      mode: viewportBand === "original" ? ("structure" as const) : ("device" as const),
     };
   }, [
     blueprint,
@@ -1900,6 +1931,7 @@ export function SiteCreatorStudio({
     selectionIndex,
     selectionInsideSection,
     structureLayerIds.length,
+    viewportBand,
   ]);
 
   const handleSpineScrollChange = useCallback(
@@ -1909,6 +1941,7 @@ export function SiteCreatorStudio({
         return;
       }
       if (fromId == null) return;
+      if (spineHeightBand === "wide") return;
       const next = setSectionScrollHop(
         blueprintRef.current,
         fromId,
@@ -1928,6 +1961,7 @@ export function SiteCreatorStudio({
         setStructureError(persistGate.message);
         return;
       }
+      if (spineHeightBand === "wide") return;
       if (mode === "custom") {
         const current = blueprintRef.current;
         const node = current.nodes[sectionId];
@@ -1977,6 +2011,7 @@ export function SiteCreatorStudio({
         setStructureError(persistGate.message);
         return;
       }
+      if (spineHeightBand === "wide") return;
       const result = setSectionHeightMode(
         blueprintRef.current,
         sectionId,
@@ -2223,7 +2258,7 @@ export function SiteCreatorStudio({
         (kind === "item" || kind === "media") &&
         siblings.length > 1 &&
         selectionParentIsStacked(unit, blueprint, editableBand, selectionIndex),
-      resetLabel: editableBand === "mobile" ? "Restablecer en Móvil" : "Restablecer en Tablet",
+      resetLabel: editableBandResetLabel(editableBand),
       showReset,
       containerContentCount: containerTarget
         ? countContainerReflowUnits({
@@ -2971,23 +3006,20 @@ export function SiteCreatorStudio({
 
   const PreviewDeviceIcon =
     responsiveBand === "wide"
-      ? Monitor
-      : responsiveBand === "tablet"
-        ? Tablet
-        : Smartphone;
+      ? Square
+      : responsiveBand === "monitor"
+        ? Monitor
+        : responsiveBand === "tablet"
+          ? Tablet
+          : Smartphone;
   const canResetBand = Boolean(
     editableBand && bandHasCustomizations(blueprint, editableBand),
   );
-  const resetBandLabel =
-    !editableBand
-      ? "Restablecer vista"
-      : editableBand === "mobile"
-      ? "Restablecer en Móvil"
-      : "Restablecer en Tablet";
+  const resetBandLabel = editableBand ? editableBandResetLabel(editableBand) : "Restablecer vista";
   const headerDeviceControls = pagePreviewMode ? (
     <span
       data-testid="site-creator-preview-live-band"
-      title={`${responsiveBand === "wide" ? "Original" : responsiveBand === "tablet" ? "Tablet" : "Móvil"} · ${Math.round(effectiveViewportWidth)} px`}
+      title={`${responsiveBand === "wide" ? "Original" : responsiveBand === "monitor" ? "Monitor" : responsiveBand === "tablet" ? "Tablet" : "Móvil"} · ${Math.round(effectiveViewportWidth)} px`}
       className="pointer-events-auto inline-flex h-7 w-11 items-center justify-center bg-white/10 text-white/80"
     >
       <PreviewDeviceIcon className="h-3.5 w-3.5" aria-hidden />
@@ -3009,8 +3041,25 @@ export function SiteCreatorStudio({
         }`}
         onClick={() => applyViewportBand("original")}
       >
-        <Monitor className="h-3.5 w-3.5" aria-hidden />
+        <Square className="h-3.5 w-3.5" aria-hidden />
       </button>
+      <SiteCreatorDeviceSelector
+        band="monitor"
+        bandLabel="Monitor"
+        active={viewportBand === "monitor"}
+        config={monitorDevice}
+        referenceWidth={referenceWidth}
+        resolvedWidth={monitorDimensions.width}
+        resolvedHeight={monitorDimensions.height}
+        sizeLabel={monitorDimensions.sizeLabel}
+        portalHost={floatingHostEl}
+        compact
+        onActivate={() => applyViewportBand("monitor")}
+        onConfigChange={(config) => {
+          setMonitorDevice(config);
+          setViewportBand("monitor");
+        }}
+      />
       <SiteCreatorDeviceSelector
         band="tablet"
         bandLabel="Tablet"
@@ -3047,14 +3096,18 @@ export function SiteCreatorStudio({
       />
       <SiteCreatorOrientationToggle
         compact
-        visible={viewportBand === "tablet" || viewportBand === "mobile"}
+        visible={viewportBand === "monitor" || viewportBand === "tablet" || viewportBand === "mobile"}
         orientation={
-          viewportBand === "tablet"
-            ? tabletDevice.orientation
-            : mobileDevice.orientation
+          viewportBand === "monitor"
+            ? monitorDevice.orientation
+            : viewportBand === "tablet"
+              ? tabletDevice.orientation
+              : mobileDevice.orientation
         }
         onChange={(orientation) => {
-          if (viewportBand === "tablet") {
+          if (viewportBand === "monitor") {
+            setMonitorDevice((prev) => ({ ...prev, orientation }));
+          } else if (viewportBand === "tablet") {
             setTabletDevice((prev) => ({ ...prev, orientation }));
           } else if (viewportBand === "mobile") {
             setMobileDevice((prev) => ({ ...prev, orientation }));
@@ -3071,7 +3124,7 @@ export function SiteCreatorStudio({
             ? resetBandLabel
             : editableBand
               ? "Esta vista no tiene personalizaciones"
-              : "Restablecer está disponible en Tablet y Móvil"
+              : "Restablecer está disponible en Monitor, Tablet y Móvil"
         }
         className={`flex h-7 w-11 items-center justify-center border-l border-white/10 text-white/40 transition hover:bg-white/[0.06] hover:text-white ${
           canResetBand ? "" : "cursor-default opacity-20"

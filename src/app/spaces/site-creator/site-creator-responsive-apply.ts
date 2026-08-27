@@ -521,7 +521,9 @@ export function applyResponsiveItemTunes(args: {
 }
 
 function defaultBandInset(band: ResponsiveEditableBand): number {
-  return band === "mobile" ? 20 : 28;
+  if (band === "mobile") return 20;
+  if (band === "tablet") return 28;
+  return 0;
 }
 
 function defaultBandGap(band: ResponsiveEditableBand): number {

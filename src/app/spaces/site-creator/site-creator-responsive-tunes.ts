@@ -1,7 +1,7 @@
 /**
  * Fase 6C — ajustes contextuales por vista (puro, sin UI).
  * Original (wide) persiste encuadre y visibilidad; los ajustes de composición
- * siguen siendo exclusivos de Tablet y Móvil.
+ * son de Monitor, Tablet y Móvil.
  */
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
@@ -27,6 +27,8 @@ import {
   type ResponsiveWidthMode,
   type SiteBlueprintV1,
   type SiteResponsiveV1,
+  RESPONSIVE_EDITABLE_BANDS,
+  isResponsiveEditableBand,
 } from "./site-creator-types";
 import type { ResponsiveVisualCluster } from "./site-creator-responsive-visual";
 import { sameResponsiveTarget, targetKey } from "./site-creator-responsive-overrides";
@@ -296,6 +298,9 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
   const rules: SiteResponsiveV1["rules"] = [];
   for (const rule of [...doc.rules].sort((a, b) => targetKey(a.target).localeCompare(targetKey(b.target)))) {
     const byBand: (typeof rule)["byBand"] = {};
+    if (rule.byBand.monitor === "preserve" || rule.byBand.monitor === "stack" || rule.byBand.monitor === "auto") {
+      byBand.monitor = rule.byBand.monitor;
+    }
     if (rule.byBand.tablet === "preserve" || rule.byBand.tablet === "stack") {
       byBand.tablet = rule.byBand.tablet;
     }
@@ -312,9 +317,11 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
   )) {
     const byBand: ResponsiveItemRuleV1["byBand"] = {};
     const wide = rule.byBand.wide ? cleanItemTune(rule.byBand.wide) : null;
+    const monitor = rule.byBand.monitor ? cleanItemTune(rule.byBand.monitor) : null;
     const tablet = rule.byBand.tablet ? cleanItemTune(rule.byBand.tablet) : null;
     const mobile = rule.byBand.mobile ? cleanItemTune(rule.byBand.mobile) : null;
     if (wide) byBand.wide = wide;
+    if (monitor) byBand.monitor = monitor;
     if (tablet) byBand.tablet = tablet;
     if (mobile) byBand.mobile = mobile;
     if (Object.keys(byBand).length === 0) continue;
@@ -326,8 +333,10 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
     targetKey(a.target).localeCompare(targetKey(b.target)),
   )) {
     const byBand: ResponsiveContainerTuneRuleV1["byBand"] = {};
+    const monitor = rule.byBand.monitor ? cleanContainerTune(rule.byBand.monitor) : null;
     const tablet = rule.byBand.tablet ? cleanContainerTune(rule.byBand.tablet) : null;
     const mobile = rule.byBand.mobile ? cleanContainerTune(rule.byBand.mobile) : null;
+    if (monitor) byBand.monitor = monitor;
     if (tablet) byBand.tablet = tablet;
     if (mobile) byBand.mobile = mobile;
     if (Object.keys(byBand).length === 0) continue;
@@ -338,9 +347,11 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
   for (const rule of [...(doc.media ?? [])].sort((a, b) => a.layerId.localeCompare(b.layerId))) {
     const byBand: ResponsiveMediaRuleV1["byBand"] = {};
     const wide = rule.byBand.wide ? cleanMediaTune(rule.byBand.wide) : null;
+    const monitor = rule.byBand.monitor ? cleanMediaTune(rule.byBand.monitor) : null;
     const tablet = rule.byBand.tablet ? cleanMediaTune(rule.byBand.tablet) : null;
     const mobile = rule.byBand.mobile ? cleanMediaTune(rule.byBand.mobile) : null;
     if (wide) byBand.wide = wide;
+    if (monitor) byBand.monitor = monitor;
     if (tablet) byBand.tablet = tablet;
     if (mobile) byBand.mobile = mobile;
     if (Object.keys(byBand).length === 0) continue;
@@ -355,6 +366,9 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
     const wide = rule.byBand.wide
       ? cleanBackgroundPlacement(rule.byBand.wide)
       : null;
+    const monitor = rule.byBand.monitor
+      ? cleanBackgroundPlacement(rule.byBand.monitor)
+      : null;
     const tablet = rule.byBand.tablet
       ? cleanBackgroundPlacement(rule.byBand.tablet)
       : null;
@@ -362,6 +376,7 @@ export function compactSiteResponsive(doc: SiteResponsiveV1): SiteResponsiveV1 |
       ? cleanBackgroundPlacement(rule.byBand.mobile)
       : null;
     if (wide) byBand.wide = wide;
+    if (monitor) byBand.monitor = monitor;
     if (tablet) byBand.tablet = tablet;
     if (mobile) byBand.mobile = mobile;
     if (Object.keys(byBand).length > 0) {
@@ -624,7 +639,7 @@ export function resetMediaToAuto(args: {
   return patchMediaTune({ ...args, patch: null });
 }
 
-/** Elimina todas las personalizaciones de una vista (Tablet o Móvil). */
+/** Elimina todas las personalizaciones de una vista (Monitor, Tablet o Móvil). */
 export function resetResponsiveBand(args: {
   blueprint: SiteBlueprintV1;
   band: ResponsiveEditableBand;
@@ -699,11 +714,12 @@ export function bandHasCustomizations(
     if (!isSiteSectionNode(node)) continue;
     const target: ResponsiveTargetRef = { kind: "blueprintNode", nodeId: node.id };
     const mode = doc?.rules.find((r) => sameResponsiveTarget(r.target, target))?.byBand[band];
-    if (mode !== "preserve") return true;
+    const effectiveMode = mode ?? (band === "monitor" ? "preserve" : "auto");
+    if (effectiveMode !== "preserve") return true;
     const tune = doc?.containerTunes?.find((r) =>
       sameResponsiveTarget(r.target, target),
     )?.byBand[band];
-    if (!sectionTuneMatchesResetBaseline(tune)) return true;
+    if (tune != null && !sectionTuneMatchesResetBaseline(tune)) return true;
   }
   if (!doc) return false;
   if (
@@ -801,18 +817,20 @@ export function unitHasCustomization(args: {
 export function unitCustomizationDotState(args: {
   blueprint: SiteBlueprintV1;
   unit: SiteCreatorSelectionUnit;
-  currentBand: "wide" | "tablet" | "mobile";
+  currentBand: "wide" | "monitor" | "tablet" | "mobile";
   index: SiteCreatorSelectionIndex | null;
 }): "current" | "other" | null {
   if (args.currentBand === "wide") {
-    const tablet = unitHasCustomization({ ...args, band: "tablet" });
-    const mobile = unitHasCustomization({ ...args, band: "mobile" });
-    if (tablet || mobile) return "other";
-    return null;
+    const anyOther = RESPONSIVE_EDITABLE_BANDS.some((band) =>
+      unitHasCustomization({ ...args, band }),
+    );
+    return anyOther ? "other" : null;
   }
+  if (!isResponsiveEditableBand(args.currentBand)) return null;
   const current = unitHasCustomization({ ...args, band: args.currentBand });
-  const otherBand: ResponsiveEditableBand = args.currentBand === "tablet" ? "mobile" : "tablet";
-  const other = unitHasCustomization({ ...args, band: otherBand });
+  const other = RESPONSIVE_EDITABLE_BANDS.some(
+    (band) => band !== args.currentBand && unitHasCustomization({ ...args, band }),
+  );
   if (current) return "current";
   if (other) return "other";
   return null;
@@ -823,14 +841,15 @@ export function unitCustomizationTooltip(args: {
   unit: SiteCreatorSelectionUnit;
   index: SiteCreatorSelectionIndex | null;
 }): string | null {
+  const monitor = unitHasCustomization({ ...args, band: "monitor" });
   const tablet = unitHasCustomization({ ...args, band: "tablet" });
   const mobile = unitHasCustomization({ ...args, band: "mobile" });
-  if (!tablet && !mobile) return null;
-  const lines = [
+  if (!monitor && !tablet && !mobile) return null;
+  return [
+    `Monitor: ${monitor ? "Personalizado" : "Composición"}`,
     `Tablet: ${tablet ? "Personalizado" : "Automática"}`,
     `Móvil: ${mobile ? "Personalizado" : "Automática"}`,
-  ];
-  return lines.join("\n");
+  ].join("\n");
 }
 
 export function alignXLabel(align: ResponsiveAlignX): string {

@@ -214,6 +214,63 @@ describe("site-creator section scroll flow", () => {
     ).toBeNull();
   });
 
+  it("Original structure spine uses a marker ball without height or scroll chips", () => {
+    const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const hops = listSectionScrollHops(blueprint);
+    const sections = listDocumentSections(blueprint);
+    const onSelect = vi.fn();
+    const onCustom = vi.fn();
+    render(
+      <div style={{ position: "relative", height: 1200 }}>
+        <SiteCreatorSectionSpine
+          pageHeight={1200}
+          scale={1}
+          mode="structure"
+          stations={sections.map((section, index) => ({
+            sectionId: section.id,
+            label: section.label,
+            top: section.sourceRange.top,
+            bottom: section.sourceRange.bottom,
+            height: section.sourceRange.bottom - section.sourceRange.top,
+            designedHeight: section.sourceRange.bottom - section.sourceRange.top,
+            heightMode: "content" as const,
+            customHeight: null,
+            selected: section.id === heroId,
+            outgoing: hops[index + 1]
+              ? {
+                  fromId: section.id,
+                  toId: sections[index + 1]!.id,
+                  kind: hops[index + 1]!.kind,
+                }
+              : null,
+          }))}
+          addSectionY={null}
+          canAddSection={false}
+          onSelectSection={onSelect}
+          onRemoveSection={() => undefined}
+          onAddSection={() => undefined}
+          onScrollChange={() => undefined}
+          onHeightModeChange={() => undefined}
+          onCustomHeightChange={onCustom}
+        />
+      </div>,
+    );
+    expect(screen.getByTestId("site-creator-section-spine").getAttribute("data-spine-mode")).toBe(
+      "structure",
+    );
+    expect(screen.queryByTestId(`site-creator-section-spine-height-${heroId}`)).toBeNull();
+    expect(screen.queryByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}`)).toBeNull();
+    const mark = screen.getByTestId(`site-creator-section-spine-drag-${heroId}`);
+    expect(mark.className).toContain("rounded-full");
+    expect(mark.className).not.toContain("cursor-ns-resize");
+    fireEvent.click(mark);
+    expect(onSelect).toHaveBeenCalledWith(heroId);
+    fireEvent.pointerDown(mark, { clientY: 400, pointerId: 1 });
+    fireNativePointer(window, "pointermove", { clientY: 520, pointerId: 1 });
+    fireNativePointer(window, "pointerup", { clientY: 520, pointerId: 1 });
+    expect(onCustom).not.toHaveBeenCalled();
+  });
+
   it("offers Custom in the height menu", () => {
     const { blueprint, heroId } = twoSectionsBlueprint();
     const hops = listSectionScrollHops(blueprint);

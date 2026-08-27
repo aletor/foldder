@@ -1,7 +1,7 @@
 /**
  * Adaptar un grupo al ancho de su contenedor, por vista.
  * Original: widthMode en el nodo; raíz → sección.
- * Tablet/móvil: containerTune de esa banda; nunca crea sección.
+ * Tablet/móvil/monitor: containerTune de esa banda; nunca crea sección.
  */
 import type { DesignerPageState } from "../designer/DesignerNode";
 import type { FreehandObject } from "../FreehandStudio";
@@ -29,16 +29,18 @@ import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type {
   LayoutGroupFitOrigin,
   LayoutGroupWidthMode,
+  ResponsiveEditableBand,
   SiteBlueprintLayoutGroupNode,
   SiteBlueprintV1,
 } from "./site-creator-types";
-import { isSiteSectionNode } from "./site-creator-types";
+import { isResponsiveEditableBand, isSiteSectionNode } from "./site-creator-types";
 import { mirrorContainerLayerIdFromNode } from "./site-creator-designer-group-bootstrap";
 import type { SiteCreatorViewportBand } from "./site-creator-viewport";
 
 export type GroupFitMode = "full" | "scale";
 
 export function fitLayoutBandFromViewport(band: SiteCreatorViewportBand): ResponsiveBandLike {
+  if (band === "monitor") return "monitor";
   if (band === "tablet") return "tablet";
   if (band === "mobile") return "mobile";
   return "wide";
@@ -247,7 +249,7 @@ function demotePromotedSection(
 function patchBandFitTune(
   blueprint: SiteBlueprintV1,
   group: SiteBlueprintLayoutGroupNode,
-  band: "tablet" | "mobile",
+  band: ResponsiveEditableBand,
   patch: Partial<{ contentWidthMode: "full" | "scale"; fitOrigin: LayoutGroupFitOrigin }>,
 ): SiteBlueprintV1 {
   let next = patchContainerTune({
@@ -271,7 +273,7 @@ function patchBandFitTune(
 function clearBandFitTune(
   blueprint: SiteBlueprintV1,
   group: SiteBlueprintLayoutGroupNode,
-  band: "tablet" | "mobile",
+  band: ResponsiveEditableBand,
 ): SiteBlueprintV1 {
   return patchBandFitTune(blueprint, group, band, {
     contentWidthMode: undefined,
@@ -294,7 +296,7 @@ export function applyGroupFitToContainer(args: {
   }
   const band = args.band ?? "wide";
 
-  if (band === "tablet" || band === "mobile") {
+  if (isResponsiveEditableBand(band)) {
     if (args.mode === "content") {
       return { ok: true, blueprint: clearBandFitTune(args.blueprint, group, band) };
     }

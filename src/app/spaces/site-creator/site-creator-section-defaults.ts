@@ -6,7 +6,7 @@ import type {
   SiteBlueprintV1,
 } from "./site-creator-types";
 
-const DEFAULT_BANDS: ResponsiveEditableBand[] = ["tablet", "mobile"];
+const DEFAULT_BANDS: ResponsiveEditableBand[] = ["monitor", "tablet", "mobile"];
 
 /** Defaults al crear sección: Mantener composición, sin padding/gap extra. */
 export function applyNewSectionResponsiveDefaults(

@@ -247,7 +247,7 @@ describe("site-creator 6C contextual refine", () => {
 
   it("keeps section height when resetting Tablet or Mobile refinements", () => {
     const fx = fixtureHeroPanelButton();
-    for (const band of ["tablet", "mobile"] as const) {
+    for (const band of ["monitor", "tablet", "mobile"] as const) {
       let initial = applyNewSectionResponsiveDefaults(fx.blueprint, fx.heroId);
       const height = setSectionHeightMode(initial, fx.heroId, "custom", band, 1200);
       expect(height.ok).toBe(true);

@@ -5,6 +5,7 @@
 import { cloneBlueprint } from "./site-blueprint-validate";
 import {
   isSiteSectionNode,
+  RESPONSIVE_EDITABLE_BANDS,
   type SiteBlueprintScrollFlowBandV1,
   type SiteBlueprintSectionNode,
   type SiteBlueprintV1,
@@ -116,10 +117,10 @@ function writeBandFlows(
   flows: Partial<Record<SiteSectionScrollBand, SiteBlueprintScrollFlowBandV1 | undefined>>,
 ): void {
   const wide = flows.wide;
-  const byBand = {
-    ...(flows.tablet ? { tablet: flows.tablet } : {}),
-    ...(flows.mobile ? { mobile: flows.mobile } : {}),
-  };
+  const byBand: NonNullable<SiteBlueprintV1["scrollFlow"]>["byBand"] = {};
+  for (const band of RESPONSIVE_EDITABLE_BANDS) {
+    if (flows[band]) byBand[band] = flows[band];
+  }
   if (!wide && Object.keys(byBand).length === 0) {
     delete blueprint.scrollFlow;
     return;
@@ -127,6 +128,22 @@ function writeBandFlows(
   blueprint.scrollFlow = {
     ...(wide ?? {}),
     ...(Object.keys(byBand).length > 0 ? { byBand } : {}),
+  };
+}
+
+function snapshotFlows(
+  blueprint: SiteBlueprintV1,
+  band: SiteSectionScrollBand,
+  compact: SiteBlueprintScrollFlowBandV1 | undefined,
+): Partial<Record<SiteSectionScrollBand, SiteBlueprintScrollFlowBandV1 | undefined>> {
+  return {
+    wide: band === "wide" ? compact : compactFlow(blueprint.scrollFlow ?? {}),
+    monitor:
+      band === "monitor" ? compact : compactFlow(blueprint.scrollFlow?.byBand?.monitor ?? {}),
+    tablet:
+      band === "tablet" ? compact : compactFlow(blueprint.scrollFlow?.byBand?.tablet ?? {}),
+    mobile:
+      band === "mobile" ? compact : compactFlow(blueprint.scrollFlow?.byBand?.mobile ?? {}),
   };
 }
 
@@ -155,6 +172,7 @@ export function pruneScrollFlow(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
   }
   writeBandFlows(next, {
     wide: pruneBandFlow(next.scrollFlow, allowed, sections.length > 0),
+    monitor: pruneBandFlow(next.scrollFlow?.byBand?.monitor, allowed, sections.length > 0),
     tablet: pruneBandFlow(next.scrollFlow?.byBand?.tablet, allowed, sections.length > 0),
     mobile: pruneBandFlow(next.scrollFlow?.byBand?.mobile, allowed, sections.length > 0),
   });
@@ -172,13 +190,7 @@ export function setEntryScrollKind(
   if (kind === "natural") delete flow.entry;
   else flow.entry = kind;
   const compact = compactFlow(flow);
-  writeBandFlows(next, {
-    wide: band === "wide" ? compact : compactFlow(next.scrollFlow ?? {}),
-    tablet:
-      band === "tablet" ? compact : compactFlow(next.scrollFlow?.byBand?.tablet ?? {}),
-    mobile:
-      band === "mobile" ? compact : compactFlow(next.scrollFlow?.byBand?.mobile ?? {}),
-  });
+  writeBandFlows(next, snapshotFlows(next, band, compact));
   return next;
 }
 
@@ -199,13 +211,7 @@ export function setSectionScrollHop(
   if (kind === "natural") delete hops[key];
   else hops[key] = kind;
   const compact = compactFlow({ entry: currentFlow?.entry, hops });
-  writeBandFlows(next, {
-    wide: band === "wide" ? compact : compactFlow(next.scrollFlow ?? {}),
-    tablet:
-      band === "tablet" ? compact : compactFlow(next.scrollFlow?.byBand?.tablet ?? {}),
-    mobile:
-      band === "mobile" ? compact : compactFlow(next.scrollFlow?.byBand?.mobile ?? {}),
-  });
+  writeBandFlows(next, snapshotFlows(next, band, compact));
   return next;
 }
 
@@ -214,7 +220,7 @@ export function scrollFlowUsesKind(
   kind: SiteSectionScrollKind,
   band?: SiteSectionScrollBand,
 ): boolean {
-  const bands: SiteSectionScrollBand[] = band ? [band] : ["wide", "tablet", "mobile"];
+  const bands: SiteSectionScrollBand[] = band ? [band] : ["wide", "monitor", "tablet", "mobile"];
   return bands.some((item) =>
     listSectionScrollHops(blueprint, item).some((hop) => hop.kind === kind),
   );

@@ -435,9 +435,31 @@ describe("site creator UX contextual actions", () => {
       snapshot: null,
       persistGate: gateOk,
     });
-    expect(model.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup"]);
-    expect(model.primaryActions.find((a) => a.id === "groupWidthFull")?.label).toBe("Ancho completo");
+    expect(model.primaryActions.map((a) => a.id)).toEqual(["separateGroup"]);
     expect(model.primaryActions.find((a) => a.id === "separateGroup")?.label).toBe("Desagrupar");
+  });
+
+  it("LayoutGroup shows Ancho completo on tablet, not on Original", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok) return;
+    const tablet = resolveContextualModel({
+      units: [{ kind: "blueprintNode", nodeId: group.createdNodeId! }],
+      inspectNodeId: null,
+      blueprint: group.blueprint,
+      index,
+      snapshot: null,
+      persistGate: gateOk,
+      band: "tablet",
+    });
+    expect(tablet.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup"]);
+    expect(tablet.primaryActions.find((a) => a.id === "groupWidthFull")?.label).toBe("Ancho completo");
   });
 
   it("recognizes a nested group and its layers as already inside a section", () => {

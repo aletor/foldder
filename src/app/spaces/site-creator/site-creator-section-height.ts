@@ -23,7 +23,7 @@ import type {
   SiteBlueprintV1,
   SiteSectionHeightMode,
 } from "./site-creator-types";
-import { isSiteSectionNode } from "./site-creator-types";
+import { isResponsiveEditableBand, isSiteSectionNode } from "./site-creator-types";
 import { resizeSectionCoverClip } from "./site-creator-clipping-resize";
 import { transformPathObjectRelative } from "./site-creator-responsive-matrix";
 
@@ -61,12 +61,12 @@ export function sectionHeightMode(node: SiteBlueprintSectionNode): SiteSectionHe
   return "content";
 }
 
-export type SectionHeightBand = "wide" | "tablet" | "mobile";
+export type SectionHeightBand = "wide" | "monitor" | "tablet" | "mobile";
 
 function sectionTuneForBand(
   blueprint: SiteBlueprintV1,
   sectionId: string,
-  band: "tablet" | "mobile",
+  band: "monitor" | "tablet" | "mobile",
 ): { heightMode?: SiteSectionHeightMode; customHeight?: number } | null {
   const rules = blueprint.responsive?.containerTunes ?? [];
   for (const rule of rules) {
@@ -86,7 +86,7 @@ export function sectionCustomHeightForBand(
   section: SiteBlueprintSectionNode,
   band: SectionHeightBand = "wide",
 ): number | null {
-  if (band === "tablet" || band === "mobile") {
+  if (isResponsiveEditableBand(band)) {
     const tune = sectionTuneForBand(blueprint, section.id, band);
     if (tune?.heightMode === "custom" && typeof tune.customHeight === "number" && tune.customHeight > 0) {
       return Math.max(1, Math.round(tune.customHeight));
@@ -164,7 +164,7 @@ export function sectionHeightModeForBand(
   section: SiteBlueprintSectionNode,
   band: SectionHeightBand = "wide",
 ): SiteSectionHeightMode {
-  if (band === "tablet" || band === "mobile") {
+  if (isResponsiveEditableBand(band)) {
     const tune = sectionTuneForBand(blueprint, section.id, band);
     if (tune?.heightMode === "viewport") return "viewport";
     if (
@@ -183,7 +183,7 @@ export function blueprintHasViewportSection(
   blueprint: SiteBlueprintV1,
   band?: SectionHeightBand,
 ): boolean {
-  const bands: SectionHeightBand[] = band ? [band] : ["wide", "tablet", "mobile"];
+  const bands: SectionHeightBand[] = band ? [band] : ["wide", "monitor", "tablet", "mobile"];
   return listDocumentSections(blueprint).some((section) =>
     bands.some((item) => sectionHeightModeForBand(blueprint, section, item) === "viewport"),
   );

@@ -39,7 +39,8 @@ const VISIBILITY_BANDS: Array<{
   label: string;
   Icon: typeof Monitor;
 }> = [
-  { band: "wide", label: "Original", Icon: Monitor },
+  { band: "wide", label: "Original", Icon: Square },
+  { band: "monitor", label: "Monitor", Icon: Monitor },
   { band: "tablet", label: "Tablet", Icon: Tablet },
   { band: "mobile", label: "Móvil", Icon: Smartphone },
 ];

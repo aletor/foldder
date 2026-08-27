@@ -287,6 +287,9 @@ describe("site-creator-responsive 6B.1", () => {
     expect(mobileLandscape.width).toBe(844);
     expect(bandForViewportWidth(mobileLandscape.width, 1920)).toBe("tablet");
     expect(bandForEditorDevice("mobile", mobileLandscape.width, 1920)).toBe("mobile");
+    expect(bandForViewportWidth(1920, 1920)).toBe("wide");
+    expect(bandForEditorDevice("monitor", 1920, 1920)).toBe("monitor");
+    expect(bandForEditorDevice("original", 1920, 1920)).toBe("wide");
   });
 
   it("fits editor tablet landscape content to the device width instead of Original identity", () => {

@@ -98,7 +98,7 @@ export type SiteBlueprintCanvasLocksV1 = {
 /** Cómo llega el scroll de un bloque al siguiente. Ausente = natural. */
 export type SiteSectionScrollKind = "natural" | "smooth" | "snap";
 
-export type SiteSectionScrollBand = "wide" | "tablet" | "mobile";
+export type SiteSectionScrollBand = "wide" | "monitor" | "tablet" | "mobile";
 
 export type SiteBlueprintScrollFlowBandV1 = {
   /** Llegada a la primera sección (carga de página). */
@@ -118,12 +118,23 @@ export type SiteDismissedDesignerMirrorsV1 = {
   groupIds: string[];
 };
 
-export type ResponsiveEditableBand = "tablet" | "mobile";
+export type ResponsiveEditableBand = "monitor" | "tablet" | "mobile";
+
+export const RESPONSIVE_EDITABLE_BANDS: readonly ResponsiveEditableBand[] = [
+  "monitor",
+  "tablet",
+  "mobile",
+];
+
+export function isResponsiveEditableBand(band: string): band is ResponsiveEditableBand {
+  return band === "monitor" || band === "tablet" || band === "mobile";
+}
+
 /** El encuadre de medios también puede personalizarse en la vista Original. */
 export type ResponsiveMediaBand = SiteSectionScrollBand;
-/** La visibilidad puede decidirse de forma independiente en los tres dispositivos. */
+/** La visibilidad puede decidirse de forma independiente en cada vista. */
 export type ResponsiveVisibilityBand = ResponsiveMediaBand;
-export type ResponsiveOverrideMode = "preserve" | "stack";
+export type ResponsiveOverrideMode = "preserve" | "stack" | "auto";
 export type ResponsiveAlignX = "start" | "center" | "end";
 export type ResponsiveAlignY = "start" | "center" | "end";
 export type ResponsiveWidthMode = "content" | "container" | "full";

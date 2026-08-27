@@ -140,6 +140,7 @@ export interface SiteCreatorPreviewProps {
     stations: SectionSpineStation[];
     addSectionY: number | null;
     canAddSection: boolean;
+    mode?: "structure" | "device";
   } | null;
   onSpineSelectSection?: (sectionId: string) => void;
   onSpineRemoveSection?: (sectionId: string) => void;
@@ -329,23 +330,27 @@ export function SiteCreatorPreview({
     const onWheel = (event: WheelEvent) => {
       const inner = deviceScrollRef.current;
       if (
-        !inner ||
-        !shouldRedirectCanvasWheelToWorkArea({
+        inner &&
+        shouldRedirectCanvasWheelToWorkArea({
           readOnly,
           ctrlOrMeta: event.ctrlKey || event.metaKey,
           innerScroller: inner,
           eventTarget: event.target,
         })
       ) {
+        event.preventDefault();
+        forwardWorkAreaWheelToScroller(inner, {
+          deltaX: event.deltaX,
+          deltaY: event.deltaY,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+        });
         return;
       }
+      if (deviceMode || readOnly || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
-      forwardWorkAreaWheelToScroller(inner, {
-        deltaX: event.deltaX,
-        deltaY: event.deltaY,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-      });
+      canvas.scrollTop = 0;
+      canvas.scrollLeft = 0;
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
@@ -369,7 +374,9 @@ export function SiteCreatorPreview({
     return Math.max(1, pageScreenHeight ?? pageHeight);
   }, [deviceFrame, deviceMode, pageHeight, pageScreenHeight, pageWidth]);
 
-  const liveSectionScroll = Boolean(blueprint && needsSectionScrollPad);
+  const liveSectionScroll = Boolean(
+    blueprint && needsSectionScrollPad && (deviceMode || readOnly),
+  );
 
   useLayoutEffect(() => {
     if (!liveSectionScroll || !blueprint) {
@@ -711,6 +718,7 @@ export function SiteCreatorPreview({
             onScrollChange={(fromId, toId, kind) => onSpineScrollChange?.(fromId, toId, kind)}
             onHeightModeChange={(id, mode) => onSpineHeightModeChange?.(id, mode)}
             onCustomHeightChange={(id, px) => onSpineCustomHeightChange?.(id, px)}
+            mode={sectionSpine.mode}
           />
         </div>
       </div>
@@ -738,9 +746,9 @@ export function SiteCreatorPreview({
       <div
         ref={scrollRef}
         className={`site-creator-preview-scroll min-h-0 flex-1 ${
-          readOnly || (!deviceMode && liveSectionScroll)
-            ? `${readOnly ? "cursor-default" : "cursor-crosshair"} overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]`
-            : "cursor-crosshair overflow-hidden"
+          readOnly
+            ? "cursor-default overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+            : "cursor-crosshair overflow-hidden overscroll-none"
         }`}
         onDoubleClick={(event) => {
           if (readOnly) return;
@@ -752,7 +760,11 @@ export function SiteCreatorPreview({
       >
         <div
           className={`site-creator-preview-scroll-inner flex min-h-full flex-col ${
-            readOnly ? "items-stretch justify-stretch px-0 py-0" : "items-center px-8 py-8"
+            readOnly
+              ? "items-stretch justify-stretch px-0 py-0"
+              : deviceMode
+                ? "items-center justify-center px-8 py-8"
+                : "items-center px-8 py-8"
           }`}
         >
           <div className="relative">

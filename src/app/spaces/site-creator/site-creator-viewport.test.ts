@@ -48,12 +48,15 @@ describe("site-creator-viewport", () => {
     expect(siteCreatorTabletMediaMaxWidth(768)).toBe(768);
   });
 
-  it("cycles original, tablet and mobile", () => {
-    expect(cycleViewportBand("original", 1)).toBe("tablet");
+  it("cycles original, monitor, tablet and mobile", () => {
+    expect(cycleViewportBand("original", 1)).toBe("monitor");
+    expect(cycleViewportBand("monitor", 1)).toBe("tablet");
     expect(cycleViewportBand("tablet", 1)).toBe("mobile");
     expect(cycleViewportBand("mobile", 1)).toBe("original");
     expect(cycleViewportBand("original", -1)).toBe("mobile");
     expect(cycleViewportBand("mobile", -1)).toBe("tablet");
+    expect(cycleViewportBand("tablet", -1)).toBe("monitor");
+    expect(cycleViewportBand("monitor", -1)).toBe("original");
   });
 
   it("detects presets and custom widths", () => {
@@ -183,6 +186,27 @@ describe("site-creator-viewport", () => {
     expect(landscape.height).toBe(390);
   });
 
+  it("defaults monitor standard to 1920 × 1080 landscape", () => {
+    const dims = resolveDeviceDimensions({
+      band: "monitor",
+      config: defaultDeviceConfig("monitor"),
+      referenceWidth: 1920,
+    });
+    expect(dims.width).toBe(1920);
+    expect(dims.height).toBe(1080);
+    expect(defaultDeviceConfig("monitor").orientation).toBe("landscape");
+  });
+
+  it("swaps monitor standard to 1080 × 1920 in portrait", () => {
+    const dims = resolveDeviceDimensions({
+      band: "monitor",
+      config: { ...defaultDeviceConfig("monitor"), orientation: "portrait" },
+      referenceWidth: 1920,
+    });
+    expect(dims.width).toBe(1080);
+    expect(dims.height).toBe(1920);
+  });
+
   it("defaults tablet standard to 820 × 1180", () => {
     const dims = resolveDeviceDimensions({
       band: "tablet",
@@ -281,6 +305,17 @@ describe("site-creator-viewport", () => {
       bezelPx: 8,
       radiusPx: 14,
       innerRadiusPx: 6,
+      color: "#3a414c",
+      rim: "0 0 0 1px rgba(255,255,255,0.22)",
+    });
+    expect(resolveSiteCreatorDeviceChromeKind({ width: 1920, height: 1080, kind: "monitor" })).toBe(
+      "monitor",
+    );
+    expect(siteCreatorDeviceChrome("monitor")).toEqual({
+      kind: "monitor",
+      bezelPx: 12,
+      radiusPx: 8,
+      innerRadiusPx: 2,
       color: "#3a414c",
       rim: "0 0 0 1px rgba(255,255,255,0.22)",
     });

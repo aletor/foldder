@@ -9,11 +9,7 @@ import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { isLayerExplicitBackgroundSurface } from "./site-creator-background-assignment";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
-import {
-  isSiteButtonNode,
-  type SiteBlueprintSectionNode,
-  type SiteBlueprintV1,
-} from "./site-creator-types";
+import { isSiteButtonNode, type SiteBlueprintSectionNode, type SiteBlueprintV1, type SiteSectionScrollBand } from "./site-creator-types";
 import {
   destinationScrollKind,
   lastDocumentSection,
@@ -23,6 +19,7 @@ import {
   sectionScrollNeedsViewportPad,
 } from "./site-creator-section-scroll";
 import { compilePublishedScrollScript } from "./site-creator-section-scroll-runtime";
+import { bandHasCustomizations, resolveMediaTune } from "./site-creator-responsive-tunes";
 import {
   sectionCustomHeightForBand,
   sectionHeightModeForBand,
@@ -40,7 +37,6 @@ import {
   type PublishTreeNode,
 } from "./site-creator-publish-tree";
 import { containerIsFullWidthForBand } from "./site-creator-group-width-layout";
-import { resolveMediaTune } from "./site-creator-responsive-tunes";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
@@ -61,6 +57,29 @@ export type CompiledPublishedSite = {
 };
 
 type BandName = "wide" | "tablet" | "mobile";
+
+function publishedDesktopScrollBand(blueprint: SiteBlueprintV1): SiteSectionScrollBand {
+  return blueprint.scrollFlow?.byBand?.monitor ? "monitor" : "wide";
+}
+
+function publishedDesktopHeightBand(blueprint: SiteBlueprintV1): SectionHeightBand {
+  return listDocumentSections(blueprint).some(
+    (section) => sectionHeightModeForBand(blueprint, section, "monitor") !== "content",
+  )
+    ? "monitor"
+    : "wide";
+}
+
+function heightLookupBand(blueprint: SiteBlueprintV1, cssBand: SectionHeightBand): SectionHeightBand {
+  return cssBand === "wide" ? publishedDesktopHeightBand(blueprint) : cssBand;
+}
+
+function scrollLookupBand(
+  blueprint: SiteBlueprintV1,
+  cssBand: SiteSectionScrollBand,
+): SiteSectionScrollBand {
+  return cssBand === "wide" ? publishedDesktopScrollBand(blueprint) : cssBand;
+}
 
 type Box = {
   x: number;
@@ -264,7 +283,7 @@ function blueprintHasExpandedSection(
   blueprint: SiteBlueprintV1,
   band?: SectionHeightBand,
 ): boolean {
-  const bands: SectionHeightBand[] = band ? [band] : ["wide", "tablet", "mobile"];
+  const bands: SectionHeightBand[] = band ? [band] : ["wide", "monitor", "tablet", "mobile"];
   return bands.some((currentBand) =>
     listDocumentSections(blueprint).some(
       (section) => sectionHeightModeForBand(blueprint, section, currentBand) !== "content",
@@ -299,11 +318,12 @@ function extraShiftExpr(
   hints?: SectionLayoutHint[] | null,
   centerWithinSection = true,
 ): string | null {
-  if (!blueprintHasExpandedSection(blueprint, band)) return null;
+  const lookup = heightLookupBand(blueprint, band);
+  if (!blueprintHasExpandedSection(blueprint, lookup)) return null;
   const parts: string[] = [];
   for (const section of listDocumentSections(blueprint)) {
     const layout = sectionLayoutHint(section, hints);
-    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, band);
+    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, lookup);
     if (!extra) continue;
     if (box.y + 0.5 >= layout.bottom) {
       parts.push(extra);
@@ -332,10 +352,11 @@ function extraGrowExpr(
   band: SectionHeightBand = "wide",
   hints?: SectionLayoutHint[] | null,
 ): string | null {
-  if (!blueprintHasExpandedSection(blueprint, band)) return null;
+  const lookup = heightLookupBand(blueprint, band);
+  if (!blueprintHasExpandedSection(blueprint, lookup)) return null;
   for (const section of listDocumentSections(blueprint)) {
     const layout = sectionLayoutHint(section, hints);
-    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, band);
+    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, lookup);
     if (!extra) continue;
     const touchesBottom = box.y < layout.bottom && box.y + box.height >= layout.bottom - 4;
     if (touchesBottom && box.width >= pageWidth * 0.8) {
@@ -355,13 +376,14 @@ function emitSectionViewportCss(
 ): void {
   const sections = listDocumentSections(blueprint);
   if (sections.length === 0) return;
+  const lookup = heightLookupBand(blueprint, band);
   const pageHeight = Math.max(1, layout.height);
   const pageWidth = Math.max(1, layout.width);
   const extraParts: string[] = [];
   for (const section of sections) {
-    const viewport = sectionHeightModeForBand(blueprint, section, band) === "viewport";
+    const viewport = sectionHeightModeForBand(blueprint, section, lookup) === "viewport";
     const geom = sectionLayoutHint(section, hints);
-    const extra = sectionExtraExpr(blueprint, section, geom, pageWidth, band);
+    const extra = sectionExtraExpr(blueprint, section, geom, pageWidth, lookup);
     const shift = extraShiftExpr(
       blueprint,
       { y: geom.top, height: 0, width: 0 },
@@ -406,7 +428,7 @@ function emitSectionScrollEndPad(
   band: SectionHeightBand,
   hints: SectionLayoutHint[] | null | undefined,
 ): void {
-  if (!sectionScrollNeedsViewportPad(blueprint, band)) {
+  if (!sectionScrollNeedsViewportPad(blueprint, scrollLookupBand(blueprint, band))) {
     if (band !== "wide") {
       lines.push("html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:0}");
     }
@@ -414,7 +436,7 @@ function emitSectionScrollEndPad(
   }
   const last = lastDocumentSection(blueprint);
   if (!last) return;
-  if (sectionHeightModeForBand(blueprint, last, band) === "viewport") {
+  if (sectionHeightModeForBand(blueprint, last, heightLookupBand(blueprint, band)) === "viewport") {
     if (band !== "wide") {
       lines.push("html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:0}");
     }
@@ -502,6 +524,7 @@ export function compilePublishedSite(args: {
     viewportWidth: reference.width,
     expandViewportSections: false,
     preserveExplicitBackgroundSurfaces: true,
+    ...(bandHasCustomizations(args.blueprint, "monitor") ? { band: "monitor" as const } : {}),
   });
   const tablet = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -559,6 +582,7 @@ export function compilePublishedSite(args: {
   }
   (["wide", "tablet", "mobile"] as BandName[]).forEach((band) => {
     const map = collectObjectMap(layouts[band].objects);
+    const mediaBand = band === "wide" && bandHasCustomizations(args.blueprint, "monitor") ? "monitor" : band;
     for (const [id, layer] of layers) {
       const obj = map.get(id);
       if (
@@ -566,7 +590,7 @@ export function compilePublishedSite(args: {
         isLayerExplicitBackgroundSurface(
           args.blueprint,
           id,
-          band,
+          mediaBand,
         )
       ) {
         layer.boxes[band] = null;
@@ -620,8 +644,8 @@ export function compilePublishedSite(args: {
   return {
     html,
     css,
-    js: compilePublishedScrollScript(listSectionScrollHops(args.blueprint, "wide"), {
-      wide: listSectionScrollHops(args.blueprint, "wide"),
+    js: compilePublishedScrollScript(listSectionScrollHops(args.blueprint, publishedDesktopScrollBand(args.blueprint)), {
+      wide: listSectionScrollHops(args.blueprint, publishedDesktopScrollBand(args.blueprint)),
       tablet: listSectionScrollHops(args.blueprint, "tablet"),
       mobile: listSectionScrollHops(args.blueprint, "mobile"),
       tabletMax,
@@ -817,8 +841,9 @@ function emitBandScrollCss(
   blueprint: SiteBlueprintV1,
   band: SectionHeightBand,
 ): void {
-  const usesSmooth = scrollFlowUsesKind(blueprint, "smooth", band);
-  const usesSnap = scrollFlowUsesKind(blueprint, "snap", band);
+  const lookup = scrollLookupBand(blueprint, band);
+  const usesSmooth = scrollFlowUsesKind(blueprint, "smooth", lookup);
+  const usesSnap = scrollFlowUsesKind(blueprint, "snap", lookup);
   lines.push(`html.s-scroll-smooth{scroll-behavior:${usesSmooth ? "smooth" : "auto"}}`);
   lines.push(`html.s-scroll-snap{scroll-snap-type:${usesSnap ? "y proximity" : "none"}}`);
   if (usesSnap) {
@@ -1094,9 +1119,9 @@ function buildHtml(args: {
     .join(" ");
   const anchors = listDocumentSections(args.blueprint)
     .map((section) => {
-      const snapBands: SectionHeightBand[] = ["wide", "tablet", "mobile"];
+      const snapBands: Array<"wide" | "tablet" | "mobile"> = ["wide", "tablet", "mobile"];
       const snapClasses = snapBands
-        .filter((band) => destinationScrollKind(args.blueprint, section.id, band) === "snap")
+        .filter((band) => destinationScrollKind(args.blueprint, section.id, scrollLookupBand(args.blueprint, band)) === "snap")
         .map((band) => `s-snap-${band}`)
         .join(" ");
       const snap = snapClasses ? ` ${snapClasses}` : "";

@@ -71,6 +71,8 @@ export type SiteCreatorSectionSpineProps = {
   onScrollChange: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
   onHeightModeChange: (sectionId: string, mode: SiteSectionHeightMode) => void;
   onCustomHeightChange: (sectionId: string, heightPx: number) => void;
+  /** Original: marcas de sección. Dispositivo: alto, recorrido y raya. */
+  mode?: "structure" | "device";
 };
 
 function heightLabel(station: SectionSpineStation, liveCustom: number | null): string {
@@ -341,6 +343,7 @@ function StationModule({
   onScrollChange,
   onHeightModeChange,
   onCustomHeightChange,
+  mode = "device",
 }: {
   station: SectionSpineStation;
   scale: number;
@@ -350,6 +353,7 @@ function StationModule({
   onScrollChange: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
   onHeightModeChange: (mode: SiteSectionHeightMode) => void;
   onCustomHeightChange: (heightPx: number) => void;
+  mode?: "structure" | "device";
 }) {
   const [liveCustom, setLiveCustom] = useState<number | null>(null);
   const dragRef = useRef<{
@@ -450,8 +454,11 @@ function StationModule({
   const displayHeight =
     station.heightMode === "custom" && liveCustom != null ? liveCustom : station.height;
 
+  const structure = mode === "structure";
+
   return (
     <>
+      {structure ? null : (
       <div
         className="pointer-events-none absolute right-[32px] flex -translate-y-1/2 items-center gap-1.5"
         style={{ top: (station.top + displayHeight / 2) * scale }}
@@ -472,12 +479,13 @@ function StationModule({
           station={station}
           liveCustom={station.heightMode === "custom" ? liveCustom : null}
           portalHost={portalHost}
-          onModeChange={(mode) => {
-            if (mode !== "custom") setLiveCustom(null);
-            onHeightModeChange(mode);
+          onModeChange={(next) => {
+            if (next !== "custom") setLiveCustom(null);
+            onHeightModeChange(next);
           }}
         />
       </div>
+      )}
 
       <div
         className="pointer-events-none absolute right-[10px] flex -translate-y-1/2 items-center gap-1.5"
@@ -502,19 +510,23 @@ function StationModule({
           data-testid={`site-creator-section-spine-drag-${station.sectionId}`}
           aria-label={station.label}
           aria-current={station.selected ? "true" : undefined}
-          title="Arrastra para altura custom"
-          className="pointer-events-auto flex h-2.5 w-10 cursor-ns-resize items-center justify-center rounded-full"
+          title={structure ? "Seleccionar sección" : "Arrastra para altura custom"}
+          className={
+            structure
+              ? "pointer-events-auto h-2.5 w-2.5 cursor-pointer rounded-full"
+              : "pointer-events-auto flex h-2.5 w-10 cursor-ns-resize items-center justify-center rounded-full"
+          }
           style={{
             background: ACCENT,
             boxShadow: station.selected ? "0 0 0 2px rgba(255,255,255,0.7)" : "none",
           }}
-          onPointerDown={onDragPointerDown}
+          onPointerDown={structure ? undefined : onDragPointerDown}
           onClick={(e) => {
             e.stopPropagation();
             onSelect();
           }}
         >
-          <span className="block h-px w-5 bg-[#1a1510]" aria-hidden />
+          {structure ? null : <span className="block h-px w-5 bg-[#1a1510]" aria-hidden />}
         </button>
       </div>
     </>
@@ -534,6 +546,7 @@ export function SiteCreatorSectionSpine({
   onScrollChange,
   onHeightModeChange,
   onCustomHeightChange,
+  mode = "device",
 }: SiteCreatorSectionSpineProps) {
   const lineBottom = Math.max(
     pageHeight * scale,
@@ -546,6 +559,7 @@ export function SiteCreatorSectionSpine({
       className="pointer-events-none absolute inset-0 z-[45] overflow-visible"
       data-testid="site-creator-section-spine"
       data-site-creator-spine-root="true"
+      data-spine-mode={mode}
       data-site-creator-floating-ui="true"
       data-page-height={pageHeight}
       data-spine-scale={scale}
@@ -573,8 +587,9 @@ export function SiteCreatorSectionSpine({
           onSelect={() => onSelectSection(station.sectionId)}
           onRemove={() => onRemoveSection(station.sectionId)}
           onScrollChange={onScrollChange}
-          onHeightModeChange={(mode) => onHeightModeChange(station.sectionId, mode)}
+          onHeightModeChange={(next) => onHeightModeChange(station.sectionId, next)}
           onCustomHeightChange={(px) => onCustomHeightChange(station.sectionId, px)}
+          mode={mode}
         />
       ))}
 

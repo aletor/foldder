@@ -133,9 +133,12 @@ describe("SiteCreatorPreview", () => {
     expect(gutter.parentElement?.contains(stage)).toBe(true);
     expect(gutter.className).toContain("absolute");
     expect(gutter.getAttribute("style")).toContain("right: 100%");
+    expect(document.querySelector(".site-creator-preview-scroll-inner")?.className).not.toContain(
+      "justify-center",
+    );
   });
 
-  it("keeps Suave/Fijo active in the Original work area without Preview", () => {
+  it("Original canvas stays pinned even with Suave/Fijo hops", () => {
     const page = makePage([
       makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
       makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
@@ -177,9 +180,13 @@ describe("SiteCreatorPreview", () => {
     );
 
     const canvas = document.querySelector(".site-creator-preview-scroll");
-    expect(canvas?.className).toContain("overflow-y-auto");
-    expect(canvas?.className).not.toContain("overflow-hidden");
+    expect(canvas?.className).toContain("overflow-hidden");
+    expect(canvas?.className).not.toContain("overflow-y-auto");
     expect(screen.queryByTestId("site-creator-device-scroll")).toBeNull();
+    expect(screen.queryByTestId("site-creator-section-scroll-pad")).toBeNull();
+    Object.defineProperty(canvas!, "scrollTop", { configurable: true, writable: true, value: 40 });
+    fireEvent.wheel(canvas!, { deltaY: 180 });
+    expect(canvas!.scrollTop).toBe(0);
   });
 
   it("mirrors the device scroll in the external spine and clips it to the frame", () => {
@@ -689,6 +696,39 @@ describe("SiteCreatorPreview", () => {
     expect(stage.getAttribute("style")).toContain("height: 1180px");
     expect(stage.getAttribute("style")).toContain("border-radius: 6px");
     expect(stage.className).not.toContain("border-white/12");
+  });
+
+  it("monitor device chrome uses a rectangular 16:9 bezel", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 1920,
+      customHeight: 2000,
+      objects: [],
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={1920}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 1920, height: 1080, kind: "monitor" }}
+      />,
+    );
+
+    const chrome = screen.getByTestId("site-creator-device-chrome");
+    expect(chrome.getAttribute("data-device-kind")).toBe("monitor");
+    expect(chrome.getAttribute("style")).toContain("padding: 12px");
+    expect(chrome.getAttribute("style")).toContain("border-radius: 8px");
+    const stage = screen.getByTestId("site-creator-preview-stage");
+    expect(stage.getAttribute("style")).toContain("width: 1920px");
+    expect(stage.getAttribute("style")).toContain("height: 1080px");
+    expect(stage.getAttribute("style")).toContain("border-radius: 2px");
+    expect(screen.queryByTestId("site-creator-resize-left")).toBeNull();
+    expect(document.querySelector(".site-creator-preview-scroll-inner")?.className).toContain(
+      "justify-center",
+    );
   });
 
   it("readOnly hides selection, resize handles and does not dispatch clicks", () => {

@@ -17,10 +17,11 @@ export function siteCreatorTabletMediaMaxWidth(referenceWidth: number): number {
 }
 export const SITE_CREATOR_MIN_VIEWPORT_WIDTH = 280;
 export const SITE_CREATOR_MIN_DEVICE_HEIGHT = 320;
-export const SITE_CREATOR_MAX_DEVICE_HEIGHT = 2400;
+export const SITE_CREATOR_MAX_DEVICE_HEIGHT = 2880;
 
-export type SiteCreatorViewportBand = "original" | "tablet" | "mobile";
-export type SiteCreatorDeviceChromeKind = "tablet" | "mobile";
+export type SiteCreatorViewportBand = "original" | "monitor" | "tablet" | "mobile";
+export type SiteCreatorDeviceBand = Exclude<SiteCreatorViewportBand, "original">;
+export type SiteCreatorDeviceChromeKind = SiteCreatorDeviceBand;
 
 export type SiteCreatorDeviceFrame = {
   width: number;
@@ -56,12 +57,21 @@ export const SITE_CREATOR_DEVICE_CHROME: Record<
     color: "#3a414c",
     rim: "0 0 0 1px rgba(255,255,255,0.22)",
   },
+  monitor: {
+    bezelPx: 12,
+    radiusPx: 8,
+    innerRadiusPx: 2,
+    color: "#3a414c",
+    rim: "0 0 0 1px rgba(255,255,255,0.22)",
+  },
 };
 
 export function resolveSiteCreatorDeviceChromeKind(
   frame: SiteCreatorDeviceFrame,
 ): SiteCreatorDeviceChromeKind {
-  if (frame.kind === "tablet" || frame.kind === "mobile") return frame.kind;
+  if (frame.kind === "monitor" || frame.kind === "tablet" || frame.kind === "mobile") {
+    return frame.kind;
+  }
   return Math.min(frame.width, frame.height) <= 500 ? "mobile" : "tablet";
 }
 
@@ -71,9 +81,9 @@ export function siteCreatorDeviceChrome(
   return { kind, ...SITE_CREATOR_DEVICE_CHROME[kind] };
 }
 
-const VIEWPORT_BANDS: SiteCreatorViewportBand[] = ["original", "tablet", "mobile"];
+const VIEWPORT_BANDS: SiteCreatorViewportBand[] = ["original", "monitor", "tablet", "mobile"];
 
-/** Tab: original → tablet → móvil. Mayús + Tab al revés. */
+/** Tab: original → monitor → tablet → móvil. Mayús + Tab al revés. */
 export function cycleViewportBand(
   band: SiteCreatorViewportBand,
   direction: 1 | -1,
@@ -112,15 +122,24 @@ export const SITE_CREATOR_TABLET_DEVICE_PRESETS: SiteCreatorDevicePreset[] = [
   { id: "large", label: "Grande", width: 1024, height: 1366 },
 ];
 
-export function devicePresetsForBand(band: "tablet" | "mobile"): SiteCreatorDevicePreset[] {
-  return band === "tablet" ? SITE_CREATOR_TABLET_DEVICE_PRESETS : SITE_CREATOR_MOBILE_DEVICE_PRESETS;
+/** Base apaisada 16:9. El retrato intercambia ancho y alto. */
+export const SITE_CREATOR_MONITOR_DEVICE_PRESETS: SiteCreatorDevicePreset[] = [
+  { id: "compact", label: "Compacto", width: 1280, height: 720 },
+  { id: "standard", label: "Estándar", width: 1920, height: 1080 },
+  { id: "large", label: "Grande", width: 2560, height: 1440 },
+];
+
+export function devicePresetsForBand(band: SiteCreatorDeviceBand): SiteCreatorDevicePreset[] {
+  if (band === "monitor") return SITE_CREATOR_MONITOR_DEVICE_PRESETS;
+  if (band === "tablet") return SITE_CREATOR_TABLET_DEVICE_PRESETS;
+  return SITE_CREATOR_MOBILE_DEVICE_PRESETS;
 }
 
-export function defaultDeviceConfig(band: "tablet" | "mobile"): SiteCreatorDeviceConfig {
+export function defaultDeviceConfig(band: SiteCreatorDeviceBand): SiteCreatorDeviceConfig {
   const preset = devicePresetsForBand(band).find((p) => p.id === "standard")!;
   return {
     sizeId: "standard",
-    orientation: "portrait",
+    orientation: band === "monitor" ? "landscape" : "portrait",
     customWidth: preset.width,
     customHeight: preset.height,
   };
@@ -132,7 +151,7 @@ export function clampDeviceHeight(height: number): number {
 }
 
 export function resolveDeviceDimensions(args: {
-  band: "tablet" | "mobile";
+  band: SiteCreatorDeviceBand;
   config: SiteCreatorDeviceConfig;
   referenceWidth: number;
 }): { width: number; height: number; sizeLabel: string } {
@@ -150,12 +169,14 @@ export function resolveDeviceDimensions(args: {
     baseH = preset.height;
     sizeLabel = preset.label;
   }
-  const width =
-    args.config.orientation === "landscape"
-      ? clampViewportWidth(baseH, args.referenceWidth)
-      : clampViewportWidth(baseW, args.referenceWidth);
-  const height =
-    args.config.orientation === "landscape" ? clampDeviceHeight(baseW) : clampDeviceHeight(baseH);
+  /** Monitor guarda 16:9 apaisado; tablet/móvil guardan retrato. */
+  const swap = args.band === "monitor"
+    ? args.config.orientation === "portrait"
+    : args.config.orientation === "landscape";
+  const width = swap
+    ? clampViewportWidth(baseH, args.referenceWidth)
+    : clampViewportWidth(baseW, args.referenceWidth);
+  const height = swap ? clampDeviceHeight(baseW) : clampDeviceHeight(baseH);
   return { width, height, sizeLabel };
 }
 export const SITE_CREATOR_FIT_ZOOM_MAX = 2;
