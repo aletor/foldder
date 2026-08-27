@@ -31,7 +31,6 @@ import { type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { getPageDimensions } from "../indesign/page-formats";
 import type { DesignerNodeData, DesignerPageState } from "../designer/DesignerNode";
-import { DesignerPagePreview } from "../designer/DesignerPagePreview";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import {
   getLiveStudioDocumentsEpoch,
@@ -67,6 +66,8 @@ import {
 } from "./site-creator-types";
 import { isValidDesignerSourceSnapshotV1 } from "./designer-source-snapshot";
 import { SiteCreatorStudio } from "./SiteCreatorStudio";
+import { SiteCreatorNodeDeviceMosaic } from "./SiteCreatorNodeDeviceMosaic";
+import { buildSiteCreatorNodeDeviceMosaic } from "./site-creator-node-device-mosaic";
 
 const STALE_SYNC_MESSAGE = "Designer volvió a cambiar. Revisa la actualización de nuevo.";
 const AUTO_SYNC_DEBOUNCE_MS = 300;
@@ -87,7 +88,7 @@ function syncValidationErrorMessage(reason: "stale" | "invalid_designer" | "inva
 const SITE_CREATOR_ACCENT = "#22d3ee";
 const SITE_CREATOR_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("siteCreator");
 const SITE_CREATOR_DOCK_MIN_CHROME = 180;
-const SITE_CREATOR_CONNECTED_PREVIEW_MIN = 140;
+const SITE_CREATOR_CONNECTED_PREVIEW_MIN = 180;
 const SITE_CREATOR_NODE_MAX_HEIGHT = 2200;
 
 function resolveSiteCreatorNodeHeight(args: { baseHeight: number; hasDock: boolean }): number {
@@ -274,6 +275,13 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
   const previewPage = display.displayPage;
   const previewPageDims = previewPage ? getPageDimensions(previewPage) : null;
   const hasCanvasPreview = Boolean(previewPage && previewPageDims);
+  const deviceMosaic = useMemo(() => {
+    if (!previewPage) return null;
+    return buildSiteCreatorNodeDeviceMosaic({
+      page: previewPage,
+      blueprint,
+    });
+  }, [blueprint, livePageContentHash, previewPage, sourceSnapshot?.contentHash]);
 
   const dismissSyncError = useCallback(() => setSyncErrorMessage(null), []);
 
@@ -587,14 +595,9 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
         className={`node-content foldder-frameless-main site-creator-node-main${hasDock ? " foldder-node-content-main--with-dock" : ""}`}
       >
         <div className="site-creator-node-preview-area foldder-node-content-preview-area">
-          {hasCanvasPreview && previewPage && previewPageDims ? (
-            <div className="site-creator-node-page-preview absolute inset-0 overflow-hidden bg-[#fafafa]">
-              <DesignerPagePreview
-                objects={previewPage.objects ?? []}
-                pageWidth={previewPageDims.width}
-                pageHeight={previewPageDims.height}
-                renderImages={nodeMediaVisible}
-              />
+          {hasCanvasPreview && previewPage && previewPageDims && deviceMosaic ? (
+            <div className="site-creator-node-page-preview absolute inset-0 overflow-hidden">
+              <SiteCreatorNodeDeviceMosaic mosaic={deviceMosaic} renderImages={nodeMediaVisible} />
             </div>
           ) : (
             <>
