@@ -12,11 +12,9 @@ import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import { isSiteButtonNode, type SiteBlueprintSectionNode, type SiteBlueprintV1, type SiteSectionScrollBand } from "./site-creator-types";
 import {
   destinationScrollKind,
-  lastDocumentSection,
   listDocumentSections,
   listSectionScrollHops,
   scrollFlowUsesKind,
-  sectionScrollNeedsViewportPad,
 } from "./site-creator-section-scroll";
 import { compilePublishedScrollScript } from "./site-creator-section-scroll-runtime";
 import { bandHasCustomizations, resolveMediaTune } from "./site-creator-responsive-tunes";
@@ -417,35 +415,6 @@ function emitSectionViewportCss(
       );
     }
   }
-  emitSectionScrollEndPad(lines, blueprint, pageWidth, band, hints);
-}
-
-/** Pad solo si la última sección no es viewport: alinea su inicio sin un viewport extra. */
-function emitSectionScrollEndPad(
-  lines: string[],
-  blueprint: SiteBlueprintV1,
-  pageWidth: number,
-  band: SectionHeightBand,
-  hints: SectionLayoutHint[] | null | undefined,
-): void {
-  if (!sectionScrollNeedsViewportPad(blueprint, scrollLookupBand(blueprint, band))) {
-    if (band !== "wide") {
-      lines.push("html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:0}");
-    }
-    return;
-  }
-  const last = lastDocumentSection(blueprint);
-  if (!last) return;
-  if (sectionHeightModeForBand(blueprint, last, heightLookupBand(blueprint, band)) === "viewport") {
-    if (band !== "wide") {
-      lines.push("html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:0}");
-    }
-    return;
-  }
-  const geom = sectionLayoutHint(last, hints);
-  lines.push(
-    `html.s-scroll-smooth body,html.s-scroll-snap body{padding-bottom:max(0px,100dvh - 100cqw * ${geom.designed} / ${Math.max(1, pageWidth)})}`,
-  );
 }
 
 function cqwLen(px: number, pageWidth: number): string {

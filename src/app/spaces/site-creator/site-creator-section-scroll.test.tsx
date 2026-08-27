@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
-import { createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
+import { createSectionFromSelection } from "./site-blueprint-ops";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import { compilePublishedSite } from "./site-creator-publish-compile";
 import { SiteCreatorSectionSpine } from "./SiteCreatorSectionSpine";
@@ -506,30 +506,24 @@ describe("site-creator section scroll flow", () => {
     expect(compiled.js).toContain(`"kind":"smooth"`);
     expect(compiled.js).toContain(heroId);
     expect(compiled.js).toContain(sectionId);
-    expect(compiled.css).toContain("padding-bottom:max(0px,100dvh");
+    expect(compiled.js).toContain("scrollHeight");
+    expect(compiled.css).not.toContain("padding-bottom:max(0px,100dvh");
     expect(compiled.css).not.toContain("padding-bottom:100vh");
     expect(compiled.js).toContain("visualViewport");
     expect(compiled.js).not.toMatch(/foldder/i);
   });
 
-  it("does not add a dummy viewport pad when the last section is already one screen", () => {
+  it("does not lengthen the published page so Suave can dock the last section", () => {
     const { page, blueprint, heroId, sectionId } = twoSectionsBlueprint();
-    const fitted = setSectionHeightMode(
-      setSectionScrollHop(blueprint, heroId, sectionId, "smooth"),
-      sectionId,
-      "viewport",
-    );
-    expect(fitted.ok).toBe(true);
-    if (!fitted.ok) return;
     const compiled = compilePublishedSite({
       page,
-      blueprint: fitted.blueprint,
-      title: "Última viewport",
+      blueprint: setSectionScrollHop(blueprint, heroId, sectionId, "smooth"),
+      title: "Sin pad",
       imageHrefByLayerId: {},
     });
-    const wideCss = compiled.css.split("@media")[0] ?? "";
-    expect(wideCss).not.toContain("padding-bottom:100vh");
-    expect(wideCss).not.toContain("padding-bottom:max(0px,100dvh");
+    expect(compiled.css).not.toContain("padding-bottom:max(0px,100dvh");
+    expect(compiled.css).not.toContain("padding-bottom:100vh");
+    expect(compiled.js).toContain("Math.min(next.y, limit)");
   });
 
   it("leaves published js empty when every hop is natural", () => {
@@ -586,8 +580,18 @@ describe("planScrollStep", () => {
 });
 
 describe("bindSectionScroller", () => {
+  function mockScrollerOverflow(
+    scroller: HTMLElement,
+    scrollHeight: number,
+    clientHeight: number,
+  ): void {
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: scrollHeight });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: clientHeight });
+  }
+
   it("releases a smooth-scroll lock when the user reverses direction", () => {
     const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1800, 800);
     const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
       scroller.scrollTop = Number(top ?? 0);
     });
@@ -619,6 +623,7 @@ describe("bindSectionScroller", () => {
 
   it("lets Suave intercept a forwarded work-area wheel without binding keys", () => {
     const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1800, 800);
     const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
       scroller.scrollTop = Number(top ?? 0);
     });
@@ -643,6 +648,58 @@ describe("bindSectionScroller", () => {
     window.dispatchEvent(key);
     expect(key.defaultPrevented).toBe(false);
     expect(scrollTo).toHaveBeenCalledTimes(1);
+
+    dispose();
+  });
+
+  it("does not intercept wheel when the page already fits the device", () => {
+    const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1080, 1080);
+    const scrollTo = vi.fn();
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 400 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+    });
+
+    const down = new WheelEvent("wheel", { deltaY: 120, cancelable: true });
+    scroller.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it("stops at the real page end instead of inventing extra length", () => {
+    const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1000, 800);
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 900 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+    });
+
+    const down = new WheelEvent("wheel", { deltaY: 120, cancelable: true });
+    scroller.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 200, behavior: "smooth" });
 
     dispose();
   });

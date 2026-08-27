@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import { collectDesignerPageFontFamilies } from "@/app/spaces/designer/designer-page-text-frame-sync";
 import { ensureGoogleFontPreviewBatchLoaded } from "@/app/spaces/freehand/google-fonts-preview-loader";
@@ -37,17 +37,14 @@ import {
   type SectionSpineStation,
 } from "./SiteCreatorSectionSpine";
 import {
-  lastDocumentSection,
   listDocumentSections,
   listSectionScrollHops,
-  sectionScrollNeedsViewportPad,
+  scrollFlowUsesKind,
 } from "./site-creator-section-scroll";
 import { bindSectionScroller } from "./site-creator-section-scroll-runtime";
 import {
   liveViewportHeightInPageUnits,
-  planSectionHeightLayout,
   sectionDisplayTop,
-  sectionHeightModeForBand,
   type SectionHeightBand,
   type SectionScrollStationPoint,
 } from "./site-creator-section-height";
@@ -239,7 +236,6 @@ export function SiteCreatorPreview({
   const [scrollTick, setScrollTick] = useState(0);
   const [deviceScrollTop, setDeviceScrollTop] = useState(0);
   const [frameTick, setFrameTick] = useState(0);
-  const [scrollPad, setScrollPad] = useState(0);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   const lastAvailableSizeRef = useRef<{ width: number; height: number } | null>(null);
   const dragRef = useRef<{
@@ -356,9 +352,6 @@ export function SiteCreatorPreview({
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [deviceMode, readOnly]);
 
-  const needsSectionScrollPad = Boolean(
-    blueprint && sectionScrollNeedsViewportPad(blueprint, heightBand),
-  );
   const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
 
   const liveScreenHeight = useCallback((): number => {
@@ -375,61 +368,11 @@ export function SiteCreatorPreview({
   }, [deviceFrame, deviceMode, pageHeight, pageScreenHeight, pageWidth]);
 
   const liveSectionScroll = Boolean(
-    blueprint && needsSectionScrollPad && (deviceMode || readOnly),
+    blueprint &&
+      (deviceMode || readOnly) &&
+      (scrollFlowUsesKind(blueprint, "smooth", heightBand) ||
+        scrollFlowUsesKind(blueprint, "snap", heightBand)),
   );
-
-  useLayoutEffect(() => {
-    if (!liveSectionScroll || !blueprint) {
-      setScrollPad(0);
-      return;
-    }
-    const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
-    if (!scroller) return;
-    const update = () => {
-      const last = lastDocumentSection(blueprint);
-      if (!last) {
-        setScrollPad(0);
-        return;
-      }
-      if (sectionHeightModeForBand(blueprint, last, heightBand) === "viewport") {
-        setScrollPad(0);
-        return;
-      }
-      const station = sectionScrollStations.find((item) => item.id === last.id);
-      const lastPageH =
-        station?.height ??
-        planSectionHeightLayout(blueprint, liveScreenHeight(), heightBand).ranges.at(-1)?.height ??
-        Math.max(1, last.sourceRange.bottom - last.sourceRange.top);
-      const stageH = stageRef.current?.getBoundingClientRect().height ?? contentDisplayHeight;
-      const lastScreen = (lastPageH / Math.max(1, pageHeight)) * stageH;
-      setScrollPad(Math.max(0, scroller.clientHeight - lastScreen));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(scroller);
-    if (stageRef.current) ro.observe(stageRef.current);
-    return () => ro.disconnect();
-  }, [
-    blueprint,
-    contentDisplayHeight,
-    deviceMode,
-    heightBand,
-    liveScreenHeight,
-    needsSectionScrollPad,
-    pageHeight,
-    liveSectionScroll,
-    sectionScrollStations,
-  ]);
-
-  const sectionScrollPadEl =
-    liveSectionScroll && scrollPad > 0 ? (
-      <div
-        aria-hidden
-        data-testid="site-creator-section-scroll-pad"
-        className="pointer-events-none w-full shrink-0"
-        style={{ height: scrollPad }}
-      />
-    ) : null;
 
   stationsFnRef.current = () => {
     const boxScroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
@@ -833,7 +776,6 @@ export function SiteCreatorPreview({
                   >
                     {pageContent}
                   </div>
-                  {sectionScrollPadEl}
                 </div>
               ) : (
                 <div ref={stageRef} className="relative h-full w-full">
@@ -863,7 +805,6 @@ export function SiteCreatorPreview({
             </div>
             </div>
           </div>
-          {deviceMode ? null : sectionScrollPadEl}
         </div>
       </div>
     </div>

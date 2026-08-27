@@ -189,6 +189,51 @@ describe("SiteCreatorPreview", () => {
     expect(canvas!.scrollTop).toBe(0);
   });
 
+  it("does not add a dummy scroll pad inside a device frame for Suave hops", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1920}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 1920, height: 1080, kind: "monitor" }}
+        blueprint={setSectionScrollHop(
+          section.blueprint,
+          hero.createdNodeId,
+          section.createdNodeId,
+          "smooth",
+        )}
+      />,
+    );
+
+    expect(screen.getByTestId("site-creator-device-scroll")).toBeTruthy();
+    expect(screen.queryByTestId("site-creator-section-scroll-pad")).toBeNull();
+  });
+
   it("mirrors the device scroll in the external spine and clips it to the frame", () => {
     const snapshotPage: DesignerPageState = {
       id: "snap_pg",

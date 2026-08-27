@@ -15,6 +15,19 @@ export type PlannedScrollStep = {
 
 const AT_STATION = 16;
 
+export function maxScrollTopForScroller(scroller: HTMLElement | Window): number {
+  if (scroller === window) {
+    const root = document.documentElement;
+    return Math.max(0, (root?.scrollHeight ?? 0) - window.innerHeight);
+  }
+  const el = scroller as HTMLElement;
+  return Math.max(0, el.scrollHeight - el.clientHeight);
+}
+
+export function reachableScrollTop(scroller: HTMLElement | Window, top: number): number {
+  return Math.min(Math.max(0, top), maxScrollTopForScroller(scroller));
+}
+
 export function stationIndexAtY(stations: ScrollStation[], scrollY: number): number {
   if (stations.length === 0) return -1;
   let index = 0;
@@ -86,7 +99,7 @@ export function bindSectionScroller(args: {
     lockedDirection = direction;
     anchoredId = toId;
     window.clearTimeout(unlockTimer);
-    target.scrollTo({ top: Math.max(0, top), behavior: scrollBehaviorForKind(kind) });
+    target.scrollTo({ top: reachableScrollTop(args.scroller, top), behavior: scrollBehaviorForKind(kind) });
     unlockTimer = window.setTimeout(() => {
       locked = false;
       lockedDirection = null;
@@ -114,7 +127,12 @@ export function bindSectionScroller(args: {
       anchoredId = null;
       return false;
     }
-    go(planned.targetY, planned.kind, planned.toId, direction);
+    const nextTop = reachableScrollTop(args.scroller, planned.targetY);
+    if (Math.abs(nextTop - readY()) < 1) {
+      anchoredId = null;
+      return false;
+    }
+    go(nextTop, planned.kind, planned.toId, direction);
     return true;
   };
   const realignAnchored = () => {
@@ -131,8 +149,9 @@ export function bindSectionScroller(args: {
     }
     const station = list.find((item) => item.id === id);
     if (!station) return;
-    if (Math.abs(y - station.y) < 1) return;
-    target.scrollTo({ top: Math.max(0, station.y), behavior: "auto" });
+    const nextTop = reachableScrollTop(args.scroller, station.y);
+    if (Math.abs(y - nextTop) < 1) return;
+    target.scrollTo({ top: nextTop, behavior: "auto" });
   };
   const onWheel = (event: Event) => {
     if (!(event instanceof WheelEvent)) return;
@@ -304,7 +323,13 @@ export function compilePublishedScrollScript(
       anchoredId = null;
       return false;
     }
-    go(next.y, next.kind, next.id, direction);
+    var limit = Math.max(0, (document.documentElement ? document.documentElement.scrollHeight : 0) - window.innerHeight);
+    var top = Math.max(0, Math.min(next.y, limit));
+    if (Math.abs(top - window.scrollY) < 1) {
+      anchoredId = null;
+      return false;
+    }
+    go(top, next.kind, next.id, direction);
     return true;
   }
   function realign() {
@@ -324,7 +349,8 @@ export function compilePublishedScrollScript(
       if (list[i].id === id) station = list[i];
     }
     if (!station || Math.abs(y - station.y) < 1) return;
-    window.scrollTo({ top: Math.max(0, station.y), behavior: "auto" });
+    var limit = Math.max(0, (document.documentElement ? document.documentElement.scrollHeight : 0) - window.innerHeight);
+    window.scrollTo({ top: Math.max(0, Math.min(station.y, limit)), behavior: "auto" });
   }
   window.addEventListener("wheel", function (event) {
     if (event.ctrlKey) return;

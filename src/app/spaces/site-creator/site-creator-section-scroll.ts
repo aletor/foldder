@@ -226,23 +226,6 @@ export function scrollFlowUsesKind(
   );
 }
 
-/** Hay suave/ancla: hace falta poder alinear el inicio de una sección con el borde superior. */
-export function sectionScrollNeedsViewportPad(
-  blueprint: SiteBlueprintV1,
-  band?: SiteSectionScrollBand,
-): boolean {
-  if (listDocumentSections(blueprint).length < 2) return false;
-  return (
-    scrollFlowUsesKind(blueprint, "smooth", band) ||
-    scrollFlowUsesKind(blueprint, "snap", band)
-  );
-}
-
-export function lastDocumentSection(blueprint: SiteBlueprintV1): SiteBlueprintSectionNode | null {
-  const sections = listDocumentSections(blueprint);
-  return sections[sections.length - 1] ?? null;
-}
-
 export function destinationScrollKind(
   blueprint: SiteBlueprintV1,
   sectionId: string,
