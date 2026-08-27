@@ -519,7 +519,11 @@ export function SiteCreatorStudio({
   const deviceFrame =
     pagePreviewMode || activeDeviceDimensions == null
       ? null
-      : { width: activeDeviceDimensions.width, height: activeDeviceDimensions.height };
+      : {
+          width: activeDeviceDimensions.width,
+          height: activeDeviceDimensions.height,
+          kind: viewportBand === "tablet" ? ("tablet" as const) : ("mobile" as const),
+        };
   const responsiveBand = pagePreviewMode
     ? bandForViewportWidth(effectiveViewportWidth, referenceWidth)
     : bandForEditorDevice(viewportBand, effectiveViewportWidth, referenceWidth);

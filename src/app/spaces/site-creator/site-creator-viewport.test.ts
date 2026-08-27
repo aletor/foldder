@@ -24,6 +24,8 @@ import {
   viewportWidthDeltaFromCenteredEdgeDrag,
   applyWorkAreaWheelDelta,
   shouldRedirectCanvasWheelToWorkArea,
+  resolveSiteCreatorDeviceChromeKind,
+  siteCreatorDeviceChrome,
 } from "./site-creator-viewport";
 
 describe("site-creator-viewport", () => {
@@ -248,5 +250,29 @@ describe("site-creator-viewport", () => {
     applyWorkAreaWheelDelta(inner, { deltaX: 4, deltaY: 80 });
     expect(inner.scrollTop).toBe(80);
     expect(inner.scrollLeft).toBe(4);
+  });
+
+  it("resolves a thicker rounded bezel for mobile than tablet", () => {
+    expect(resolveSiteCreatorDeviceChromeKind({ width: 390, height: 844 })).toBe("mobile");
+    expect(resolveSiteCreatorDeviceChromeKind({ width: 820, height: 1180 })).toBe("tablet");
+    expect(resolveSiteCreatorDeviceChromeKind({ width: 1180, height: 820, kind: "tablet" })).toBe(
+      "tablet",
+    );
+    expect(siteCreatorDeviceChrome("mobile")).toEqual({
+      kind: "mobile",
+      bezelPx: 10,
+      radiusPx: 22,
+      innerRadiusPx: 12,
+      color: "#3a414c",
+      rim: "0 0 0 1px rgba(255,255,255,0.22)",
+    });
+    expect(siteCreatorDeviceChrome("tablet")).toEqual({
+      kind: "tablet",
+      bezelPx: 8,
+      radiusPx: 14,
+      innerRadiusPx: 6,
+      color: "#3a414c",
+      rim: "0 0 0 1px rgba(255,255,255,0.22)",
+    });
   });
 });

@@ -119,6 +119,9 @@ describe("SiteCreatorPreview", () => {
     const stage = screen.getByTestId("site-creator-preview-stage");
     expect(stage.getAttribute("style")).toContain("width: 800px");
     expect(stage.getAttribute("style")).toContain("height: 600px");
+    expect(stage.getAttribute("style") ?? "").not.toContain("border-radius");
+    expect(screen.queryByTestId("site-creator-device-chrome")).toBeNull();
+    expect(screen.getByTestId("site-creator-resize-left")).toBeTruthy();
     const canvas = document.querySelector(".site-creator-preview-scroll");
     expect(canvas?.className).toContain("overflow-hidden");
     expect(screen.queryByTestId("site-creator-device-scroll")).toBeNull();
@@ -163,6 +166,7 @@ describe("SiteCreatorPreview", () => {
     expect(gutter.className).toContain("overflow-visible");
     expect(gutter.getAttribute("style")).toContain("height: 300px");
     expect(gutter.getAttribute("style")).toContain("clip-path: inset(0 -100vw 0 -100vw)");
+    expect(gutter.getAttribute("style")).toContain("margin-right: 30px");
     expect(spineContent.getAttribute("data-spine-scroll-offset")).toBe("0");
 
     Object.defineProperty(deviceScroll, "scrollTop", {
@@ -592,12 +596,49 @@ describe("SiteCreatorPreview", () => {
     const stage = screen.getByTestId("site-creator-preview-stage");
     expect(stage.getAttribute("style")).toContain("width: 390px");
     expect(stage.getAttribute("style")).toContain("height: 844px");
+    expect(stage.getAttribute("style")).toContain("border-radius: 12px");
+    const chrome = screen.getByTestId("site-creator-device-chrome");
+    expect(chrome.getAttribute("data-device-kind")).toBe("mobile");
+    expect(chrome.getAttribute("style")).toContain("padding: 10px");
+    expect(chrome.getAttribute("style")).toContain("border-radius: 22px");
+    expect(chrome.getAttribute("style")).toContain("background: rgb(58, 65, 76)");
+    expect(screen.queryByTestId("site-creator-resize-left")).toBeNull();
     const canvas = document.querySelector(".site-creator-preview-scroll")!;
     expect(canvas.className).toContain("overflow-hidden");
     const inner = screen.getByTestId("site-creator-device-scroll");
     Object.defineProperty(inner, "scrollTop", { configurable: true, writable: true, value: 0 });
     fireEvent.wheel(canvas, { deltaY: 120 });
     expect(inner.scrollTop).toBe(120);
+  });
+
+  it("tablet device chrome uses a thinner bezel than mobile", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 820,
+      customHeight: 2000,
+      objects: [],
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={820}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 820, height: 1180, kind: "tablet" }}
+      />,
+    );
+
+    const chrome = screen.getByTestId("site-creator-device-chrome");
+    expect(chrome.getAttribute("data-device-kind")).toBe("tablet");
+    expect(chrome.getAttribute("style")).toContain("padding: 8px");
+    expect(chrome.getAttribute("style")).toContain("border-radius: 14px");
+    const stage = screen.getByTestId("site-creator-preview-stage");
+    expect(stage.getAttribute("style")).toContain("width: 820px");
+    expect(stage.getAttribute("style")).toContain("height: 1180px");
+    expect(stage.getAttribute("style")).toContain("border-radius: 6px");
+    expect(stage.className).not.toContain("border-white/12");
   });
 
   it("readOnly hides selection, resize handles and does not dispatch clicks", () => {

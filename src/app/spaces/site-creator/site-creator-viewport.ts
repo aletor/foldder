@@ -20,6 +20,56 @@ export const SITE_CREATOR_MIN_DEVICE_HEIGHT = 320;
 export const SITE_CREATOR_MAX_DEVICE_HEIGHT = 2400;
 
 export type SiteCreatorViewportBand = "original" | "tablet" | "mobile";
+export type SiteCreatorDeviceChromeKind = "tablet" | "mobile";
+
+export type SiteCreatorDeviceFrame = {
+  width: number;
+  height: number;
+  kind?: SiteCreatorDeviceChromeKind;
+};
+
+export type SiteCreatorDeviceChrome = {
+  kind: SiteCreatorDeviceChromeKind;
+  bezelPx: number;
+  radiusPx: number;
+  innerRadiusPx: number;
+  color: string;
+  rim: string;
+};
+
+/** Bisel mínimo alrededor de la página. No escala con el zoom. */
+export const SITE_CREATOR_DEVICE_CHROME: Record<
+  SiteCreatorDeviceChromeKind,
+  Omit<SiteCreatorDeviceChrome, "kind">
+> = {
+  mobile: {
+    bezelPx: 10,
+    radiusPx: 22,
+    innerRadiusPx: 12,
+    color: "#3a414c",
+    rim: "0 0 0 1px rgba(255,255,255,0.22)",
+  },
+  tablet: {
+    bezelPx: 8,
+    radiusPx: 14,
+    innerRadiusPx: 6,
+    color: "#3a414c",
+    rim: "0 0 0 1px rgba(255,255,255,0.22)",
+  },
+};
+
+export function resolveSiteCreatorDeviceChromeKind(
+  frame: SiteCreatorDeviceFrame,
+): SiteCreatorDeviceChromeKind {
+  if (frame.kind === "tablet" || frame.kind === "mobile") return frame.kind;
+  return Math.min(frame.width, frame.height) <= 500 ? "mobile" : "tablet";
+}
+
+export function siteCreatorDeviceChrome(
+  kind: SiteCreatorDeviceChromeKind,
+): SiteCreatorDeviceChrome {
+  return { kind, ...SITE_CREATOR_DEVICE_CHROME[kind] };
+}
 
 const VIEWPORT_BANDS: SiteCreatorViewportBand[] = ["original", "tablet", "mobile"];
 
@@ -255,6 +305,7 @@ export function isSiteCreatorPreviewChromeBackgroundTarget(target: EventTarget |
   if (target.closest("[data-site-creator-floating-ui]")) return false;
   if (target.closest(".site-creator-viewport-resize")) return false;
   if (target.closest(".site-creator-preview-stage")) return false;
+  if (target.closest(".site-creator-device-chrome")) return false;
   return Boolean(target.closest(".site-creator-preview-scroll"));
 }
 

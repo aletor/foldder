@@ -56,8 +56,11 @@ import {
   clampViewportWidth,
   isSiteCreatorPreviewChromeBackgroundTarget,
   measureSiteCreatorPreviewAvailableSize,
+  resolveSiteCreatorDeviceChromeKind,
   shouldRedirectCanvasWheelToWorkArea,
+  siteCreatorDeviceChrome,
   viewportWidthDeltaFromCenteredEdgeDrag,
+  type SiteCreatorDeviceFrame,
 } from "./site-creator-viewport";
 
 /** @deprecated Prefer numeric previewZoom (6A). Kept for import compatibility. */
@@ -78,7 +81,7 @@ export interface SiteCreatorPreviewProps {
   /** Zoom de edición numérico (no modo reactivo). */
   previewZoom: number;
   /** Frame de dispositivo (tablet/móvil). Null = vista Original. */
-  deviceFrame?: { width: number; height: number } | null;
+  deviceFrame?: SiteCreatorDeviceFrame | null;
   onViewportWidthChange?: (width: number) => void;
   onAvailableSizeChange?: (size: { width: number; height: number }) => void;
   /** @deprecated Ignorado en 6A; el zoom lo controla el Studio. */
@@ -254,6 +257,10 @@ export function SiteCreatorPreview({
 
   const zoom = previewZoom > 0 ? previewZoom : 1;
   const deviceMode = deviceFrame != null;
+  const deviceChrome =
+    !readOnly && deviceMode && deviceFrame
+      ? siteCreatorDeviceChrome(resolveSiteCreatorDeviceChromeKind(deviceFrame))
+      : null;
   const layoutWidth = pageWidth;
   const layoutHeight = pageHeight;
   const screenScale = zoom;
@@ -666,7 +673,8 @@ export function SiteCreatorPreview({
           width: spineGutterPx,
           height: deviceMode ? displayHeight : contentDisplayHeight,
           right: "100%",
-          marginRight: SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX,
+          marginRight:
+            SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX - (deviceChrome?.bezelPx ?? 0),
           clipPath: deviceMode ? "inset(0 -100vw 0 -100vw)" : undefined,
         }}
         data-testid="site-creator-section-spine-gutter"
@@ -742,15 +750,36 @@ export function SiteCreatorPreview({
           <div className="relative">
             {spineLayer}
             <div
+              className={deviceChrome ? "site-creator-device-chrome" : undefined}
+              data-testid={deviceChrome ? "site-creator-device-chrome" : undefined}
+              data-device-kind={deviceChrome?.kind}
+              style={
+                deviceChrome
+                  ? {
+                      padding: deviceChrome.bezelPx,
+                      borderRadius: deviceChrome.radiusPx,
+                      background: deviceChrome.color,
+                      boxShadow: deviceChrome.rim,
+                    }
+                  : undefined
+              }
+            >
+            <div
               className={`site-creator-preview-stage relative ${
                 readOnly
                   ? "overflow-hidden border-0 bg-transparent shadow-none"
-                  : "border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
+                  : deviceChrome
+                    ? "overflow-hidden border-0 bg-[#0e131a] shadow-none"
+                    : "border border-white/12 bg-[#0e131a] shadow-[0_8px_28px_rgba(0,0,0,0.28)]"
               }`}
               style={
                 readOnly
                   ? { width: "100%", height: contentDisplayHeight }
-                  : { width: displayWidth, height: displayHeight }
+                  : {
+                      width: displayWidth,
+                      height: displayHeight,
+                      borderRadius: deviceChrome ? deviceChrome.innerRadiusPx : undefined,
+                    }
               }
               data-site-creator-preview-scale={screenScale}
               data-testid="site-creator-preview-stage"
@@ -811,6 +840,7 @@ export function SiteCreatorPreview({
                   {dragLabel}
                 </div>
               ) : null}
+            </div>
             </div>
           </div>
           {deviceMode ? null : sectionScrollPadEl}

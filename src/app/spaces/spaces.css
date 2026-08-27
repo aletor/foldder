@@ -9142,6 +9142,10 @@
   overflow: hidden;
 }
 
+.site-creator-device-chrome {
+  overflow: hidden;
+}
+
 .site-creator-preview-stage__inner {
   position: relative;
   display: block;
