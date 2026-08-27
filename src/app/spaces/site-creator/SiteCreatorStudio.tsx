@@ -26,6 +26,7 @@ import {
   clampViewportWidth,
   computeFillWidthPreviewZoom,
   computeFitPreviewZoom,
+  cycleViewportBand,
   defaultDeviceConfig,
   resolveDeviceDimensions,
   type SiteCreatorDeviceConfig,
@@ -770,6 +771,14 @@ export function SiteCreatorStudio({
       return true;
     });
   }, [clearUnitsAndInspect]);
+
+  const applyViewportBand = useCallback(
+    (band: SiteCreatorViewportBand) => {
+      setViewportBand(band);
+      if (band === "original") setOriginalViewportWidth(referenceWidth);
+    },
+    [referenceWidth],
+  );
 
   const publishPage = snapshot?.page ?? page;
   const canPublish = Boolean(publishPage) && !publishing;
@@ -2877,6 +2886,18 @@ export function SiteCreatorStudio({
       }
       if (pagePreviewMode) return;
 
+      if (
+        event.key === "Tab" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        applyViewportBand(cycleViewportBand(viewportBand, event.shiftKey ? -1 : 1));
+        return;
+      }
+
       const meta = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
 
@@ -2913,7 +2934,15 @@ export function SiteCreatorStudio({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [exitPagePreview, onBlueprintChange, pagePreviewMode, removeSelectedStructure, togglePagePreview]);
+  }, [
+    applyViewportBand,
+    exitPagePreview,
+    onBlueprintChange,
+    pagePreviewMode,
+    removeSelectedStructure,
+    togglePagePreview,
+    viewportBand,
+  ]);
 
   const originLabel = siteCreatorOriginStateLabel(originState);
   const designerLine = designerLabel?.trim() || snapshot?.designerNodeId || "—";
@@ -2955,7 +2984,7 @@ export function SiteCreatorStudio({
     <span
       data-testid="site-creator-preview-live-band"
       title={`${responsiveBand === "wide" ? "Original" : responsiveBand === "tablet" ? "Tablet" : "Móvil"} · ${Math.round(effectiveViewportWidth)} px`}
-      className="pointer-events-auto inline-flex h-7 w-7 items-center justify-center bg-white/10 text-white/80"
+      className="pointer-events-auto inline-flex h-7 w-11 items-center justify-center bg-white/10 text-white/80"
     >
       <PreviewDeviceIcon className="h-3.5 w-3.5" aria-hidden />
     </span>
@@ -2969,15 +2998,12 @@ export function SiteCreatorStudio({
         data-testid="site-creator-preset-original"
         aria-label="Original"
         title={`Original · ${Math.round(referenceWidth)} px`}
-        className={`flex h-7 w-7 items-center justify-center transition ${
+        className={`flex h-7 w-11 items-center justify-center transition ${
           viewportBand === "original"
             ? "bg-white/12 text-white"
             : "text-white/40 hover:bg-white/6 hover:text-white/80"
         }`}
-        onClick={() => {
-          setViewportBand("original");
-          setOriginalViewportWidth(referenceWidth);
-        }}
+        onClick={() => applyViewportBand("original")}
       >
         <Monitor className="h-3.5 w-3.5" aria-hidden />
       </button>
@@ -2992,7 +3018,7 @@ export function SiteCreatorStudio({
         sizeLabel={tabletDimensions.sizeLabel}
         portalHost={floatingHostEl}
         compact
-        onActivate={() => setViewportBand("tablet")}
+        onActivate={() => applyViewportBand("tablet")}
         onConfigChange={(config) => {
           setTabletDevice(config);
           setViewportBand("tablet");
@@ -3009,7 +3035,7 @@ export function SiteCreatorStudio({
         sizeLabel={mobileDimensions.sizeLabel}
         portalHost={floatingHostEl}
         compact
-        onActivate={() => setViewportBand("mobile")}
+        onActivate={() => applyViewportBand("mobile")}
         onConfigChange={(config) => {
           setMobileDevice(config);
           setViewportBand("mobile");
@@ -3043,7 +3069,7 @@ export function SiteCreatorStudio({
               ? "Esta vista no tiene personalizaciones"
               : "Restablecer está disponible en Tablet y Móvil"
         }
-        className={`flex h-7 w-7 items-center justify-center border-l border-white/10 text-white/40 transition hover:bg-white/[0.06] hover:text-white ${
+        className={`flex h-7 w-11 items-center justify-center border-l border-white/10 text-white/40 transition hover:bg-white/[0.06] hover:text-white ${
           canResetBand ? "" : "cursor-default opacity-20"
         }`}
         onClick={() => {

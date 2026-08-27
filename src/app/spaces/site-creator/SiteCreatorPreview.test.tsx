@@ -122,6 +122,8 @@ describe("SiteCreatorPreview", () => {
     const gutter = screen.getByTestId("site-creator-section-spine-gutter");
     expect(stage.contains(gutter)).toBe(false);
     expect(gutter.parentElement?.contains(stage)).toBe(true);
+    expect(gutter.className).toContain("absolute");
+    expect(gutter.getAttribute("style")).toContain("right: 100%");
   });
 
   it("mirrors the device scroll in the external spine and clips it to the frame", () => {

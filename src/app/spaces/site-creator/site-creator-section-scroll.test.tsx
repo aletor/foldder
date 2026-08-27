@@ -22,7 +22,7 @@ import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
 
 function fireNativePointer(
-  target: EventTarget,
+  target: Window | Document | Element,
   type: string,
   values: { clientY: number; pointerId: number },
 ): void {
@@ -31,7 +31,7 @@ function fireNativePointer(
     clientY: { value: values.clientY },
     pointerId: { value: values.pointerId },
   });
-  target.dispatchEvent(event);
+  fireEvent(target, event);
 }
 
 function twoSectionsBlueprint() {
@@ -186,6 +186,14 @@ describe("site-creator section scroll flow", () => {
       </div>,
     );
     expect(screen.getByTestId("site-creator-section-spine")).toBeTruthy();
+    expect(
+      screen.getByTestId(`site-creator-section-spine-station-${heroId}`).contains(
+        screen.getByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}`),
+      ),
+    ).toBe(true);
+    expect(
+      screen.getAllByTestId(/site-creator-section-spine-drag-/),
+    ).toHaveLength(sections.length);
     fireEvent.click(screen.getByLabelText(sections.find((s) => s.id === sectionId)!.label));
     expect(onSelect).toHaveBeenCalledWith(sectionId);
     fireEvent.click(screen.getByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}`));
@@ -283,6 +291,23 @@ describe("site-creator section scroll flow", () => {
     const handle = screen.getByTestId(
       `site-creator-section-spine-drag-${heroId}`,
     );
+    const centerControls = screen.getByTestId(
+      `site-creator-section-spine-station-${heroId}`,
+    );
+    const boundaryControls = screen.getByTestId(
+      `site-creator-section-spine-boundary-${heroId}`,
+    );
+
+    expect(centerControls.style.top).toBe("200px");
+    expect(boundaryControls.style.top).toBe("400px");
+    expect(centerControls.className).toContain("right-[32px]");
+    expect(boundaryControls.className).toContain("right-[10px]");
+    expect(
+      centerControls.contains(
+        screen.getByTestId(`site-creator-section-spine-height-${heroId}`),
+      ),
+    ).toBe(true);
+    expect(boundaryControls.contains(handle)).toBe(true);
 
     fireNativePointer(handle, "pointerdown", { clientY: 100, pointerId: 7 });
     rerender(<SiteCreatorSectionSpine {...commonProps} scale={0.5} />);
@@ -291,6 +316,12 @@ describe("site-creator section scroll flow", () => {
 
     expect(onCustomHeightChange).toHaveBeenCalledTimes(1);
     expect(onCustomHeightChange).toHaveBeenLastCalledWith(heroId, 500);
+    expect(
+      screen.getByTestId(`site-creator-section-spine-station-${heroId}`).style.top,
+    ).toBe("125px");
+    expect(
+      screen.getByTestId(`site-creator-section-spine-boundary-${heroId}`).style.top,
+    ).toBe("250px");
     fireNativePointer(window, "pointerup", { clientY: 200, pointerId: 7 });
   });
 
@@ -338,8 +369,8 @@ describe("site-creator section scroll flow", () => {
         stations={[{ ...station, heightMode: "viewport" as const, height: 1080 }]}
       />,
     );
-    expect(screen.getByTestId(`site-creator-section-spine-height-${heroId}`).textContent).toContain(
-      "Toda la página",
+    expect(screen.getByTestId(`site-creator-section-spine-height-${heroId}`).getAttribute("aria-label")).toBe(
+      "Alto: Toda la página",
     );
     fireEvent.click(screen.getByTestId(`site-creator-section-spine-height-${heroId}`));
     expect(

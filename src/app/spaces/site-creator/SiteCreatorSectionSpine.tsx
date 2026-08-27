@@ -2,7 +2,15 @@
 
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Magnet, UnfoldVertical, Waves, X } from "lucide-react";
+import {
+  Magnet,
+  Maximize2,
+  MoveVertical,
+  Square,
+  UnfoldVertical,
+  Waves,
+  X,
+} from "lucide-react";
 import { floatingPressHandlers, isNodeInsideRefs } from "./site-creator-floating-press";
 import type { SiteSectionHeightMode, SiteSectionScrollKind } from "./site-creator-types";
 import {
@@ -15,12 +23,23 @@ const ACCENT = "#c4a882";
 
 /** Ancho del margen izquierdo (px de pantalla) donde vive el spine, fuera de la página. */
 export const SITE_CREATOR_SECTION_SPINE_GUTTER_PX = 280;
+/** Separación entre la línea de secciones y el borde del lienzo. */
+export const SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX = 40;
 
 const HOP_ICON: Record<SiteSectionScrollKind, typeof UnfoldVertical> = {
   natural: UnfoldVertical,
   smooth: Waves,
   snap: Magnet,
 };
+
+const HEIGHT_ICON = {
+  content: Square,
+  viewport: Maximize2,
+  custom: MoveVertical,
+} as const;
+
+const CHIP_BUTTON =
+  "pointer-events-auto flex h-6 w-6 items-center justify-center border border-white/18 bg-[#151c24] text-white/85 hover:border-white/35";
 
 export type SectionSpineStation = {
   sectionId: string;
@@ -167,14 +186,12 @@ function ScrollChip({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title={SECTION_SCROLL_HINT[kind]}
+        aria-label={`Scroll: ${SECTION_SCROLL_LABEL[kind]}`}
+        title={`Scroll · ${SECTION_SCROLL_LABEL[kind]}`}
         onClick={() => setOpen((v) => !v)}
-        className="pointer-events-auto flex items-center gap-1 rounded border border-white/18 bg-[#151c24] px-2 py-1 text-[10px] font-semibold text-white/85 hover:border-white/35"
+        className={CHIP_BUTTON}
       >
-        <span className="text-white/40">Scroll:</span>
-        <Icon className="h-3 w-3" strokeWidth={2.2} aria-hidden />
-        {SECTION_SCROLL_LABEL[kind]}
-        <ChevronDown className="h-3 w-3 opacity-50" strokeWidth={2.2} aria-hidden />
+        <Icon className="h-3.5 w-3.5" strokeWidth={2.2} aria-hidden />
       </button>
       <MenuPortal
         open={open}
@@ -238,6 +255,8 @@ function HeightChip({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const label = heightLabel(station, liveCustom);
   const isCustom = station.heightMode === "custom" || liveCustom != null;
+  const HeightIcon =
+    HEIGHT_ICON[isCustom ? "custom" : station.heightMode === "viewport" ? "viewport" : "content"];
 
   return (
     <>
@@ -247,12 +266,12 @@ function HeightChip({
         data-testid={`site-creator-section-spine-height-${station.sectionId}`}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={`Alto: ${label}`}
+        title={`Alto · ${label}`}
         onClick={() => setOpen((v) => !v)}
-        className="pointer-events-auto flex max-w-[148px] items-center gap-1 rounded border border-white/18 bg-[#151c24] px-2 py-1 text-[10px] font-semibold text-white/85 hover:border-white/35"
+        className={CHIP_BUTTON}
       >
-        <span className="text-white/40">Alto:</span>
-        <span className="truncate">{label}</span>
-        <ChevronDown className="h-3 w-3 shrink-0 opacity-50" strokeWidth={2.2} aria-hidden />
+        <HeightIcon className="h-3.5 w-3.5" strokeWidth={2.2} aria-hidden />
       </button>
       <MenuPortal
         open={open}
@@ -272,6 +291,7 @@ function HeightChip({
             option.mode === "custom"
               ? isCustom
               : !isCustom && station.heightMode === option.mode;
+          const OptionIcon = HEIGHT_ICON[option.mode];
           return (
             <button
               key={option.mode}
@@ -279,7 +299,7 @@ function HeightChip({
               role="option"
               aria-selected={selected}
               data-testid={`site-creator-section-spine-height-${station.sectionId}-${option.mode}`}
-              className={`flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-white/8 ${
+              className={`flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-white/8 ${
                 selected ? "bg-white/10" : ""
               }`}
               {...floatingPressHandlers(() => {
@@ -291,8 +311,11 @@ function HeightChip({
                 setOpen(false);
               })}
             >
-              <span className="text-[12px] font-semibold text-white">{option.title}</span>
-              <span className="text-[10px] text-white/45">{option.hint}</span>
+              <OptionIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white/70" strokeWidth={2.2} aria-hidden />
+              <span className="min-w-0">
+                <span className="block text-[12px] font-semibold text-white">{option.title}</span>
+                <span className="block text-[10px] text-white/45">{option.hint}</span>
+              </span>
             </button>
           );
         })}
@@ -300,7 +323,7 @@ function HeightChip({
           <div className="mt-1 border-t border-white/10 px-2 py-1.5 text-[11px] text-white/70">
             Custom {liveCustom ?? station.customHeight ?? Math.round(station.height)} px
             <span className="mt-0.5 block text-[10px] text-white/40">
-              Arrastra la raya entre Scroll y Alto para cambiar el valor
+              Arrastra la raya inferior para cambiar el valor
             </span>
           </div>
         ) : null}
@@ -409,72 +432,73 @@ function StationModule({
     station.heightMode === "custom" && liveCustom != null ? liveCustom : station.height;
 
   return (
-    <div
-      className="pointer-events-none absolute right-0 flex -translate-y-1/2 items-center gap-1.5 pr-1"
-      style={{ top: (station.top + displayHeight) * scale }}
-      data-testid={`site-creator-section-spine-station-${station.sectionId}`}
-    >
-      <button
-        type="button"
-        aria-label={`Quitar ${station.label}`}
-        data-testid={`site-creator-section-spine-remove-${station.sectionId}`}
-        className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-[#101820] text-white/55 hover:border-white/40 hover:text-white"
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
+    <>
+      <div
+        className="pointer-events-none absolute right-[32px] flex -translate-y-1/2 items-center gap-1.5"
+        style={{ top: (station.top + displayHeight / 2) * scale }}
+        data-testid={`site-creator-section-spine-station-${station.sectionId}`}
       >
-        <X className="h-3 w-3" strokeWidth={2.2} aria-hidden />
-      </button>
+        {station.outgoing ? (
+          <ScrollChip
+            kind={station.outgoing.kind}
+            testId={`site-creator-section-spine-hop-${station.outgoing.fromId}-${station.outgoing.toId}`}
+            portalHost={portalHost}
+            onChange={(kind) =>
+              onScrollChange(station.outgoing!.fromId, station.outgoing!.toId, kind)
+            }
+          />
+        ) : null}
 
-      <button
-        type="button"
-        aria-label={station.label}
-        aria-current={station.selected ? "true" : undefined}
-        className={`pointer-events-auto h-3 w-3 shrink-0 rounded-full border ${
-          station.selected
-            ? "border-white bg-white"
-            : "border-white/50 bg-[#0e141c] hover:border-white"
-        }`}
-        style={{ boxShadow: `0 0 0 2px ${ACCENT}55` }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect();
-        }}
-      />
-
-      {station.outgoing ? (
-        <ScrollChip
-          kind={station.outgoing.kind}
-          testId={`site-creator-section-spine-hop-${station.outgoing.fromId}-${station.outgoing.toId}`}
+        <HeightChip
+          station={station}
+          liveCustom={station.heightMode === "custom" ? liveCustom : null}
           portalHost={portalHost}
-          onChange={(kind) =>
-            onScrollChange(station.outgoing!.fromId, station.outgoing!.toId, kind)
-          }
+          onModeChange={(mode) => {
+            if (mode !== "custom") setLiveCustom(null);
+            onHeightModeChange(mode);
+          }}
         />
-      ) : null}
+      </div>
 
-      <button
-        type="button"
-        data-testid={`site-creator-section-spine-drag-${station.sectionId}`}
-        aria-label="Arrastrar altura personalizada"
-        title="Arrastra para altura custom"
-        className="pointer-events-auto flex h-5 w-9 cursor-ns-resize items-center justify-center rounded border border-white/15 bg-[#151c24] hover:border-white/40"
-        onPointerDown={onDragPointerDown}
+      <div
+        className="pointer-events-none absolute right-[10px] flex -translate-y-1/2 items-center gap-1.5"
+        style={{ top: (station.top + displayHeight) * scale }}
+        data-testid={`site-creator-section-spine-boundary-${station.sectionId}`}
       >
-        <span className="block h-px w-5 bg-white/70" aria-hidden />
-      </button>
-
-      <HeightChip
-        station={station}
-        liveCustom={station.heightMode === "custom" ? liveCustom : null}
-        portalHost={portalHost}
-        onModeChange={(mode) => {
-          if (mode !== "custom") setLiveCustom(null);
-          onHeightModeChange(mode);
-        }}
-      />
-    </div>
+        <button
+          type="button"
+          aria-label={`Quitar ${station.label}`}
+          data-testid={`site-creator-section-spine-remove-${station.sectionId}`}
+          className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-full text-[#1a1510] hover:brightness-110"
+          style={{ background: ACCENT }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+        >
+          <X className="h-3 w-3" strokeWidth={2.2} aria-hidden />
+        </button>
+        <button
+          type="button"
+          data-testid={`site-creator-section-spine-drag-${station.sectionId}`}
+          aria-label={station.label}
+          aria-current={station.selected ? "true" : undefined}
+          title="Arrastra para altura custom"
+          className="pointer-events-auto flex h-2.5 w-10 cursor-ns-resize items-center justify-center rounded-full"
+          style={{
+            background: ACCENT,
+            boxShadow: station.selected ? "0 0 0 2px rgba(255,255,255,0.7)" : "none",
+          }}
+          onPointerDown={onDragPointerDown}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect();
+          }}
+        >
+          <span className="block h-px w-5 bg-[#1a1510]" aria-hidden />
+        </button>
+      </div>
+    </>
   );
 }
 

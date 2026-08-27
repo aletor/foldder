@@ -19,6 +19,7 @@ import {
   pageToScreenScale,
   resolveDeviceDimensions,
   resolveSiteCreatorLayout,
+  cycleViewportBand,
   siteCreatorTabletMediaMaxWidth,
   viewportWidthDeltaFromCenteredEdgeDrag,
 } from "./site-creator-viewport";
@@ -40,6 +41,14 @@ describe("site-creator-viewport", () => {
     expect(siteCreatorTabletMediaMaxWidth(1920)).toBe(SITE_CREATOR_TABLET_MAX_WIDTH);
     expect(siteCreatorTabletMediaMaxWidth(800)).toBe(799);
     expect(siteCreatorTabletMediaMaxWidth(768)).toBe(768);
+  });
+
+  it("cycles original, tablet and mobile", () => {
+    expect(cycleViewportBand("original", 1)).toBe("tablet");
+    expect(cycleViewportBand("tablet", 1)).toBe("mobile");
+    expect(cycleViewportBand("mobile", 1)).toBe("original");
+    expect(cycleViewportBand("original", -1)).toBe("mobile");
+    expect(cycleViewportBand("mobile", -1)).toBe("tablet");
   });
 
   it("detects presets and custom widths", () => {

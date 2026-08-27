@@ -259,7 +259,7 @@ export function SiteCreatorDeviceSelector({
           }}
           type="button"
           data-testid={`site-creator-device-trigger-${band}`}
-          className={`${shellClass} ${compact ? "h-7 w-7 justify-center p-0" : "gap-1 px-2 py-1"}`}
+          className={`${shellClass} ${compact ? "h-7 w-11 justify-center p-0" : "gap-1 px-2 py-1"}`}
           aria-label={bandLabel}
           title={`${bandLabel} · ${sizeLabel} · ${resolvedWidth} × ${resolvedHeight}`}
           onPointerDown={(e) => e.stopPropagation()}
@@ -278,7 +278,7 @@ export function SiteCreatorDeviceSelector({
             type="button"
             data-testid={`site-creator-device-trigger-${band}`}
             className={`flex min-w-0 flex-1 items-center ${
-              compact ? "h-7 w-7 justify-center p-0" : "px-2 py-1 text-left"
+              compact ? "h-7 w-11 justify-center p-0" : "px-2 py-1 text-left"
             }`}
             aria-label={bandLabel}
             title={`${bandLabel} · ${sizeLabel} · ${resolvedWidth} × ${resolvedHeight}`}
@@ -297,7 +297,7 @@ export function SiteCreatorDeviceSelector({
             aria-expanded={open}
             aria-haspopup="menu"
             className={`shrink-0 text-white/35 hover:text-white/80 ${
-              compact ? "h-7 w-4 p-0" : "px-1.5 py-1"
+              compact ? "h-7 w-6 p-0" : "px-1.5 py-1"
             }`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => {
@@ -350,7 +350,7 @@ export function SiteCreatorOrientationToggle({
       }
       className={`font-semibold text-white/55 transition hover:bg-white/[0.06] hover:text-white ${
         compact
-          ? `flex h-7 w-7 items-center justify-center border-l border-white/10 p-0 ${
+          ? `flex h-7 w-11 items-center justify-center border-l border-white/10 p-0 ${
               visible ? "" : "cursor-default opacity-20"
             }`
           : "border border-white/12 px-2 py-0.5 text-[10px]"

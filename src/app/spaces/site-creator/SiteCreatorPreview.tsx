@@ -33,6 +33,7 @@ import type { SiteBlueprintV1, SiteSectionHeightMode, SiteSectionScrollKind } fr
 import {
   SiteCreatorSectionSpine,
   SITE_CREATOR_SECTION_SPINE_GUTTER_PX,
+  SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX,
   type SectionSpineStation,
 } from "./SiteCreatorSectionSpine";
 import {
@@ -634,10 +635,12 @@ export function SiteCreatorPreview({
   const spineLayer =
     showSpine && sectionSpine && onSpineSelectSection && onSpineAddSection ? (
       <div
-        className="pointer-events-none relative z-[45] shrink-0 overflow-visible"
+        className="pointer-events-none absolute top-0 z-[45] overflow-visible"
         style={{
           width: spineGutterPx,
           height: deviceMode ? displayHeight : contentDisplayHeight,
+          right: "100%",
+          marginRight: SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX,
           clipPath: deviceMode ? "inset(0 -100vw 0 -100vw)" : undefined,
         }}
         data-testid="site-creator-section-spine-gutter"
@@ -708,7 +711,7 @@ export function SiteCreatorPreview({
             readOnly ? "items-stretch justify-stretch px-0 py-0" : "items-center px-8 py-8"
           }`}
         >
-          <div className="relative flex items-start">
+          <div className="relative">
             {spineLayer}
             <div
               className={`site-creator-preview-stage relative ${

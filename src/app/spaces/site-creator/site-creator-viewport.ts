@@ -20,6 +20,19 @@ export const SITE_CREATOR_MIN_DEVICE_HEIGHT = 320;
 export const SITE_CREATOR_MAX_DEVICE_HEIGHT = 2400;
 
 export type SiteCreatorViewportBand = "original" | "tablet" | "mobile";
+
+const VIEWPORT_BANDS: SiteCreatorViewportBand[] = ["original", "tablet", "mobile"];
+
+/** Tab: original → tablet → móvil. Mayús + Tab al revés. */
+export function cycleViewportBand(
+  band: SiteCreatorViewportBand,
+  direction: 1 | -1,
+): SiteCreatorViewportBand {
+  const index = VIEWPORT_BANDS.indexOf(band);
+  const from = index >= 0 ? index : 0;
+  const next = (from + direction + VIEWPORT_BANDS.length) % VIEWPORT_BANDS.length;
+  return VIEWPORT_BANDS[next]!;
+}
 export type SiteCreatorDeviceSizeId = "compact" | "standard" | "large" | "custom";
 export type SiteCreatorDeviceOrientation = "portrait" | "landscape";
 
