@@ -14,6 +14,7 @@ import {
   mirrorContainerLayerIdFromNode,
 } from "./site-creator-designer-group-bootstrap";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
+import { publishedPathGeom } from "./site-creator-publish-path";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type {
   LayoutGroupWidthMode,
@@ -33,6 +34,8 @@ export type PublishBox = {
   visible: boolean;
 };
 
+export type PublishClipMaskKind = "rect" | "ellipse" | "path";
+
 export type PublishTreeGroup = {
   kind: "group";
   id: string;
@@ -41,6 +44,8 @@ export type PublishTreeGroup = {
   world: Record<PublishBand, PublishBox | null>;
   children: PublishTreeNode[];
   clipOverflow?: boolean;
+  clipMaskKind?: PublishClipMaskKind;
+  clipPathD?: string;
 };
 
 export type PublishTreeRow = {
@@ -75,6 +80,8 @@ type RawNode = {
   box: PublishBox;
   children?: RawNode[];
   clipOverflow?: boolean;
+  clipMaskKind?: PublishClipMaskKind;
+  clipPathD?: string;
 };
 
 const BANDS: PublishBand[] = ["wide", "tablet", "mobile"];
@@ -225,16 +232,27 @@ function visitDesignerList(
       return;
     }
     if (obj.type === "booleanGroup") {
+      const cached = (obj as { cachedResult?: string }).cachedResult?.trim();
+      if (cached) {
+        raw.push({ kind: "layer", id: obj.id, z, box: boxFromObject(obj) });
+        return;
+      }
       raw.push(
         ...visitDesignerList((obj as { children?: FreehandObject[] }).children, z * 100, blueprint, index),
       );
       return;
     }
     if (obj.type === "clippingContainer") {
-      const clip = obj as { content?: FreehandObject[] };
+      const clip = obj as {
+        content?: FreehandObject[];
+        mask?: FreehandObject;
+      };
       const children = visitDesignerList(clip.content, z * 100, blueprint, index).map((child) =>
         offsetRawNode(child, obj.x, obj.y),
       );
+      const maskKind: PublishClipMaskKind =
+        clip.mask?.type === "ellipse" ? "ellipse" : clip.mask?.type === "path" ? "path" : "rect";
+      const pathGeom = clip.mask && maskKind === "path" ? publishedPathGeom(clip.mask) : null;
       raw.push({
         kind: "group",
         id: obj.id,
@@ -242,6 +260,8 @@ function visitDesignerList(
         box: boxFromObject(obj),
         children,
         clipOverflow: true,
+        clipMaskKind: maskKind,
+        clipPathD: pathGeom?.d,
       });
       return;
     }
@@ -268,6 +288,16 @@ function wrapSiblingUnits(
   return wrapManualLayoutGroups(wrappedIds, blueprint, index);
 }
 
+function boxMostlyInside(inner: PublishBox, outer: PublishBox, ratio = 0.65): boolean {
+  const ix = Math.max(inner.x, outer.x);
+  const iy = Math.max(inner.y, outer.y);
+  const ax = Math.min(inner.x + inner.width, outer.x + outer.width);
+  const ay = Math.min(inner.y + inner.height, outer.y + outer.height);
+  const overlap = Math.max(0, ax - ix) * Math.max(0, ay - iy);
+  const area = Math.max(1, inner.width * inner.height);
+  return overlap / area >= ratio;
+}
+
 function wrapGroupIdClusters(
   nodes: RawNode[],
   blueprint: SiteBlueprintV1,
@@ -279,7 +309,7 @@ function wrapGroupIdClusters(
   const out: RawNode[] = [];
   const clusterByMember = new Map<string, (typeof clusters)[number]>();
   for (const cluster of clusters) {
-    if (!cluster.memberIds.every((id) => byId.has(id) && byId.get(id)?.kind === "layer")) continue;
+    if (!cluster.memberIds.every((id) => byId.has(id))) continue;
     for (const id of cluster.memberIds) clusterByMember.set(id, cluster);
   }
 
@@ -300,16 +330,25 @@ function wrapGroupIdClusters(
       continue;
     }
     members.forEach((m) => used.add(m.id));
-    const union = unionBoxes(members.map((m) => m.box));
+    let union = unionBoxes(members.map((m) => m.box));
     if (!union) continue;
+    const extras: RawNode[] = [];
+    for (const sibling of nodes) {
+      if (used.has(sibling.id) || clusterByMember.has(sibling.id)) continue;
+      if (!boxMostlyInside(sibling.box, union)) continue;
+      extras.push(sibling);
+      used.add(sibling.id);
+    }
+    const all = [...members, ...extras];
+    union = unionBoxes(all.map((m) => m.box)) ?? union;
     const mirrorId = designerGroupIdMirrorNodeId(cluster.designerGroupId);
     out.push({
       kind: "group",
       id: mirrorId,
-      z: Math.min(...members.map((m) => m.z)),
+      z: Math.min(...all.map((m) => m.z)),
       widthMode: layoutGroupWidthMode(blueprint, mirrorId),
       box: union,
-      children: members.sort((a, b) => a.z - b.z),
+      children: all.sort((a, b) => a.z - b.z),
     });
   }
   return out;
@@ -411,7 +450,7 @@ function promoteFlow(nodes: RawNode[], parent: PageRect): RawNode[] {
   rows.forEach((row, rowIndex) => {
     const fulls = row.filter((n) => n.kind === "group" && n.widthMode === "full");
     const rest = row.filter((n) => !(n.kind === "group" && n.widthMode === "full"));
-    if (fulls.length === 0 && row.length < 2) {
+    if (fulls.length === 0) {
       flowed.push(...row);
       return;
     }
@@ -471,6 +510,8 @@ function rawToTree(node: RawNode, band: PublishBand): PublishTreeNode {
     world: withBand(emptyBands(), band, node.box),
     children,
     clipOverflow: node.clipOverflow,
+    clipMaskKind: node.clipMaskKind,
+    clipPathD: node.clipPathD,
   };
 }
 

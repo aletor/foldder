@@ -28,6 +28,7 @@ import {
   buildPublishForest,
   collectObjectMap,
   toLocalBox,
+  walkPublishTree,
   worldBoxForBand,
   type PublishBand as TreeBand,
   type PublishBox,
@@ -35,6 +36,15 @@ import {
   type PublishTreeNode,
 } from "./site-creator-publish-tree";
 import { containerIsFullWidthForBand } from "./site-creator-group-width-layout";
+import { ellipseClipPathCss, publishedPathGeom } from "./site-creator-publish-path";
+import {
+  googleFontsHrefFromFamilies,
+  publishedBlendMode,
+  publishedGlowFilter,
+  publishedRichTextHtml,
+  publishedShapeSvg,
+  publishedTextFillInline,
+} from "./site-creator-publish-paint";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
   SITE_CREATOR_TABLET_WIDTH,
@@ -109,13 +119,31 @@ type CompiledLayer = {
   background?: string;
   stroke?: string;
   strokeWidth?: number;
-  borderRadius?: string;
+  corners?: { tl: number; tr: number; br: number; bl: number } | "ellipse";
   objectFit?: string;
   imageFrame?: boolean;
   imageFrameCrop?: Partial<
     Record<BandName, { focal: { x: number; y: number }; zoom: number }>
   >;
   pathD?: string;
+  pathViewBox?: { x: number; y: number; width: number; height: number };
+  paintHtml?: string;
+  mixBlendMode?: string;
+  flipX?: boolean;
+  flipY?: boolean;
+  skewX?: number;
+  skewY?: number;
+  scaleX?: number;
+  scaleY?: number;
+  glowFilter?: string;
+  fillInline?: string;
+  textUnderline?: boolean;
+  textStrikethrough?: boolean;
+  fontVariantCaps?: string;
+  paragraphIndent?: number;
+  fontKerning?: string;
+  fontFeatureSettings?: string;
+  clips: Record<BandName, { x: number; y: number; width: number; height: number } | null>;
   buttonLabel?: string;
 };
 
@@ -159,8 +187,11 @@ export function collectPublishImageRefs(page: DesignerPageState): PublishImageRe
         seen.add(ref.layerId);
         refs.push(ref);
       }
-      if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
+      if (obj.type === "groupContainer") {
         visit((obj as { children?: FreehandObject[] }).children);
+      } else if (obj.type === "booleanGroup") {
+        const cached = (obj as { cachedResult?: string }).cachedResult?.trim();
+        if (!cached) visit((obj as { children?: FreehandObject[] }).children);
       } else if (obj.type === "clippingContainer") {
         const clip = obj as { mask?: FreehandObject; content?: FreehandObject[] };
         if (clip.mask) visit([clip.mask]);
@@ -180,6 +211,11 @@ function imageRefFromObject(obj: FreehandObject): PublishImageRef | null {
     const src = usableSrc(image.src);
     if (!s3Key && !src) return null;
     return { layerId: obj.id, s3Key, src, alreadyOptimized: Boolean(optKey) };
+  }
+  if (obj.type === "booleanGroup") {
+    const cached = usableSrc((obj as { cachedResult?: string }).cachedResult);
+    if (!cached) return null;
+    return { layerId: obj.id, src: cached };
   }
   const frame = obj.imageFrameContent;
   if (frame) {
@@ -209,6 +245,17 @@ function usableSrc(src: string | undefined): string | undefined {
   return undefined;
 }
 
+function cssStop(color: string, opacity?: number): string {
+  if (opacity == null || opacity >= 0.999) return color;
+  const hex = color.trim().match(/^#([0-9a-f]{6})$/i);
+  if (!hex) return color;
+  const n = parseInt(hex[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, opacity))})`;
+}
+
 function cssPaint(fill: unknown, asText: boolean): string | null {
   if (fill == null) return null;
   if (typeof fill === "string") {
@@ -216,26 +263,42 @@ function cssPaint(fill: unknown, asText: boolean): string | null {
     return fill;
   }
   if (typeof fill !== "object") return null;
-  const rec = fill as { type?: string; color?: string; stops?: Array<{ color?: string; opacity?: number; position?: number }>; x1?: number; y1?: number; x2?: number; y2?: number };
+  const rec = fill as {
+    type?: string;
+    color?: string;
+    stops?: Array<{ color?: string; opacity?: number; position?: number }>;
+    x1?: number;
+    y1?: number;
+    x2?: number;
+    y2?: number;
+    cx?: number;
+    cy?: number;
+    r?: number;
+  };
   if (rec.type === "solid") {
     if (!rec.color || rec.color === "none" || rec.color === "transparent") return null;
     return rec.color;
   }
   if (asText) return rec.stops?.[0]?.color ?? null;
+  const stopList = (rec.stops ?? [])
+    .map((stop) => {
+      const color = cssStop(stop.color || "#000", stop.opacity);
+      const pos = Number.isFinite(stop.position) ? ` ${stop.position}%` : "";
+      return `${color}${pos}`;
+    })
+    .join(", ");
   if (rec.type === "gradient-linear" && rec.stops?.length) {
-    const stops = rec.stops
-      .map((stop) => {
-        const color = stop.color || "#000";
-        const pos = Number.isFinite(stop.position) ? `${stop.position}%` : "";
-        return `${color}${pos ? ` ${pos}` : ""}`;
-      })
-      .join(", ");
     const x1 = rec.x1 ?? 0;
     const y1 = rec.y1 ?? 0.5;
     const x2 = rec.x2 ?? 1;
     const y2 = rec.y2 ?? 0.5;
     const angle = Math.round((Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI);
-    return `linear-gradient(${angle}deg, ${stops})`;
+    return `linear-gradient(${angle}deg, ${stopList})`;
+  }
+  if (rec.type === "gradient-radial" && rec.stops?.length) {
+    const cx = Math.round((rec.cx ?? 0.5) * 1000) / 10;
+    const cy = Math.round((rec.cy ?? 0.5) * 1000) / 10;
+    return `radial-gradient(circle at ${cx}% ${cy}%, ${stopList})`;
   }
   return rec.color ?? null;
 }
@@ -294,14 +357,17 @@ function sectionExtraExpr(
   section: SiteBlueprintSectionNode,
   layout: { designed: number },
   pageWidth: number,
-  band: SectionHeightBand,
+  lookupBand: SectionHeightBand,
+  cssBand: SectionHeightBand,
 ): string | null {
-  const mode = sectionHeightModeForBand(blueprint, section, band);
+  const mode = sectionHeightModeForBand(blueprint, section, lookupBand);
   if (mode === "viewport") {
+    // Desktop CSS matches the Studio artboard. 100dvh is tablet/mobile only.
+    if (cssBand === "wide") return null;
     return `max(0px,100dvh - 100cqw * ${layout.designed} / ${Math.max(1, pageWidth)})`;
   }
   if (mode === "custom") {
-    const custom = sectionCustomHeightForBand(blueprint, section, band);
+    const custom = sectionCustomHeightForBand(blueprint, section, lookupBand);
     const extra = custom == null ? 0 : Math.max(0, custom - layout.designed);
     if (extra > 0.5) return `calc(100cqw * ${extra} / ${Math.max(1, pageWidth)})`;
   }
@@ -321,7 +387,7 @@ function extraShiftExpr(
   const parts: string[] = [];
   for (const section of listDocumentSections(blueprint)) {
     const layout = sectionLayoutHint(section, hints);
-    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, lookup);
+    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, lookup, band);
     if (!extra) continue;
     if (box.y + 0.5 >= layout.bottom) {
       parts.push(extra);
@@ -331,16 +397,13 @@ function extraShiftExpr(
       box.y < layout.bottom &&
       box.y + box.height >= layout.bottom - 4 &&
       box.width >= pageWidth * 0.8;
-    if (
-      centerWithinSection &&
-      box.y + box.height > layout.top + 0.5 &&
-      box.y < layout.bottom &&
-      !fillsSectionBottom
-    ) {
+    const midpoint = box.y + box.height / 2;
+    const belongsToSection = midpoint >= layout.top && midpoint < layout.bottom;
+    if (centerWithinSection && belongsToSection && !fillsSectionBottom) {
       parts.push(`(${extra}) / 2`);
     }
   }
-  return parts.length > 0 ? parts.join(" + ") : "0px";
+  return parts.length > 0 ? parts.join(" + ") : null;
 }
 
 function extraGrowExpr(
@@ -354,7 +417,7 @@ function extraGrowExpr(
   if (!blueprintHasExpandedSection(blueprint, lookup)) return null;
   for (const section of listDocumentSections(blueprint)) {
     const layout = sectionLayoutHint(section, hints);
-    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, lookup);
+    const extra = sectionExtraExpr(blueprint, section, layout, pageWidth, lookup, band);
     if (!extra) continue;
     const touchesBottom = box.y < layout.bottom && box.y + box.height >= layout.bottom - 4;
     if (touchesBottom && box.width >= pageWidth * 0.8) {
@@ -379,9 +442,10 @@ function emitSectionViewportCss(
   const pageWidth = Math.max(1, layout.width);
   const extraParts: string[] = [];
   for (const section of sections) {
-    const viewport = sectionHeightModeForBand(blueprint, section, lookup) === "viewport";
+    const viewport =
+      band !== "wide" && sectionHeightModeForBand(blueprint, section, lookup) === "viewport";
     const geom = sectionLayoutHint(section, hints);
-    const extra = sectionExtraExpr(blueprint, section, geom, pageWidth, lookup);
+    const extra = sectionExtraExpr(blueprint, section, geom, pageWidth, lookup, band);
     const shift = extraShiftExpr(
       blueprint,
       { y: geom.top, height: 0, width: 0 },
@@ -421,36 +485,8 @@ function cqwLen(px: number, pageWidth: number): string {
   return `calc(100cqw * ${px} / ${Math.max(1, pageWidth)})`;
 }
 
-function textInnerHtml(obj: FreehandObject): string {
-  const textObj = obj as FreehandObject & {
-    text?: string;
-    _designerRichSpans?: Array<{ text: string; style?: { fontWeight?: string; fontStyle?: string; color?: string } }>;
-  };
-  if (textObj._designerRichSpans?.length) {
-    return textObj._designerRichSpans
-      .map((span) => {
-        const bits: string[] = [];
-        if (span.style?.fontWeight) bits.push(`font-weight:${escapeHtml(String(span.style.fontWeight))}`);
-        if (span.style?.fontStyle) bits.push(`font-style:${escapeHtml(String(span.style.fontStyle))}`);
-        if (span.style?.color) bits.push(`color:${escapeHtml(span.style.color)}`);
-        const open = bits.length ? `<span style="${bits.join(";")}">` : "";
-        const close = bits.length ? "</span>" : "";
-        return `${open}${escapeHtml(span.text)}${close}`;
-      })
-      .join("");
-  }
-  return escapeHtml(textObj.text ?? "");
-}
-
 function googleFontsHref(families: string[]): string | null {
-  const unique = [...new Set(families.map((f) => f.trim()).filter(Boolean))].filter(
-    (family) => !GENERIC_FONTS.has(family.toLowerCase()),
-  );
-  if (!unique.length) return null;
-  const params = unique
-    .map((family) => `family=${encodeURIComponent(family)}:wght@400;500;600;700`)
-    .join("&");
-  return `https://fonts.googleapis.com/css2?${params}&display=swap`;
+  return googleFontsHrefFromFamilies(families, GENERIC_FONTS);
 }
 
 function buttonLabelByLayerId(blueprint: SiteBlueprintV1): Map<string, string> {
@@ -463,12 +499,48 @@ function buttonLabelByLayerId(blueprint: SiteBlueprintV1): Map<string, string> {
   return map;
 }
 
+function compiledTransform(layer: CompiledLayer, rotation: number): string {
+  const parts: string[] = [];
+  if (rotation) parts.push(`rotate(${rotation}deg)`);
+  if (layer.skewX) parts.push(`skewX(${layer.skewX}deg)`);
+  if (layer.skewY) parts.push(`skewY(${layer.skewY}deg)`);
+  const sx = layer.flipX ? -1 : layer.scaleX && layer.scaleX !== 1 ? layer.scaleX : 1;
+  const sy = layer.flipY ? -1 : layer.scaleY && layer.scaleY !== 1 ? layer.scaleY : 1;
+  if (sx !== 1 || sy !== 1) parts.push(`scale(${sx}, ${sy})`);
+  return parts.join(" ");
+}
+
 function applyStroke(layer: CompiledLayer, obj: FreehandObject): void {
   const stroke = typeof obj.stroke === "string" ? obj.stroke.trim() : "";
   const width = typeof obj.strokeWidth === "number" ? obj.strokeWidth : 0;
   if (!stroke || stroke === "none" || stroke === "transparent" || width <= 0) return;
   layer.stroke = stroke;
   layer.strokeWidth = width;
+}
+
+function objectCorners(obj: FreehandObject): CompiledLayer["corners"] {
+  if (obj.type === "ellipse") return "ellipse";
+  if (obj.type !== "rect") return undefined;
+  const rect = obj as {
+    rx?: number;
+    cornerRadius?: number | { topLeft?: number; topRight?: number; bottomRight?: number; bottomLeft?: number };
+  };
+  if (rect.cornerRadius && typeof rect.cornerRadius === "object") {
+    const tl = Math.max(0, rect.cornerRadius.topLeft ?? 0);
+    const tr = Math.max(0, rect.cornerRadius.topRight ?? 0);
+    const br = Math.max(0, rect.cornerRadius.bottomRight ?? 0);
+    const bl = Math.max(0, rect.cornerRadius.bottomLeft ?? 0);
+    if (tl + tr + br + bl <= 0) return undefined;
+    return { tl, tr, br, bl };
+  }
+  const r =
+    typeof rect.cornerRadius === "number"
+      ? rect.cornerRadius
+      : typeof rect.rx === "number"
+        ? rect.rx
+        : 0;
+  if (r <= 0) return undefined;
+  return { tl: r, tr: r, br: r, bl: r };
 }
 
 function objectFitForFrame(obj: FreehandObject): string | undefined {
@@ -516,6 +588,11 @@ export function compilePublishedSite(args: {
     wide: { width: wide.layout.layoutWidth, height: wide.layout.layoutHeight, objects: wide.displayPage.objects ?? [] },
     tablet: { width: tablet.layout.layoutWidth, height: tablet.layout.layoutHeight, objects: tablet.displayPage.objects ?? [] },
     mobile: { width: mobile.layout.layoutWidth, height: mobile.layout.layoutHeight, objects: mobile.displayPage.objects ?? [] },
+  };
+  const clipsByBand: Record<BandName, Record<string, { x: number; y: number; width: number; height: number }>> = {
+    wide: wide.resolvedLayout?.objectClipById ?? {},
+    tablet: tablet.resolvedLayout?.objectClipById ?? {},
+    mobile: mobile.resolvedLayout?.objectClipById ?? {},
   };
 
   const forest = buildPublishForest({
@@ -566,6 +643,8 @@ export function compilePublishedSite(args: {
         continue;
       }
       layer.boxes[band] = boxFromObject(obj);
+      const clip = clipsByBand[band][id];
+      layer.clips[band] = clip ?? null;
       if (layer.kind === "text") {
         const size = (obj as { fontSize?: number }).fontSize;
         if (typeof size === "number") layer.fontSize![band] = size;
@@ -582,12 +661,18 @@ export function compilePublishedSite(args: {
     }
   });
 
+  walkPublishTree(forest.children, (node) => {
+    if (node.kind !== "layer") return;
+    const layer = layers.get(node.id);
+    if (layer) layer.z = node.z;
+  });
+
   const pageBg =
     args.page.pageBackground === "black"
       ? "#000000"
       : args.page.pageBackground === "transparent"
         ? "transparent"
-        : "#ffffff";
+        : "#fafafa";
 
   const css = buildCss({
     pageBg,
@@ -631,16 +716,17 @@ function compilePaintLayer(
   if (obj.visible === false) return null;
   if (
     obj.type === "groupContainer" ||
-    obj.type === "booleanGroup" ||
     obj.type === "clippingContainer" ||
-    obj.type === "adjustmentLayer"
+    obj.type === "adjustmentLayer" ||
+    (obj.type === "booleanGroup" && !(obj as { cachedResult?: string }).cachedResult)
   ) {
     return null;
   }
+  const booleanSrc = obj.type === "booleanGroup" ? usableSrc((obj as { cachedResult?: string }).cachedResult) : undefined;
   const kind: CompiledLayer["kind"] =
     obj.type === "text" || obj.type === "textOnPath"
       ? "text"
-      : obj.type === "image" || obj.imageFrameContent
+      : obj.type === "image" || obj.imageFrameContent || booleanSrc
         ? "image"
         : obj.type === "path"
           ? "path"
@@ -651,11 +737,24 @@ function compilePaintLayer(
     z: 1,
     kind,
     boxes: { wide: null, tablet: null, mobile: null },
-    imageHref: imageHrefByLayerId[obj.id],
+    clips: { wide: null, tablet: null, mobile: null },
+    imageHref: imageHrefByLayerId[obj.id] ?? booleanSrc,
     alt: buttonLabels.get(obj.id) || (obj.name && obj.name !== obj.id ? obj.name : ""),
     fontSize: { wide: 16, tablet: 16, mobile: 16 },
     buttonLabel: buttonLabels.get(obj.id),
   };
+  const blend = publishedBlendMode(obj);
+  if (blend) layer.mixBlendMode = blend;
+  const glow = publishedGlowFilter(obj);
+  if (glow) layer.glowFilter = glow;
+  if (obj.flipX) layer.flipX = true;
+  if (obj.flipY) layer.flipY = true;
+  if (obj.skewX) layer.skewX = obj.skewX;
+  if (obj.skewY) layer.skewY = obj.skewY;
+  const textScale = obj as { scaleX?: number; scaleY?: number };
+  if (typeof textScale.scaleX === "number") layer.scaleX = textScale.scaleX;
+  if (typeof textScale.scaleY === "number") layer.scaleY = textScale.scaleY;
+
   if (kind === "text") {
     const textObj = obj as FreehandObject & {
       fontFamily?: string;
@@ -664,34 +763,51 @@ function compilePaintLayer(
       letterSpacing?: number;
       lineHeight?: number;
       textAlign?: string;
+      textUnderline?: boolean;
+      textStrikethrough?: boolean;
+      fontVariantCaps?: string;
+      paragraphIndent?: number;
+      fontKerning?: string;
+      fontFeatureSettings?: string;
     };
-    layer.textHtml = textInnerHtml(obj);
+    layer.textHtml = publishedRichTextHtml(obj);
     layer.fontFamily = textObj.fontFamily;
     layer.fontWeight = textObj.fontWeight;
     layer.fontStyle = textObj.fontStyle;
     layer.letterSpacing = textObj.letterSpacing;
     layer.lineHeight = textObj.lineHeight;
     layer.textAlign = textObj.textAlign;
-    layer.color = cssPaint(obj.fill, true) ?? "#111";
-  } else if (kind === "shape") {
-    layer.background = cssPaint(obj.fill, false) ?? undefined;
+    layer.fillInline = publishedTextFillInline(obj);
+    layer.textUnderline = textObj.textUnderline;
+    layer.textStrikethrough = textObj.textStrikethrough;
+    layer.fontVariantCaps = textObj.fontVariantCaps;
+    layer.paragraphIndent = textObj.paragraphIndent;
+    layer.fontKerning = textObj.fontKerning;
+    layer.fontFeatureSettings = textObj.fontFeatureSettings;
     applyStroke(layer, obj);
-    if (obj.type === "ellipse") layer.borderRadius = "50%";
-    else if (obj.type === "rect") {
-      const rx = (obj as { rx?: number }).rx;
-      if (rx) layer.borderRadius = `${rx}px`;
+  } else if (kind === "shape" || kind === "path") {
+    applyStroke(layer, obj);
+    layer.corners = objectCorners(obj);
+    const svg = publishedShapeSvg(obj);
+    if (svg) {
+      layer.paintHtml = svg;
+      if (kind === "path") {
+        const geom = publishedPathGeom(obj);
+        if (geom) {
+          layer.pathD = geom.d;
+          layer.pathViewBox = geom.viewBox;
+        }
+      }
+    } else {
+      layer.background = cssPaint(obj.fill, false) ?? undefined;
     }
   } else if (kind === "image") {
-    layer.objectFit = objectFitForFrame(obj);
+    layer.objectFit = objectFitForFrame(obj) ?? (booleanSrc ? "cover" : undefined);
     if (obj.imageFrameContent) {
       layer.imageFrame = true;
       layer.imageFrameCrop = {};
     }
-  } else if (kind === "path") {
-    const path = obj as { svgPathD?: string };
-    layer.pathD = path.svgPathD;
-    layer.background = cssPaint(obj.fill, false) ?? undefined;
-    applyStroke(layer, obj);
+    layer.corners = objectCorners(obj);
   }
   return layer;
 }
@@ -715,6 +831,7 @@ function buildCss(args: {
     ".s-el,.s-group{position:absolute;display:block;margin:0;border:0;padding:0;max-width:none}",
     ".s-group{container-type:inline-size;overflow:visible}",
     ".s-group.s-clip{overflow:hidden}",
+    ".s-clip-svg{position:absolute;width:0;height:0;overflow:hidden}",
     ".s-row{position:relative;display:flex;flex-wrap:wrap;align-items:flex-start;width:100%;left:auto;top:auto;box-sizing:border-box}",
     ".s-row>.s-flow-item{position:relative;flex:0 0 auto;top:auto;left:auto}",
     ".s-row-full>.s-flow-item{flex:0 0 100%;width:100%}",
@@ -724,7 +841,7 @@ function buildCss(args: {
     ".s-btn{background:transparent;cursor:pointer;appearance:none}",
     ".s-el img,.s-image{width:100%;height:100%;object-fit:cover;display:block}",
     ".s-text{white-space:pre-wrap;overflow:visible}",
-    ".s-path{width:100%;height:100%;display:block}",
+    ".s-path,.s-paint{width:100%;height:100%;display:block;overflow:visible}",
     bandPageCss(args.layouts.wide, flow),
   ];
 
@@ -898,28 +1015,30 @@ function groupBoxCss(
   const full = node.widthMode === "full" || containerIsFullWidthForBand(blueprint, node.id, band);
   const pageParent = !inRow && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
   const shift = pageParent ? extraShiftExpr(blueprint, box, pageWidth, band, hints) : null;
-  const useCqw = Boolean(pageParent && shift != null);
-  const grow = useCqw ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
+  const unit = Math.max(1, parent.width);
+  const grow = pageParent ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
   const rules = [
-    inRow ? "left:auto;top:auto" : full ? "left:0" : useCqw ? `left:${cqwLen(box.x, pageWidth)}` : `left:${pct(local.x, parent.width)}`,
+    inRow ? "left:auto;top:auto" : full ? "left:0" : `left:${cqwLen(local.x, unit)}`,
     inRow || full
       ? ""
-      : useCqw
-        ? `top:calc(${shift} + ${cqwLen(box.y, pageWidth)})`
-        : `top:${pct(local.y, parent.height)}`,
-    full ? "width:100%" : useCqw ? `width:${cqwLen(box.width, pageWidth)}` : `width:${pct(local.width, parent.width)}`,
+      : shift != null
+        ? `top:calc(${shift} + ${cqwLen(local.y, unit)})`
+        : `top:${cqwLen(local.y, unit)}`,
+    full ? "width:100%" : `width:${cqwLen(local.width, unit)}`,
     inRow && full ? "flex:0 0 100%" : "",
     full || inRow
       ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
-      : useCqw
-        ? grow
-          ? `height:calc(${cqwLen(box.height, pageWidth)} + ${grow})`
-          : `height:${cqwLen(box.height, pageWidth)}`
-        : `height:${pct(local.height, parent.height)}`,
+      : grow
+        ? `height:calc(${cqwLen(local.height, unit)} + ${grow})`
+        : `height:${cqwLen(local.height, unit)}`,
     `z-index:${node.z}`,
     box.opacity < 1 ? `opacity:${box.opacity}` : "",
     box.rotation ? `transform:rotate(${box.rotation}deg)` : "",
     node.clipOverflow ? "overflow:hidden" : "",
+    node.clipMaskKind === "ellipse" ? `clip-path:${ellipseClipPathCss()}` : "",
+    node.clipMaskKind === "path" && node.clipPathD
+      ? `clip-path:url(#s-mask-${cssSafeId(node.id)})`
+      : "",
   ].filter(Boolean);
   const clipContent = node.clipOverflow
     ? `\n${sel}>.s-clip-content{position:absolute;left:50%;top:50%;height:max(100%,calc(100cqw * ${Math.max(1, box.height)} / ${Math.max(1, box.width)}));width:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)};transform:translate(-50%,-50%)}`
@@ -944,42 +1063,66 @@ function layerBoxCss(
   const pageParent =
     !inRow && Boolean(blueprint) && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
   const shift = pageParent && blueprint ? extraShiftExpr(blueprint, box, pageWidth, band, hints) : null;
-  const useCqw = Boolean(pageParent && shift != null);
-  const grow = useCqw && blueprint ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
-  const transform = box.rotation ? `transform:rotate(${box.rotation}deg)` : "";
+  const unit = Math.max(1, parent.width);
+  const grow = pageParent && blueprint ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
+  const transform = compiledTransform(layer, box.rotation);
   const font =
     layer.kind === "text"
-      ? `font-size:calc(${layer.fontSize?.[band] ?? 16} * 100cqw / ${Math.max(1, parent.width)})`
+      ? `font-size:calc(${layer.fontSize?.[band] ?? 16} * 100cqw / ${unit})`
       : "";
+  const radius = layer.kind === "image" ? cornerRadiusCss(layer.corners, unit) : "";
+  const clip = layerClipCss(box, layer.clips[band], unit, grow);
+  const deco = [
+    layer.textUnderline ? "underline" : "",
+    layer.textStrikethrough ? "line-through" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const rules = [
     "display:block",
-    inRow ? "left:auto;top:auto" : useCqw ? `left:${cqwLen(box.x, pageWidth)}` : `left:${pct(local.x, parent.width)}`,
+    inRow ? "left:auto;top:auto" : `left:${cqwLen(local.x, unit)}`,
     inRow
       ? ""
-      : useCqw
-        ? `top:calc(${shift} + ${cqwLen(box.y, pageWidth)})`
-        : `top:${pct(local.y, parent.height)}`,
-    useCqw ? `width:${cqwLen(box.width, pageWidth)}` : `width:${pct(local.width, parent.width)}`,
+      : shift != null
+        ? `top:calc(${shift} + ${cqwLen(local.y, unit)})`
+        : `top:${cqwLen(local.y, unit)}`,
+    `width:${cqwLen(local.width, unit)}`,
     inRow
       ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
-      : useCqw
-        ? grow
-          ? `height:calc(${cqwLen(box.height, pageWidth)} + ${grow})`
-          : `height:${cqwLen(box.height, pageWidth)}`
-        : `height:${pct(local.height, parent.height)}`,
+      : grow
+        ? `height:calc(${cqwLen(local.height, unit)} + ${grow})`
+        : `height:${cqwLen(local.height, unit)}`,
     `z-index:${layer.z}`,
     box.opacity < 1 ? `opacity:${box.opacity}` : "",
-    transform,
+    transform ? `transform:${transform}` : "",
     font,
     layer.kind === "text" && layer.fontFamily ? `font-family:${cssFontFamily(layer.fontFamily)}` : "",
     layer.kind === "text" && layer.fontWeight != null ? `font-weight:${layer.fontWeight}` : "",
     layer.kind === "text" && layer.fontStyle ? `font-style:${layer.fontStyle}` : "",
-    layer.kind === "text" && layer.letterSpacing != null ? `letter-spacing:${layer.letterSpacing}px` : "",
+    layer.kind === "text" && layer.letterSpacing != null
+      ? `letter-spacing:${cqwLen(layer.letterSpacing, unit)}`
+      : "",
     layer.kind === "text" && layer.lineHeight != null ? `line-height:${layer.lineHeight}` : "",
     layer.kind === "text" && layer.textAlign ? `text-align:${layer.textAlign}` : "",
-    layer.kind === "text" && layer.color ? `color:${layer.color}` : "",
-    layer.kind === "shape" && layer.background ? `background:${layer.background}` : "",
-    layer.imageFrame ? "overflow:hidden" : "",
+    layer.kind === "text" && layer.fillInline ? layer.fillInline : "",
+    layer.kind === "text" && deco ? `text-decoration:${deco}` : "",
+    layer.kind === "text" && layer.fontVariantCaps ? `font-variant-caps:${layer.fontVariantCaps}` : "",
+    layer.kind === "text" && layer.fontKerning ? `font-kerning:${layer.fontKerning}` : "",
+    layer.kind === "text" && layer.fontFeatureSettings
+      ? `font-feature-settings:${layer.fontFeatureSettings}`
+      : "",
+    layer.kind === "text" && layer.paragraphIndent
+      ? `text-indent:${cqwLen(layer.paragraphIndent, unit)}`
+      : "",
+    layer.kind === "text" && layer.stroke && layer.strokeWidth
+      ? `-webkit-text-stroke:${cqwLen(layer.strokeWidth, unit)} ${layer.stroke}`
+      : "",
+    layer.kind === "shape" && !layer.paintHtml && layer.background ? `background:${layer.background}` : "",
+    radius,
+    layer.mixBlendMode ?? "",
+    layer.glowFilter ?? "",
+    clip,
+    layer.imageFrame || radius ? "overflow:hidden" : "",
     !layer.imageFrame && layer.objectFit ? `object-fit:${layer.objectFit}` : "",
   ].filter(Boolean);
   const crop = layer.imageFrameCrop?.[band];
@@ -991,6 +1134,35 @@ function layerBoxCss(
       }}`
     : "";
   return `${sel}{${rules.join(";")}}${frameImage}`;
+}
+
+function cornerRadiusCss(
+  corners: CompiledLayer["corners"],
+  unit: number,
+): string {
+  if (corners === "ellipse") return "border-radius:50%";
+  if (!corners) return "";
+  const tl = cqwLen(corners.tl, unit);
+  const tr = cqwLen(corners.tr, unit);
+  const br = cqwLen(corners.br, unit);
+  const bl = cqwLen(corners.bl, unit);
+  if (tl === tr && tr === br && br === bl) return `border-radius:${tl}`;
+  return `border-radius:${tl} ${tr} ${br} ${bl}`;
+}
+
+function layerClipCss(
+  box: Box,
+  clip: { x: number; y: number; width: number; height: number } | null | undefined,
+  unit: number,
+  grow: string | null,
+): string {
+  if (!clip) return "";
+  const top = Math.max(0, clip.y - box.y);
+  const left = Math.max(0, clip.x - box.x);
+  const right = Math.max(0, box.x + box.width - (clip.x + clip.width));
+  const bottom = grow ? 0 : Math.max(0, box.y + box.height - (clip.y + clip.height));
+  if (top < 0.5 && left < 0.5 && right < 0.5 && bottom < 0.5) return "";
+  return `clip-path:inset(${cqwLen(top, unit)} ${cqwLen(right, unit)} ${cqwLen(bottom, unit)} ${cqwLen(left, unit)})`;
 }
 
 function cssFontFamily(family: string): string {
@@ -1021,9 +1193,13 @@ function serializeTreeHtml(
         const flowItem = inRow ? " s-flow-item" : "";
         const clip = node.kind === "group" && node.clipOverflow ? " s-clip" : "";
         const inner = serializeTreeHtml(node.children, layers, `${indent}  `, false);
+        const maskSvg =
+          node.clipMaskKind === "path" && node.clipPathD
+            ? `${indent}  <svg class="s-clip-svg" width="0" height="0" aria-hidden="true"><defs><clipPath id="s-mask-${cssSafeId(node.id)}" clipPathUnits="objectBoundingBox"><path transform="scale(${1 / Math.max(1, worldBoxForBand(node, "wide")?.width ?? 1)},${1 / Math.max(1, worldBoxForBand(node, "wide")?.height ?? 1)})" d="${escapeHtml(node.clipPathD)}" /></clipPath></defs></svg>\n`
+            : "";
         const content = node.clipOverflow
-          ? `${indent}  <div class="s-clip-content">\n${inner}\n${indent}  </div>`
-          : inner;
+          ? `${maskSvg}${indent}  <div class="s-clip-content">\n${inner}\n${indent}  </div>`
+          : `${maskSvg}${inner}`;
         return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}${clip}" data-group="${escapeHtml(node.id)}">\n${content}\n${indent}</div>`;
       }
       const layer = layers.get(node.id);
@@ -1061,8 +1237,11 @@ function serializeLayerHtml(layer: CompiledLayer, inRow = false): string {
     const typeAttr = layer.buttonLabel ? ` type="button"` : "";
     return `<${tag} class="${cls}"${typeAttr}${labelAttr}>${layer.textHtml ?? ""}</${tag}>`;
   }
-  if (layer.kind === "path" && layer.pathD) {
-    return `<svg class="${cls} s-path" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true"><path d="${escapeHtml(layer.pathD)}" fill="${escapeHtml(layer.background || "currentColor")}" /></svg>`;
+  if (layer.paintHtml) {
+    const tag = layer.buttonLabel ? "button" : "div";
+    const typeAttr = layer.buttonLabel ? ` type="button"` : "";
+    const hidden = layer.buttonLabel ? "" : ` aria-hidden="true"`;
+    return `<${tag} class="${cls}"${typeAttr}${labelAttr}${hidden}>${layer.paintHtml}</${tag}>`;
   }
   const tag = layer.buttonLabel ? "button" : "div";
   const typeAttr = layer.buttonLabel ? ` type="button"` : "";

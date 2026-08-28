@@ -612,13 +612,18 @@ describe("section height mode", () => {
     const fitted = setSectionHeightMode(blueprint, heroId, "viewport");
     expect(fitted.ok).toBe(true);
     if (!fitted.ok) return;
+    const tablet = setSectionHeightMode(fitted.blueprint, heroId, "viewport", "tablet");
+    expect(tablet.ok).toBe(true);
+    if (!tablet.ok) return;
     const compiled = compilePublishedSite({
       page,
-      blueprint: fitted.blueprint,
+      blueprint: tablet.blueprint,
       title: "Alto",
       imageHrefByLayerId: {},
     });
     expect(compiled.html).toContain("s-has-vh-secs");
+    const wideCss = compiled.css.split("@media")[0] ?? "";
+    expect(wideCss).not.toContain("height:100dvh");
     expect(compiled.css).toContain("height:100dvh");
     expect(compiled.css).toContain("max-height:100dvh");
     expect(compiled.css).toContain("100cqw");
@@ -644,17 +649,22 @@ describe("section height mode", () => {
     const fitted = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "viewport");
     expect(fitted.ok).toBe(true);
     if (!fitted.ok) return;
+    const tablet = setSectionHeightMode(fitted.blueprint, hero.createdNodeId, "viewport", "tablet");
+    expect(tablet.ok).toBe(true);
+    if (!tablet.ok) return;
     const compiled = compilePublishedSite({
       page,
-      blueprint: fitted.blueprint,
+      blueprint: tablet.blueprint,
       title: "Centrado",
       imageHrefByLayerId: {},
     });
 
+    const wideCss = compiled.css.split("@media")[0] ?? "";
+    expect(wideCss).toContain("top:calc(100cqw * 120 / 1920)");
+    expect(wideCss).not.toContain("100dvh");
     expect(compiled.css).toContain(
-      "top:calc((max(0px,100dvh - 100cqw * 400 / 1920)) / 2 + calc(100cqw * 120 / 1920))",
+      "top:calc((max(0px,100dvh - 100cqw * 576 / 768)) / 2 + calc(100cqw * 186 / 768))",
     );
-    expect(compiled.css).toMatch(/\.s-el-bg\{[^}]*height:calc\([^}]*100dvh/);
 
     const custom = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
     expect(custom.ok).toBe(true);
@@ -707,9 +717,10 @@ describe("section height mode", () => {
       title: "Alto",
       imageHrefByLayerId: {},
     });
-    expect(compiled.css).toContain("100dvh");
     expect(compiled.css).toMatch(/100cqw \* 500 \//);
     expect(compiled.css).not.toMatch(/100cqw \* 1180 \//);
+    const wideCss = compiled.css.split("@media")[0] ?? "";
+    expect(wideCss).not.toContain("100dvh");
   });
 
   it("keeps viewport height independent per original / tablet / mobile", () => {
