@@ -14,7 +14,7 @@ import {
   isLoopSpacePortalConnection,
   type SpaceMapEntryLike,
 } from './space-portal-loop-link';
-import { isValidSiteCreatorDocumentConnection } from './site-creator/site-creator-connection';
+import { isValidSiteCreatorDatasetConnection, isValidSiteCreatorDocumentConnection } from './site-creator/site-creator-connection';
 
 /**
  * Tipos de nodo creativo que Loop puede orquestar (plantilla).
@@ -199,6 +199,14 @@ export function areNodesConnectable(
 
   // Dataset handle only connects dataset output → dataset input.
   if (connection.sourceHandle === 'dataset' || connection.targetHandle === 'dataset') {
+    if (targetNode.type === "siteCreator") {
+      return isValidSiteCreatorDatasetConnection(
+        sourceNode,
+        targetNode,
+        connection,
+        options?.edges,
+      );
+    }
     return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
   }
 

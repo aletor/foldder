@@ -4,6 +4,7 @@ import { walkDesignerObjectTree } from "../designer/designer-object-tree";
 import { getPageDimensions } from "../indesign/page-formats";
 
 export const SITE_CREATOR_DOCUMENT_INPUT_HANDLE = "document";
+export const SITE_CREATOR_DATASET_INPUT_HANDLE = "dataset";
 export const SITE_CREATOR_TEMPLATE_OUTPUT_HANDLE = "template";
 
 export type SiteCreatorSourceStatus = "none" | "valid" | "needs_review";
@@ -68,6 +69,49 @@ export function isValidSiteCreatorDocumentConnection(
     if (existing.length > 0) return false;
   }
 
+  return true;
+}
+
+export function findSiteCreatorDatasetEdge(
+  siteCreatorId: string,
+  edges: Pick<Edge, "source" | "target" | "targetHandle" | "sourceHandle">[],
+): Pick<Edge, "source" | "target" | "targetHandle" | "sourceHandle"> | null {
+  return (
+    edges.find(
+      (edge) =>
+        edge.target === siteCreatorId &&
+        (edge.targetHandle === SITE_CREATOR_DATASET_INPUT_HANDLE ||
+          (!edge.targetHandle && edge.sourceHandle === SITE_CREATOR_DATASET_INPUT_HANDLE)),
+    ) ?? null
+  );
+}
+
+export function isValidSiteCreatorDatasetConnection(
+  sourceNode: Node,
+  targetNode: Node,
+  connection: { sourceHandle?: string | null; targetHandle?: string | null },
+  edges?: Pick<Edge, "source" | "target" | "targetHandle" | "sourceHandle" | "id">[],
+  options?: { ignoreEdgeId?: string },
+): boolean {
+  if (targetNode.type !== "siteCreator") return false;
+  if ((connection.targetHandle ?? SITE_CREATOR_DATASET_INPUT_HANDLE) !== SITE_CREATOR_DATASET_INPUT_HANDLE) {
+    return false;
+  }
+  if (sourceNode.type !== "dataset") return false;
+  if ((connection.sourceHandle ?? SITE_CREATOR_DATASET_INPUT_HANDLE) !== SITE_CREATOR_DATASET_INPUT_HANDLE) {
+    return false;
+  }
+  if (edges?.length) {
+    const existing = edges.filter(
+      (edge) =>
+        edge.id !== options?.ignoreEdgeId &&
+        edge.target === targetNode.id &&
+        (edge.targetHandle === SITE_CREATOR_DATASET_INPUT_HANDLE ||
+          (!edge.targetHandle && edge.sourceHandle === SITE_CREATOR_DATASET_INPUT_HANDLE)),
+    );
+    if (existing.some((edge) => edge.source === sourceNode.id)) return true;
+    if (existing.length > 0) return false;
+  }
   return true;
 }
 

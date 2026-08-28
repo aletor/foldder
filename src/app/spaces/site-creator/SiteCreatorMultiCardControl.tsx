@@ -15,6 +15,8 @@ export type SiteCreatorMultiCardControlModel = {
   canRemoveActive: boolean;
   canMoveLeft: boolean;
   canMoveRight: boolean;
+  datasetBound?: boolean;
+  hasException?: boolean;
 };
 
 export function SiteCreatorMultiCardControl({
@@ -38,8 +40,8 @@ export function SiteCreatorMultiCardControl({
         <button
           type="button"
           aria-label="Quitar card"
-          title="Quitar card"
-          disabled={model.count <= MULTICARD_COUNT_MIN}
+          title={model.datasetBound ? "Filas del Dataset" : "Quitar card"}
+          disabled={model.datasetBound || model.count <= MULTICARD_COUNT_MIN}
           className="flex h-6 w-6 items-center justify-center text-white/80 disabled:opacity-30"
           data-testid="site-creator-multicard-count-dec"
           onClick={(e) => {
@@ -54,14 +56,15 @@ export function SiteCreatorMultiCardControl({
           className="min-w-[1.25rem] text-center text-[10px] font-semibold"
           style={{ color: SC_VISUAL.chipFg }}
           data-testid="site-creator-multicard-count"
+          title={model.datasetBound ? `${model.count} filas del Dataset` : undefined}
         >
           {model.count}
         </span>
         <button
           type="button"
           aria-label="Añadir card"
-          title="Añadir card"
-          disabled={model.count >= MULTICARD_COUNT_MAX}
+          title={model.datasetBound ? "Filas del Dataset" : "Añadir card"}
+          disabled={model.datasetBound || model.count >= MULTICARD_COUNT_MAX}
           className="flex h-6 w-6 items-center justify-center text-white/80 disabled:opacity-30"
           data-testid="site-creator-multicard-count-inc"
           onClick={(e) => {
@@ -105,6 +108,25 @@ export function SiteCreatorMultiCardControl({
       >
         {model.activeCardIndex + 1}/{model.count}
       </span>
+      {model.datasetBound ? (
+        <span
+          className="text-[8px] font-semibold uppercase tracking-wide"
+          style={{ color: SC_VISUAL.chipMuted }}
+          data-testid="site-creator-multicard-filas"
+        >
+          filas
+        </span>
+      ) : null}
+      {model.hasException ? (
+        <span
+          className="rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide"
+          style={{ background: SC_VISUAL.selection, color: "#101820" }}
+          data-testid="site-creator-multicard-exception"
+          title="Esta card tiene una excepción"
+        >
+          exc
+        </span>
+      ) : null}
       <IconBtn
         testId="site-creator-multicard-move-left"
         label="Mover card a la izquierda"
@@ -123,7 +145,7 @@ export function SiteCreatorMultiCardControl({
       </IconBtn>
       <IconBtn
         testId="site-creator-multicard-duplicate"
-        label="Duplicar card"
+        label={model.datasetBound ? "Las filas las marca el Dataset" : "Duplicar card"}
         disabled={!model.canDuplicate}
         onClick={onDuplicateActive}
       >
@@ -132,9 +154,11 @@ export function SiteCreatorMultiCardControl({
       <IconBtn
         testId="site-creator-multicard-remove"
         label={
-          model.activeCardIndex === 0
-            ? "La primera card es el molde y no se puede eliminar"
-            : "Eliminar card"
+          model.datasetBound
+            ? "Las filas las marca el Dataset"
+            : model.activeCardIndex === 0
+              ? "La primera card es el molde y no se puede eliminar"
+              : "Eliminar card"
         }
         disabled={!model.canRemoveActive}
         onClick={onRemoveActive}

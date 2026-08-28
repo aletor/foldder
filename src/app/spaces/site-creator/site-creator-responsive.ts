@@ -8,6 +8,7 @@ import type {
   PathObject,
 } from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import type { Dataset } from "../dataset/dataset-types";
 import { getPageDimensions } from "../indesign/page-formats";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
@@ -2405,6 +2406,7 @@ function withLayoutGroupWidthModes(
   sectionViewport?: { viewportHeight?: number; expandViewportSections?: boolean },
   preserveExplicitBackgroundSurfaces?: boolean,
   multiCardScrollIndexByNodeId?: Record<string, number>,
+  dataset?: Dataset | null,
 ): SiteCreatorResponsiveResolveResult {
   const laidOut = applyLayoutGroupWidthModes({
     page: result.displayPage,
@@ -2456,7 +2458,7 @@ function withLayoutGroupWidthModes(
     band: result.band,
   });
   if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
-    return withMultiCardInstances(result, blueprint, multiCardScrollIndexByNodeId);
+    return withMultiCardInstances(result, blueprint, multiCardScrollIndexByNodeId, dataset);
   }
   page.customWidth = result.layout.layoutWidth;
   page.customHeight = layoutHeight;
@@ -2468,6 +2470,7 @@ function withLayoutGroupWidthModes(
     },
     blueprint,
     multiCardScrollIndexByNodeId,
+    dataset,
   );
 }
 
@@ -2475,6 +2478,7 @@ function withMultiCardInstances(
   result: SiteCreatorResponsiveResolveResult,
   blueprint: SiteBlueprintV1,
   scrollIndexByNodeId?: Record<string, number>,
+  dataset?: Dataset | null,
 ): SiteCreatorResponsiveResolveResult {
   const applied = applyMultiCardLayout({
     page: result.displayPage,
@@ -2486,6 +2490,7 @@ function withMultiCardInstances(
     regions: result.resolvedLayout?.regions,
     objectClipById: result.resolvedLayout?.objectClipById,
     scrollIndexByNodeId,
+    dataset,
   });
   if (applied.containers.length === 0) return result;
 
@@ -2554,6 +2559,8 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   band?: ResponsiveBand;
   /** Índice de carrusel MultiCard en el studio (publicar siempre 0). */
   multiCardScrollIndexByNodeId?: Record<string, number>;
+  /** Dataset vivo enchufado al Site Creator (relleno de MultiCard). */
+  dataset?: Dataset | null;
 }): SiteCreatorResponsiveResolveResult {
   const reference = getPageDimensions(args.page);
   const viewportWidth = clampViewportWidth(args.viewportWidth, reference.width);
@@ -2593,6 +2600,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       sectionViewport,
       args.preserveExplicitBackgroundSurfaces,
       args.multiCardScrollIndexByNodeId,
+      args.dataset,
     );
   }
 
@@ -2692,6 +2700,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       sectionViewport,
       args.preserveExplicitBackgroundSurfaces,
       args.multiCardScrollIndexByNodeId,
+      args.dataset,
     );
   }
 
@@ -2952,6 +2961,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     sectionViewport,
     args.preserveExplicitBackgroundSurfaces,
     args.multiCardScrollIndexByNodeId,
+    args.dataset,
   );
 }
 

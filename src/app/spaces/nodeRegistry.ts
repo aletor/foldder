@@ -627,7 +627,10 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     label: 'Site Creator',
     description:
       'Transforma un documento Designer de una sola página en una landing web responsive mediante un Site Blueprint separado que referencia capas por ID, sin modificar el documento Designer.',
-    inputs: [{ id: 'document', label: 'Designer document', type: 'json' as HandleType, required: true }],
+    inputs: [
+      { id: 'document', label: 'Designer document', type: 'json' as HandleType, required: true },
+      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType, required: false },
+    ],
     outputs: [{ id: 'template', label: 'Site template', type: 'site_template' as HandleType }],
     dataSchema: {
       schemaVersion: '1',
@@ -766,7 +769,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   presenter:
     "label; conectar entrada document desde designer; transitionsByPageId; imageVideoPlacements; el UI lee pages del Designer vía grafo (slides / Presenter / share)",
   siteCreator:
-    "schemaVersion 1; blueprint SiteBlueprintV1; sourceSnapshot DesignerSourceSnapshotV1 (page congelada); studioState; entrada document solo Designer 1 página; salida template site_template",
+    "schemaVersion 1; blueprint SiteBlueprintV1; sourceSnapshot DesignerSourceSnapshotV1 (page congelada); studioState; entrada document solo Designer 1 página; entrada dataset opcional (catálogo MultiCard); salida template site_template",
   populate:
     "label, listId, templateBindings[] (1..8 Designers), activeTemplateNodeId, publicShareToken; salida value + mediaListOutput; formulario público /f/{token}; NO iterar Dataset (distinto de loop)",
   canvasGroup:

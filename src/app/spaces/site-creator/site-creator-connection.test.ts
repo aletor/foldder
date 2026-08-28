@@ -123,4 +123,98 @@ describe("site_template handle type", () => {
     const templateOutput = meta.outputs.find((output) => output.id === "template");
     expect(templateOutput?.type).toBe("site_template");
   });
+
+  it("rejects site template → populate or loop", () => {
+    const siteCreator = siteCreatorNode("sc1");
+    const populate = node("p1", "populate");
+    const loop = node("l1", "loop");
+    expect(
+      areNodesConnectable(siteCreator, populate, {
+        sourceHandle: "template",
+        targetHandle: "template",
+      }),
+    ).toBe(false);
+    expect(
+      areNodesConnectable(siteCreator, loop, {
+        sourceHandle: "template",
+        targetHandle: "template",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("site creator dataset handle", () => {
+  function datasetNode(id: string): Node {
+    return node(id, "dataset", { label: "Catálogo" });
+  }
+
+  it("accepts dataset → site creator dataset", () => {
+    const dataset = datasetNode("ds1");
+    const siteCreator = siteCreatorNode("sc1");
+    expect(
+      areNodesConnectable(dataset, siteCreator, {
+        sourceHandle: "dataset",
+        targetHandle: "dataset",
+      }),
+    ).toBe(true);
+  });
+
+  it("still accepts designer document while a dataset is connected", () => {
+    const designer = designerWithPages([{ id: "pg1", format: "web169", objects: [] }]);
+    const dataset = datasetNode("ds1");
+    const siteCreator = siteCreatorNode("sc1");
+    const edges: Edge[] = [
+      {
+        id: "e-ds",
+        source: "ds1",
+        target: "sc1",
+        sourceHandle: "dataset",
+        targetHandle: "dataset",
+      },
+    ];
+    expect(
+      areNodesConnectable(
+        designer,
+        siteCreator,
+        { sourceHandle: "document", targetHandle: "document" },
+        [designer, dataset, siteCreator],
+        { edges },
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a second dataset", () => {
+    const datasetA = datasetNode("ds1");
+    const datasetB = datasetNode("ds2");
+    const siteCreator = siteCreatorNode("sc1");
+    const edges: Edge[] = [
+      {
+        id: "e1",
+        source: "ds1",
+        target: "sc1",
+        sourceHandle: "dataset",
+        targetHandle: "dataset",
+      },
+    ];
+    expect(
+      areNodesConnectable(
+        datasetB,
+        siteCreator,
+        { sourceHandle: "dataset", targetHandle: "dataset" },
+        [datasetA, datasetB, siteCreator],
+        { edges },
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects dataset on the document handle", () => {
+    const dataset = datasetNode("ds1");
+    const siteCreator = siteCreatorNode("sc1");
+    expect(
+      areNodesConnectable(dataset, siteCreator, {
+        sourceHandle: "dataset",
+        targetHandle: "document",
+      }),
+    ).toBe(false);
+  });
 });

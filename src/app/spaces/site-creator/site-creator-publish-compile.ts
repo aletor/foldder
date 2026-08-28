@@ -645,6 +645,7 @@ export function compilePublishedSite(args: {
   blueprint: SiteBlueprintV1;
   title: string;
   imageHrefByLayerId: Record<string, string>;
+  dataset?: import("../dataset/dataset-types").Dataset | null;
 }): CompiledPublishedSite {
   const referenceIndex = buildSiteSelectionIndex(args.page);
   const reference = getPageDimensions(args.page);
@@ -656,6 +657,7 @@ export function compilePublishedSite(args: {
     expandViewportSections: false,
     preserveExplicitBackgroundSurfaces: true,
     band: "monitor",
+    dataset: args.dataset,
   });
   const tablet = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -664,6 +666,7 @@ export function compilePublishedSite(args: {
     viewportWidth: SITE_CREATOR_TABLET_WIDTH,
     expandViewportSections: false,
     preserveExplicitBackgroundSurfaces: true,
+    dataset: args.dataset,
   });
   const mobile = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -672,6 +675,7 @@ export function compilePublishedSite(args: {
     viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
     expandViewportSections: false,
     preserveExplicitBackgroundSurfaces: true,
+    dataset: args.dataset,
   });
 
   const layouts: Record<BandName, { width: number; height: number; objects: FreehandObject[] }> = {

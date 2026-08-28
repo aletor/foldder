@@ -3,6 +3,7 @@ import type { FreehandObject } from "../FreehandStudio";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import type { SiteBlueprintV1 } from "./site-creator-types";
+import type { Dataset } from "../dataset/dataset-types";
 import {
   SITE_CREATOR_MOBILE_WIDTH,
   siteCreatorDeviceChrome,
@@ -39,6 +40,7 @@ function snapshotForBand(args: {
   deviceWidth: number;
   deviceHeight: number;
   label: string;
+  dataset?: Dataset | null;
 }): SiteCreatorNodeDeviceSnapshot {
   const resolved = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -48,6 +50,7 @@ function snapshotForBand(args: {
     viewportHeight: args.deviceHeight,
     band: args.kind,
     expandViewportSections: false,
+    dataset: args.dataset,
   });
   const layoutWidth = Math.max(1, resolved.layout.layoutWidth);
   const layoutHeight = Math.max(1, resolved.layout.layoutHeight);
@@ -66,6 +69,7 @@ function snapshotForBand(args: {
 export function buildSiteCreatorNodeDeviceMosaic(args: {
   page: DesignerPageState;
   blueprint: SiteBlueprintV1;
+  dataset?: Dataset | null;
 }): SiteCreatorNodeDeviceMosaicModel {
   const index = buildSiteSelectionIndex(args.page);
   return {
@@ -77,6 +81,7 @@ export function buildSiteCreatorNodeDeviceMosaic(args: {
       deviceWidth: SITE_CREATOR_NODE_MONITOR_FRAME.width,
       deviceHeight: SITE_CREATOR_NODE_MONITOR_FRAME.height,
       label: "Ordenador",
+      dataset: args.dataset,
     }),
     mobile: snapshotForBand({
       page: args.page,
@@ -86,6 +91,7 @@ export function buildSiteCreatorNodeDeviceMosaic(args: {
       deviceWidth: SITE_CREATOR_NODE_MOBILE_FRAME.width,
       deviceHeight: SITE_CREATOR_NODE_MOBILE_FRAME.height,
       label: "Móvil",
+      dataset: args.dataset,
     }),
   };
 }

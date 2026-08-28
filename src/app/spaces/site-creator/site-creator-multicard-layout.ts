@@ -5,6 +5,7 @@
  */
 import type { FreehandObject, PathObject } from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import type { Dataset } from "../dataset/dataset-types";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
@@ -34,6 +35,7 @@ import {
   parseMultiCardInstanceId,
   type MultiCardInstanceRef,
 } from "./site-creator-multicard-ids";
+import { mergedOverridesForCard } from "./site-creator-multicard-dataset";
 
 /** Power2 ease-in-out (GSAP Quad.inOut) para el carrusel MultiCard. */
 export const MULTICARD_SCROLL_DURATION_MS = 520;
@@ -727,6 +729,7 @@ export function applyMultiCardLayout(args: {
   }>;
   objectClipById?: Record<string, PageRect>;
   scrollIndexByNodeId?: Record<string, number>;
+  dataset?: Dataset | null;
 }): ApplyMultiCardLayoutResult {
   const nodes = listMultiCards(args.blueprint);
   const empty: ApplyMultiCardLayoutResult = {
@@ -801,10 +804,16 @@ export function applyMultiCardLayout(args: {
     const templates = moldCloneTemplates(worldRoots, byId, index, mold, node.id);
     const card1 = node.cards[0];
     if (card1) {
+      const merged = mergedOverridesForCard({
+        dataset: args.dataset,
+        node,
+        card: card1,
+        cardIndex: 0,
+      });
       for (const rootId of worldRoots) {
         const obj = byId.get(rootId);
         if (!obj) continue;
-        applyOverridesToTree(obj, card1.overrides, (id) => id);
+        applyOverridesToTree(obj, merged, (id) => id);
         if (planned.scale !== 1) scaleWorldRoot(obj, planned.scale, mold.x, mold.y);
       }
     }
@@ -872,7 +881,16 @@ export function applyMultiCardLayout(args: {
         remapSubtreeIds(clone, node.id, card.id, idMap);
         if (planned.scale !== 1) scaleWorldRoot(clone, planned.scale);
         shiftWorldObject(clone, dx, dy);
-        applyOverridesToTree(clone, card.overrides, (id) => parseMultiCardInstanceId(id)?.moldLayerId ?? id);
+        applyOverridesToTree(
+          clone,
+          mergedOverridesForCard({
+            dataset: args.dataset,
+            node,
+            card,
+            cardIndex: i,
+          }),
+          (id) => parseMultiCardInstanceId(id)?.moldLayerId ?? id,
+        );
         cardClones.push(clone);
         for (const [moldId, instanceId] of idMap) {
           if (instances[instanceId]) continue;

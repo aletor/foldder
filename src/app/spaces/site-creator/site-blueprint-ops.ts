@@ -30,7 +30,14 @@ import type {
   SiteMultiCardSlotOverrideV1,
   SiteSectionHeightMode,
   SiteSectionType,
+  SiteMultiCardSlotBindingV1,
 } from "./site-creator-types";
+import type { Dataset } from "../dataset/dataset-types";
+import {
+  claimMultiCardDatasetList as claimMultiCardDatasetListPure,
+  isMultiCardDatasetBound,
+  setMultiCardSlotBinding as setMultiCardSlotBindingPure,
+} from "./site-creator-multicard-dataset";
 import {
   MULTICARD_COUNT_MAX,
   MULTICARD_COUNT_MIN,
@@ -1126,6 +1133,9 @@ function requireMultiCard(
 export function setMultiCardCount(blueprint: SiteBlueprintV1, nodeId: string, count: number): BlueprintOpResult {
   const node = requireMultiCard(blueprint, nodeId);
   if ("ok" in node) return node;
+  if (isMultiCardDatasetBound(node)) {
+    return fail("multicard_dataset", "El número de cards lo marca la lista del Dataset.");
+  }
   const n = Math.min(MULTICARD_COUNT_MAX, Math.max(MULTICARD_COUNT_MIN, Math.round(count)));
   if (n === node.cards.length) return { ok: true, blueprint };
   const next = cloneBlueprint(blueprint);
@@ -1177,6 +1187,9 @@ export function duplicateMultiCardCard(
 ): BlueprintOpResult {
   const node = requireMultiCard(blueprint, nodeId);
   if ("ok" in node) return node;
+  if (isMultiCardDatasetBound(node)) {
+    return fail("multicard_dataset", "Con una lista conectada no se duplican cards a mano.");
+  }
   if (node.cards.length >= MULTICARD_COUNT_MAX) {
     return fail("multicard_count", "No se pueden añadir más cards.");
   }
@@ -1205,6 +1218,9 @@ export function removeMultiCardCard(
 ): BlueprintOpResult {
   const node = requireMultiCard(blueprint, nodeId);
   if ("ok" in node) return node;
+  if (isMultiCardDatasetBound(node)) {
+    return fail("multicard_dataset", "Con una lista conectada las filas viven en el Dataset.");
+  }
   if (node.cards[0]?.id === cardId) {
     return fail("multicard_card1", "La primera card es el molde y no se puede eliminar.");
   }
@@ -1228,6 +1244,9 @@ export function moveMultiCardCard(
 ): BlueprintOpResult {
   const node = requireMultiCard(blueprint, nodeId);
   if ("ok" in node) return node;
+  if (isMultiCardDatasetBound(node)) {
+    return fail("multicard_dataset", "El orden de las cards lo marca la lista del Dataset.");
+  }
   const from = node.cards.findIndex((card) => card.id === cardId);
   if (from < 0) return fail("invalid_target", "Esa card no existe.");
   const to = from + direction;
@@ -1277,6 +1296,37 @@ export function setMultiCardSlotOverride(args: {
     return { ...item, overrides };
   });
   next.nodes[args.nodeId] = { ...current, cards };
+  return { ok: true, blueprint: next };
+}
+
+export function claimMultiCardDatasetList(args: {
+  blueprint: SiteBlueprintV1;
+  nodeId: string;
+  dataset: Dataset;
+  listId: string;
+  index: SiteCreatorSelectionIndex;
+}): BlueprintOpResult {
+  const node = requireMultiCard(args.blueprint, args.nodeId);
+  if ("ok" in node) return node;
+  const next = claimMultiCardDatasetListPure(args);
+  if (!next) return fail("invalid_target", "No se pudo enlazar esa lista.");
+  try {
+    return { ok: true, blueprint: assertValidBlueprint(next, args.index) };
+  } catch (e) {
+    return fail("validation", e instanceof Error ? e.message : "Blueprint inválido.");
+  }
+}
+
+export function setMultiCardSlotBinding(args: {
+  blueprint: SiteBlueprintV1;
+  nodeId: string;
+  moldLayerId: string;
+  binding: SiteMultiCardSlotBindingV1 | null;
+}): BlueprintOpResult {
+  const node = requireMultiCard(args.blueprint, args.nodeId);
+  if ("ok" in node) return node;
+  const next = setMultiCardSlotBindingPure(args);
+  if (!next) return fail("invalid_target", "No se pudo enlazar esa capa.");
   return { ok: true, blueprint: next };
 }
 

@@ -70,7 +70,11 @@ import { SiteCreatorNodeDeviceMosaic } from "./SiteCreatorNodeDeviceMosaic";
 import { buildSiteCreatorNodeDeviceMosaic } from "./site-creator-node-device-mosaic";
 import { collectProjectMedia } from "../project-media-inventory";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
-import type { SiteCreatorMediaPickItem } from "./SiteCreatorMediaPicker";
+import { useDesignerConnectedDataset } from "../designer/use-designer-connected-dataset";
+import {
+  freezeBlueprintDatasetMultiCards,
+  syncBlueprintDatasetMultiCards,
+} from "./site-creator-multicard-dataset";
 
 const STALE_SYNC_MESSAGE = "Designer volvió a cambiar. Revisa la actualización de nuevo.";
 const AUTO_SYNC_DEBOUNCE_MS = 300;
@@ -109,9 +113,17 @@ const SITE_CREATOR_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
     id: "document",
     label: "Document",
     side: "left",
-    top: "42%",
+    top: "38%",
     type: "target",
     dataType: "txt",
+  },
+  {
+    id: "dataset",
+    label: "Dataset",
+    side: "left",
+    top: "62%",
+    type: "target",
+    dataType: "dataset",
   },
   {
     id: "template",
@@ -253,6 +265,12 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
   }, [getNodes, liveStudioEpoch]);
 
   const sourceStateStatus = resolveSourceStatus(graph);
+  const { datasetConnected, connectedDataset } = useDesignerConnectedDataset(id);
+  const lastDatasetRef = useRef(connectedDataset);
+  const hadDatasetRef = useRef(false);
+  const blueprintRef = useRef(blueprint);
+  blueprintRef.current = blueprint;
+  if (connectedDataset) lastDatasetRef.current = connectedDataset;
 
   const livePage = useMemo(() => {
     void liveStudioEpoch;
@@ -302,8 +320,9 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
     return buildSiteCreatorNodeDeviceMosaic({
       page: previewPage,
       blueprint,
+      dataset: connectedDataset,
     });
-  }, [blueprint, livePageContentHash, previewPage, sourceSnapshot?.contentHash]);
+  }, [blueprint, connectedDataset, livePageContentHash, previewPage, sourceSnapshot?.contentHash]);
 
   const dismissSyncError = useCallback(() => setSyncErrorMessage(null), []);
 
@@ -420,6 +439,21 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
     },
     [id, setNodes],
   );
+
+  useEffect(() => {
+    if (hadDatasetRef.current && !datasetConnected) {
+      const current = blueprintRef.current;
+      const frozen = freezeBlueprintDatasetMultiCards(current, lastDatasetRef.current);
+      if (frozen !== current) onBlueprintChange(frozen);
+    }
+    hadDatasetRef.current = datasetConnected;
+  }, [datasetConnected, onBlueprintChange]);
+
+  useEffect(() => {
+    if (!connectedDataset) return;
+    const next = syncBlueprintDatasetMultiCards(blueprint, connectedDataset);
+    if (next !== blueprint) onBlueprintChange(next);
+  }, [blueprint, connectedDataset, onBlueprintChange]);
 
   const connected = sourceStateStatus !== "none";
   const hasDock = connected || Boolean(sourceSnapshot);
@@ -664,6 +698,10 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
                 </p>
                 <FoldderNodeContentMeta>
                   <FoldderNodeContentMetaRow label="Designer" value={designerLabel ?? "—"} />
+                  <FoldderNodeContentMetaRow
+                    label="Dataset"
+                    value={connectedDataset?.name?.trim() || (datasetConnected ? "Conectado" : "—")}
+                  />
                   <FoldderNodeContentMetaRow label="Dimensiones" value={dimensionsLabel} />
                   <FoldderNodeContentMetaRow label="Capas" value={String(displayLayerCount)} />
                   <FoldderNodeContentMetaRow
@@ -706,6 +744,7 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
               publish={parseSiteCreatorNodeData(data).publish ?? null}
               onPublishChange={onPublishChange}
               projectMedia={projectMedia}
+              dataset={connectedDataset}
             />,
             document.body,
           )

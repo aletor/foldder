@@ -99,8 +99,13 @@ import type {
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorMicrobarModel } from "./SiteCreatorObjectMicrobar";
 import { SiteCreatorMultiCardControl } from "./SiteCreatorMultiCardControl";
+import {
+  SiteCreatorMultiCardDatasetOverlay,
+  type ArmedDatasetChip,
+} from "./SiteCreatorMultiCardDatasetOverlay";
 import { SiteCreatorMediaPicker, type SiteCreatorMediaPickItem } from "./SiteCreatorMediaPicker";
 import { findOwningMultiCardDisplay } from "./site-creator-multicard";
+import { isMultiCardDatasetBound, usableDatasetLists } from "./site-creator-multicard-dataset";
 import {
   clampMultiCardScrollIndex,
   easePower2InOut,
@@ -156,6 +161,7 @@ import {
   publishAssetPlaceholder,
 } from "./site-creator-publish-compile";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import type { Dataset } from "../dataset/dataset-types";
 import { FOLDDER_STUDIO_BODY_CLASS } from "../studio-node/studio-node-architecture";
 import {
   canPersistSiteStructure,
@@ -185,6 +191,8 @@ import {
   setMultiCardCount,
   setMultiCardLayoutMode,
   setMultiCardSlotOverride,
+  claimMultiCardDatasetList,
+  setMultiCardSlotBinding,
   duplicateMultiCardCard,
   removeMultiCardCard,
   moveMultiCardCard,
@@ -258,6 +266,8 @@ export interface SiteCreatorStudioProps {
   onPublishChange?: (next: SiteCreatorPublishStateV1 | null) => void;
   /** Inventario de imágenes de Foldder para overrides de MultiCard. */
   projectMedia?: SiteCreatorMediaPickItem[];
+  /** Dataset vivo enchufado al nodo (catálogo MultiCard). */
+  dataset?: Dataset | null;
 }
 
 function emptyStateMessage(originState: SiteCreatorOriginState): string {
@@ -322,6 +332,15 @@ function coverageHasDisplayLayer(coverage: Set<string>, layerId: string): boolea
 function isImageLikeObject(object: { type?: string; imageFrameContent?: unknown } | undefined): boolean {
   if (!object) return false;
   return object.type === "image" || Boolean(object.imageFrameContent);
+}
+
+function slotKindFromObject(
+  object: { type?: string; imageFrameContent?: unknown } | undefined,
+): "text" | "image" | null {
+  if (!object) return null;
+  if (object.type === "text" || object.type === "textOnPath") return "text";
+  if (isImageLikeObject(object)) return "image";
+  return null;
 }
 
 function mediaItemsFromPage(page: DesignerPageState | null | undefined): SiteCreatorMediaPickItem[] {
@@ -478,6 +497,7 @@ export function SiteCreatorStudio({
   publish = null,
   onPublishChange,
   projectMedia = [],
+  dataset = null,
 }: SiteCreatorStudioProps) {
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -565,6 +585,22 @@ export function SiteCreatorStudio({
     cardId: string;
     moldLayerId: string;
   } | null>(null);
+  const [armedDatasetChip, setArmedDatasetChip] = useState<ArmedDatasetChip | null>(null);
+  const [datasetFlash, setDatasetFlash] = useState(false);
+  const hadStudioDatasetRef = useRef(Boolean(dataset));
+  useEffect(() => {
+    if (!hadStudioDatasetRef.current && dataset) {
+      setDatasetFlash(true);
+      const timer = window.setTimeout(() => setDatasetFlash(false), 1600);
+      hadStudioDatasetRef.current = true;
+      return () => window.clearTimeout(timer);
+    }
+    hadStudioDatasetRef.current = Boolean(dataset);
+    if (!dataset) setDatasetFlash(false);
+  }, [dataset]);
+  useEffect(() => {
+    if (!dataset) setArmedDatasetChip(null);
+  }, [dataset]);
 
   const historyRef = useRef<SiteBlueprintHistoryState>(createBlueprintHistory(blueprint));
   const writeCountRef = useRef(0);
@@ -763,8 +799,10 @@ export function SiteCreatorStudio({
       viewportHeight: liveViewportHeight,
       band: responsiveBand,
       multiCardScrollIndexByNodeId,
+      dataset,
     });
   }, [
+    dataset,
     displayBlueprint,
     layoutViewportWidth,
     liveViewportHeight,
@@ -1008,6 +1046,7 @@ export function SiteCreatorStudio({
         blueprint,
         title: nodeLabel,
         imageHrefByLayerId,
+        dataset,
       });
       const response = await fetch("/api/site-creator-publish", {
         method: "POST",
@@ -1040,7 +1079,7 @@ export function SiteCreatorStudio({
     } finally {
       setPublishing(false);
     }
-  }, [blueprint, nodeLabel, onPublishChange, publish?.siteId, publishPage, publishing]);
+  }, [blueprint, dataset, nodeLabel, onPublishChange, publish?.siteId, publishPage, publishing]);
 
   const handleUnpublish = useCallback(async () => {
     if (!publish?.siteId || publishing) return;
@@ -1237,10 +1276,22 @@ export function SiteCreatorStudio({
         setStructureError(result.message);
         return;
       }
-      commitBlueprint(result.blueprint);
+      let nextBlueprint = result.blueprint;
+      const lists = dataset ? usableDatasetLists(dataset) : [];
+      if (dataset && result.createdNodeId && lists.length === 1) {
+        const claimed = claimMultiCardDatasetList({
+          blueprint: nextBlueprint,
+          nodeId: result.createdNodeId,
+          dataset,
+          listId: lists[0]!.id,
+          index: committedIndex,
+        });
+        if (claimed.ok && claimed.blueprint) nextBlueprint = claimed.blueprint;
+      }
+      commitBlueprint(nextBlueprint);
       setPendingParentChoice(null);
       selectCreatedNode(result.createdNodeId);
-      const created = result.createdNodeId ? result.blueprint.nodes[result.createdNodeId] : null;
+      const created = result.createdNodeId ? nextBlueprint.nodes[result.createdNodeId] : null;
       if (created?.parentId) {
         setInteractionPath([created.parentId]);
       }
@@ -1250,6 +1301,7 @@ export function SiteCreatorStudio({
       commitBlueprint,
       committedIndex,
       contextualInspectId,
+      dataset,
       persistGate,
       selectCreatedNode,
       structureLayerIds,
@@ -1496,6 +1548,43 @@ export function SiteCreatorStudio({
         }
 
         case "click": {
+          if (armedDatasetChip) {
+            if (!action.layerId) {
+              setArmedDatasetChip(null);
+            } else {
+              const owning = findOwningMultiCardDisplay(blueprint, action.layerId, selectionIndex);
+              if (owning && owning.nodeId === armedDatasetChip.nodeId) {
+                const kind = slotKindFromObject(selectionIndex.byId[action.layerId]?.object);
+                if (kind === armedDatasetChip.kind) {
+                  const node = blueprint.nodes[owning.nodeId];
+                  const current =
+                    node && isSiteMultiCardNode(node)
+                      ? node.slotBindings?.[owning.moldLayerId]
+                      : undefined;
+                  const sameField =
+                    current?.source === armedDatasetChip.source &&
+                    current.fieldId === armedDatasetChip.fieldId;
+                  commitMultiCardOp(
+                    setMultiCardSlotBinding({
+                      blueprint,
+                      nodeId: owning.nodeId,
+                      moldLayerId: owning.moldLayerId,
+                      binding: sameField
+                        ? null
+                        : {
+                            source: armedDatasetChip.source,
+                            fieldId: armedDatasetChip.fieldId,
+                            fieldKey: armedDatasetChip.fieldKey,
+                          },
+                    }),
+                  );
+                  setArmedDatasetChip(null);
+                  return;
+                }
+              }
+              return;
+            }
+          }
           if (!action.layerId) {
             if (action.additive) return;
             clearUnitsAndInspect();
@@ -1651,6 +1740,7 @@ export function SiteCreatorStudio({
         }
 
         case "doubleClickLayer": {
+          if (armedDatasetChip) setArmedDatasetChip(null);
           const hit = selectionIndex?.byId[action.layerId];
           const owning =
             selectionIndex
@@ -1971,8 +2061,10 @@ export function SiteCreatorStudio({
       applyGroup,
       applyMultiCard,
       applyRemoveFromContainer,
+      armedDatasetChip,
       blueprint,
       commitBlueprint,
+      commitMultiCardOp,
       committedPage,
       displayUnits,
       mediaBand,
@@ -2425,6 +2517,18 @@ export function SiteCreatorStudio({
     }
     return ghosts;
   }, [blueprint.nodes, displayUnits, hoverUnit, presentationTree, responsive?.multiCard, selectionIndex]);
+
+  const datasetCompatibleBounds = useMemo(() => {
+    if (!armedDatasetChip || !selectionIndex) return [];
+    const bounds: { x: number; y: number; width: number; height: number }[] = [];
+    for (const entry of selectionIndex.entries) {
+      const owning = findOwningMultiCardDisplay(blueprint, entry.layerId, selectionIndex);
+      if (!owning || owning.nodeId !== armedDatasetChip.nodeId) continue;
+      if (slotKindFromObject(entry.object) !== armedDatasetChip.kind) continue;
+      bounds.push(entry.visualBounds);
+    }
+    return bounds;
+  }, [armedDatasetChip, blueprint, selectionIndex]);
 
   const sectionOutlines = useMemo((): SiteCreatorUnitOutline[] => {
     return [];
@@ -3030,6 +3134,8 @@ export function SiteCreatorStudio({
       }
       const multiCardNode =
         unit.kind === "blueprintNode" ? blueprint.nodes[unit.nodeId] : null;
+      const datasetBound =
+        Boolean(multiCardNode && isSiteMultiCardNode(multiCardNode) && isMultiCardDatasetBound(multiCardNode));
       const multiCardActiveCardId =
         multiCardNode && isSiteMultiCardNode(multiCardNode)
           ? multiCardActiveCardByNodeId[multiCardNode.id] ??
@@ -3059,12 +3165,21 @@ export function SiteCreatorStudio({
                   referenceWidth,
                 ).layoutMode,
                 activeCardIndex: multiCardActiveIndex,
-                canDuplicate: multiCardNode.count < MULTICARD_COUNT_MAX && Boolean(multiCardActiveCardId),
-                canRemoveActive: multiCardActiveIndex > 0 && multiCardNode.count > 1,
-                canMoveLeft: multiCardActiveIndex > 1,
+                canDuplicate:
+                  !datasetBound &&
+                  multiCardNode.count < MULTICARD_COUNT_MAX &&
+                  Boolean(multiCardActiveCardId),
+                canRemoveActive:
+                  !datasetBound && multiCardActiveIndex > 0 && multiCardNode.count > 1,
+                canMoveLeft: !datasetBound && multiCardActiveIndex > 1,
                 canMoveRight:
+                  !datasetBound &&
                   multiCardActiveIndex > 0 &&
                   multiCardActiveIndex < multiCardNode.cards.length - 1,
+                datasetBound,
+                hasException: Object.keys(
+                  multiCardNode.cards[multiCardActiveIndex]?.overrides ?? {},
+                ).length > 0,
               }}
               onCountChange={(count) => commitMultiCardOp(setMultiCardCount(blueprint, multiCardNode.id, count))}
               onLayoutMode={(mode) =>
@@ -3429,6 +3544,12 @@ export function SiteCreatorStudio({
         return;
       }
       if (pagePreviewMode) return;
+      if (event.key === "Escape" && armedDatasetChip) {
+        event.preventDefault();
+        event.stopPropagation();
+        setArmedDatasetChip(null);
+        return;
+      }
 
       if (
         event.key === "Tab" &&
@@ -3480,6 +3601,7 @@ export function SiteCreatorStudio({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [
     applyViewportBand,
+    armedDatasetChip,
     exitPagePreview,
     onBlueprintChange,
     pagePreviewMode,
@@ -3919,6 +4041,47 @@ export function SiteCreatorStudio({
               objectClipById={objectClipById}
               multiCardNav={responsive?.multiCard?.containers ?? []}
               onMultiCardScrollIndex={commitMultiCardScrollIndex}
+              datasetChipArmed={Boolean(armedDatasetChip)}
+              datasetOverlay={
+                pagePreviewMode || !dataset
+                  ? null
+                  : (
+                      <SiteCreatorMultiCardDatasetOverlay
+                        containers={responsive?.multiCard?.containers ?? []}
+                        blueprint={blueprint}
+                        dataset={dataset}
+                        armed={armedDatasetChip}
+                        compatibleBounds={datasetCompatibleBounds}
+                        flashUnclaimed={datasetFlash}
+                        onClaimList={(nodeId, listId) => {
+                          if (!committedIndex) return;
+                          commitMultiCardOp(
+                            claimMultiCardDatasetList({
+                              blueprint,
+                              nodeId,
+                              dataset,
+                              listId,
+                              index: committedIndex,
+                            }),
+                          );
+                        }}
+                        onArmChip={setArmedDatasetChip}
+                        onUnbindLayer={(nodeId, moldLayerId) => {
+                          commitMultiCardOp(
+                            setMultiCardSlotBinding({
+                              blueprint,
+                              nodeId,
+                              moldLayerId,
+                              binding: null,
+                            }),
+                          );
+                          setArmedDatasetChip((current) =>
+                            current?.nodeId === nodeId ? null : current,
+                          );
+                        }}
+                      />
+                    )
+              }
               floatingPortalHost={pagePreviewMode ? null : floatingHostEl}
               transformEnabled={
                 !pagePreviewMode &&

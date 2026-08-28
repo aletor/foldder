@@ -64,12 +64,26 @@ export type SiteMultiCardSlotOverrideV1 = {
 
 export type SiteMultiCardInstanceV1 = {
   id: string;
+  /** Fila del Dataset cuando el MultiCard lee una lista. */
+  datasetRowId?: string;
   overrides: Record<string, SiteMultiCardSlotOverrideV1>;
 };
 
 export type SiteMultiCardNavV1 = {
   visibility: SiteMultiCardNavVisibility;
   style: SiteMultiCardNavStyle;
+};
+
+export type SiteMultiCardDatasetSourceV1 = {
+  kind: "dataset";
+  listId: string;
+  listKey: string;
+};
+
+export type SiteMultiCardSlotBindingV1 = {
+  source: "list" | "constant";
+  fieldId: string;
+  fieldKey: string;
 };
 
 export interface SiteBlueprintMultiCardNode extends SiteBlueprintNodeBase {
@@ -83,6 +97,10 @@ export interface SiteBlueprintMultiCardNode extends SiteBlueprintNodeBase {
   /** Alto visible en scrollV (unidades de página). */
   visibleHeight?: number;
   cards: SiteMultiCardInstanceV1[];
+  /** Ausente = copias manuales. */
+  dataset?: SiteMultiCardDatasetSourceV1;
+  /** moldLayerId → columna. */
+  slotBindings?: Record<string, SiteMultiCardSlotBindingV1>;
 }
 
 export interface SiteBlueprintLayoutGroupNode extends SiteBlueprintNodeBase {
@@ -424,6 +442,8 @@ export function parseMultiCardNode(raw: unknown): SiteBlueprintMultiCardNode {
     layerIds?: string[];
   };
   const cards = parseMultiCardCards(node.cards);
+  const dataset = parseMultiCardDatasetSource(node.dataset);
+  const slotBindings = parseMultiCardSlotBindings(node.slotBindings);
   return {
     id: typeof node.id === "string" && node.id.trim() ? node.id : "scmc_unknown",
     kind: "multicard",
@@ -441,6 +461,8 @@ export function parseMultiCardNode(raw: unknown): SiteBlueprintMultiCardNode {
       ? { visibleHeight: node.visibleHeight }
       : {}),
     cards,
+    ...(dataset ? { dataset } : {}),
+    ...(Object.keys(slotBindings).length > 0 ? { slotBindings } : {}),
   };
 }
 
@@ -451,8 +473,11 @@ export function cloneMultiCardNode(node: SiteBlueprintMultiCardNode): SiteBluepr
     layerIds: [...node.layerIds],
     cards: node.cards.map((card) => ({
       id: card.id,
+      ...(card.datasetRowId ? { datasetRowId: card.datasetRowId } : {}),
       overrides: { ...card.overrides },
     })),
+    dataset: node.dataset,
+    slotBindings: node.slotBindings,
   });
 }
 
@@ -484,6 +509,10 @@ function parseMultiCardCards(raw: unknown): SiteMultiCardInstanceV1[] {
     seen.add(id);
     cards.push({
       id,
+      ...(typeof (item as { datasetRowId?: unknown }).datasetRowId === "string" &&
+      (item as { datasetRowId: string }).datasetRowId.trim()
+        ? { datasetRowId: (item as { datasetRowId: string }).datasetRowId.trim() }
+        : {}),
       overrides: parseMultiCardOverrides((item as { overrides?: unknown }).overrides),
     });
     if (cards.length >= MULTICARD_COUNT_MAX) break;
@@ -510,6 +539,34 @@ function parseMultiCardOverrides(raw: unknown): Record<string, SiteMultiCardSlot
       if (mediaRef.src || mediaRef.s3Key) slot.mediaRef = mediaRef;
     }
     if (slot.text != null || slot.mediaRef) out[layerId] = slot;
+  }
+  return out;
+}
+
+function parseMultiCardDatasetSource(raw: unknown): SiteMultiCardDatasetSourceV1 | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const item = raw as { kind?: unknown; listId?: unknown; listKey?: unknown };
+  if (item.kind !== "dataset") return undefined;
+  if (typeof item.listId !== "string" || !item.listId.trim()) return undefined;
+  return {
+    kind: "dataset",
+    listId: item.listId.trim(),
+    listKey: typeof item.listKey === "string" && item.listKey.trim() ? item.listKey.trim() : item.listId.trim(),
+  };
+}
+
+function parseMultiCardSlotBindings(raw: unknown): Record<string, SiteMultiCardSlotBindingV1> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, SiteMultiCardSlotBindingV1> = {};
+  for (const [layerId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!layerId.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue;
+    const item = value as { source?: unknown; fieldId?: unknown; fieldKey?: unknown };
+    const source = item.source === "constant" ? "constant" : item.source === "list" ? "list" : null;
+    if (!source) continue;
+    if (typeof item.fieldId !== "string" || !item.fieldId.trim()) continue;
+    const fieldKey =
+      typeof item.fieldKey === "string" && item.fieldKey.trim() ? item.fieldKey.trim() : item.fieldId.trim();
+    out[layerId] = { source, fieldId: item.fieldId.trim(), fieldKey };
   }
   return out;
 }

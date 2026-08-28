@@ -109,6 +109,10 @@ export interface SiteCreatorPreviewProps {
   /** Carruseles MultiCard resueltos (flechas / rueda). */
   multiCardNav?: MultiCardContainerLayout[];
   onMultiCardScrollIndex?: (nodeId: string, index: number) => void;
+  /** Hojas y recortes Dataset sobre el MultiCard. */
+  datasetOverlay?: React.ReactNode;
+  /** Recorte Dataset armado: el clic siguiente enlaza una capa compatible. */
+  datasetChipArmed?: boolean;
   /** Host para portal de microbarra / popover (capa Studio sin clip). */
   floatingPortalHost?: HTMLElement | null;
   transformEnabled?: boolean;
@@ -214,6 +218,8 @@ export function SiteCreatorPreview({
   objectClipById,
   multiCardNav = [],
   onMultiCardScrollIndex,
+  datasetOverlay = null,
+  datasetChipArmed = false,
   floatingPortalHost = null,
   transformEnabled = false,
   transformBounds = null,
@@ -671,6 +677,7 @@ export function SiteCreatorPreview({
             objectClipById={objectClipById}
           />
         ) : null}
+        {datasetOverlay}
         {multiCardNav.length > 0 && onMultiCardScrollIndex ? (
           <SiteCreatorMultiCardNavOverlay
             containers={multiCardNav}
@@ -754,10 +761,13 @@ export function SiteCreatorPreview({
       ) : null}
       <div
         ref={scrollRef}
+        data-site-creator-dataset-armed={datasetChipArmed ? "1" : undefined}
         className={`site-creator-preview-scroll min-h-0 flex-1 ${
           readOnly
             ? "cursor-default overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
-            : "cursor-crosshair overflow-hidden overscroll-none"
+            : datasetChipArmed
+              ? "cursor-copy overflow-hidden overscroll-none"
+              : "cursor-crosshair overflow-hidden overscroll-none"
         }`}
         onDoubleClick={(event) => {
           if (readOnly) return;
