@@ -20,6 +20,7 @@ import {
   findPartiallyCoveredSemanticNodes,
   removeBlueprintNodePreservingContent,
   resolveButtonParent,
+  stretchSectionSourceRangeBottom,
 } from "./site-blueprint-ops";
 import {
   buildBlueprintOwnershipIndex,
@@ -695,6 +696,69 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
     expect(section.sourceRange.bottom).toBe(120);
   });
 
+  it("stretching the section frame claims empty space below without moving layers", () => {
+    const committed = page([
+      layer({ id: "top", type: "rect", x: 0, y: 0, width: 100, height: 80 }),
+      layer({ id: "bottom", type: "rect", x: 0, y: 140, width: 100, height: 40 }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const first = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["top"],
+      index,
+      committedPage: committed,
+      sectionType: "hero",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok || !first.createdNodeId) return;
+    const second = createSectionFromSelection({
+      blueprint: first.blueprint,
+      selectedLayerIds: ["bottom"],
+      index,
+      committedPage: committed,
+      sectionType: "generic",
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok || !second.createdNodeId) return;
+
+    const heroId = first.createdNodeId;
+    const stretched = stretchSectionSourceRangeBottom({
+      blueprint: second.blueprint,
+      sectionId: heroId,
+      bottom: 120,
+      index,
+      pageHeight: 300,
+    });
+    expect(stretched.ok).toBe(true);
+    if (!stretched.ok) return;
+    const hero = stretched.blueprint.nodes[heroId] as SiteBlueprintSectionNode;
+    expect(hero.sourceRange.bottom).toBe(120);
+    expect(committed.objects?.find((obj) => obj.id === "top")?.y).toBe(0);
+    expect(committed.objects?.find((obj) => obj.id === "top")?.height).toBe(80);
+
+    const tooLow = stretchSectionSourceRangeBottom({
+      blueprint: stretched.blueprint,
+      sectionId: heroId,
+      bottom: 40,
+      index,
+      pageHeight: 300,
+    });
+    expect(tooLow.ok).toBe(true);
+    if (!tooLow.ok) return;
+    expect((tooLow.blueprint.nodes[heroId] as SiteBlueprintSectionNode).sourceRange.bottom).toBe(80);
+
+    const intoNext = stretchSectionSourceRangeBottom({
+      blueprint: stretched.blueprint,
+      sectionId: heroId,
+      bottom: 200,
+      index,
+      pageHeight: 300,
+    });
+    expect(intoNext.ok).toBe(true);
+    if (!intoNext.ok) return;
+    expect((intoNext.blueprint.nodes[heroId] as SiteBlueprintSectionNode).sourceRange.bottom).toBe(140);
+  });
+
   it("25. Sections ordered by vertical position", () => {
     const committed = page([
       layer({ id: "lower", type: "rect", x: 0, y: 300, width: 80, height: 40 }),
@@ -1055,6 +1119,34 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
     };
     expect(validateSiteBlueprintTree(bp).ok).toBe(true);
     expect(collectSemanticCoverageLayerIds(bp, "s1")).toEqual(["missing_layer"]);
+  });
+
+  it("41b. coverage walk does not hang on a parent/child cycle", () => {
+    const bp: SiteBlueprintV1 = {
+      schemaVersion: 1,
+      rootChildIds: ["s1"],
+      nodes: {
+        s1: {
+          id: "s1",
+          kind: "section",
+          sectionType: "hero",
+          label: "Hero",
+          parentId: null,
+          childIds: ["g1"],
+          layerIds: ["clip"],
+          sourceRange: { top: 0, bottom: 100 },
+        },
+        g1: {
+          id: "g1",
+          kind: "layoutGroup",
+          label: "Grupo",
+          parentId: "s1",
+          childIds: ["s1"],
+          layerIds: ["inner"],
+        },
+      },
+    };
+    expect(collectSemanticCoverageLayerIds(bp, "s1")).toEqual(["clip", "inner"]);
   });
 
   it("42. unstructured visual content is not an error (validate ok + count > 0)", () => {

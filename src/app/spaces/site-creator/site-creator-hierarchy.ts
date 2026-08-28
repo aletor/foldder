@@ -1,5 +1,5 @@
 import type { SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { PageRect } from "./site-creator-coordinate-space";
 import { pageRectFullyContains, unionPageRects } from "./site-creator-coordinate-space";
@@ -20,7 +20,7 @@ const CONTAIN_TOLERANCE_PAGE = 2; // ~2 CSS px at 100%; caller may scale
 
 export function isSemanticContainerNode(node: SiteBlueprintNode | null | undefined): boolean {
   if (!node) return false;
-  return isSiteSectionNode(node) || node.kind === "layoutGroup" || isSiteButtonNode(node);
+  return isSiteSectionNode(node) || node.kind === "layoutGroup" || isSiteMultiCardNode(node) || isSiteButtonNode(node);
 }
 
 export function countContainerElements(node: SiteBlueprintNode): number {
@@ -46,6 +46,11 @@ export function containerDisplayLabel(
     const base = node.label?.trim() || "Grupo";
     if (n <= 0) return base;
     return `${base} · ${n} ${n === 1 ? "elemento" : "elementos"}`;
+  }
+  if (isSiteMultiCardNode(node)) {
+    const n = node.count;
+    const base = node.label?.trim() || "MultiCard";
+    return `${base} · ×${n}`;
   }
   return deriveBlueprintNodeDisplayLabel(node, snapshot, index);
 }
@@ -209,7 +214,7 @@ export function containersFullyContainingUnit(
   // Better: inflate container by tolerance
   const hits: string[] = [];
   for (const node of Object.values(blueprint.nodes)) {
-    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup") continue;
+    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup" && !isSiteMultiCardNode(node)) continue;
     // Skip if unit already inside this node
     if (unit.kind === "blueprintNode") {
       if (unit.nodeId === node.id) continue;

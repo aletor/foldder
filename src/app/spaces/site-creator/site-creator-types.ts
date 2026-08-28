@@ -1,11 +1,12 @@
 import type { DesignerPageState } from "../designer/DesignerNode";
+import { createSiteMultiCardCardId } from "./site-blueprint-ids";
 import { isValidDesignerSourceSnapshotV1 } from "./designer-source-snapshot";
 
 export const SITE_BLUEPRINT_SCHEMA_VERSION = 1 as const;
 export const SITE_CREATOR_SCHEMA_VERSION = 1 as const;
 export const DESIGNER_SOURCE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
-export type SiteBlueprintNodeKind = "section" | "component" | "layoutGroup";
+export type SiteBlueprintNodeKind = "section" | "component" | "layoutGroup" | "multicard";
 export type SiteSectionType = "hero" | "generic";
 export type SiteComponentType = "button";
 
@@ -41,6 +42,49 @@ export interface SiteBlueprintSectionNode extends SiteBlueprintNodeBase {
 export type LayoutGroupWidthMode = "content" | "full" | "scale";
 export type LayoutGroupFitOrigin = "start" | "end";
 
+export type SiteMultiCardLayoutMode = "grid" | "scrollH" | "scrollV";
+export type SiteMultiCardNavVisibility = "auto" | "hidden";
+export type SiteMultiCardNavStyle = "arrows" | "dots";
+
+export const MULTICARD_COUNT_MIN = 1;
+export const MULTICARD_COUNT_MAX = 24;
+export const MULTICARD_DEFAULT_COUNT = 3;
+export const MULTICARD_DEFAULT_GAP = 24;
+
+/** Sustitución de imagen por card. El estilo/encuadre sigue el molde. */
+export type SiteMultiCardMediaRefV1 = {
+  src?: string;
+  s3Key?: string;
+};
+
+export type SiteMultiCardSlotOverrideV1 = {
+  text?: string;
+  mediaRef?: SiteMultiCardMediaRefV1;
+};
+
+export type SiteMultiCardInstanceV1 = {
+  id: string;
+  overrides: Record<string, SiteMultiCardSlotOverrideV1>;
+};
+
+export type SiteMultiCardNavV1 = {
+  visibility: SiteMultiCardNavVisibility;
+  style: SiteMultiCardNavStyle;
+};
+
+export interface SiteBlueprintMultiCardNode extends SiteBlueprintNodeBase {
+  kind: "multicard";
+  /** N en Original. Debe coincidir con `cards.length`. */
+  count: number;
+  layoutMode: SiteMultiCardLayoutMode;
+  /** Separación entre cards en unidades de página (Original). */
+  gap: number;
+  nav?: SiteMultiCardNavV1;
+  /** Alto visible en scrollV (unidades de página). */
+  visibleHeight?: number;
+  cards: SiteMultiCardInstanceV1[];
+}
+
 export interface SiteBlueprintLayoutGroupNode extends SiteBlueprintNodeBase {
   kind: "layoutGroup";
   /**
@@ -65,7 +109,8 @@ export interface SiteBlueprintComponentNode extends SiteBlueprintNodeBase {
 export type SiteBlueprintNode =
   | SiteBlueprintSectionNode
   | SiteBlueprintComponentNode
-  | SiteBlueprintLayoutGroupNode;
+  | SiteBlueprintLayoutGroupNode
+  | SiteBlueprintMultiCardNode;
 
 export interface SiteBlueprintV1 {
   schemaVersion: typeof SITE_BLUEPRINT_SCHEMA_VERSION;
@@ -184,6 +229,13 @@ export type ResponsiveContainerTuneV1 = {
   heightMode?: SiteSectionHeightMode;
   /** Solo con `heightMode: "custom"`. */
   customHeight?: number;
+  /** MultiCard: modo de repetición en esta banda. Ausente = hereda Original. */
+  repeatMode?: SiteMultiCardLayoutMode;
+  /** MultiCard: gap entre cards en esta banda. Distinto de `gap` (stack). */
+  cardGap?: number;
+  navVisibility?: SiteMultiCardNavVisibility;
+  navStyle?: SiteMultiCardNavStyle;
+  visibleHeight?: number;
 };
 
 export type ResponsiveContainerTuneRuleV1 = {
@@ -194,7 +246,10 @@ export type ResponsiveContainerTuneRuleV1 = {
 export type ResponsiveMediaTuneV1 = {
   fit?: ResponsiveMediaFit;
   focal?: { x: number; y: number };
-  /** Ampliación adicional del contenido recortado. 1 = cover mínimo. */
+  /**
+   * Escala del contenido recortado respecto al encuadre de origen.
+   * 1 = tamaño actual al entrar; puede ser < 1 hasta el cover de la máscara.
+   */
   zoom?: number;
 };
 
@@ -306,7 +361,7 @@ export function parseSiteCreatorPublishState(value: unknown): SiteCreatorPublish
 export function parseSiteCreatorNodeData(data: unknown): SiteCreatorNodeData {
   const raw = (data ?? {}) as Partial<SiteCreatorNodeData>;
   const blueprint = isValidSiteBlueprintV1(raw.blueprint)
-    ? raw.blueprint
+    ? sanitizeSiteBlueprintV1(raw.blueprint)
     : createEmptySiteBlueprintV1();
   const sourceSnapshot = isValidDesignerSourceSnapshotV1(raw.sourceSnapshot)
     ? raw.sourceSnapshot
@@ -331,4 +386,130 @@ export function isSiteComponentNode(node: SiteBlueprintNode): node is SiteBluepr
 
 export function isSiteButtonNode(node: SiteBlueprintNode): node is SiteBlueprintComponentNode {
   return node.kind === "component" && node.componentType === "button";
+}
+
+export function isSiteMultiCardNode(node: SiteBlueprintNode): node is SiteBlueprintMultiCardNode {
+  return node.kind === "multicard";
+}
+
+/** Sección, grupo o MultiCard (no botón). */
+export function isSiteStructuralContainerNode(
+  node: SiteBlueprintNode | null | undefined,
+): node is SiteBlueprintSectionNode | SiteBlueprintLayoutGroupNode | SiteBlueprintMultiCardNode {
+  if (!node) return false;
+  return node.kind === "section" || node.kind === "layoutGroup" || node.kind === "multicard";
+}
+
+export function sanitizeSiteBlueprintV1(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
+  let changed = false;
+  const nodes: Record<string, SiteBlueprintNode> = {};
+  for (const [id, node] of Object.entries(blueprint.nodes ?? {})) {
+    if (node && (node as { kind?: string }).kind === "multicard") {
+      nodes[id] = parseMultiCardNode(node);
+      changed = true;
+    } else {
+      nodes[id] = node;
+    }
+  }
+  if (!changed) return blueprint;
+  return { ...blueprint, nodes };
+}
+
+export function parseMultiCardNode(raw: unknown): SiteBlueprintMultiCardNode {
+  const node = (raw ?? {}) as Partial<SiteBlueprintMultiCardNode> & {
+    id?: string;
+    label?: string;
+    parentId?: string | null;
+    childIds?: string[];
+    layerIds?: string[];
+  };
+  const cards = parseMultiCardCards(node.cards);
+  return {
+    id: typeof node.id === "string" && node.id.trim() ? node.id : "scmc_unknown",
+    kind: "multicard",
+    label: typeof node.label === "string" && node.label.trim() ? node.label : "MultiCard",
+    parentId: typeof node.parentId === "string" ? node.parentId : null,
+    childIds: Array.isArray(node.childIds) ? node.childIds.filter((id) => typeof id === "string") : [],
+    layerIds: Array.isArray(node.layerIds) ? node.layerIds.filter((id) => typeof id === "string") : [],
+    count: cards.length,
+    layoutMode: parseMultiCardLayoutMode(node.layoutMode),
+    gap: parseMultiCardGap(node.gap),
+    ...(parseMultiCardNav(node.nav) ? { nav: parseMultiCardNav(node.nav)! } : {}),
+    ...(typeof node.visibleHeight === "number" &&
+    Number.isFinite(node.visibleHeight) &&
+    node.visibleHeight > 0
+      ? { visibleHeight: node.visibleHeight }
+      : {}),
+    cards,
+  };
+}
+
+export function cloneMultiCardNode(node: SiteBlueprintMultiCardNode): SiteBlueprintMultiCardNode {
+  return parseMultiCardNode({
+    ...node,
+    childIds: [...node.childIds],
+    layerIds: [...node.layerIds],
+    cards: node.cards.map((card) => ({
+      id: card.id,
+      overrides: { ...card.overrides },
+    })),
+  });
+}
+
+function parseMultiCardLayoutMode(value: unknown): SiteMultiCardLayoutMode {
+  return value === "scrollH" || value === "scrollV" || value === "grid" ? value : "grid";
+}
+
+function parseMultiCardGap(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  return MULTICARD_DEFAULT_GAP;
+}
+
+function parseMultiCardNav(value: unknown): SiteMultiCardNavV1 | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as { visibility?: unknown; style?: unknown };
+  const visibility = raw.visibility === "hidden" || raw.visibility === "auto" ? raw.visibility : "auto";
+  const style = raw.style === "dots" || raw.style === "arrows" ? raw.style : "arrows";
+  return { visibility, style };
+}
+
+function parseMultiCardCards(raw: unknown): SiteMultiCardInstanceV1[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const cards: SiteMultiCardInstanceV1[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const id = (item as { id?: unknown }).id;
+    if (typeof id !== "string" || !id.startsWith("scmcc_") || seen.has(id)) continue;
+    seen.add(id);
+    cards.push({
+      id,
+      overrides: parseMultiCardOverrides((item as { overrides?: unknown }).overrides),
+    });
+    if (cards.length >= MULTICARD_COUNT_MAX) break;
+  }
+  if (cards.length === 0) {
+    return [{ id: createSiteMultiCardCardId(), overrides: {} }];
+  }
+  return cards;
+}
+
+function parseMultiCardOverrides(raw: unknown): Record<string, SiteMultiCardSlotOverrideV1> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, SiteMultiCardSlotOverrideV1> = {};
+  for (const [layerId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!layerId.trim() || !value || typeof value !== "object" || Array.isArray(value)) continue;
+    const item = value as { text?: unknown; mediaRef?: unknown };
+    const slot: SiteMultiCardSlotOverrideV1 = {};
+    if (typeof item.text === "string") slot.text = item.text;
+    if (item.mediaRef && typeof item.mediaRef === "object" && !Array.isArray(item.mediaRef)) {
+      const media = item.mediaRef as { src?: unknown; s3Key?: unknown };
+      const mediaRef: SiteMultiCardMediaRefV1 = {};
+      if (typeof media.src === "string" && media.src.trim()) mediaRef.src = media.src;
+      if (typeof media.s3Key === "string" && media.s3Key.trim()) mediaRef.s3Key = media.s3Key;
+      if (mediaRef.src || mediaRef.s3Key) slot.mediaRef = mediaRef;
+    }
+    if (slot.text != null || slot.mediaRef) out[layerId] = slot;
+  }
+  return out;
 }

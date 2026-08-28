@@ -35,6 +35,39 @@ export function isLayerScopedEffectLayer(layer: {
   return layer.effectScope === "selectedLayer" && !!layer.effectTargetLayerId;
 }
 
+/** Tipo que ve el modal de fx: el campo de imagen no es un rectángulo vacío. */
+export function effectLayerModalTargetType(node: {
+  type: string;
+  isImageFrame?: boolean;
+} | null | undefined): string | undefined {
+  if (!node) return undefined;
+  if (node.type === "rect" && node.isImageFrame) return "imageFrame";
+  return node.type;
+}
+
+export function isEffectLayerScopedTarget(args: {
+  targetType?: string;
+  targetInsideFolder?: boolean;
+}): boolean {
+  return (
+    !!args.targetInsideFolder ||
+    args.targetType === "clippingContainer" ||
+    args.targetType === "imageFrame"
+  );
+}
+
+/** Qué opciones de «Aplicar» tiene sentido mostrar para el objetivo actual. */
+export function effectLayerApplyModeVisible(
+  mode: "embedded" | "wholeStack" | "belowSelection" | "selectedFolder" | "selectedLayer",
+  args: { targetType?: string; targetInsideFolder?: boolean },
+): boolean {
+  if (mode === "selectedFolder") return args.targetType === "groupContainer";
+  const scoped = isEffectLayerScopedTarget(args);
+  if (mode === "selectedLayer") return scoped;
+  if (scoped && (mode === "wholeStack" || mode === "belowSelection")) return false;
+  return true;
+}
+
 export function selectedIndexInRootStack(
   objects: { id: string }[],
   selectedId: string | null,

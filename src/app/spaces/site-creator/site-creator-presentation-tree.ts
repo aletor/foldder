@@ -6,7 +6,7 @@
 import type { DesignerPageState } from "../designer/DesignerNode";
 import type { FreehandObject } from "../FreehandStudio";
 import type { DesignerSourceSnapshotV1, SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex, SiteCreatorSelectionIndexEntry } from "./site-creator-selection-types";
 import type { PageRect } from "./site-creator-coordinate-space";
 import { unionPageRects } from "./site-creator-coordinate-space";
@@ -22,6 +22,8 @@ import {
   type SiteCreatorSelectionUnit,
 } from "./site-creator-display-labels";
 import { looksTechnicalName } from "./site-creator-display-labels";
+import { collectMultiCardInstanceLayerIds } from "./site-creator-multicard-layout";
+import { isMultiCardInstanceId } from "./site-creator-multicard-ids";
 import {
   collectDesignerGroupIdClusters,
   designerGroupIdClusterLabel,
@@ -331,7 +333,9 @@ function buildSemanticSubtree(
         : node.label?.trim() || "Sección"
       : node.kind === "layoutGroup"
         ? node.label?.trim() || "Grupo"
-        : deriveBlueprintNodeDisplayLabel(node, snapshot, index);
+        : node.kind === "multicard"
+          ? `${node.label?.trim() || "MultiCard"} · ×${node.count}`
+          : deriveBlueprintNodeDisplayLabel(node, snapshot, index);
 
   const n = children.length;
   const label =
@@ -391,6 +395,14 @@ function collectPresentationBounds(
       rects.push(entry.visualBounds);
     }
   }
+  const semantic = blueprint.nodes[node.nodeId];
+  if (semantic && isSiteMultiCardNode(semantic)) {
+    for (const layerId of collectMultiCardInstanceLayerIds(index, node.nodeId)) {
+      const entry = index.byId[layerId];
+      if (!entry?.visible) continue;
+      rects.push(entry.visualBounds);
+    }
+  }
   const u = unionPageRects(rects);
   if (u) into[`node:${node.nodeId}`] = u;
   return u;
@@ -421,6 +433,10 @@ export function buildSiteCreatorPresentationTree(args: {
 
   for (const entry of index.entries) {
     if (!entry.visible || !entry.selectableFromCanvas) continue;
+    if (isMultiCardInstanceId(entry.layerId)) {
+      seen.add(entry.layerId);
+      continue;
+    }
     if (
       ownership.ownerByLayerId[entry.layerId] ||
       ownership.coveredByContainerOwner[entry.layerId] ||

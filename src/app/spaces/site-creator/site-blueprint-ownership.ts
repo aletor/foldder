@@ -61,9 +61,12 @@ export function collectSemanticCoverageLayerIds(
   const node = blueprint.nodes[nodeId];
   if (!node) return [];
   const out = new Set<string>(node.layerIds);
+  const seen = new Set<string>([nodeId]);
   const stack = [...node.childIds];
   while (stack.length) {
     const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
     const child = blueprint.nodes[id];
     if (!child) continue;
     for (const layerId of child.layerIds) out.add(layerId);

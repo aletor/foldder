@@ -9,6 +9,7 @@ import {
 } from "./PhotoImageAdjustmentsModal";
 import { LayerStylesModal } from "./LayerStylesModal";
 import { isLayerOverlaysSupported, type LayerEffects } from "./layer-effects-types";
+import { effectLayerApplyModeVisible } from "./effect-layer-utils";
 import { STUDIO_LAYER_MODAL_Z, studioOverlayPointerGuards } from "./studio-modal-shell";
 
 export type EffectLayerTab = "tone" | "look" | "overlays";
@@ -239,16 +240,9 @@ export function EffectLayerModal({
             onChange={(e) => onApplyModeChange?.(e.target.value as EffectLayerApplyMode)}
             className="min-w-0 flex-1 truncate rounded-none border border-white/10 bg-black/40 px-1.5 py-0.5 text-[10px] text-zinc-100 outline-none focus:border-[#71449f]/60"
           >
-            {APPLY_MODE_OPTIONS.filter((o) => {
-              if (o.value === "selectedFolder") return targetType === "groupContainer";
-              const scopedTarget =
-                !!targetInsideFolder || targetType === "clippingContainer";
-              if (o.value === "selectedLayer") return scopedTarget;
-              if (scopedTarget && (o.value === "wholeStack" || o.value === "belowSelection")) {
-                return false;
-              }
-              return true;
-            }).map((o) => (
+            {APPLY_MODE_OPTIONS.filter((o) =>
+              effectLayerApplyModeVisible(o.value, { targetType, targetInsideFolder }),
+            ).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>

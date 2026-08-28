@@ -9,7 +9,23 @@ import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { isLayerExplicitBackgroundSurface } from "./site-creator-background-assignment";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
-import { isSiteButtonNode, type SiteBlueprintSectionNode, type SiteBlueprintV1, type SiteSectionScrollBand } from "./site-creator-types";
+import {
+  encodeMultiCardInstanceId,
+  moldLayerIdFromDisplay,
+  parseMultiCardInstanceId,
+} from "./site-creator-multicard-ids";
+import {
+  buildMultiCardPublishPlan,
+  compilePublishedMultiCardScript,
+  type MultiCardPublishPlan,
+} from "./site-creator-multicard-publish";
+import {
+  isSiteButtonNode,
+  isSiteMultiCardNode,
+  type SiteBlueprintSectionNode,
+  type SiteBlueprintV1,
+  type SiteSectionScrollBand,
+} from "./site-creator-types";
 import {
   destinationScrollKind,
   lastDocumentSection,
@@ -178,7 +194,10 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export function collectPublishImageRefs(page: DesignerPageState): PublishImageRef[] {
+export function collectPublishImageRefs(
+  page: DesignerPageState,
+  blueprint?: SiteBlueprintV1,
+): PublishImageRef[] {
   const refs: PublishImageRef[] = [];
   const seen = new Set<string>();
   const visit = (objects: FreehandObject[] | undefined) => {
@@ -201,7 +220,76 @@ export function collectPublishImageRefs(page: DesignerPageState): PublishImageRe
     }
   };
   visit(page.objects);
+  if (blueprint) {
+    for (const extra of collectMultiCardOverrideImageRefs(blueprint)) {
+      if (seen.has(extra.layerId)) continue;
+      seen.add(extra.layerId);
+      refs.push(extra);
+    }
+  }
   return refs;
+}
+
+function collectMultiCardOverrideImageRefs(blueprint: SiteBlueprintV1): PublishImageRef[] {
+  const refs: PublishImageRef[] = [];
+  for (const node of Object.values(blueprint.nodes)) {
+    if (!isSiteMultiCardNode(node)) continue;
+    for (const card of node.cards) {
+      for (const [moldLayerId, slot] of Object.entries(card.overrides)) {
+        const media = slot.mediaRef;
+        if (!media) continue;
+        const s3Key = pickS3Key(media.s3Key);
+        const src = usableSrc(media.src);
+        if (!s3Key && !src) continue;
+        refs.push({
+          layerId: encodeMultiCardInstanceId({
+            nodeId: node.id,
+            cardId: card.id,
+            moldLayerId,
+          }),
+          s3Key,
+          src,
+        });
+      }
+    }
+  }
+  return refs;
+}
+
+/** Card 1 override lives on the instance id so clones falling back to the mold keep the original asset. */
+function card1OverrideHrefKeys(blueprint: SiteBlueprintV1): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const node of Object.values(blueprint.nodes)) {
+    if (!isSiteMultiCardNode(node)) continue;
+    const card1 = node.cards[0];
+    if (!card1) continue;
+    for (const [moldLayerId, slot] of Object.entries(card1.overrides)) {
+      if (!slot.mediaRef) continue;
+      map.set(
+        moldLayerId,
+        encodeMultiCardInstanceId({
+          nodeId: node.id,
+          cardId: card1.id,
+          moldLayerId,
+        }),
+      );
+    }
+  }
+  return map;
+}
+
+function resolvePublishedImageHref(
+  layerId: string,
+  hrefMap: Record<string, string>,
+  card1OverrideKeys: Map<string, string>,
+): string | undefined {
+  const parsed = parseMultiCardInstanceId(layerId);
+  if (parsed) {
+    return hrefMap[layerId] ?? hrefMap[parsed.moldLayerId];
+  }
+  const card1Key = card1OverrideKeys.get(layerId);
+  if (card1Key && hrefMap[card1Key]) return hrefMap[card1Key];
+  return hrefMap[layerId];
 }
 
 function imageRefFromObject(obj: FreehandObject): PublishImageRef | null {
@@ -606,8 +694,15 @@ export function compilePublishedSite(args: {
     index: referenceIndex,
     pageRect: { x: 0, y: 0, width: reference.width, height: reference.height },
   });
+  const multiCardPlan = buildMultiCardPublishPlan({
+    blueprint: args.blueprint,
+    wide,
+    tablet,
+    mobile,
+  });
 
   const buttonLabels = buttonLabelByLayerId(args.blueprint);
+  const card1OverrideKeys = card1OverrideHrefKeys(args.blueprint);
   const layers = new Map<string, CompiledLayer>();
   const imageHrefByLayerId = { ...args.imageHrefByLayerId };
   for (const rule of args.blueprint.responsive?.backgrounds ?? []) {
@@ -623,7 +718,7 @@ export function compilePublishedSite(args: {
   }
   const wideMap = collectObjectMap(layouts.wide.objects);
   for (const obj of wideMap.values()) {
-    const layer = compilePaintLayer(obj, imageHrefByLayerId, buttonLabels);
+    const layer = compilePaintLayer(obj, imageHrefByLayerId, buttonLabels, card1OverrideKeys);
     if (!layer) continue;
     layers.set(obj.id, layer);
   }
@@ -651,7 +746,7 @@ export function compilePublishedSite(args: {
         if (typeof size === "number") layer.fontSize![band] = size;
       }
       if (layer.imageFrame) {
-        const tune = resolveMediaTune(args.blueprint, id, mediaBand);
+        const tune = resolveMediaTune(args.blueprint, moldLayerIdFromDisplay(id), mediaBand);
         if (tune?.focal || tune?.zoom) {
           layer.imageFrameCrop![band] = {
             focal: tune.focal ?? { x: 0.5, y: 0.5 },
@@ -687,6 +782,7 @@ export function compilePublishedSite(args: {
       tablet: hintsFromResolved(tablet),
       mobile: hintsFromResolved(mobile),
     },
+    multiCardPlan,
   });
   const html = buildHtml({
     title: args.title.trim() || "Sitio",
@@ -694,25 +790,41 @@ export function compilePublishedSite(args: {
     forest,
     layers,
     blueprint: args.blueprint,
+    multiCardPlan,
   });
   const tabletMax = siteCreatorTabletMediaMaxWidth(reference.width);
+  const scrollJs = compilePublishedScrollScript(listSectionScrollHops(args.blueprint, publishedDesktopScrollBand(args.blueprint)), {
+    wide: listSectionScrollHops(args.blueprint, publishedDesktopScrollBand(args.blueprint)),
+    tablet: listSectionScrollHops(args.blueprint, "tablet"),
+    mobile: listSectionScrollHops(args.blueprint, "mobile"),
+    tabletMax,
+    mobileMax: SITE_CREATOR_TABLET_WIDTH - 1,
+  });
+  const multiCardJs = compilePublishedMultiCardScript(multiCardPlan, {
+    tabletMax,
+    mobileMax: SITE_CREATOR_TABLET_WIDTH - 1,
+  });
+  const js = joinPublishedScripts(scrollJs, multiCardJs);
   return {
     html,
     css,
-    js: compilePublishedScrollScript(listSectionScrollHops(args.blueprint, publishedDesktopScrollBand(args.blueprint)), {
-      wide: listSectionScrollHops(args.blueprint, publishedDesktopScrollBand(args.blueprint)),
-      tablet: listSectionScrollHops(args.blueprint, "tablet"),
-      mobile: listSectionScrollHops(args.blueprint, "mobile"),
-      tabletMax,
-      mobileMax: SITE_CREATOR_TABLET_WIDTH - 1,
-    }),
+    js,
   };
+}
+
+function joinPublishedScripts(...parts: string[]): string {
+  const bodies = parts
+    .map((part) => part.replace(/^"use strict";\s*/m, "").trim())
+    .filter(Boolean);
+  if (bodies.length === 0) return `"use strict";\n`;
+  return `"use strict";\n${bodies.join("\n")}\n`;
 }
 
 function compilePaintLayer(
   obj: FreehandObject,
   imageHrefByLayerId: Record<string, string>,
   buttonLabels: Map<string, string>,
+  card1OverrideKeys: Map<string, string>,
 ): CompiledLayer | null {
   if (obj.visible === false) return null;
   if (
@@ -739,8 +851,9 @@ function compilePaintLayer(
     kind,
     boxes: { wide: null, tablet: null, mobile: null },
     clips: { wide: null, tablet: null, mobile: null },
-    imageHref: imageHrefByLayerId[obj.id] ?? booleanSrc,
-    alt: buttonLabels.get(obj.id) || (obj.name && obj.name !== obj.id ? obj.name : ""),
+    imageHref:
+      resolvePublishedImageHref(obj.id, imageHrefByLayerId, card1OverrideKeys) ?? booleanSrc,
+    alt: buttonLabels.get(obj.id) || buttonLabels.get(moldLayerIdFromDisplay(obj.id)) || (obj.name && obj.name !== obj.id ? obj.name : ""),
     fontSize: { wide: 16, tablet: 16, mobile: 16 },
     buttonLabel: buttonLabels.get(obj.id),
   };
@@ -821,6 +934,7 @@ function buildCss(args: {
   referenceWidth: number;
   blueprint: SiteBlueprintV1;
   hintsByBand: Record<BandName, SectionLayoutHint[] | null>;
+  multiCardPlan: MultiCardPublishPlan;
 }): string {
   const tabletMax = siteCreatorTabletMediaMaxWidth(args.referenceWidth);
   const flow = args.forest.usesFlow;
@@ -843,6 +957,20 @@ function buildCss(args: {
     ".s-el img,.s-image{width:100%;height:100%;object-fit:cover;display:block}",
     ".s-text{white-space:pre-wrap;overflow:visible}",
     ".s-path,.s-paint{width:100%;height:100%;display:block;overflow:visible}",
+    ".s-mc{position:absolute;pointer-events:none}",
+    ".s-mc>.s-mc-track{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:auto;will-change:transform}",
+    ".s-mc-nav{position:absolute;inset:0;pointer-events:none;z-index:20}",
+    ".s-mc[data-nav=\"0\"] .s-mc-nav{display:none}",
+    ".s-mc[data-nav-style=\"dots\"] .s-mc-btn{display:none}",
+    ".s-mc[data-nav-style=\"arrows\"] .s-mc-dots{display:none}",
+    ".s-mc-btn{position:absolute;pointer-events:auto;width:calc(100cqw * 28 / var(--s-mc-page,1920));height:calc(100cqw * 28 / var(--s-mc-page,1920));border:0;border-radius:999px;background:rgba(16,24,32,.72);color:#fff;cursor:pointer}",
+    ".s-mc-prev{left:calc(100cqw * 8 / var(--s-mc-page,1920));top:50%;transform:translateY(-50%)}",
+    ".s-mc-next{right:calc(100cqw * 8 / var(--s-mc-page,1920));top:50%;transform:translateY(-50%)}",
+    ".s-mc[data-axis=\"v\"] .s-mc-prev{left:50%;top:calc(100cqw * 8 / var(--s-mc-page,1920));right:auto;transform:translateX(-50%)}",
+    ".s-mc[data-axis=\"v\"] .s-mc-next{left:50%;bottom:calc(100cqw * 8 / var(--s-mc-page,1920));right:auto;top:auto;transform:translateX(-50%)}",
+    ".s-mc-dots{position:absolute;left:50%;bottom:calc(100cqw * 10 / var(--s-mc-page,1920));display:flex;gap:calc(100cqw * 6 / var(--s-mc-page,1920));transform:translateX(-50%);pointer-events:auto}",
+    ".s-mc-dot{width:calc(100cqw * 8 / var(--s-mc-page,1920));height:calc(100cqw * 8 / var(--s-mc-page,1920));border:0;border-radius:999px;background:rgba(255,255,255,.45);padding:0;cursor:pointer}",
+    ".s-mc-dot[aria-current=\"true\"]{background:#a8ff32}",
     bandPageCss(args.layouts.wide, flow),
   ];
 
@@ -870,6 +998,16 @@ function buildCss(args: {
     false,
     args.blueprint,
     args.hintsByBand.wide,
+    args.multiCardPlan.layerToNode,
+  );
+  emitMultiCardCss(
+    lines,
+    args.multiCardPlan,
+    "wide",
+    args.layouts.wide,
+    args.layers,
+    args.blueprint,
+    args.hintsByBand.wide,
   );
 
   lines.push(`@media (max-width:${tabletMax}px) and (min-width:${SITE_CREATOR_TABLET_WIDTH}px){`);
@@ -891,6 +1029,16 @@ function buildCss(args: {
     null,
     args.layers,
     false,
+    args.blueprint,
+    args.hintsByBand.tablet,
+    args.multiCardPlan.layerToNode,
+  );
+  emitMultiCardCss(
+    lines,
+    args.multiCardPlan,
+    "tablet",
+    args.layouts.tablet,
+    args.layers,
     args.blueprint,
     args.hintsByBand.tablet,
   );
@@ -915,6 +1063,16 @@ function buildCss(args: {
     null,
     args.layers,
     false,
+    args.blueprint,
+    args.hintsByBand.mobile,
+    args.multiCardPlan.layerToNode,
+  );
+  emitMultiCardCss(
+    lines,
+    args.multiCardPlan,
+    "mobile",
+    args.layouts.mobile,
+    args.layers,
     args.blueprint,
     args.hintsByBand.mobile,
   );
@@ -958,13 +1116,14 @@ function collectTreeCss(
   inRow = false,
   blueprint: SiteBlueprintV1,
   hints: SectionLayoutHint[] | null = null,
+  skipLayers?: Map<string, string>,
 ): void {
   const percentParent: PublishBox =
     parent ?? { x: 0, y: 0, width: layout.width, height: layout.height, rotation: 0, opacity: 1, visible: true };
   for (const node of nodes) {
     if (node.kind === "row") {
       lines.push(rowBoxCss(node, band, percentParent));
-      collectTreeCss(lines, node.children, band, layout, percentParent, layers, true, blueprint, hints);
+      collectTreeCss(lines, node.children, band, layout, percentParent, layers, true, blueprint, hints, skipLayers);
       continue;
     }
     if (node.kind === "group") {
@@ -979,9 +1138,11 @@ function collectTreeCss(
         false,
         blueprint,
         hints,
+        skipLayers,
       );
       continue;
     }
+    if (skipLayers?.has(node.id)) continue;
     const layer = layers.get(node.id);
     if (!layer) continue;
     lines.push(
@@ -1057,6 +1218,7 @@ function layerBoxCss(
   blueprint?: SiteBlueprintV1,
   pageWidth = parent.width,
   hints: SectionLayoutHint[] | null = null,
+  opts?: { cqwUnit?: number; omitClip?: boolean },
 ): string {
   const sel = `.s-el-${layer.cssId}`;
   if (layer.boxes[band] === null) return `${sel}{display:none}`;
@@ -1065,7 +1227,7 @@ function layerBoxCss(
   const pageParent =
     !inRow && Boolean(blueprint) && parent.x === 0 && parent.y === 0 && Math.abs(parent.width - pageWidth) < 1;
   const shift = pageParent && blueprint ? extraShiftExpr(blueprint, box, pageWidth, band, hints) : null;
-  const unit = Math.max(1, parent.width);
+  const unit = Math.max(1, opts?.cqwUnit ?? parent.width);
   const grow = pageParent && blueprint ? extraGrowExpr(blueprint, box, pageWidth, band, hints) : null;
   const transform = compiledTransform(layer, box.rotation);
   const font =
@@ -1073,7 +1235,7 @@ function layerBoxCss(
       ? `font-size:calc(${layer.fontSize?.[band] ?? 16} * 100cqw / ${unit})`
       : "";
   const radius = layer.kind === "image" ? cornerRadiusCss(layer.corners, unit) : "";
-  const clip = layerClipCss(box, layer.clips[band], unit, grow);
+  const clip = opts?.omitClip ? "" : layerClipCss(box, layer.clips[band], unit, grow);
   const deco = [
     layer.textUnderline ? "underline" : "",
     layer.textStrikethrough ? "line-through" : "",
@@ -1175,17 +1337,147 @@ function cssFontFamily(family: string): string {
   return `"${trimmed.replace(/"/g, "")}",sans-serif`;
 }
 
+function emitMultiCardCss(
+  lines: string[],
+  plan: MultiCardPublishPlan,
+  band: BandName,
+  layout: { width: number; height: number },
+  layers: Map<string, CompiledLayer>,
+  blueprint: SiteBlueprintV1,
+  hints: SectionLayoutHint[] | null,
+): void {
+  const page: PublishBox = {
+    x: 0,
+    y: 0,
+    width: layout.width,
+    height: layout.height,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+  };
+  const specs = plan.byBand[band];
+  const layerIdsByNode = layerIdsGrouped(plan);
+  for (const spec of specs) {
+    const cssId = cssSafeId(spec.nodeId);
+    const sel = `.s-mc-${cssId}`;
+    const box = {
+      x: spec.layoutRect.x,
+      y: spec.layoutRect.y,
+      width: spec.layoutRect.width,
+      height: spec.layoutRect.height,
+      rotation: 0,
+      opacity: 1,
+      visible: true,
+    };
+    const local = toLocalBox(box, page);
+    const shift = extraShiftExpr(blueprint, box, layout.width, band, hints);
+    const z = maxLayerZ(layers, layerIdsByNode.get(spec.nodeId) ?? []);
+    const overflow = spec.overflow && spec.axis ? "hidden" : "visible";
+    const rules = [
+      `left:${cqwLen(local.x, layout.width)}`,
+      shift != null
+        ? `top:calc(${shift} + ${cqwLen(local.y, layout.width)})`
+        : `top:${cqwLen(local.y, layout.width)}`,
+      `width:${cqwLen(local.width, layout.width)}`,
+      `height:${cqwLen(local.height, layout.width)}`,
+      `overflow:${overflow}`,
+      `z-index:${z}`,
+      `--s-mc-page:${Math.max(1, spec.pageWidth)}`,
+    ];
+    lines.push(`${sel}{${rules.join(";")}}`);
+    const parent: PublishBox = {
+      x: spec.layoutRect.x,
+      y: spec.layoutRect.y,
+      width: spec.layoutRect.width,
+      height: spec.layoutRect.height,
+      rotation: 0,
+      opacity: 1,
+      visible: true,
+    };
+    for (const layerId of layerIdsByNode.get(spec.nodeId) ?? []) {
+      const layer = layers.get(layerId);
+      if (!layer) continue;
+      const world = layer.boxes[band];
+      lines.push(
+        layerBoxCss(layer, band, parent, world, false, undefined, layout.width, null, {
+          cqwUnit: layout.width,
+          omitClip: true,
+        }),
+      );
+    }
+  }
+}
+
+function layerIdsGrouped(plan: MultiCardPublishPlan): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const [layerId, nodeId] of plan.layerToNode) {
+    const list = grouped.get(nodeId) ?? [];
+    list.push(layerId);
+    grouped.set(nodeId, list);
+  }
+  return grouped;
+}
+
+function maxLayerZ(layers: Map<string, CompiledLayer>, layerIds: string[]): number {
+  let z = 1;
+  for (const id of layerIds) {
+    const layer = layers.get(id);
+    if (layer) z = Math.max(z, layer.z);
+  }
+  return z;
+}
+
+function serializeMultiCardHtml(
+  plan: MultiCardPublishPlan,
+  layers: Map<string, CompiledLayer>,
+): string {
+  if (plan.nodeIds.length === 0) return "";
+  const layerIdsByNode = layerIdsGrouped(plan);
+  const wideById = new Map(plan.byBand.wide.map((spec) => [spec.nodeId, spec]));
+  return plan.nodeIds
+    .map((nodeId) => {
+      const spec = wideById.get(nodeId) ?? plan.byBand.tablet.find((item) => item.nodeId === nodeId) ?? plan.byBand.mobile.find((item) => item.nodeId === nodeId);
+      if (!spec) return "";
+      const cssId = cssSafeId(nodeId);
+      const owned = (layerIdsByNode.get(nodeId) ?? [])
+        .map((id) => layers.get(id))
+        .filter((layer): layer is CompiledLayer => Boolean(layer))
+        .sort((a, b) => a.z - b.z);
+      if (owned.length === 0) return "";
+      const inner = owned.map((layer) => `      ${serializeLayerHtml(layer)}`).join("\n");
+      const dots = Array.from({ length: spec.count }, (_, i) => {
+        const current = i === 0 ? ` aria-current="true"` : "";
+        return `      <button type="button" class="s-mc-dot" data-i="${i}" aria-label="Card ${i + 1}"${current}></button>`;
+      }).join("\n");
+      return `    <div class="s-mc s-mc-${cssId}" data-mc="${escapeHtml(nodeId)}" data-nav="0" data-nav-style="${escapeHtml(spec.navStyle)}" data-axis="${spec.axis ?? "none"}">
+      <div class="s-mc-track">
+${inner}
+      </div>
+      <div class="s-mc-nav">
+        <button type="button" class="s-mc-btn s-mc-prev" aria-label="Anterior">&#8249;</button>
+        <button type="button" class="s-mc-btn s-mc-next" aria-label="Siguiente">&#8250;</button>
+        <div class="s-mc-dots">
+${dots}
+        </div>
+      </div>
+    </div>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 function serializeTreeHtml(
   nodes: PublishTreeNode[],
   layers: Map<string, CompiledLayer>,
   indent: string,
   inRow = false,
+  skipLayers?: Map<string, string>,
 ): string {
   return nodes
     .map((node) => {
       if (node.kind === "row") {
         const role = node.role === "full" ? " s-row-full" : " s-row-rest";
-        const inner = serializeTreeHtml(node.children, layers, `${indent}  `, true);
+        const inner = serializeTreeHtml(node.children, layers, `${indent}  `, true, skipLayers);
         return `${indent}<div class="s-row s-row-${cssSafeId(node.id)}${role}">\n${inner}\n${indent}</div>`;
       }
       if (node.kind === "group") {
@@ -1194,7 +1486,7 @@ function serializeTreeHtml(
         const flowHost = hasFlow ? " s-has-flow" : "";
         const flowItem = inRow ? " s-flow-item" : "";
         const clip = node.kind === "group" && node.clipOverflow ? " s-clip" : "";
-        const inner = serializeTreeHtml(node.children, layers, `${indent}  `, false);
+        const inner = serializeTreeHtml(node.children, layers, `${indent}  `, false, skipLayers);
         const maskSvg =
           node.clipMaskKind === "path" && node.clipPathD
             ? `${indent}  <svg class="s-clip-svg" width="0" height="0" aria-hidden="true"><defs><clipPath id="s-mask-${cssSafeId(node.id)}" clipPathUnits="objectBoundingBox"><path transform="scale(${1 / Math.max(1, worldBoxForBand(node, "wide")?.width ?? 1)},${1 / Math.max(1, worldBoxForBand(node, "wide")?.height ?? 1)})" d="${escapeHtml(node.clipPathD)}" /></clipPath></defs></svg>\n`
@@ -1204,6 +1496,7 @@ function serializeTreeHtml(
           : `${maskSvg}${inner}`;
         return `${indent}<div class="s-group s-group-${cssSafeId(node.id)}${full}${flowHost}${flowItem}${clip}" data-group="${escapeHtml(node.id)}">\n${content}\n${indent}</div>`;
       }
+      if (skipLayers?.has(node.id)) return "";
       const layer = layers.get(node.id);
       if (!layer) return "";
       return `${indent}${serializeLayerHtml(layer, inRow)}`;
@@ -1257,8 +1550,10 @@ function buildHtml(args: {
   forest: PublishForest;
   layers: Map<string, CompiledLayer>;
   blueprint: SiteBlueprintV1;
+  multiCardPlan: MultiCardPublishPlan;
 }): string {
-  const body = serializeTreeHtml(args.forest.children, args.layers, "    ");
+  const body = serializeTreeHtml(args.forest.children, args.layers, "    ", false, args.multiCardPlan.layerToNode);
+  const multiCardHtml = serializeMultiCardHtml(args.multiCardPlan, args.layers);
   const pageClass = args.forest.usesFlow ? "s-page s-flow" : "s-page";
   const htmlClass = [
     scrollFlowUsesKind(args.blueprint, "smooth") ? "s-scroll-smooth" : "",
@@ -1297,7 +1592,7 @@ ${fontLink}  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="${pageClass}">
-${anchors ? `${anchors}\n` : ""}${body}
+${anchors ? `${anchors}\n` : ""}${body}${multiCardHtml ? `\n${multiCardHtml}` : ""}
   </main>
   <script src="script.js"></script>
 </body>

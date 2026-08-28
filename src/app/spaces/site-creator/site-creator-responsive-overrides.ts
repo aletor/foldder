@@ -6,6 +6,7 @@ import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteBlueprintV1 } from "./site-creator-types";
 import {
   isSiteButtonNode,
+  isSiteMultiCardNode,
   isSiteSectionNode,
   type ResponsiveContainerRuleV1,
   type ResponsiveEditableBand,
@@ -87,6 +88,7 @@ export function resolveResponsiveTarget(
     if (isSiteButtonNode(node)) return null;
     if (isSiteSectionNode(node)) return { kind: "blueprintNode", nodeId: node.id };
     if (node.kind === "layoutGroup") return { kind: "blueprintNode", nodeId: node.id };
+    if (isSiteMultiCardNode(node)) return { kind: "blueprintNode", nodeId: node.id };
     return null;
   }
   if (!index) return null;
@@ -232,7 +234,7 @@ function ancestorTargets(
     while (walk) {
       const node = blueprint.nodes[walk];
       if (!node) break;
-      if (isSiteSectionNode(node) || node.kind === "layoutGroup") {
+      if (isSiteSectionNode(node) || node.kind === "layoutGroup" || isSiteMultiCardNode(node)) {
         out.push({ kind: "blueprintNode", nodeId: walk });
       }
       walk = node.parentId;
@@ -258,14 +260,14 @@ function ancestorTargets(
   // (owner lookup is via blueprint layerIds — walk sections/groups that own this layer)
   for (const node of Object.values(blueprint.nodes)) {
     if (isSiteButtonNode(node)) continue;
-    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup") continue;
+    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup" && !isSiteMultiCardNode(node)) continue;
     if (node.layerIds.includes(target.layerId)) {
       out.push({ kind: "blueprintNode", nodeId: node.id });
       let walk: string | null = node.parentId;
       while (walk) {
         const p = blueprint.nodes[walk];
         if (!p) break;
-        if (isSiteSectionNode(p) || p.kind === "layoutGroup") {
+        if (isSiteSectionNode(p) || p.kind === "layoutGroup" || isSiteMultiCardNode(p)) {
           out.push({ kind: "blueprintNode", nodeId: walk });
         }
         walk = p.parentId;
@@ -316,6 +318,7 @@ export function controllerDisplayName(
     if (isSiteSectionNode(node) && node.sectionType === "hero") return "Hero";
     if (isSiteSectionNode(node)) return "Sección";
     if (node.kind === "layoutGroup") return node.label?.trim() || "Grupo";
+    if (isSiteMultiCardNode(node)) return node.label?.trim() || "MultiCard";
     return node.label?.trim() || "contenedor";
   }
   const name = index?.byId[controller.layerId]?.name?.trim();

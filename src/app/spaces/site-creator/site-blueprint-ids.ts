@@ -26,3 +26,11 @@ export function createSiteLayoutGroupId(): string {
 export function createSiteComponentId(): string {
   return `sccmp_${nextToken()}`;
 }
+
+export function createSiteMultiCardId(): string {
+  return `scmc_${nextToken()}`;
+}
+
+export function createSiteMultiCardCardId(): string {
+  return `scmcc_${nextToken()}`;
+}

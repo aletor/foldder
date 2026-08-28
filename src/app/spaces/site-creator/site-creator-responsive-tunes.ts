@@ -8,6 +8,10 @@ import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import {
+  CLIP_IMAGE_ZOOM_FLOOR,
+  CLIP_IMAGE_ZOOM_MAX,
+} from "./site-creator-clipping-resize";
+import {
   isSiteSectionNode,
   type ResponsiveAlignX,
   type ResponsiveBackgroundPlacementV1,
@@ -101,6 +105,7 @@ export function resolveItemRef(
     if (!node) return null;
     if (isSiteSectionNode(node)) return null;
     if (node.kind === "layoutGroup") return null;
+    if (node.kind === "multicard") return null;
     return { kind: "blueprintNode", nodeId: node.id };
   }
   return { kind: "layer", layerId: unit.layerId };
@@ -162,6 +167,11 @@ function isEmptyContainerTune(tune: ResponsiveContainerTuneV1 | undefined): bool
   if (tune.autoHeight === false) return false;
   if (tune.heightMode === "viewport" || tune.heightMode === "custom") return false;
   if (typeof tune.customHeight === "number") return false;
+  if (tune.repeatMode) return false;
+  if (typeof tune.cardGap === "number") return false;
+  if (tune.navVisibility) return false;
+  if (tune.navStyle) return false;
+  if (typeof tune.visibleHeight === "number") return false;
   return true;
 }
 
@@ -242,6 +252,21 @@ function cleanContainerTune(tune: ResponsiveContainerTuneV1): ResponsiveContaine
       next.customHeight = Math.max(1, Math.round(tune.customHeight));
     }
   }
+  if (tune.repeatMode === "grid" || tune.repeatMode === "scrollH" || tune.repeatMode === "scrollV") {
+    next.repeatMode = tune.repeatMode;
+  }
+  if (typeof tune.cardGap === "number" && Number.isFinite(tune.cardGap) && tune.cardGap >= 0) {
+    next.cardGap = Math.round(tune.cardGap);
+  }
+  if (tune.navVisibility === "auto" || tune.navVisibility === "hidden") {
+    next.navVisibility = tune.navVisibility;
+  }
+  if (tune.navStyle === "arrows" || tune.navStyle === "dots") {
+    next.navStyle = tune.navStyle;
+  }
+  if (typeof tune.visibleHeight === "number" && Number.isFinite(tune.visibleHeight) && tune.visibleHeight > 0) {
+    next.visibleHeight = Math.round(tune.visibleHeight);
+  }
   return isEmptyContainerTune(next) ? null : next;
 }
 
@@ -256,8 +281,8 @@ function cleanMediaTune(tune: ResponsiveMediaTuneV1): ResponsiveMediaTuneV1 | nu
     if (x !== 0.5 || y !== 0.5) next.focal = { x, y };
   }
   if (typeof tune.zoom === "number" && Number.isFinite(tune.zoom)) {
-    const zoom = Math.min(4, Math.max(1, tune.zoom));
-    if (zoom !== 1) next.zoom = zoom;
+    const zoom = Math.min(CLIP_IMAGE_ZOOM_MAX, Math.max(CLIP_IMAGE_ZOOM_FLOOR, tune.zoom));
+    if (Math.abs(zoom - 1) > 1e-6) next.zoom = zoom;
   }
   return isEmptyMediaTune(next) ? null : next;
 }
@@ -281,7 +306,7 @@ function cleanBackgroundPlacement(
     : { x: 0.5, y: 0.5 };
   const zoom =
     typeof placement.zoom === "number" && Number.isFinite(placement.zoom)
-      ? Math.min(4, Math.max(1, placement.zoom))
+      ? Math.min(CLIP_IMAGE_ZOOM_MAX, Math.max(CLIP_IMAGE_ZOOM_FLOOR, placement.zoom))
       : 1;
   return {
     target,
@@ -755,7 +780,7 @@ export function unitHasCustomization(args: {
   const { blueprint, unit, band, index } = args;
   if (unit.kind === "blueprintNode") {
     const node = blueprint.nodes[unit.nodeId];
-    if (node && (isSiteSectionNode(node) || node.kind === "layoutGroup")) {
+    if (node && (isSiteSectionNode(node) || node.kind === "layoutGroup" || node.kind === "multicard")) {
       const target: ResponsiveTargetRef = { kind: "blueprintNode", nodeId: node.id };
       if (isSiteSectionNode(node)) {
         const mode = blueprint.responsive?.rules.find((r) =>
@@ -764,6 +789,12 @@ export function unitHasCustomization(args: {
         if (mode !== "preserve") return true;
         const tune = resolveContainerTune(blueprint, target, band);
         if (!sectionTuneMatchesResetBaseline(tune ?? undefined)) return true;
+      }
+      if (node.kind === "multicard") {
+        const tune = resolveContainerTune(blueprint, target, band);
+        if (tune?.repeatMode || typeof tune?.cardGap === "number" || tune?.navVisibility || tune?.navStyle) {
+          return true;
+        }
       }
       if (
         blueprint.responsive?.rules.some((r) => {

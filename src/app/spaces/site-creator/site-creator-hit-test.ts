@@ -104,32 +104,28 @@ export function marqueeHitTestUnits(
   return blueprint ? withoutCanvasLocks(units, index, blueprint) : units;
 }
 
+export type FrontmostHitOptions = {
+  /** false al inspeccionar un contenedor: el clic debe poder elegir la imagen frontal. */
+  passthroughImages?: boolean;
+  /** Recorte de preview (p. ej. carrusel MultiCard). */
+  clipById?: Record<string, PageRect>;
+};
+
 export function entriesUnderPoint(
   units: SiteCreatorSelectionIndexEntry[],
   point: PagePoint,
-  options?: { directClickOnly?: boolean },
+  options?: { directClickOnly?: boolean; clipById?: Record<string, PageRect> },
 ): SiteCreatorSelectionIndexEntry[] {
   const hits = units.filter((entry) => {
     if (!entry.selectableFromCanvas) return false;
     if (options?.directClickOnly && !entry.directClickable) return false;
-    return pointInPageRect(point, entry.visualBounds);
+    if (!pointInPageRect(point, entry.visualBounds)) return false;
+    const clip = options?.clipById?.[entry.layerId];
+    if (clip && !pointInPageRect(point, clip)) return false;
+    return true;
   });
   return sortFrontToBack(hits);
 }
-
-/**
- * Elige la capa frontal “útil” bajo el cursor.
- *
- * Una imagen a pantalla completa (o con transparencia) suele quedar por encima en
- * el stack y, con hit-test solo por AABB, se come todos los clics. Si hay otra
- * capa seleccionable bajo el mismo punto, la imagen se atraviesa (como el alpha
- * hit de Freehand/Designer). Para seleccionar la imagen: clic donde no haya
- * otra capa, o el menú “Elegir capa”.
- */
-export type FrontmostHitOptions = {
-  /** false al inspeccionar un contenedor: el clic debe poder elegir la imagen frontal. */
-  passthroughImages?: boolean;
-};
 
 export function resolveFrontmostHit(
   hitsFrontToBack: SiteCreatorSelectionIndexEntry[],
@@ -156,7 +152,10 @@ export function frontmostDirectHit(
   options?: FrontmostHitOptions,
 ): SiteCreatorSelectionIndexEntry | null {
   const units = canvasHitTestUnits(index, isolationIds, blueprint);
-  const hits = entriesUnderPoint(units, point, { directClickOnly: true });
+  const hits = entriesUnderPoint(units, point, {
+    directClickOnly: true,
+    clipById: options?.clipById,
+  });
   return resolveFrontmostHit(hits, options);
 }
 
@@ -166,9 +165,10 @@ export function layerPickerHitsAtPoint(
   isolationIds: string[],
   point: PagePoint,
   blueprint?: SiteBlueprintV1 | null,
+  clipById?: Record<string, PageRect>,
 ): SiteCreatorSelectionIndexEntry[] {
   const units = canvasHitTestUnits(index, isolationIds, blueprint);
-  const unitHits = entriesUnderPoint(units, point, { directClickOnly: false });
+  const unitHits = entriesUnderPoint(units, point, { directClickOnly: false, clipById });
   const seen = new Set(unitHits.map((entry) => entry.layerId));
   const extras: SiteCreatorSelectionIndexEntry[] = [];
   const top = resolveFrontmostHit(unitHits) ?? unitHits[0];

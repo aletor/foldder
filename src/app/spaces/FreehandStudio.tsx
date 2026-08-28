@@ -327,6 +327,7 @@ import { isInsideFoldderEffectLayerPanel, STUDIO_BODY_PORTAL_Z } from "./freehan
 import {
   insertIndexForEffectLayer,
   isFolderScopedEffectLayer,
+  effectLayerModalTargetType,
   resolveEffectLayerFxBounds,
   selectedIndexInRootStack,
   type EffectLayerScope,
@@ -5361,6 +5362,37 @@ function wrapClippingContainerWithLayerEffects(
   );
 }
 
+/** Outer glow / overlays sobre el compuesto del campo de imagen (marco + foto recortada). */
+function wrapImageFrameWithLayerEffects(
+  frame: RectObject,
+  layerId: string,
+  effects: LayerEffects,
+  children: React.ReactNode,
+): React.ReactNode {
+  const w = Math.max(1, frame.width);
+  const h = Math.max(1, frame.height);
+  const silhouette = (
+    <path
+      d={roundedRectPathDataFromRectObject(rectObjectWithNormalizedCorners(frame))}
+      fill="white"
+      stroke="none"
+    />
+  );
+  return (
+    <VectorShapeWithLayerEffects
+      objId={layerId}
+      x={frame.x}
+      y={frame.y}
+      w={w}
+      h={h}
+      effects={effects}
+      alphaSource={silhouette}
+    >
+      {children}
+    </VectorShapeWithLayerEffects>
+  );
+}
+
 /** Silueta de la máscara en local del clip; se compone con el mismo `transform` que el contenedor. Solo guía visual. */
 function renderClipContentIsolationMaskGuide(m: ClipMaskShape, zoom: number): React.ReactNode {
   const sw = 1 / zoom;
@@ -6687,8 +6719,9 @@ export function renderObj(
           opts?.imageFrameOptimizeShowFrameId != null &&
           opts.imageFrameOptimizeShowFrameId === rObj.id;
         const suppressPresenterBitmap = opts?.presenterSuppressBitmapObjectIds?.has(rObj.id) ?? false;
-        return (
-          <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
+        const leFrame = resolveLayerEffectsForRender(rObj, opts);
+        const frameInner = (
+          <>
             <defs>
               <clipPath id={cid}>
                 <path d={rectPathD} />
@@ -6730,6 +6763,15 @@ export function renderObj(
                 show={optimizeHudShow}
               />
             ) : null}
+          </>
+        );
+        const framed =
+          hasActiveLayerEffects(leFrame) && leFrame
+            ? wrapImageFrameWithLayerEffects(rObj, rObj.id, leFrame, frameInner)
+            : frameInner;
+        return (
+          <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
+            {framed}
           </g>
         );
       }
@@ -13778,7 +13820,7 @@ export function FreehandStudioCanvas({
         if (!studioCaps.layerStyles) return;
         if (!isLayerStylesEligible(target)) {
           setToast(
-            "Selecciona una imagen, forma, clip (pegar dentro) o carpeta para efectos.",
+            "Selecciona una imagen, campo de imagen, forma, clip (pegar dentro) o carpeta para efectos.",
           );
           window.setTimeout(() => setToast(null), 3200);
           return;
@@ -13788,6 +13830,7 @@ export function FreehandStudioCanvas({
           : null;
         const targetLoc = findInTree(objects, target.id);
         const nestedInFolder = targetLoc?.parent?.type === "groupContainer";
+        const isImageFrameTarget = target.type === "rect" && !!(target as RectObject).isImageFrame;
         setEffectLayerUi({
           open: true,
           targetId: target.id,
@@ -13800,7 +13843,8 @@ export function FreehandStudioCanvas({
           stylesDraft: cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects),
           histogram: new Array<number>(256).fill(0),
           showApplyTargetChoice:
-            opts?.showApplyTargetChoice ?? (designerMode || nestedInFolder || target.type === "clippingContainer"),
+            opts?.showApplyTargetChoice ??
+            (designerMode || nestedInFolder || target.type === "clippingContainer" || isImageFrameTarget),
           applyMode:
             opts?.applyMode ??
             (target.type === "groupContainer" && designerMode
@@ -27336,7 +27380,7 @@ export function FreehandStudioCanvas({
             }
             targetType={
               effectLayerUi.targetId
-                ? findInTree(objects, effectLayerUi.targetId)?.node?.type
+                ? effectLayerModalTargetType(findInTree(objects, effectLayerUi.targetId)?.node)
                 : undefined
             }
             targetInsideFolder={

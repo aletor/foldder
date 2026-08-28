@@ -26,6 +26,8 @@ export type SiteCreatorMicrobarModel = {
   adaptationSlot?: React.ReactNode;
   /** Slot 6C — ajustes contextuales de la vista. */
   refineSlot?: React.ReactNode;
+  /** Slot MultiCard — stepper de N y modos de layout. */
+  multiCardSlot?: React.ReactNode;
 };
 
 export type FloatingChromeGeometry = {
@@ -99,6 +101,7 @@ export function SiteCreatorObjectMicrobar({
     !model.summary &&
     !model.adaptationSlot &&
     !model.refineSlot &&
+    !model.multiCardSlot &&
     (model.hoverOnly || model.actions.length === 0)
   ) {
     return null;
@@ -204,6 +207,13 @@ export function SiteCreatorObjectMicrobar({
         </>
       ) : null}
 
+      {model.multiCardSlot && !model.hoverOnly ? (
+        <>
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
+          {model.multiCardSlot}
+        </>
+      ) : null}
+
       {actions.length > 0 ? (
         <>
           <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
@@ -216,6 +226,7 @@ export function SiteCreatorObjectMicrobar({
               const destructive =
                 action.id === "undoButton" ||
                 action.id === "undoSection" ||
+                action.id === "undoMultiCard" ||
                 action.id === "separateGroup" ||
                 action.id === "removeFromContainer";
               return (

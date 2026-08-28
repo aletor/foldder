@@ -8,7 +8,7 @@ import {
   publishAssetPlaceholder,
 } from "./site-creator-publish-compile";
 import { applyPublishedAssetHrefs, rewritePublishedHtmlForPublicUrl } from "./site-creator-publish-placeholders";
-import { createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
+import { createMultiCardFromSelection, createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
 import { createEmptySiteBlueprintV1, parseSiteCreatorNodeData } from "./site-creator-types";
 import { fixtureHeroPanelButton, makeLayer, makePage } from "./site-creator-responsive-fixtures";
 
@@ -466,5 +466,51 @@ describe("site-creator-publish-compile", () => {
       /data-group="scgrp_dg_gid_card1"[\s\S]*s-group-jeans[\s\S]*s-el-price/,
     );
     expect(compiled.html).not.toMatch(/s-group-jeans[\s\S]*data-group="scgrp_dg_gid_card1"/);
+  });
+
+  it("publishes MultiCard copies with the mold image href", () => {
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({
+        id: "photo",
+        type: "image",
+        x: 40,
+        y: 80,
+        width: 240,
+        height: 160,
+        src: "https://cdn.example/photo.png",
+      }),
+      makeLayer({ id: "title", type: "text", x: 40, y: 260, width: 200, height: 32, text: "Card" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "photo", "title"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const created = createMultiCardFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["photo", "title"],
+      index,
+      preferredParentId: hero.createdNodeId,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: created.blueprint,
+      title: "Multi",
+      imageHrefByLayerId: { photo: "assets/photo.webp" },
+    });
+    const photos = compiled.html.match(/src="assets\/photo\.webp"/g) ?? [];
+    expect(photos.length).toBeGreaterThanOrEqual(3);
+    const titles = compiled.html.match(/>Card</g) ?? [];
+    expect(titles.length).toBeGreaterThanOrEqual(3);
+    expect(compiled.html).toContain("s-mc-track");
+    expect(compiled.js).toContain("[data-mc]");
   });
 });

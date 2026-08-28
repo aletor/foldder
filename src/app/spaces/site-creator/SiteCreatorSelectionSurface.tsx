@@ -35,6 +35,11 @@ import {
   imageFrameGeometryForSiteCreator,
   imageFrameContentForSiteCreator,
 } from "./site-creator-image-frame";
+import {
+  CLIP_IMAGE_ZOOM_MAX,
+  clampClipImageZoom,
+  clipImageMinZoomFromRendered,
+} from "./site-creator-clipping-resize";
 
 const MARQUEE_THRESHOLD_PX = 4;
 
@@ -120,6 +125,26 @@ function isPointOnPage(point: PagePoint, pageWidth: number, pageHeight: number):
 
 function clamp(min: number, value: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function clipImageEditMinZoom(
+  edit: SiteCreatorClipImageEdit,
+  index: SiteCreatorSelectionIndex,
+): number {
+  if (edit.kind === "imageFrame") return 1;
+  const clipEntry = index.byId[edit.clipId];
+  const imageEntry = index.byId[edit.imageId];
+  const clip = clipEntry?.object as ClippingContainerObject | undefined;
+  const image = imageEntry?.object;
+  if (!clip || clip.type !== "clippingContainer" || image?.type !== "image") return 1;
+  return clipImageMinZoomFromRendered({
+    image: { width: Math.max(1, image.width), height: Math.max(1, image.height) },
+    mask: {
+      width: Math.max(1, clip.mask.width),
+      height: Math.max(1, clip.mask.height),
+    },
+    currentZoom: edit.zoom,
+  });
 }
 
 function directClipImage(
@@ -232,6 +257,8 @@ export interface SiteCreatorSelectionSurfaceProps {
    * Desactivar mientras se inspecciona un contenedor para poder elegir la imagen.
    */
   canvasHitPassthroughImages?: boolean;
+  /** Recorte de preview (p. ej. carrusel MultiCard). */
+  objectClipById?: Record<string, { x: number; y: number; width: number; height: number }>;
 }
 
 export function SiteCreatorSelectionSurface({
@@ -268,6 +295,7 @@ export function SiteCreatorSelectionSurface({
   pageAnchorRef,
   captureRootRef,
   canvasHitPassthroughImages = true,
+  objectClipById,
 }: SiteCreatorSelectionSurfaceProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -317,18 +345,21 @@ export function SiteCreatorSelectionSurface({
   );
 
   const frontHitOptions = useMemo(
-    () => ({ passthroughImages: canvasHitPassthroughImages }),
-    [canvasHitPassthroughImages],
+    () => ({ passthroughImages: canvasHitPassthroughImages, clipById: objectClipById }),
+    [canvasHitPassthroughImages, objectClipById],
   );
 
   const resolveFrontHit = useCallback(
     (point: PagePoint) => {
       if (!isPointOnPage(point, pageWidth, pageHeight)) return null;
       const units = canvasHitTestUnits(index, selection.isolationIds, blueprint);
-      const directHits = entriesUnderPoint(units, point, { directClickOnly: true });
+      const directHits = entriesUnderPoint(units, point, {
+        directClickOnly: true,
+        clipById: objectClipById,
+      });
       return resolveFrontmostHit(directHits, frontHitOptions);
     },
-    [blueprint, frontHitOptions, index, pageHeight, pageWidth, selection.isolationIds],
+    [blueprint, frontHitOptions, index, objectClipById, pageHeight, pageWidth, selection.isolationIds],
   );
 
   const handlePointerMove = useCallback(
@@ -739,6 +770,7 @@ export function SiteCreatorSelectionSurface({
     [
       blueprint,
       dispatch,
+      frontHitOptions,
       index,
       onCanvasBackgroundDoubleClick,
       onEnterClipImageEdit,
@@ -758,14 +790,20 @@ export function SiteCreatorSelectionSurface({
       event.preventDefault();
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
-      const entries = layerPickerHitsAtPoint(index, selection.isolationIds, point, blueprint);
+      const entries = layerPickerHitsAtPoint(
+        index,
+        selection.isolationIds,
+        point,
+        blueprint,
+        objectClipById,
+      );
       if (entries.length === 0) {
         setPicker(null);
         return;
       }
       setPicker({ x: event.clientX, y: event.clientY, entries });
     },
-    [blueprint, index, selection.isolationIds, toPage],
+    [blueprint, index, objectClipById, selection.isolationIds, toPage],
   );
 
   useEffect(() => {
@@ -853,6 +891,9 @@ export function SiteCreatorSelectionSurface({
   const activeClipBounds = clipImageEdit
     ? index.byId[clipImageEdit.clipId]?.visualBounds ?? null
     : null;
+  const clipImageMinZoom = clipImageEdit
+    ? clipImageEditMinZoom(clipImageEdit, index)
+    : 1;
 
   return (
     <div
@@ -949,13 +990,13 @@ export function SiteCreatorSelectionSurface({
           <button
             type="button"
             aria-label="Alejar imagen"
-            disabled={clipImageEdit.zoom <= 1}
+            disabled={clipImageEdit.zoom <= clipImageMinZoom + 0.001}
             className="rounded px-1.5 py-0.5 text-white/70 hover:bg-white/10 disabled:opacity-30"
             onClick={() =>
               onClipImageTuneChange?.(
                 {
                   focal: clipImageEdit.focal,
-                  zoom: clamp(1, clipImageEdit.zoom - 0.1, 4),
+                  zoom: clampClipImageZoom(clipImageEdit.zoom - 0.1, clipImageMinZoom),
                 },
                 true,
               )
@@ -969,13 +1010,13 @@ export function SiteCreatorSelectionSurface({
           <button
             type="button"
             aria-label="Acercar imagen"
-            disabled={clipImageEdit.zoom >= 4}
+            disabled={clipImageEdit.zoom >= CLIP_IMAGE_ZOOM_MAX}
             className="rounded px-1.5 py-0.5 text-white/70 hover:bg-white/10 disabled:opacity-30"
             onClick={() =>
               onClipImageTuneChange?.(
                 {
                   focal: clipImageEdit.focal,
-                  zoom: clamp(1, clipImageEdit.zoom + 0.1, 4),
+                  zoom: clampClipImageZoom(clipImageEdit.zoom + 0.1, clipImageMinZoom),
                 },
                 true,
               )

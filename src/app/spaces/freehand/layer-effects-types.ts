@@ -310,8 +310,8 @@ export function hasActivePhotoFilter(le: LayerEffects | undefined): boolean {
 }
 
 /**
- * Capas elegibles para Layer Styles (PhotoRoom): raster, boolean con caché, y formas vectoriales básicas.
- * Excluye marcos de imagen (`rect` con `isImageFrame`), texto y contenedores.
+ * Capas elegibles para Layer Styles: raster, boolean con caché, formas, texto,
+ * carpetas, clips «pegar dentro» y campos de imagen (`rect` + `isImageFrame`).
  */
 export function isLayerStylesEligible(o: {
   type: string;
@@ -323,7 +323,7 @@ export function isLayerStylesEligible(o: {
     const s = o.cachedResult;
     return typeof s === "string" && s.trim().length > 0;
   }
-  if (o.type === "rect") return o.isImageFrame !== true;
+  if (o.type === "rect") return true;
   if (o.type === "ellipse" || o.type === "path") return true;
   if (o.type === "text") return true;
   // Carpeta: el filtro fotográfico se propaga por CSS a todo su contenido.

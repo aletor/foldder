@@ -779,6 +779,18 @@ describe("site-creator 6C visible layout effects", () => {
     expect(resolveMediaTune(bp, "photo", "mobile")).toBeNull();
   });
 
+  it("stores clip zoom below 100% in Original", () => {
+    const fx = fixtureHeroPanelButton();
+    const bp = patchMediaTune({
+      blueprint: fx.blueprint,
+      layerId: "photo",
+      band: "wide",
+      patch: { zoom: 0.7 },
+    }).blueprint;
+
+    expect(resolveMediaTune(bp, "photo", "wide")?.zoom).toBe(0.7);
+  });
+
   it("applies item controls on a page without Hero or Section", () => {
     const fx = fixtureRealEightLayersGrouped();
     const index = buildSiteSelectionIndex(fx.page);

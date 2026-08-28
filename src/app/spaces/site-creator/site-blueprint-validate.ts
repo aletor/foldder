@@ -1,7 +1,14 @@
-import { validateBlueprintOwnership } from "./site-blueprint-ownership";
+import { collectSemanticCoverageLayerIds, validateBlueprintOwnership } from "./site-blueprint-ownership";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import {
+  cloneMultiCardNode,
+  isSiteButtonNode,
+  isSiteMultiCardNode,
+  isSiteSectionNode,
+  MULTICARD_COUNT_MAX,
+  MULTICARD_COUNT_MIN,
+} from "./site-creator-types";
 
 export type SiteBlueprintValidationIssue = {
   code: string;
@@ -127,6 +134,95 @@ export function validateSiteBlueprintTree(
             nodeId: node.id,
           });
         }
+        if (child && isSiteMultiCardNode(child)) {
+          issues.push({
+            code: "multicard_in_button",
+            message: "Un Button no puede contener un MultiCard.",
+            nodeId: node.id,
+          });
+        }
+      }
+    }
+
+    if (isSiteMultiCardNode(node)) {
+      if (node.parentId == null) {
+        issues.push({
+          code: "multicard_root",
+          message: "Un MultiCard no puede ser raíz; su padre es una sección o un grupo.",
+          nodeId: node.id,
+        });
+      } else {
+        const parent = nodes[node.parentId];
+        if (parent && !isSiteSectionNode(parent) && parent.kind !== "layoutGroup") {
+          issues.push({
+            code: "multicard_parent",
+            message: "El padre de un MultiCard debe ser una sección o un grupo.",
+            nodeId: node.id,
+          });
+        }
+      }
+      for (const childId of node.childIds) {
+        const child = nodes[childId];
+        if (child && isSiteMultiCardNode(child)) {
+          issues.push({
+            code: "multicard_nested",
+            message: "No se puede anidar un MultiCard dentro de otro.",
+            nodeId: node.id,
+          });
+        }
+        if (child && isSiteSectionNode(child)) {
+          issues.push({
+            code: "section_in_multicard",
+            message: "Un MultiCard no puede contener una Section.",
+            nodeId: node.id,
+          });
+        }
+      }
+      const cardCount = node.cards?.length ?? 0;
+      if (cardCount < MULTICARD_COUNT_MIN || cardCount > MULTICARD_COUNT_MAX) {
+        issues.push({
+          code: "multicard_count",
+          message: `Un MultiCard tiene entre ${MULTICARD_COUNT_MIN} y ${MULTICARD_COUNT_MAX} cards.`,
+          nodeId: node.id,
+        });
+      }
+      if (node.count !== cardCount) {
+        issues.push({
+          code: "multicard_count_mismatch",
+          message: "count debe coincidir con el número de cards.",
+          nodeId: node.id,
+        });
+      }
+      const cardIds = new Set<string>();
+      for (const card of node.cards ?? []) {
+        if (!card.id.startsWith("scmcc_")) {
+          issues.push({
+            code: "multicard_card_id",
+            message: "Los ids de card deben usar el prefijo scmcc_.",
+            nodeId: node.id,
+          });
+        }
+        if (cardIds.has(card.id)) {
+          issues.push({
+            code: "multicard_card_duplicate",
+            message: "Hay cards con el mismo id.",
+            nodeId: node.id,
+          });
+        }
+        cardIds.add(card.id);
+      }
+      const coverage = new Set(collectSemanticCoverageLayerIds(blueprint, node.id));
+      for (const card of node.cards ?? []) {
+        for (const layerId of Object.keys(card.overrides ?? {})) {
+          if (!coverage.has(layerId)) {
+            issues.push({
+              code: "multicard_override_layer",
+              message: "Un override apunta a una capa que no pertenece al molde.",
+              nodeId: node.id,
+            });
+            break;
+          }
+        }
       }
     }
   }
@@ -235,6 +331,9 @@ function cloneNode(node: SiteBlueprintNode): SiteBlueprintNode {
   };
   if (node.kind === "component") {
     return { ...base, kind: "component", componentType: node.componentType, config: { ...node.config } };
+  }
+  if (node.kind === "multicard") {
+    return cloneMultiCardNode(node);
   }
   if (node.kind === "section") {
     return {

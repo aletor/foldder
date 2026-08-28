@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createArtboard } from "./artboard";
-import { resolveEffectLayerFxBounds } from "./effect-layer-utils";
+import {
+  effectLayerApplyModeVisible,
+  effectLayerModalTargetType,
+  isEffectLayerScopedTarget,
+  resolveEffectLayerFxBounds,
+} from "./effect-layer-utils";
+import { isLayerStylesEligible } from "./layer-effects-types";
 
 describe("resolveEffectLayerFxBounds", () => {
   const artboards = [
@@ -74,5 +80,29 @@ describe("resolveEffectLayerFxBounds", () => {
       artboards,
     );
     expect(bounds).toEqual(content);
+  });
+});
+
+describe("image frame effect targeting", () => {
+  it("treats an image frame as eligible for layer styles", () => {
+    expect(isLayerStylesEligible({ type: "rect", isImageFrame: true })).toBe(true);
+    expect(isLayerStylesEligible({ type: "rect" })).toBe(true);
+    expect(isLayerStylesEligible({ type: "image" })).toBe(true);
+  });
+
+  it("exposes imageFrame as the modal target type", () => {
+    expect(effectLayerModalTargetType({ type: "rect", isImageFrame: true })).toBe("imageFrame");
+    expect(effectLayerModalTargetType({ type: "rect" })).toBe("rect");
+    expect(effectLayerModalTargetType({ type: "clippingContainer" })).toBe("clippingContainer");
+  });
+
+  it("scopes apply modes like a clip: this layer only, not the whole stack", () => {
+    const args = { targetType: "imageFrame" as const };
+    expect(isEffectLayerScopedTarget(args)).toBe(true);
+    expect(effectLayerApplyModeVisible("embedded", args)).toBe(true);
+    expect(effectLayerApplyModeVisible("selectedLayer", args)).toBe(true);
+    expect(effectLayerApplyModeVisible("wholeStack", args)).toBe(false);
+    expect(effectLayerApplyModeVisible("belowSelection", args)).toBe(false);
+    expect(effectLayerApplyModeVisible("selectedFolder", args)).toBe(false);
   });
 });

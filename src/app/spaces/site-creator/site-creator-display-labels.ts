@@ -1,10 +1,11 @@
 import type { FreehandObject } from "../FreehandStudio";
 import type { DesignerSourceSnapshotV1, SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import { collectSemanticCoverageLayerIds, findLayerSemanticOwner } from "./site-blueprint-ownership";
 import { expandLayerIdsWithDesignerGroups } from "./site-creator-designer-group-id";
 import { resolveSnapshotLayerById } from "./designer-source-layers";
+import { moldLayerIdFromDisplay, parseMultiCardInstanceId } from "./site-creator-multicard-ids";
 
 /** Unidad de selección orientada al usuario (no se persiste). */
 export type SiteCreatorSelectionUnit =
@@ -200,6 +201,10 @@ export function deriveBlueprintNodeDisplayLabel(
     if (n <= 0) return base;
     return `${base} · ${n} ${n === 1 ? "elemento" : "elementos"}`;
   }
+  if (isSiteMultiCardNode(node)) {
+    const base = node.label?.trim() || "MultiCard";
+    return `${base} · ×${node.count}`;
+  }
   if (isSiteButtonNode(node)) {
     const fromLabelLayer = node.config.labelLayerId
       ? readLabelFromLayer(node.config.labelLayerId, snapshot, index)
@@ -241,14 +246,22 @@ export function resolveRootClickUnit(
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
 ): SiteCreatorSelectionUnit {
-  const owner = findLayerSemanticOwner(blueprint, layerId, index);
+  const instance = parseMultiCardInstanceId(layerId);
+  const resolvedLayerId = instance?.moldLayerId ?? layerId;
+  if (instance && blueprint.nodes[instance.nodeId] && isSiteMultiCardNode(blueprint.nodes[instance.nodeId]!)) {
+    return { kind: "blueprintNode", nodeId: instance.nodeId };
+  }
+  const owner = findLayerSemanticOwner(blueprint, resolvedLayerId, index);
   if (
     owner &&
-    (isSiteButtonNode(owner) || owner.kind === "layoutGroup" || isSiteSectionNode(owner))
+    (isSiteButtonNode(owner) ||
+      owner.kind === "layoutGroup" ||
+      isSiteMultiCardNode(owner) ||
+      isSiteSectionNode(owner))
   ) {
     return { kind: "blueprintNode", nodeId: owner.id };
   }
-  return { kind: "layer", layerId };
+  return { kind: "layer", layerId: resolvedLayerId };
 }
 
 /** Dentro de un contenedor semántico (Button/Grupo/Sección). */
@@ -258,9 +271,10 @@ export function resolveInspectClickUnit(
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
 ): SiteCreatorSelectionUnit {
-  const owner = findLayerSemanticOwner(blueprint, layerId, index);
+  const resolvedLayerId = moldLayerIdFromDisplay(layerId);
+  const owner = findLayerSemanticOwner(blueprint, resolvedLayerId, index);
   if (!owner || owner.id === inspectNodeId) {
-    return { kind: "layer", layerId };
+    return { kind: "layer", layerId: resolvedLayerId };
   }
   let current: string | null = owner.id;
   while (current) {
@@ -278,9 +292,18 @@ export function resolveInspectClickUnit(
 export function unitCoverageLayerIds(
   unit: SiteCreatorSelectionUnit,
   blueprint: SiteBlueprintV1,
+  index?: SiteCreatorSelectionIndex | null,
 ): string[] {
   if (unit.kind === "layer") return [unit.layerId];
-  return collectSemanticCoverageLayerIds(blueprint, unit.nodeId);
+  const mold = collectSemanticCoverageLayerIds(blueprint, unit.nodeId);
+  const node = blueprint.nodes[unit.nodeId];
+  if (!node || !isSiteMultiCardNode(node) || !index) return mold;
+  const extra: string[] = [];
+  for (const entry of index.entries) {
+    const parsed = parseMultiCardInstanceId(entry.layerId);
+    if (parsed?.nodeId === unit.nodeId) extra.push(entry.layerId);
+  }
+  return [...mold, ...extra];
 }
 
 /**

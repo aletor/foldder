@@ -1,5 +1,5 @@
 import type { DesignerSourceSnapshotV1, SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
-import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { PersistentStructureGate } from "./site-blueprint-history";
 import { findLayerSemanticOwner } from "./site-blueprint-ownership";
@@ -23,6 +23,8 @@ export type SiteCreatorPrimaryAction = {
     | "createButton"
     | "createSection"
     | "keepTogether"
+    | "createMultiCard"
+    | "undoMultiCard"
     | "undoButton"
     | "undoSection"
     | "separateGroup"
@@ -215,12 +217,26 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
         });
       }
       actions.push({ id: "separateGroup", label: "Desagrupar" });
+      if (persistGate.allowed) {
+        actions.push({ id: "createMultiCard", label: "Multiplicar" });
+      }
       return {
         summary: label,
         primaryActions: actions,
         overflowActions: [],
         canvasLabel: label,
         breadcrumb: null,
+      };
+    }
+    if (isSiteMultiCardNode(node)) {
+      return {
+        summary: label,
+        primaryActions: [{ id: "undoMultiCard", label: "Deshacer MultiCard" }],
+        overflowActions: [],
+        canvasLabel: label,
+        breadcrumb: node.parentId
+          ? `${containerDisplayLabel(blueprint.nodes[node.parentId]!, snapshot, index)} / ${label}`
+          : label,
       };
     }
   }
@@ -348,6 +364,10 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
     actions.push({ id: "keepTogether", label: groupActionLabel(units, blueprint) });
   }
 
+  if (n >= 1 && persistGate.allowed) {
+    actions.push({ id: "createMultiCard", label: "Multiplicar" });
+  }
+
   return {
     summary,
     primaryActions: actions,
@@ -364,6 +384,7 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
 function shortContainerName(node: SiteBlueprintNode): string {
   if (isSiteSectionNode(node)) return node.sectionType === "hero" ? "Hero" : "Sección";
   if (node.kind === "layoutGroup") return "Grupo";
+  if (isSiteMultiCardNode(node)) return "MultiCard";
   if (isSiteButtonNode(node)) return "Botón";
   return "contenedor";
 }
@@ -461,7 +482,10 @@ function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextual
     if (units.length >= 2) {
       actions.push({ id: "keepTogether", label: groupActionLabel(units, blueprint) });
     }
-    if (inspectNodeId && (isSiteSectionNode(node!) || node?.kind === "layoutGroup")) {
+    if (units.length >= 1) {
+      actions.push({ id: "createMultiCard", label: "Multiplicar" });
+    }
+    if (inspectNodeId && (isSiteSectionNode(node!) || node?.kind === "layoutGroup" || isSiteMultiCardNode(node!))) {
       const dest = shortContainerName(node!);
       actions.push({
         id: "removeFromContainer",

@@ -98,10 +98,62 @@ export function resizeSectionCoverClip(
   obj.height = Math.max(1, target.height);
 }
 
+export const CLIP_IMAGE_ZOOM_MAX = 4;
+/** Suelo absoluto al persistir; el cover de la máscara puede subir este mínimo. */
+export const CLIP_IMAGE_ZOOM_FLOOR = 0.05;
+
+export function clipImageCoverScale(
+  image: { width: number; height: number },
+  mask: { width: number; height: number },
+): number {
+  return Math.max(
+    Math.max(1, mask.width) / Math.max(1, image.width),
+    Math.max(1, mask.height) / Math.max(1, image.height),
+  );
+}
+
+/**
+ * Zoom mínimo respecto al tamaño actual para seguir cubriendo la máscara.
+ * Si la foto ya es más grande que el recorte, puede ser < 1.
+ */
+export function clipImageMinZoom(
+  image: { width: number; height: number },
+  mask: { width: number; height: number },
+): number {
+  const coverScale = clipImageCoverScale(image, mask);
+  const fit = Math.max(1, coverScale);
+  return clampNumber(CLIP_IMAGE_ZOOM_FLOOR, coverScale / fit, CLIP_IMAGE_ZOOM_MAX);
+}
+
+/**
+ * Mínimo de zoom guardado a partir del tamaño ya pintado y el zoom actual.
+ * Tras un reframe, el display cambia; esto recupera el suelo estable.
+ */
+export function clipImageMinZoomFromRendered(args: {
+  image: { width: number; height: number };
+  mask: { width: number; height: number };
+  currentZoom: number;
+}): number {
+  const zoom =
+    Number.isFinite(args.currentZoom) && args.currentZoom > 0 ? args.currentZoom : 1;
+  return clampNumber(
+    CLIP_IMAGE_ZOOM_FLOOR,
+    zoom * clipImageCoverScale(args.image, args.mask),
+    CLIP_IMAGE_ZOOM_MAX,
+  );
+}
+
+export function clampClipImageZoom(zoom: number, minZoom: number): number {
+  const min = clampNumber(CLIP_IMAGE_ZOOM_FLOOR, minZoom, CLIP_IMAGE_ZOOM_MAX);
+  const requested = Number.isFinite(zoom) ? zoom : 1;
+  return clampNumber(min, requested, CLIP_IMAGE_ZOOM_MAX);
+}
+
 /**
  * Reencuadra una imagen directa del contenido de una máscara.
  * Mantiene cover, conserva la proporción y limita la traslación para que nunca
  * aparezcan huecos dentro del marco de recorte.
+ * `zoom: 1` es el encuadre de origen; se puede bajar hasta el cover real.
  */
 export function reframeClippingImage(
   obj: ClippingContainerObject,
@@ -120,14 +172,14 @@ export function reframeClippingImage(
   };
   const currentWidth = Math.max(1, image.width);
   const currentHeight = Math.max(1, image.height);
-  const coverScale = Math.max(
-    1,
-    target.width / currentWidth,
-    target.height / currentHeight,
+  const coverScale = clipImageCoverScale(
+    { width: currentWidth, height: currentHeight },
+    target,
   );
-  const zoom = clampNumber(1, Number.isFinite(tune.zoom) ? (tune.zoom ?? 1) : 1, 4);
-  const width = currentWidth * coverScale * zoom;
-  const height = currentHeight * coverScale * zoom;
+  const fit = Math.max(1, coverScale);
+  const zoom = clampClipImageZoom(tune.zoom ?? 1, coverScale / fit);
+  const width = currentWidth * fit * zoom;
+  const height = currentHeight * fit * zoom;
   const focal = {
     x: clampNumber(0, Number.isFinite(tune.focal?.x) ? (tune.focal?.x ?? 0.5) : 0.5, 1),
     y: clampNumber(0, Number.isFinite(tune.focal?.y) ? (tune.focal?.y ?? 0.5) : 0.5, 1),

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ClippingContainerObject } from "@/app/spaces/FreehandStudio";
 import { makeLayer } from "./site-creator-responsive-fixtures";
 import {
+  clipImageMinZoom,
+  clipImageMinZoomFromRendered,
   reframeClippingImage,
   resizeSectionCoverClip,
 } from "./site-creator-clipping-resize";
@@ -79,5 +81,64 @@ describe("section cover clipping resize", () => {
     expect(photo.y + photo.height).toBeGreaterThanOrEqual(
       clip.mask.y + clip.mask.height,
     );
+  });
+
+  it("allows zooming below 100% down to cover without empty mask areas", () => {
+    const clip = {
+      ...clipFixture(),
+      content: [
+        makeLayer({
+          id: "photo",
+          type: "image",
+          x: -50,
+          y: -25,
+          width: 200,
+          height: 100,
+        }),
+      ],
+    } as ClippingContainerObject;
+
+    expect(clipImageMinZoom(clip.content[0]!, clip.mask)).toBeCloseTo(0.5, 8);
+
+    expect(
+      reframeClippingImage(clip, "photo", {
+        focal: { x: 0.5, y: 0.5 },
+        zoom: 0.5,
+      }),
+    ).toBe(true);
+
+    const photo = clip.content[0]!;
+    expect(photo.width).toBeCloseTo(100, 8);
+    expect(photo.height).toBeCloseTo(50, 8);
+    expect(photo.x).toBeLessThanOrEqual(clip.mask.x + 0.01);
+    expect(photo.y).toBeLessThanOrEqual(clip.mask.y + 0.01);
+    expect(photo.x + photo.width).toBeGreaterThanOrEqual(clip.mask.x + clip.mask.width - 0.01);
+    expect(photo.y + photo.height).toBeGreaterThanOrEqual(clip.mask.y + clip.mask.height - 0.01);
+  });
+
+  it("clamps zoom-out so the image still covers the mask", () => {
+    const clip = {
+      ...clipFixture(),
+      content: [
+        makeLayer({
+          id: "photo",
+          type: "image",
+          x: -50,
+          y: -25,
+          width: 200,
+          height: 100,
+        }),
+      ],
+    } as ClippingContainerObject;
+
+    reframeClippingImage(clip, "photo", { zoom: 0.1 });
+    const photo = clip.content[0]!;
+    expect(photo.width).toBeCloseTo(100, 8);
+    expect(photo.height).toBeCloseTo(50, 8);
+    expect(clipImageMinZoomFromRendered({
+      image: photo,
+      mask: clip.mask,
+      currentZoom: 0.5,
+    })).toBeCloseTo(0.5, 8);
   });
 });

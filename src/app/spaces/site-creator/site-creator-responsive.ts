@@ -76,6 +76,7 @@ import {
   analyzeSectionVisualPresentation,
   buildResponsiveVisualClusters,
   buildUnorganizedPresentationUnits,
+  collectSectionLayoutLayerIds,
   getObjectFontSize,
   roughlyContained,
   strongSurfaceContentRelation,
@@ -84,10 +85,16 @@ import {
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
+import { applyMultiCardLayout } from "./site-creator-multicard-layout";
+import type { MultiCardInstanceRef } from "./site-creator-multicard-ids";
+import type { MultiCardContainerLayout } from "./site-creator-multicard-layout";
 import {
   applySectionViewportHeights,
+  designedSectionBottomPaddingPx,
   resolveBandSectionTargetHeight,
+  scaleOriginalPxToBand,
   scaledDesignedSectionGap,
+  sectionHeightModeForBand,
 } from "./site-creator-section-height";
 import {
   reframeClippingImage,
@@ -150,6 +157,11 @@ export type SiteCreatorResponsiveResolveResult = {
   /** Escena canónica — misma matriz para render y selección. */
   resolvedScene?: ResolvedResponsiveScene | null;
   debug?: SiteCreatorResponsiveDebug;
+  /** Copias vivas 2…N. Solo en memoria de preview. */
+  multiCard?: {
+    instances: Record<string, MultiCardInstanceRef>;
+    containers: MultiCardContainerLayout[];
+  };
 };
 
 export type { Matrix2D, ResolvedLayerInstance, ResolvedResponsiveScene } from "./site-creator-responsive-matrix";
@@ -580,6 +592,25 @@ function backgroundTargetRect(args: {
     y: args.layoutRect.y,
     width: Math.max(1, args.sourceRect.width * scaleX),
     height: args.layoutRect.height,
+  };
+}
+
+/** Slot of the cover inside the section: keep Original space above it (headline). */
+function backgroundLayoutRectPreservingInsets(args: {
+  layoutRect: PageRect;
+  sourceRegion: PageRect;
+  sourceBackground: PageRect | null;
+  extraBottom: number;
+  sourcePageWidth: number;
+}): PageRect {
+  const scale = args.layoutRect.width / Math.max(1, args.sourcePageWidth);
+  const topPx = args.sourceBackground
+    ? Math.max(0, args.sourceBackground.y - args.sourceRegion.y) * scale
+    : 0;
+  return {
+    ...args.layoutRect,
+    y: args.layoutRect.y + topPx,
+    height: Math.max(1, args.layoutRect.height - args.extraBottom - topPx),
   };
 }
 
@@ -1116,10 +1147,13 @@ function layoutSectionPreserveMode(args: {
   const contentWidth = metrics.contentWidth;
   const sectionTop = args.yCursor;
 
+  const coverageIds = collectSectionLayoutLayerIds({
+    blueprint: args.blueprint,
+    sectionId: analysis.sectionId,
+    index,
+  });
   const bgSet = new Set(analysis.background.backgroundLayerIds);
-  const foregroundIds = collectSemanticCoverageLayerIds(args.blueprint, analysis.sectionId).filter(
-    (id) => !bgSet.has(id),
-  );
+  const foregroundIds = coverageIds.filter((id) => !bgSet.has(id));
   const origin: PageRect = {
     x: 0,
     y: analysis.containerBounds.y,
@@ -1147,16 +1181,9 @@ function layoutSectionPreserveMode(args: {
     height: sectionHeight,
   };
 
-  const backgroundFocals = placeBackgroundLayers({
-    byId: args.byId,
-    backgroundLayerIds: analysis.background.backgroundLayerIds,
-    layoutRect,
-    sourceRegion: analysis.containerBounds,
-    sourcePageWidth: args.sourceWidth,
-    index,
-    blueprint: args.blueprint,
-    band,
-  });
+  // Preserve: same matrix for photo and title. Stretching the cover to
+  // layoutRect hid headlines that sit above the image in Original.
+  const backgroundFocals: Record<string, NormalizedFocalPoint> = {};
 
   const placedBoxRaw = placeClusterByAnchor({
     clusterSize: { width: compW, height: compH },
@@ -1187,7 +1214,7 @@ function layoutSectionPreserveMode(args: {
   };
   const placed = layoutPreserveComposition({
     byId: args.byId,
-    layerIds: foregroundIds,
+    layerIds: coverageIds,
     origin,
     index,
     band,
@@ -2377,6 +2404,7 @@ function withLayoutGroupWidthModes(
   index: SiteCreatorSelectionIndex,
   sectionViewport?: { viewportHeight?: number; expandViewportSections?: boolean },
   preserveExplicitBackgroundSurfaces?: boolean,
+  multiCardScrollIndexByNodeId?: Record<string, number>,
 ): SiteCreatorResponsiveResolveResult {
   const laidOut = applyLayoutGroupWidthModes({
     page: result.displayPage,
@@ -2428,14 +2456,83 @@ function withLayoutGroupWidthModes(
     band: result.band,
   });
   if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
-    return result;
+    return withMultiCardInstances(result, blueprint, multiCardScrollIndexByNodeId);
   }
   page.customWidth = result.layout.layoutWidth;
   page.customHeight = layoutHeight;
+  return withMultiCardInstances(
+    {
+      ...result,
+      displayPage: page,
+      layout: { ...result.layout, layoutHeight },
+    },
+    blueprint,
+    multiCardScrollIndexByNodeId,
+  );
+}
+
+function withMultiCardInstances(
+  result: SiteCreatorResponsiveResolveResult,
+  blueprint: SiteBlueprintV1,
+  scrollIndexByNodeId?: Record<string, number>,
+): SiteCreatorResponsiveResolveResult {
+  const applied = applyMultiCardLayout({
+    page: result.displayPage,
+    blueprint,
+    band: result.band,
+    layoutWidth: result.layout.layoutWidth,
+    sourceWidth: result.layout.referenceWidth,
+    layoutHeight: result.layout.layoutHeight,
+    regions: result.resolvedLayout?.regions,
+    objectClipById: result.resolvedLayout?.objectClipById,
+    scrollIndexByNodeId,
+  });
+  if (applied.containers.length === 0) return result;
+
+  let resolvedLayout = result.resolvedLayout;
+  if (resolvedLayout) {
+    const regionById = new Map(applied.regions.map((r) => [r.sectionId, r]));
+    resolvedLayout = {
+      ...resolvedLayout,
+      objectClipById: applied.objectClipById,
+      pageRect: { ...resolvedLayout.pageRect, height: applied.layoutHeight },
+      regions: resolvedLayout.regions.map((region) => {
+        const next = regionById.get(region.sectionId);
+        if (!next) return region;
+        return {
+          ...region,
+          layoutRect: next.layoutRect,
+          clipRect: next.clipRect,
+          naturalHeight: Math.max(region.naturalHeight, next.layoutRect.height),
+        };
+      }),
+    };
+  } else if (Object.keys(applied.objectClipById).length > 0) {
+    resolvedLayout = {
+      band: result.band,
+      viewportWidth: result.layout.viewportWidth,
+      pageRect: {
+        x: 0,
+        y: 0,
+        width: result.layout.layoutWidth,
+        height: applied.layoutHeight,
+      },
+      regions: [],
+      objectClipById: applied.objectClipById,
+    };
+  }
+
+  applied.page.customWidth = result.layout.layoutWidth;
+  applied.page.customHeight = applied.layoutHeight;
   return {
     ...result,
-    displayPage: page,
-    layout: { ...result.layout, layoutHeight },
+    displayPage: applied.page,
+    layout: { ...result.layout, layoutHeight: applied.layoutHeight },
+    resolvedLayout,
+    multiCard: {
+      instances: applied.instances,
+      containers: applied.containers,
+    },
   };
 }
 
@@ -2455,6 +2552,8 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
    * El CSS publicado sigue infiriendo por media query.
    */
   band?: ResponsiveBand;
+  /** Índice de carrusel MultiCard en el studio (publicar siempre 0). */
+  multiCardScrollIndexByNodeId?: Record<string, number>;
 }): SiteCreatorResponsiveResolveResult {
   const reference = getPageDimensions(args.page);
   const viewportWidth = clampViewportWidth(args.viewportWidth, reference.width);
@@ -2493,6 +2592,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.referenceIndex,
       sectionViewport,
       args.preserveExplicitBackgroundSurfaces,
+      args.multiCardScrollIndexByNodeId,
     );
   }
 
@@ -2591,6 +2691,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.referenceIndex,
       sectionViewport,
       args.preserveExplicitBackgroundSurfaces,
+      args.multiCardScrollIndexByNodeId,
     );
   }
 
@@ -2606,7 +2707,11 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   const objectClipById: Record<string, PageRect> = {};
 
   for (const section of sections) {
-    for (const id of collectSemanticCoverageLayerIds(args.blueprint, section.id)) {
+    for (const id of collectSectionLayoutLayerIds({
+      blueprint: args.blueprint,
+      sectionId: section.id,
+      index,
+    })) {
       owned.add(id);
       for (const ancestorId of index.byId[id]?.ancestorIds ?? []) {
         owned.add(ancestorId);
@@ -2615,7 +2720,16 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   }
 
   const layoutScale = viewportWidth / Math.max(1, reference.width);
-  let yCursor = 0;
+  // Original deja el hueco de página encima de la primera sección (sourceRange.top).
+  // Sin esto, Ordenador/tablet/móvil restanean desde y=0 y el contenido se pega arriba.
+  let yCursor =
+    sections.length > 0
+      ? scaleOriginalPxToBand(
+          Math.max(0, sections[0]!.sourceRange.top),
+          viewportWidth,
+          reference.width,
+        )
+      : 0;
   for (let i = 0; i < sections.length; i += 1) {
     const section = sections[i]!;
     const analysis = analyzeSectionVisualPresentation({
@@ -2654,6 +2768,21 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         });
       }
     }
+    const extraBottom = scaleOriginalPxToBand(
+      designedSectionBottomPaddingPx(section, analysis.containerBounds),
+      viewportWidth,
+      reference.width,
+    );
+    if (extraBottom > 0.5) {
+      region.layoutRect = {
+        ...region.layoutRect,
+        height: region.layoutRect.height + extraBottom,
+      };
+      region.clipRect = {
+        ...region.clipRect,
+        height: region.clipRect.height + extraBottom,
+      };
+    }
     region.naturalHeight = Math.max(1, region.layoutRect.height);
     regions.push(region);
 
@@ -2669,6 +2798,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       });
       const extra = Math.max(0, targetH - region.layoutRect.height);
       if (extra > 0.5) {
+        const fillHeightMode = sectionHeightModeForBand(args.blueprint, section, band);
         shiftSectionContentY({
           byId,
           blueprint: args.blueprint,
@@ -2679,10 +2809,24 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         });
         region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
         region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };
+        const sourceBackground =
+          region.backgroundLayerIds[0] != null
+            ? sourceWorldVisualBounds(region.backgroundLayerIds[0], index)
+            : null;
+        const backgroundRect =
+          fillHeightMode === "viewport"
+            ? region.layoutRect
+            : backgroundLayoutRectPreservingInsets({
+                layoutRect: region.layoutRect,
+                sourceRegion: analysis.containerBounds,
+                sourceBackground,
+                extraBottom,
+                sourcePageWidth: reference.width,
+              });
         placeBackgroundLayers({
           byId,
           backgroundLayerIds: region.backgroundLayerIds,
-          layoutRect: region.layoutRect,
+          layoutRect: backgroundRect,
           sourceRegion: analysis.containerBounds,
           sourcePageWidth: reference.width,
           index,
@@ -2693,7 +2837,11 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     }
 
     // Clip de render: fondos + capas de cobertura de la región
-    for (const layerId of collectSemanticCoverageLayerIds(args.blueprint, section.id)) {
+    for (const layerId of collectSectionLayoutLayerIds({
+      blueprint: args.blueprint,
+      sectionId: section.id,
+      index,
+    })) {
       objectClipById[layerId] = { ...region.clipRect };
     }
     for (const bgId of region.backgroundLayerIds) {
@@ -2803,6 +2951,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     args.referenceIndex,
     sectionViewport,
     args.preserveExplicitBackgroundSurfaces,
+    args.multiCardScrollIndexByNodeId,
   );
 }
 

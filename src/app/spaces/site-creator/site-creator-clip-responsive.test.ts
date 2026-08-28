@@ -312,4 +312,49 @@ describe("clip images resize with the page", () => {
       height: baseMobile.height,
     });
   });
+
+  it("can shrink a cropped clip photo to cover without empty mask", () => {
+    const page = makePage([clipWithPhoto()]);
+    const index = buildSiteSelectionIndex(page);
+    const created = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["clip"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok || !created.createdNodeId) return;
+    const initial = applyNewSectionResponsiveDefaults(
+      created.blueprint,
+      created.createdNodeId,
+    );
+    const coverZoom = 800 / 960;
+    const tuned = patchMediaTune({
+      blueprint: initial,
+      layerId: "photo",
+      band: "monitor",
+      patch: { zoom: coverZoom },
+    }).blueprint;
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: tuned,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "monitor",
+    });
+    const clip = findDisplayObject(resolved.displayPage, "clip") as
+      | (FreehandObject & { mask?: FreehandObject; content?: FreehandObject[] })
+      | undefined;
+    const photo = clip?.content?.find((child) => child.id === "photo");
+    expect(clip?.mask).toBeTruthy();
+    expect(photo).toBeTruthy();
+    if (!clip?.mask || !photo) return;
+    expect(photo.width).toBeCloseTo(clip.mask.width, 4);
+    expect(photo.height).toBeGreaterThanOrEqual(clip.mask.height - 0.5);
+    expect(photo.x).toBeLessThanOrEqual(clip.mask.x + 0.5);
+    expect(photo.x + photo.width).toBeGreaterThanOrEqual(clip.mask.x + clip.mask.width - 0.5);
+    expect(photo.y).toBeLessThanOrEqual(clip.mask.y + 0.5);
+    expect(photo.y + photo.height).toBeGreaterThanOrEqual(clip.mask.y + clip.mask.height - 0.5);
+  });
 });

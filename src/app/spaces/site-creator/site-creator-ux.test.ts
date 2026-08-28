@@ -435,7 +435,7 @@ describe("site creator UX contextual actions", () => {
       snapshot: null,
       persistGate: gateOk,
     });
-    expect(model.primaryActions.map((a) => a.id)).toEqual(["separateGroup"]);
+    expect(model.primaryActions.map((a) => a.id)).toEqual(["separateGroup", "createMultiCard"]);
     expect(model.primaryActions.find((a) => a.id === "separateGroup")?.label).toBe("Desagrupar");
   });
 
@@ -458,7 +458,7 @@ describe("site creator UX contextual actions", () => {
       persistGate: gateOk,
       band: "tablet",
     });
-    expect(tablet.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup"]);
+    expect(tablet.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup", "createMultiCard"]);
     expect(tablet.primaryActions.find((a) => a.id === "groupWidthFull")?.label).toBe("Ancho completo");
   });
 

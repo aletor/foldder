@@ -95,6 +95,8 @@ export function bindSectionScroller(args: {
   stations: () => ScrollStation[];
   /** En edición, la rueda basta; las flechas no deben pelear con el lienzo. */
   bindKeyboard?: boolean;
+  /** True si un MultiCard (u otro scroller interno) consume este gesto. */
+  shouldIgnoreWheel?: (event: WheelEvent) => boolean;
 }): () => void {
   let locked = false;
   let lockedDirection: 1 | -1 | null = null;
@@ -171,6 +173,7 @@ export function bindSectionScroller(args: {
   const onWheel = (event: Event) => {
     if (!(event instanceof WheelEvent)) return;
     if (event.ctrlKey) return;
+    if (args.shouldIgnoreWheel?.(event)) return;
     if (!interceptDelta(event.deltaY)) return;
     event.preventDefault();
   };
@@ -369,6 +372,10 @@ export function compilePublishedScrollScript(
   }
   window.addEventListener("wheel", function (event) {
     if (event.ctrlKey) return;
+    if (typeof window.__sMcConsumeWheel === "function" && window.__sMcConsumeWheel(event)) {
+      event.preventDefault();
+      return;
+    }
     if (!intercept(event.deltaY)) return;
     event.preventDefault();
   }, { passive: false, capture: true });

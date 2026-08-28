@@ -305,13 +305,77 @@ describe("site-creator section scroll flow", () => {
     expect(screen.queryByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}`)).toBeNull();
     const mark = screen.getByTestId(`site-creator-section-spine-drag-${heroId}`);
     expect(mark.className).toContain("rounded-full");
-    expect(mark.className).not.toContain("cursor-ns-resize");
+    expect(mark.className).toContain("cursor-ns-resize");
     fireEvent.click(mark);
     expect(onSelect).toHaveBeenCalledWith(heroId);
     fireEvent.pointerDown(mark, { clientY: 400, pointerId: 1 });
     fireNativePointer(window, "pointermove", { clientY: 520, pointerId: 1 });
     fireNativePointer(window, "pointerup", { clientY: 520, pointerId: 1 });
     expect(onCustom).not.toHaveBeenCalled();
+  });
+
+  it("Original structure spine drag stretches sourceRange without using custom height", async () => {
+    const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const hops = listSectionScrollHops(blueprint);
+    const sections = listDocumentSections(blueprint);
+    const onSelect = vi.fn();
+    const onCustom = vi.fn();
+    const onRange = vi.fn();
+    const hero = sections.find((section) => section.id === heroId)!;
+    render(
+      <div style={{ position: "relative", height: 1200 }}>
+        <SiteCreatorSectionSpine
+          pageHeight={1200}
+          scale={1}
+          mode="structure"
+          stations={sections.map((section, index) => ({
+            sectionId: section.id,
+            label: section.label,
+            top: section.sourceRange.top,
+            bottom: section.sourceRange.bottom,
+            height: section.sourceRange.bottom - section.sourceRange.top,
+            designedHeight: section.sourceRange.bottom - section.sourceRange.top,
+            contentHeight: section.sourceRange.bottom - section.sourceRange.top,
+            maxBottom: sections[index + 1]?.sourceRange.top ?? 1200,
+            heightMode: "content" as const,
+            customHeight: null,
+            selected: section.id === heroId,
+            outgoing: hops[index + 1]
+              ? {
+                  fromId: section.id,
+                  toId: sections[index + 1]!.id,
+                  kind: hops[index + 1]!.kind,
+                }
+              : null,
+          }))}
+          addSectionY={null}
+          canAddSection={false}
+          onSelectSection={onSelect}
+          onRemoveSection={() => undefined}
+          onAddSection={() => undefined}
+          onScrollChange={() => undefined}
+          onHeightModeChange={() => undefined}
+          onCustomHeightChange={onCustom}
+          onSourceRangeBottomChange={onRange}
+        />
+      </div>,
+    );
+    const mark = screen.getByTestId(`site-creator-section-spine-drag-${heroId}`);
+    fireNativePointer(mark, "pointerdown", { clientY: hero.sourceRange.bottom, pointerId: 7 });
+    fireNativePointer(window, "pointermove", {
+      clientY: hero.sourceRange.bottom + 80,
+      pointerId: 7,
+    });
+    await flushAnimationFrame();
+    fireNativePointer(window, "pointerup", {
+      clientY: hero.sourceRange.bottom + 80,
+      pointerId: 7,
+    });
+    expect(onCustom).not.toHaveBeenCalled();
+    expect(onRange).toHaveBeenCalled();
+    expect(onRange.mock.calls.at(-1)?.[0]).toBe(heroId);
+    expect(onRange.mock.calls.at(-1)?.[1]).toBe(hero.sourceRange.bottom + 80);
+    expect(screen.queryByTestId(`site-creator-section-spine-hop-${heroId}-${sectionId}`)).toBeNull();
   });
 
   it("offers Custom in the height menu", () => {
@@ -688,6 +752,34 @@ describe("bindSectionScroller", () => {
     const up = new WheelEvent("wheel", { deltaY: -120, cancelable: true });
     scroller.dispatchEvent(up);
     expect(up.defaultPrevented).toBe(false);
+
+    dispose();
+  });
+
+  it("does not snap when shouldIgnoreWheel returns true", () => {
+    const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1800, 800);
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 900 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+      shouldIgnoreWheel: () => true,
+    });
+
+    const down = new WheelEvent("wheel", { deltaY: 120, cancelable: true });
+    scroller.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+    expect(scrollTo).not.toHaveBeenCalled();
 
     dispose();
   });

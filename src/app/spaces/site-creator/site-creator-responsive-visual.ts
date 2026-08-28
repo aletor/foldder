@@ -296,7 +296,7 @@ export function buildSectionPresentationUnits(args: {
   const section = blueprint.nodes[sectionId];
   if (!section || !isSiteSectionNode(section)) return [];
 
-  const coverage = collectSemanticCoverageLayerIds(blueprint, sectionId);
+  const coverage = collectSectionLayoutLayerIds({ blueprint, sectionId, index });
   const used = new Set<string>(excludeLayerIds);
   const units: ResponsivePresentationUnit[] = [];
 
@@ -684,12 +684,51 @@ export function buildResponsiveVisualClusters(args: {
   return { clusters, fallbackReasons };
 }
 
+/**
+ * Hijas semánticas más las capas que el marco de la sección cubre por completo
+ * y no pertenecen a otra sección (p. ej. un titular encima de la foto).
+ */
+export function collectSectionLayoutLayerIds(args: {
+  blueprint: SiteBlueprintV1;
+  sectionId: string;
+  index: SiteCreatorSelectionIndex;
+}): string[] {
+  const semantic = collectSemanticCoverageLayerIds(args.blueprint, args.sectionId);
+  const section = args.blueprint.nodes[args.sectionId];
+  if (!section || !isSiteSectionNode(section)) return semantic;
+  const taken = new Set(semantic);
+  for (const node of Object.values(args.blueprint.nodes)) {
+    if (!isSiteSectionNode(node) || node.id === args.sectionId) continue;
+    for (const id of collectSemanticCoverageLayerIds(args.blueprint, node.id)) {
+      taken.add(id);
+    }
+  }
+  const extra: string[] = [];
+  for (const entry of args.index.entries) {
+    if (!entry.visible) continue;
+    if (!isWorldSpaceLayerId(entry.layerId, args.index)) continue;
+    if (taken.has(entry.layerId)) continue;
+    if (entry.ancestorIds.some((ancestorId) => taken.has(ancestorId))) continue;
+    const bounds = sourceWorldVisualBounds(entry.layerId, args.index) ?? entry.visualBounds;
+    if (!bounds) continue;
+    if (
+      bounds.y < section.sourceRange.top - 0.5 ||
+      bounds.y + bounds.height > section.sourceRange.bottom + 0.5
+    ) {
+      continue;
+    }
+    extra.push(entry.layerId);
+    taken.add(entry.layerId);
+  }
+  return extra.length ? [...semantic, ...extra] : semantic;
+}
+
 export function analyzeSectionVisualPresentation(args: {
   blueprint: SiteBlueprintV1;
   sectionId: string;
   index: SiteCreatorSelectionIndex;
 }): SectionVisualAnalysis | null {
-  const layerIds = collectSemanticCoverageLayerIds(args.blueprint, args.sectionId);
+  const layerIds = collectSectionLayoutLayerIds(args);
   const containerBounds = boundsOfIds(layerIds, args.index);
   if (!containerBounds || layerIds.length === 0) return null;
 

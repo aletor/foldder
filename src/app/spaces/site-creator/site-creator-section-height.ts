@@ -107,6 +107,31 @@ export function designedSectionGapPx(
   return Math.max(0, to.sourceRange.top - from.sourceRange.bottom);
 }
 
+/** Padding inferior de diseño: hueco del sourceRange bajo el contenido. */
+export function designedSectionBottomPaddingPx(
+  section: SiteBlueprintSectionNode,
+  contentBounds: { y: number; height: number },
+): number {
+  return Math.max(0, section.sourceRange.bottom - (contentBounds.y + contentBounds.height));
+}
+
+export function clampSectionSourceRangeBottom(args: {
+  contentBottom: number;
+  nextSectionTop: number | null;
+  pageHeight: number;
+  requestedBottom: number;
+}): number {
+  const minBottom = args.contentBottom;
+  const maxBottom =
+    args.nextSectionTop != null
+      ? Math.min(args.pageHeight, args.nextSectionTop)
+      : args.pageHeight;
+  const hi = Math.max(minBottom, maxBottom);
+  return Math.round(
+    Math.min(hi, Math.max(minBottom, args.requestedBottom)),
+  );
+}
+
 export function scaleOriginalPxToBand(
   px: number,
   viewportWidth: number,

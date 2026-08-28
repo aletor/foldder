@@ -49,6 +49,10 @@ export type SectionSpineStation = {
   top: number;
   height: number;
   designedHeight: number;
+  /** Alto mínimo al estirar el marco (unión de capas). Original. */
+  contentHeight?: number;
+  /** Tope inferior: inicio de la siguiente sección o alto de página. */
+  maxBottom?: number;
   heightMode: SiteSectionHeightMode;
   customHeight: number | null;
   selected: boolean;
@@ -71,6 +75,8 @@ export type SiteCreatorSectionSpineProps = {
   onScrollChange: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
   onHeightModeChange: (sectionId: string, mode: SiteSectionHeightMode) => void;
   onCustomHeightChange: (sectionId: string, heightPx: number) => void;
+  /** Original: estira sourceRange.bottom (padding inferior). */
+  onSourceRangeBottomChange?: (sectionId: string, bottom: number) => void;
   /** Original: marcas de sección. Dispositivo: alto, recorrido y raya. */
   mode?: "structure" | "device";
 };
@@ -343,6 +349,7 @@ function StationModule({
   onScrollChange,
   onHeightModeChange,
   onCustomHeightChange,
+  onSourceRangeBottomChange,
   mode = "device",
 }: {
   station: SectionSpineStation;
@@ -353,26 +360,39 @@ function StationModule({
   onScrollChange: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
   onHeightModeChange: (mode: SiteSectionHeightMode) => void;
   onCustomHeightChange: (heightPx: number) => void;
+  onSourceRangeBottomChange?: (bottom: number) => void;
   mode?: "structure" | "device";
 }) {
   const [liveCustom, setLiveCustom] = useState<number | null>(null);
   const dragRef = useRef<{
+    kind: "custom" | "range";
     startClientY: number;
     startHeight: number;
+    startTop: number;
     startScale: number;
     minimumHeight: number;
+    maximumHeight: number;
     pointerId: number;
     lastSent: number;
     pending: number | null;
     raf: number;
   } | null>(null);
   const onCustomRef = useRef(onCustomHeightChange);
+  const onRangeRef = useRef(onSourceRangeBottomChange);
 
   useEffect(() => {
     onCustomRef.current = onCustomHeightChange;
-  }, [onCustomHeightChange]);
+    onRangeRef.current = onSourceRangeBottomChange;
+  }, [onCustomHeightChange, onSourceRangeBottomChange]);
 
   useEffect(() => {
+    const emit = (kind: "custom" | "range", height: number, top: number) => {
+      if (kind === "range") {
+        onRangeRef.current?.(top + height);
+        return;
+      }
+      onCustomRef.current(height);
+    };
     const flush = () => {
       const drag = dragRef.current;
       if (!drag) return;
@@ -381,16 +401,16 @@ function StationModule({
       if (next == null || next === drag.lastSent) return;
       drag.lastSent = next;
       setLiveCustom(next);
-      onCustomRef.current(next);
+      emit(drag.kind, next, drag.startTop);
     };
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || event.pointerId !== drag.pointerId) return;
       const deltaPage =
         (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
-      drag.pending = Math.max(
-        drag.minimumHeight,
-        Math.round(drag.startHeight + deltaPage),
+      drag.pending = Math.min(
+        drag.maximumHeight,
+        Math.max(drag.minimumHeight, Math.round(drag.startHeight + deltaPage)),
       );
       if (drag.raf) return;
       drag.raf = window.requestAnimationFrame(flush);
@@ -404,12 +424,14 @@ function StationModule({
       }
       const deltaPage =
         (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
-      const next = Math.max(
-        drag.minimumHeight,
-        Math.round(drag.startHeight + deltaPage),
+      const next = Math.min(
+        drag.maximumHeight,
+        Math.max(drag.minimumHeight, Math.round(drag.startHeight + deltaPage)),
       );
+      const kind = drag.kind;
+      const top = drag.startTop;
       dragRef.current = null;
-      if (next !== drag.lastSent) onCustomRef.current(next);
+      if (next !== drag.lastSent) emit(kind, next, top);
       setLiveCustom(null);
     };
     window.addEventListener("pointermove", onMove);
@@ -424,20 +446,38 @@ function StationModule({
     };
   }, []);
 
-  const onDragPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const onDragPointerDown = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    kind: "custom" | "range",
+  ) => {
     event.preventDefault();
     event.stopPropagation();
     if (dragRef.current?.pointerId === event.pointerId) return;
+    if (kind === "range" && !onRangeRef.current) return;
     const configuredHeight =
-      station.heightMode === "custom" && station.customHeight != null
+      kind === "custom" && station.heightMode === "custom" && station.customHeight != null
         ? station.customHeight
         : Math.round(station.height);
-    const startHeight = Math.max(station.designedHeight, configuredHeight);
+    const minHeight =
+      kind === "range"
+        ? Math.max(1, Math.round(station.contentHeight ?? station.designedHeight))
+        : station.designedHeight;
+    const maxHeight =
+      kind === "range"
+        ? Math.max(
+            minHeight,
+            Math.round((station.maxBottom ?? Number.POSITIVE_INFINITY) - station.top),
+          )
+        : Number.POSITIVE_INFINITY;
+    const startHeight = Math.min(maxHeight, Math.max(minHeight, configuredHeight));
     dragRef.current = {
+      kind,
       startClientY: event.clientY,
       startHeight,
+      startTop: station.top,
       startScale: scale,
-      minimumHeight: station.designedHeight,
+      minimumHeight: minHeight,
+      maximumHeight: maxHeight,
       pointerId: event.pointerId,
       lastSent: startHeight,
       pending: null,
@@ -452,7 +492,7 @@ function StationModule({
   };
 
   const displayHeight =
-    station.heightMode === "custom" && liveCustom != null ? liveCustom : station.height;
+    liveCustom != null ? liveCustom : station.height;
 
   const structure = mode === "structure";
 
@@ -510,17 +550,21 @@ function StationModule({
           data-testid={`site-creator-section-spine-drag-${station.sectionId}`}
           aria-label={station.label}
           aria-current={station.selected ? "true" : undefined}
-          title={structure ? "Seleccionar sección" : "Arrastra para altura custom"}
+          title={
+            structure
+              ? "Arrastra para incluir margen debajo · clic para seleccionar"
+              : "Arrastra para altura custom"
+          }
           className={
             structure
-              ? "pointer-events-auto h-2.5 w-2.5 cursor-pointer rounded-full"
+              ? "pointer-events-auto h-2.5 w-2.5 cursor-ns-resize rounded-full"
               : "pointer-events-auto flex h-2.5 w-10 cursor-ns-resize items-center justify-center rounded-full"
           }
           style={{
             background: ACCENT,
             boxShadow: station.selected ? "0 0 0 2px rgba(255,255,255,0.7)" : "none",
           }}
-          onPointerDown={structure ? undefined : onDragPointerDown}
+          onPointerDown={(event) => onDragPointerDown(event, structure ? "range" : "custom")}
           onClick={(e) => {
             e.stopPropagation();
             onSelect();
@@ -546,6 +590,7 @@ export function SiteCreatorSectionSpine({
   onScrollChange,
   onHeightModeChange,
   onCustomHeightChange,
+  onSourceRangeBottomChange,
   mode = "device",
 }: SiteCreatorSectionSpineProps) {
   const lineBottom = Math.max(
@@ -589,6 +634,11 @@ export function SiteCreatorSectionSpine({
           onScrollChange={onScrollChange}
           onHeightModeChange={(next) => onHeightModeChange(station.sectionId, next)}
           onCustomHeightChange={(px) => onCustomHeightChange(station.sectionId, px)}
+          onSourceRangeBottomChange={
+            onSourceRangeBottomChange
+              ? (bottom) => onSourceRangeBottomChange(station.sectionId, bottom)
+              : undefined
+          }
           mode={mode}
         />
       ))}

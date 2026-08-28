@@ -2,6 +2,8 @@ import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
 import {
   createSiteComponentId,
   createSiteLayoutGroupId,
+  createSiteMultiCardCardId,
+  createSiteMultiCardId,
   createSiteSectionId,
 } from "./site-blueprint-ids";
 import {
@@ -17,20 +19,42 @@ import type { SiteCreatorSelectionIndex, SiteCreatorSelectionIndexEntry } from "
 import type {
   LayoutGroupFitOrigin,
   LayoutGroupWidthMode,
+  ResponsiveEditableBand,
   SiteBlueprintComponentNode,
   SiteBlueprintLayoutGroupNode,
+  SiteBlueprintMultiCardNode,
   SiteBlueprintNode,
   SiteBlueprintSectionNode,
   SiteBlueprintV1,
+  SiteMultiCardLayoutMode,
+  SiteMultiCardSlotOverrideV1,
   SiteSectionHeightMode,
   SiteSectionType,
 } from "./site-creator-types";
-import { isResponsiveEditableBand, isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import {
+  MULTICARD_COUNT_MAX,
+  MULTICARD_COUNT_MIN,
+  MULTICARD_DEFAULT_GAP,
+  isResponsiveEditableBand,
+  isSiteButtonNode,
+  isSiteMultiCardNode,
+  isSiteSectionNode,
+  isSiteStructuralContainerNode,
+} from "./site-creator-types";
+import {
+  applyNewMultiCardResponsiveDefaults,
+  collectOwningSectionIds,
+  createDefaultMultiCardCards,
+  layerIsInsideMultiCard,
+  nodeIsInsideMultiCard,
+} from "./site-creator-multicard";
 import { getPageDimensions } from "../indesign/page-formats";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { unitsToStructureLayerIds, type SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { commonContainersForFreeLayers } from "./site-creator-hierarchy";
 import { sourceWorldBoundsOfIds } from "./site-creator-layer-world-bounds";
+import { collectMultiCardInstanceLayerIds } from "./site-creator-multicard-layout";
+import { clampSectionSourceRangeBottom } from "./site-creator-section-height";
 
 export type BlueprintOpError = {
   ok: false;
@@ -60,7 +84,12 @@ function nodeVisualBounds(
   nodeId: string,
   index: SiteCreatorSelectionIndex,
 ): PageRect | null {
-  return sourceWorldBoundsOfIds(collectSemanticCoverageLayerIds(blueprint, nodeId), index);
+  const ids = [...collectSemanticCoverageLayerIds(blueprint, nodeId)];
+  const node = blueprint.nodes[nodeId];
+  if (node && isSiteMultiCardNode(node)) {
+    ids.push(...collectMultiCardInstanceLayerIds(index, nodeId));
+  }
+  return sourceWorldBoundsOfIds(ids, index);
 }
 
 /** ¿La cobertura completa del nodo está incluida en selectedLayerIds? */
@@ -295,6 +324,26 @@ function attachChild(
     } as SiteBlueprintNode,
   };
   return { ...next, nodes, rootChildIds: next.rootChildIds.filter((id) => id !== childId) };
+}
+
+/** No reparentar al padre/ancestro del nodo nuevo: eso cierra un ciclo y congela el studio. */
+function reparentableFullyCoveredNodes(
+  blueprint: SiteBlueprintV1,
+  parentId: string | null,
+  fullyCovered: string[],
+): string[] {
+  const blocked = new Set<string>();
+  let walk = parentId;
+  while (walk) {
+    blocked.add(walk);
+    walk = blueprint.nodes[walk]?.parentId ?? null;
+  }
+  return fullyCovered.filter((id) => {
+    if (blocked.has(id)) return false;
+    const node = blueprint.nodes[id];
+    if (!node || isSiteSectionNode(node)) return false;
+    return true;
+  });
 }
 
 export function createSectionFromSelection(args: {
@@ -681,11 +730,12 @@ export function createLayoutGroupFromSelection(args: {
   const resolvedLayerIds = expand.resolvedLayerIds;
 
   const fullyCovered = findFullyCoveredSemanticNodes(blueprint, selectedLayerIds, index);
+  const reparentIds = reparentableFullyCoveredNodes(blueprint, parentRes.parentId, fullyCovered);
   const ownership = buildBlueprintOwnershipIndexWithTree(blueprint, index);
   const groupLayers: string[] = [];
   for (const layerId of resolvedLayerIds) {
     const ownerId = ownership.ownerByLayerId[layerId];
-    if (ownerId && fullyCovered.includes(ownerId)) continue;
+    if (ownerId && reparentIds.includes(ownerId)) continue;
     if (ownerId && ownerId !== parentRes.parentId) continue;
     const coveredBy = ownership.coveredByContainerOwner[layerId];
     if (coveredBy && coveredBy !== parentRes.parentId) continue;
@@ -709,7 +759,7 @@ export function createLayoutGroupFromSelection(args: {
   };
   blueprint = attachChild(blueprint, parentRes.parentId, groupId);
   blueprint = moveLayersToBlueprintNode(blueprint, groupId, unique(groupLayers));
-  for (const childId of fullyCovered) {
+  for (const childId of reparentIds) {
     blueprint = attachChild(blueprint, groupId, childId);
   }
 
@@ -720,10 +770,128 @@ export function createLayoutGroupFromSelection(args: {
   }
 }
 
+export function createMultiCardFromSelection(args: {
+  blueprint: SiteBlueprintV1;
+  selectedLayerIds: string[];
+  index: SiteCreatorSelectionIndex;
+  preferredParentId?: string | null;
+  label?: string;
+}): BlueprintOpResult {
+  const { selectedLayerIds, index } = args;
+  if (selectedLayerIds.length === 0) {
+    return fail("empty_selection", "Selecciona al menos una capa.");
+  }
+
+  const atomic = findAtomicContainerViolations(selectedLayerIds, index);
+  if (atomic.length > 0) return fail("atomic_container", ATOMIC_MSG);
+
+  const partial = findPartiallyCoveredSemanticNodes(args.blueprint, selectedLayerIds, index).filter(
+    (id) => isSiteButtonNode(args.blueprint.nodes[id]!),
+  );
+  if (partial.length > 0) {
+    return fail(
+      "partial_semantic",
+      "La selección contiene solo una parte de un componente. Inclúyelo completo o retíralo de la selección.",
+      { partialNodeIds: partial },
+    );
+  }
+
+  if (collectOwningSectionIds(args.blueprint, selectedLayerIds, index).length > 1) {
+    return fail("multicard_cross_section", "La selección abarca más de una sección.");
+  }
+
+  for (const layerId of selectedLayerIds) {
+    if (layerIsInsideMultiCard(args.blueprint, layerId, index)) {
+      return fail("multicard_nested", "No se puede crear un MultiCard dentro de otro.");
+    }
+  }
+
+  const parentRes = resolveButtonParent({
+    blueprint: args.blueprint,
+    selectedLayerIds,
+    index,
+    preferredParentId: args.preferredParentId,
+  });
+  if (parentRes.status === "blocked") return fail("parent", parentRes.message);
+  if (parentRes.status === "ambiguous") {
+    return fail("ambiguous_parent", parentRes.message, {
+      candidateParentIds: parentRes.candidateParentIds,
+    });
+  }
+  if (parentRes.parentId == null) {
+    return fail("multicard_needs_parent", "El MultiCard tiene que vivir en una sección o un grupo.");
+  }
+  const parent = args.blueprint.nodes[parentRes.parentId];
+  if (!parent || isSiteButtonNode(parent)) {
+    return fail("parent", "Un botón no puede contener un MultiCard.");
+  }
+  if (isSiteMultiCardNode(parent) || nodeIsInsideMultiCard(args.blueprint, parent.id)) {
+    return fail("multicard_nested", "No se puede crear un MultiCard dentro de otro.");
+  }
+  if (!isSiteSectionNode(parent) && parent.kind !== "layoutGroup") {
+    return fail("multicard_needs_parent", "El MultiCard tiene que vivir en una sección o un grupo.");
+  }
+
+  const expand = expandGroupContainersForSelection(args.blueprint, selectedLayerIds, index);
+  let blueprint = expand.blueprint;
+  const resolvedLayerIds = expand.resolvedLayerIds;
+
+  const fullyCovered = findFullyCoveredSemanticNodes(blueprint, selectedLayerIds, index);
+  if (fullyCovered.some((id) => isSiteMultiCardNode(blueprint.nodes[id]!))) {
+    return fail("multicard_nested", "No se puede crear un MultiCard dentro de otro.");
+  }
+  const reparentIds = reparentableFullyCoveredNodes(blueprint, parentRes.parentId, fullyCovered);
+
+  const ownership = buildBlueprintOwnershipIndexWithTree(blueprint, index);
+  const moldLayers: string[] = [];
+  for (const layerId of resolvedLayerIds) {
+    const ownerId = ownership.ownerByLayerId[layerId];
+    if (ownerId && reparentIds.includes(ownerId)) continue;
+    if (ownerId && ownerId !== parentRes.parentId) continue;
+    const coveredBy = ownership.coveredByContainerOwner[layerId];
+    if (coveredBy && coveredBy !== parentRes.parentId) continue;
+    moldLayers.push(layerId);
+  }
+
+  const cards = createDefaultMultiCardCards();
+  const nodeId = createSiteMultiCardId();
+  const multi: SiteBlueprintMultiCardNode = {
+    id: nodeId,
+    kind: "multicard",
+    label: args.label ?? "MultiCard",
+    parentId: null,
+    childIds: [],
+    layerIds: [],
+    count: cards.length,
+    layoutMode: "grid",
+    gap: MULTICARD_DEFAULT_GAP,
+    nav: { visibility: "auto", style: "arrows" },
+    cards,
+  };
+
+  blueprint = {
+    ...blueprint,
+    nodes: { ...blueprint.nodes, [nodeId]: multi },
+    rootChildIds: [...blueprint.rootChildIds, nodeId],
+  };
+  blueprint = attachChild(blueprint, parentRes.parentId, nodeId);
+  blueprint = moveLayersToBlueprintNode(blueprint, nodeId, unique(moldLayers));
+  for (const childId of reparentIds) {
+    blueprint = attachChild(blueprint, nodeId, childId);
+  }
+  blueprint = applyNewMultiCardResponsiveDefaults(blueprint, nodeId);
+
+  try {
+    return { ok: true, blueprint: assertValidBlueprint(blueprint, index), createdNodeId: nodeId };
+  } catch (e) {
+    return fail("validation", e instanceof Error ? e.message : "Blueprint inválido.");
+  }
+}
+
 export function isWrapEligibleSemanticNode(blueprint: SiteBlueprintV1, nodeId: string): boolean {
   const node = blueprint.nodes[nodeId];
   if (!node || isSiteSectionNode(node)) return false;
-  return node.kind === "layoutGroup" || isSiteButtonNode(node);
+  return node.kind === "layoutGroup" || isSiteButtonNode(node) || isSiteMultiCardNode(node);
 }
 
 /** Envuelve nodos semánticos hermanos (grupos/botones) en un layoutGroup padre. */
@@ -944,6 +1112,174 @@ export function setLayoutGroupWidthMode(
   return { ok: true, blueprint: next };
 }
 
+function requireMultiCard(
+  blueprint: SiteBlueprintV1,
+  nodeId: string,
+): SiteBlueprintMultiCardNode | BlueprintOpError {
+  const node = blueprint.nodes[nodeId];
+  if (!node || !isSiteMultiCardNode(node)) {
+    return fail("invalid_target", "Selecciona un MultiCard.");
+  }
+  return node;
+}
+
+export function setMultiCardCount(blueprint: SiteBlueprintV1, nodeId: string, count: number): BlueprintOpResult {
+  const node = requireMultiCard(blueprint, nodeId);
+  if ("ok" in node) return node;
+  const n = Math.min(MULTICARD_COUNT_MAX, Math.max(MULTICARD_COUNT_MIN, Math.round(count)));
+  if (n === node.cards.length) return { ok: true, blueprint };
+  const next = cloneBlueprint(blueprint);
+  const current = next.nodes[nodeId];
+  if (!current || !isSiteMultiCardNode(current)) return fail("invalid_target", "Selecciona un MultiCard.");
+  const cards = [...current.cards];
+  while (cards.length < n) {
+    cards.push({ id: createSiteMultiCardCardId(), overrides: {} });
+  }
+  while (cards.length > n) {
+    if (cards.length <= 1) break;
+    cards.pop();
+  }
+  next.nodes[nodeId] = { ...current, cards, count: cards.length };
+  return { ok: true, blueprint: next };
+}
+
+export function setMultiCardLayoutMode(
+  blueprint: SiteBlueprintV1,
+  nodeId: string,
+  layoutMode: SiteMultiCardLayoutMode,
+  band: "wide" | ResponsiveEditableBand = "wide",
+): BlueprintOpResult {
+  const node = requireMultiCard(blueprint, nodeId);
+  if ("ok" in node) return node;
+  if (isResponsiveEditableBand(band)) {
+    return {
+      ok: true,
+      blueprint: patchContainerTune({
+        blueprint,
+        target: { kind: "blueprintNode", nodeId },
+        band,
+        patch: { repeatMode: layoutMode },
+      }).blueprint,
+    };
+  }
+  if (node.layoutMode === layoutMode) return { ok: true, blueprint };
+  const next = cloneBlueprint(blueprint);
+  const current = next.nodes[nodeId];
+  if (!current || !isSiteMultiCardNode(current)) return fail("invalid_target", "Selecciona un MultiCard.");
+  next.nodes[nodeId] = { ...current, layoutMode };
+  return { ok: true, blueprint: next };
+}
+
+export function duplicateMultiCardCard(
+  blueprint: SiteBlueprintV1,
+  nodeId: string,
+  cardId: string,
+): BlueprintOpResult {
+  const node = requireMultiCard(blueprint, nodeId);
+  if ("ok" in node) return node;
+  if (node.cards.length >= MULTICARD_COUNT_MAX) {
+    return fail("multicard_count", "No se pueden añadir más cards.");
+  }
+  const index = node.cards.findIndex((card) => card.id === cardId);
+  if (index < 0) return fail("invalid_target", "Esa card no existe.");
+  const next = cloneBlueprint(blueprint);
+  const current = next.nodes[nodeId];
+  if (!current || !isSiteMultiCardNode(current)) return fail("invalid_target", "Selecciona un MultiCard.");
+  const source = current.cards[index]!;
+  const copy = {
+    id: createSiteMultiCardCardId(),
+    overrides: Object.fromEntries(
+      Object.entries(source.overrides).map(([layerId, slot]) => [layerId, { ...slot }]),
+    ),
+  };
+  const cards = [...current.cards];
+  cards.splice(index + 1, 0, copy);
+  next.nodes[nodeId] = { ...current, cards, count: cards.length };
+  return { ok: true, blueprint: next };
+}
+
+export function removeMultiCardCard(
+  blueprint: SiteBlueprintV1,
+  nodeId: string,
+  cardId: string,
+): BlueprintOpResult {
+  const node = requireMultiCard(blueprint, nodeId);
+  if ("ok" in node) return node;
+  if (node.cards[0]?.id === cardId) {
+    return fail("multicard_card1", "La primera card es el molde y no se puede eliminar.");
+  }
+  if (node.cards.length <= 1) {
+    return fail("multicard_count", "El MultiCard tiene que tener al menos una card.");
+  }
+  const next = cloneBlueprint(blueprint);
+  const current = next.nodes[nodeId];
+  if (!current || !isSiteMultiCardNode(current)) return fail("invalid_target", "Selecciona un MultiCard.");
+  const cards = current.cards.filter((card) => card.id !== cardId);
+  if (cards.length === current.cards.length) return fail("invalid_target", "Esa card no existe.");
+  next.nodes[nodeId] = { ...current, cards, count: cards.length };
+  return { ok: true, blueprint: next };
+}
+
+export function moveMultiCardCard(
+  blueprint: SiteBlueprintV1,
+  nodeId: string,
+  cardId: string,
+  direction: -1 | 1,
+): BlueprintOpResult {
+  const node = requireMultiCard(blueprint, nodeId);
+  if ("ok" in node) return node;
+  const from = node.cards.findIndex((card) => card.id === cardId);
+  if (from < 0) return fail("invalid_target", "Esa card no existe.");
+  const to = from + direction;
+  if (to < 0 || to >= node.cards.length) return { ok: true, blueprint };
+  if (from === 0 || to === 0) {
+    return fail("multicard_card1", "La primera card es el molde y tiene que quedar la primera.");
+  }
+  const next = cloneBlueprint(blueprint);
+  const current = next.nodes[nodeId];
+  if (!current || !isSiteMultiCardNode(current)) return fail("invalid_target", "Selecciona un MultiCard.");
+  const cards = [...current.cards];
+  const [moved] = cards.splice(from, 1);
+  if (!moved) return { ok: true, blueprint };
+  cards.splice(to, 0, moved);
+  next.nodes[nodeId] = { ...current, cards, count: cards.length };
+  return { ok: true, blueprint: next };
+}
+
+export function setMultiCardSlotOverride(args: {
+  blueprint: SiteBlueprintV1;
+  nodeId: string;
+  cardId: string;
+  moldLayerId: string;
+  patch: SiteMultiCardSlotOverrideV1 | null;
+}): BlueprintOpResult {
+  const node = requireMultiCard(args.blueprint, args.nodeId);
+  if ("ok" in node) return node;
+  if (!node.cards.some((item) => item.id === args.cardId)) {
+    return fail("invalid_target", "Esa card no existe.");
+  }
+  const next = cloneBlueprint(args.blueprint);
+  const current = next.nodes[args.nodeId];
+  if (!current || !isSiteMultiCardNode(current)) return fail("invalid_target", "Selecciona un MultiCard.");
+  const cards = current.cards.map((item) => {
+    if (item.id !== args.cardId) return item;
+    const overrides = { ...item.overrides };
+    if (args.patch == null) {
+      delete overrides[args.moldLayerId];
+      return { ...item, overrides };
+    }
+    const prev = overrides[args.moldLayerId] ?? {};
+    const merged: SiteMultiCardSlotOverrideV1 = { ...prev };
+    if (typeof args.patch.text === "string") merged.text = args.patch.text;
+    if (args.patch.mediaRef) merged.mediaRef = { ...args.patch.mediaRef };
+    if (!merged.text && !merged.mediaRef) delete overrides[args.moldLayerId];
+    else overrides[args.moldLayerId] = merged;
+    return { ...item, overrides };
+  });
+  next.nodes[args.nodeId] = { ...current, cards };
+  return { ok: true, blueprint: next };
+}
+
 export function setSectionHeightMode(
   blueprint: SiteBlueprintV1,
   sectionId: string,
@@ -996,6 +1332,48 @@ export function setSectionHeightMode(
   return { ok: true, blueprint: next };
 }
 
+/**
+ * Estira el marco de la sección en Original (`sourceRange.bottom`).
+ * No mueve capas: el extra es padding inferior, sin solapar la siguiente sección.
+ */
+export function stretchSectionSourceRangeBottom(args: {
+  blueprint: SiteBlueprintV1;
+  sectionId: string;
+  bottom: number;
+  index: SiteCreatorSelectionIndex;
+  pageHeight: number;
+}): BlueprintOpResult {
+  const node = args.blueprint.nodes[args.sectionId];
+  if (!node || !isSiteSectionNode(node)) {
+    return fail("invalid_target", "Selecciona una sección.");
+  }
+  const content = nodeVisualBounds(args.blueprint, node.id, args.index);
+  const contentBottom = content
+    ? content.y + content.height
+    : node.sourceRange.top + 1;
+  const sections = args.blueprint.rootChildIds
+    .map((id) => args.blueprint.nodes[id])
+    .filter((n): n is SiteBlueprintSectionNode => Boolean(n) && isSiteSectionNode(n))
+    .sort((a, b) => a.sourceRange.top - b.sourceRange.top || a.id.localeCompare(b.id));
+  const sectionIndex = sections.findIndex((item) => item.id === node.id);
+  const nextSection = sectionIndex >= 0 ? sections[sectionIndex + 1] ?? null : null;
+  const bottom = clampSectionSourceRangeBottom({
+    contentBottom,
+    nextSectionTop: nextSection ? nextSection.sourceRange.top : null,
+    pageHeight: Math.max(1, args.pageHeight),
+    requestedBottom: args.bottom,
+  });
+  if (Math.abs(bottom - node.sourceRange.bottom) < 0.5) {
+    return { ok: true, blueprint: args.blueprint };
+  }
+  const next = cloneBlueprint(args.blueprint);
+  next.nodes[node.id] = {
+    ...node,
+    sourceRange: { ...node.sourceRange, bottom },
+  };
+  return { ok: true, blueprint: next };
+}
+
 export function semanticNodeBounds(
   blueprint: SiteBlueprintV1,
   nodeId: string,
@@ -1035,7 +1413,7 @@ export function reparentUnitsToContainer(args: {
   if (isSiteButtonNode(target)) {
     return fail("invalid_target", "No se puede añadir contenido estructural dentro de un botón.");
   }
-  if (!isSiteSectionNode(target) && target.kind !== "layoutGroup") {
+  if (!isSiteStructuralContainerNode(target)) {
     return fail("invalid_target", "El destino no admite contenido.");
   }
   if (units.length === 0) return fail("empty_selection", "Selecciona al menos un elemento.");

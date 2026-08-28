@@ -98,6 +98,10 @@ import type {
 } from "./SiteCreatorSelectionSurface";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorMicrobarModel } from "./SiteCreatorObjectMicrobar";
+import { SiteCreatorMultiCardControl } from "./SiteCreatorMultiCardControl";
+import { SiteCreatorMediaPicker, type SiteCreatorMediaPickItem } from "./SiteCreatorMediaPicker";
+import { findOwningMultiCardDisplay } from "./site-creator-multicard";
+import { clampMultiCardScrollIndex, resolveMultiCardBandPresentation } from "./site-creator-multicard-layout";
 import { createPortal } from "react-dom";
 import {
   buildSiteCreatorPresentationTree,
@@ -140,7 +144,7 @@ import type {
   SiteSectionHeightMode,
   SiteSectionScrollKind,
 } from "./site-creator-types";
-import { isResponsiveEditableBand, isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
+import { isResponsiveEditableBand, isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode, MULTICARD_COUNT_MAX } from "./site-creator-types";
 import {
   collectPublishImageRefs,
   compilePublishedSite,
@@ -165,6 +169,7 @@ import {
   createButtonFromSelection,
   createLayoutGroupFromSelection,
   createGroupFromSelection,
+  createMultiCardFromSelection,
   createSectionFromSelection,
   extractAccessibleLabelFromLayers,
   removeBlueprintNodePreservingContent,
@@ -172,7 +177,14 @@ import {
   reparentUnitsToContainer,
   resolveButtonParent,
   semanticNodeBounds,
+  setMultiCardCount,
+  setMultiCardLayoutMode,
+  setMultiCardSlotOverride,
+  duplicateMultiCardCard,
+  removeMultiCardCard,
+  moveMultiCardCard,
   setSectionHeightMode,
+  stretchSectionSourceRangeBottom,
 } from "./site-blueprint-ops";
 import {
   applyGroupFitToContainer,
@@ -206,6 +218,7 @@ import {
   unitsToStructureLayerIds,
   type SiteCreatorSelectionUnit,
 } from "./site-creator-display-labels";
+import { moldLayerIdFromDisplay } from "./site-creator-multicard-ids";
 import {
   buildBreadcrumbSegments,
   containerDisplayLabel,
@@ -216,6 +229,7 @@ import {
   isAutoDesignerMirrorNode,
 } from "./site-creator-designer-group-dismiss";
 import type { SiteBlueprintLayoutGroupNode } from "./site-creator-types";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 const SITE_CREATOR_ACCENT = "#22d3ee";
 const STALE_SYNC_MESSAGE = "Designer volvió a cambiar. Revisa la actualización de nuevo.";
@@ -237,6 +251,8 @@ export interface SiteCreatorStudioProps {
   onBlueprintChange: (next: SiteBlueprintV1) => void;
   publish?: SiteCreatorPublishStateV1 | null;
   onPublishChange?: (next: SiteCreatorPublishStateV1 | null) => void;
+  /** Inventario de imágenes de Foldder para overrides de MultiCard. */
+  projectMedia?: SiteCreatorMediaPickItem[];
 }
 
 function emptyStateMessage(originState: SiteCreatorOriginState): string {
@@ -292,6 +308,49 @@ function unitOutlineKind(
   return "group";
 }
 
+function coverageHasDisplayLayer(coverage: Set<string>, layerId: string): boolean {
+  if (coverage.has(layerId)) return true;
+  const moldId = moldLayerIdFromDisplay(layerId);
+  return moldId !== layerId && coverage.has(moldId);
+}
+
+function isImageLikeObject(object: { type?: string; imageFrameContent?: unknown } | undefined): boolean {
+  if (!object) return false;
+  return object.type === "image" || Boolean(object.imageFrameContent);
+}
+
+function mediaItemsFromPage(page: DesignerPageState | null | undefined): SiteCreatorMediaPickItem[] {
+  if (!page) return [];
+  const out: SiteCreatorMediaPickItem[] = [];
+  const visit = (objects: DesignerPageState["objects"]) => {
+    for (const obj of objects ?? []) {
+      const src =
+        (obj as { src?: string }).src ||
+        (obj as { imageFrameContent?: { src?: string } }).imageFrameContent?.src;
+      if (typeof src === "string" && src.trim()) {
+        const s3Key =
+          tryExtractKnowledgeFilesKeyFromUrl(src) ??
+          (obj as { s3Key?: string }).s3Key ??
+          (obj as { imageFrameContent?: { s3Key?: string } }).imageFrameContent?.s3Key;
+        out.push({
+          id: obj.id,
+          url: src,
+          s3Key: typeof s3Key === "string" && s3Key.trim() ? s3Key : undefined,
+          sourceLabel: obj.name && obj.name !== obj.id ? obj.name : "Diseño",
+        });
+      }
+      if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
+        visit((obj as { children?: DesignerPageState["objects"] }).children);
+      } else if (obj.type === "clippingContainer") {
+        const clip = obj as { mask?: { id: string }; content?: DesignerPageState["objects"] };
+        visit(clip.content);
+      }
+    }
+  };
+  visit(page.objects);
+  return out;
+}
+
 function boundsForUnit(
   unit: SiteCreatorSelectionUnit,
   blueprint: SiteBlueprintV1,
@@ -315,6 +374,7 @@ function parentChoiceLabel(
   if (isSiteSectionNode(node) && node.sectionType === "hero") return "En Hero";
   if (isSiteSectionNode(node)) return "En Sección";
   if (node.kind === "layoutGroup") return "En Grupo";
+  if (isSiteMultiCardNode(node)) return "En MultiCard";
   return `En ${deriveBlueprintNodeDisplayLabel(node, snapshot, index)}`;
 }
 
@@ -363,7 +423,7 @@ function selectionParentIsStacked(
     );
   }
   for (const node of Object.values(blueprint.nodes)) {
-    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup") continue;
+    if (!isSiteSectionNode(node) && node.kind !== "layoutGroup" && !isSiteMultiCardNode(node)) continue;
     if (!node.layerIds.includes(unit.layerId)) continue;
     return (
       resolveEffectiveResponsiveMode({
@@ -412,6 +472,7 @@ export function SiteCreatorStudio({
   onBlueprintChange,
   publish = null,
   onPublishChange,
+  projectMedia = [],
 }: SiteCreatorStudioProps) {
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -475,10 +536,27 @@ export function SiteCreatorStudio({
     preferredParentId?: string | null;
   } | null>(null);
   const [pendingParentChoice, setPendingParentChoice] = useState<{
-    kind: "button" | "group";
+    kind: "button" | "group" | "multicard";
     candidateParentIds: string[];
   } | null>(null);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
+  const [multiCardTextEdit, setMultiCardTextEdit] = useState<{
+    nodeId: string;
+    cardId: string;
+    moldLayerId: string;
+    text: string;
+  } | null>(null);
+  const [multiCardScrollIndexByNodeId, setMultiCardScrollIndexByNodeId] = useState<
+    Record<string, number>
+  >({});
+  const [multiCardActiveCardByNodeId, setMultiCardActiveCardByNodeId] = useState<
+    Record<string, string>
+  >({});
+  const [multiCardMediaPick, setMultiCardMediaPick] = useState<{
+    nodeId: string;
+    cardId: string;
+    moldLayerId: string;
+  } | null>(null);
 
   const historyRef = useRef<SiteBlueprintHistoryState>(createBlueprintHistory(blueprint));
   const writeCountRef = useRef(0);
@@ -500,6 +578,15 @@ export function SiteCreatorStudio({
   );
 
   const page = previewPage ?? snapshot?.page ?? null;
+  const pickerMediaItems = useMemo(() => {
+    const merged = new Map<string, SiteCreatorMediaPickItem>();
+    for (const item of [...projectMedia, ...mediaItemsFromPage(page)]) {
+      const key = item.s3Key || item.url;
+      if (!key || merged.has(key)) continue;
+      merged.set(key, item);
+    }
+    return [...merged.values()];
+  }, [page, projectMedia]);
   const committedPage =
     originState === "synced" && page ? page : (snapshot?.page ?? null);
   const pageDimensions = page ? getPageDimensions(page) : null;
@@ -667,11 +754,13 @@ export function SiteCreatorStudio({
       viewportWidth: layoutViewportWidth,
       viewportHeight: liveViewportHeight,
       band: responsiveBand,
+      multiCardScrollIndexByNodeId,
     });
   }, [
     displayBlueprint,
     layoutViewportWidth,
     liveViewportHeight,
+    multiCardScrollIndexByNodeId,
     page,
     referenceIndex,
     responsiveBand,
@@ -679,6 +768,25 @@ export function SiteCreatorStudio({
 
   const displayPage = responsive?.displayPage ?? page;
   const objectClipById = responsive?.resolvedLayout?.objectClipById;
+
+  useEffect(() => {
+    const containers = responsive?.multiCard?.containers;
+    if (!containers || containers.length === 0) return;
+    setMultiCardScrollIndexByNodeId((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const container of containers) {
+        const clamped = container.overflow
+          ? clampMultiCardScrollIndex(container.count, current[container.nodeId] ?? 0)
+          : 0;
+        if ((current[container.nodeId] ?? 0) !== clamped) {
+          next[container.nodeId] = clamped;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [responsive?.multiCard?.containers]);
   const selectionIndex = useMemo(
     () => (displayPage ? buildSiteSelectionIndex(displayPage) : null),
     [displayPage],
@@ -712,12 +820,11 @@ export function SiteCreatorStudio({
     if (!availablePreviewSize) return;
     if (availablePreviewSize.width < 80 || availablePreviewSize.height < 80) return;
     if (pagePreviewMode) {
-      setPreviewZoom(
-        computeFillWidthPreviewZoom({
-          layoutWidth,
-          availableWidth: availablePreviewSize.width,
-        }),
-      );
+      const z = computeFillWidthPreviewZoom({
+        layoutWidth,
+        availableWidth: availablePreviewSize.width,
+      });
+      setPreviewZoom((prev) => (Math.abs(prev - z) < 1e-4 ? prev : z));
       return;
     }
     const spineReserve = deviceFrame
@@ -729,7 +836,7 @@ export function SiteCreatorStudio({
       availableWidth: Math.max(1, availablePreviewSize.width - spineReserve),
       availableHeight: availablePreviewSize.height,
     });
-    setPreviewZoom(z);
+    setPreviewZoom((prev) => (Math.abs(prev - z) < 1e-4 ? prev : z));
   }, [
     availablePreviewSize,
     deviceFrame,
@@ -835,7 +942,7 @@ export function SiteCreatorStudio({
     setPublishing(true);
     setPublishError(null);
     try {
-      const refs = collectPublishImageRefs(publishPage);
+      const refs = collectPublishImageRefs(publishPage, blueprint);
       const imageHrefByLayerId = Object.fromEntries(
         refs.map((ref) => [ref.layerId, publishAssetPlaceholder(ref.layerId)]),
       );
@@ -1044,6 +1151,75 @@ export function SiteCreatorStudio({
       persistGate,
       selectCreatedNode,
     ],
+  );
+
+  const applyMultiCard = useCallback(
+    (preferredParentId?: string | null) => {
+      if (!committedIndex) return;
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      const parentId =
+        preferredParentId !== undefined ? preferredParentId : contextualInspectId ?? undefined;
+      const result = createMultiCardFromSelection({
+        blueprint,
+        selectedLayerIds: structureLayerIds,
+        index: committedIndex,
+        preferredParentId: parentId,
+      });
+      if (!result.ok) {
+        if (result.code === "ambiguous_parent" && result.candidateParentIds) {
+          setPendingParentChoice({
+            kind: "multicard",
+            candidateParentIds: result.candidateParentIds,
+          });
+          setStructureError(result.message);
+          return;
+        }
+        setStructureError(result.message);
+        return;
+      }
+      commitBlueprint(result.blueprint);
+      setPendingParentChoice(null);
+      selectCreatedNode(result.createdNodeId);
+      const created = result.createdNodeId ? result.blueprint.nodes[result.createdNodeId] : null;
+      if (created?.parentId) {
+        setInteractionPath([created.parentId]);
+      }
+    },
+    [
+      blueprint,
+      commitBlueprint,
+      committedIndex,
+      contextualInspectId,
+      persistGate,
+      selectCreatedNode,
+      structureLayerIds,
+    ],
+  );
+
+  const commitMultiCardOp = useCallback(
+    (result: { ok: boolean; blueprint?: SiteBlueprintV1; message?: string }) => {
+      if (!result.ok || !result.blueprint) {
+        if (result.message) setStructureError(result.message);
+        return;
+      }
+      commitBlueprint(result.blueprint);
+    },
+    [commitBlueprint],
+  );
+
+  const openMultiCardMediaPicker = useCallback(
+    (owning: { nodeId: string; cardId: string; moldLayerId: string }) => {
+      setMultiCardMediaPick(owning);
+      setMultiCardActiveCardByNodeId((current) => ({
+        ...current,
+        [owning.nodeId]: owning.cardId,
+      }));
+      setUnits([{ kind: "blueprintNode", nodeId: owning.nodeId }]);
+    },
+    [],
   );
 
   const applyButton = useCallback(
@@ -1269,13 +1445,22 @@ export function SiteCreatorStudio({
             patchShadow({ type: "clear" });
             return;
           }
+          if (selectionIndex) {
+            const owning = findOwningMultiCardDisplay(blueprint, action.layerId, selectionIndex);
+            if (owning) {
+              setMultiCardActiveCardByNodeId((current) => ({
+                ...current,
+                [owning.nodeId]: owning.cardId,
+              }));
+            }
+          }
 
           // Profundidad: contenedor seleccionado o ancestro en interactionPath
           if (displayInspectNodeId) {
             const coverage = new Set(
               collectSemanticCoverageLayerIds(blueprint, displayInspectNodeId),
             );
-            if (!coverage.has(action.layerId)) {
+            if (!coverageHasDisplayLayer(coverage, action.layerId)) {
               setInteractionPath([]);
               const clickUnits = collapseLayersToSelectionUnits(
                 [action.layerId],
@@ -1409,12 +1594,43 @@ export function SiteCreatorStudio({
         }
 
         case "doubleClickLayer": {
+          const hit = selectionIndex?.byId[action.layerId];
+          const owning =
+            selectionIndex
+              ? findOwningMultiCardDisplay(blueprint, action.layerId, selectionIndex)
+              : null;
+          const isText = hit?.type === "text" || hit?.type === "textOnPath";
+          if (owning && isText) {
+            const displayText =
+              typeof (hit?.object as { text?: string } | undefined)?.text === "string"
+                ? (hit!.object as { text?: string }).text ?? ""
+                : "";
+            setMultiCardTextEdit({
+              nodeId: owning.nodeId,
+              cardId: owning.cardId,
+              moldLayerId: owning.moldLayerId,
+              text: displayText,
+            });
+            setMultiCardActiveCardByNodeId((current) => ({
+              ...current,
+              [owning.nodeId]: owning.cardId,
+            }));
+            setUnits([{ kind: "blueprintNode", nodeId: owning.nodeId }]);
+            return;
+          }
+          if (owning && isImageLikeObject(hit?.object)) {
+            openMultiCardMediaPicker(owning);
+            return;
+          }
           const unit = resolveRootClickUnit(action.layerId, blueprint, selectionIndex);
           if (unit.kind === "blueprintNode") {
             const node = blueprint.nodes[unit.nodeId];
             if (
               node &&
-              (isSiteButtonNode(node) || node.kind === "layoutGroup" || isSiteSectionNode(node))
+              (isSiteButtonNode(node) ||
+                node.kind === "layoutGroup" ||
+                isSiteMultiCardNode(node) ||
+                isSiteSectionNode(node))
             ) {
               // Doble clic: seleccionar contenedor (hijos ya accesibles al estar seleccionado)
               setUnits([unit]);
@@ -1482,8 +1698,8 @@ export function SiteCreatorStudio({
               const coverage = new Set(
                 collectSemanticCoverageLayerIds(blueprint, displayInspectNodeId),
               );
-              if (coverage.has(layerId)) {
-                setUnits([{ kind: "layer", layerId }]);
+              if (coverageHasDisplayLayer(coverage, layerId)) {
+                setUnits([{ kind: "layer", layerId: moldLayerIdFromDisplay(layerId) }]);
                 return;
               }
               setInteractionPath([]);
@@ -1498,8 +1714,8 @@ export function SiteCreatorStudio({
             const coverage = new Set(
               collectSemanticCoverageLayerIds(blueprint, displayInspectNodeId),
             );
-            if (coverage.has(layerId)) {
-              setUnits([{ kind: "layer", layerId }]);
+            if (coverageHasDisplayLayer(coverage, layerId)) {
+              setUnits([{ kind: "layer", layerId: moldLayerIdFromDisplay(layerId) }]);
               return;
             }
             setInteractionPath([]);
@@ -1531,6 +1747,7 @@ export function SiteCreatorStudio({
       displayShadow,
       displayUnits,
       interactionPath,
+      openMultiCardMediaPicker,
       selectionIndex,
     ],
   );
@@ -1612,8 +1829,12 @@ export function SiteCreatorStudio({
         case "keepTogether":
           applyGroup();
           return;
+        case "createMultiCard":
+          applyMultiCard();
+          return;
         case "undoButton":
         case "undoSection":
+        case "undoMultiCard":
         case "separateGroup":
           removeSelectedStructure();
           return;
@@ -1691,6 +1912,7 @@ export function SiteCreatorStudio({
       applyAddToContainer,
       applyButton,
       applyGroup,
+      applyMultiCard,
       applyRemoveFromContainer,
       blueprint,
       commitBlueprint,
@@ -1712,10 +1934,12 @@ export function SiteCreatorStudio({
         id,
         label: parentChoiceLabel(id, blueprint, snapshot, committedIndex),
       }));
-    choices.push({
-      id: null,
-      label: parentChoiceLabel(null, blueprint, snapshot, committedIndex),
-    });
+    if (pendingParentChoice.kind !== "multicard") {
+      choices.push({
+        id: null,
+        label: parentChoiceLabel(null, blueprint, snapshot, committedIndex),
+      });
+    }
     return choices;
   }, [blueprint, committedIndex, pendingParentChoice, snapshot]);
 
@@ -1724,7 +1948,7 @@ export function SiteCreatorStudio({
     if (!hoverId || !selectionIndex) return null;
     if (displayInspectNodeId) {
       const coverage = new Set(collectSemanticCoverageLayerIds(blueprint, displayInspectNodeId));
-      if (!coverage.has(hoverId)) return null;
+      if (!coverageHasDisplayLayer(coverage, hoverId)) return null;
       return resolveInspectClickUnit(hoverId, displayInspectNodeId, blueprint, selectionIndex);
     }
     // Contenedor seleccionado: revelar hijo directo bajo el cursor
@@ -1735,7 +1959,7 @@ export function SiteCreatorStudio({
     ) {
       const containerId = displayUnits[0]!.nodeId;
       const coverage = new Set(collectSemanticCoverageLayerIds(blueprint, containerId));
-      if (coverage.has(hoverId)) {
+      if (coverageHasDisplayLayer(coverage, hoverId)) {
         return resolveInspectClickUnit(hoverId, containerId, blueprint, selectionIndex);
       }
     }
@@ -1746,9 +1970,20 @@ export function SiteCreatorStudio({
     if (!selectionIndex) return [];
     const outlines: SiteCreatorUnitOutline[] = [];
     for (const unit of displayUnits) {
-      const bounds =
+      let bounds =
         presentationBoundsForUnit(unit, presentationTree, selectionIndex) ??
         boundsForUnit(unit, blueprint, selectionIndex);
+      if (viewportBand === "original" && unit.kind === "blueprintNode") {
+        const node = blueprint.nodes[unit.nodeId];
+        if (node && isSiteSectionNode(node)) {
+          bounds = {
+            x: 0,
+            y: node.sourceRange.top,
+            width: referenceWidth,
+            height: Math.max(1, node.sourceRange.bottom - node.sourceRange.top),
+          };
+        }
+      }
       if (!bounds) continue;
       const label =
         unit.kind === "layer"
@@ -1761,7 +1996,7 @@ export function SiteCreatorStudio({
       });
     }
     return outlines;
-  }, [blueprint, displayUnits, presentationTree, selectionIndex, snapshot]);
+  }, [blueprint, displayUnits, presentationTree, referenceWidth, selectionIndex, snapshot, viewportBand]);
 
   const hoverOutline = useMemo((): SiteCreatorUnitOutline | null => {
     if (!hoverUnit || !selectionIndex) return null;
@@ -1866,6 +2101,10 @@ export function SiteCreatorStudio({
     const sections = listDocumentSections(blueprint);
     const hops = listSectionScrollHops(blueprint, spineHeightBand);
     const stationsDisplay = sectionScrollStations;
+    const pageH = Math.max(
+      1,
+      committedPage ? getPageDimensions(committedPage).height : 1,
+    );
     const stations: SectionSpineStation[] = sections.map((section, index) => {
       const display = stationsDisplay.find((item) => item.id === section.id) ?? null;
       const visual =
@@ -1874,18 +2113,24 @@ export function SiteCreatorStudio({
           presentationTree,
           selectionIndex,
         ) ?? semanticNodeBounds(blueprint, section.id, selectionIndex);
-      const top = display?.y ?? visual?.y ?? section.sourceRange.top;
-      const height =
-        display?.height ??
-        visual?.height ??
-        Math.max(1, section.sourceRange.bottom - section.sourceRange.top);
+      const useRange = viewportBand === "original";
+      const top = useRange
+        ? section.sourceRange.top
+        : (display?.y ?? visual?.y ?? section.sourceRange.top);
+      const height = useRange
+        ? Math.max(1, section.sourceRange.bottom - section.sourceRange.top)
+        : (display?.height ??
+          visual?.height ??
+          Math.max(1, section.sourceRange.bottom - section.sourceRange.top));
       const designedHeight =
         spineHeightBand === "wide"
           ? Math.max(1, section.sourceRange.bottom - section.sourceRange.top)
           : Math.max(1, display?.naturalHeight ?? visual?.height ?? height);
+      const contentBottom = visual ? visual.y + visual.height : section.sourceRange.bottom;
+      const contentHeight = Math.max(1, contentBottom - section.sourceRange.top);
+      const nextSection = sections[index + 1] ?? null;
       const mode = sectionHeightModeForBand(blueprint, section, spineHeightBand);
       const customHeight = sectionCustomHeightForBand(blueprint, section, spineHeightBand);
-      const nextSection = sections[index + 1] ?? null;
       const hopToNext = hops[index + 1] ?? null;
       return {
         sectionId: section.id,
@@ -1894,6 +2139,8 @@ export function SiteCreatorStudio({
         bottom: top + height,
         height,
         designedHeight,
+        contentHeight,
+        maxBottom: nextSection ? nextSection.sourceRange.top : pageH,
         heightMode: mode,
         customHeight,
         selected: selectedId === section.id,
@@ -1946,6 +2193,7 @@ export function SiteCreatorStudio({
     selectionInsideSection,
     structureLayerIds.length,
     viewportBand,
+    committedPage,
   ]);
 
   const handleSpineScrollChange = useCallback(
@@ -2041,6 +2289,28 @@ export function SiteCreatorStudio({
     [commitBlueprint, persistGate, spineHeightBand],
   );
 
+  const handleSpineSourceRangeBottomChange = useCallback(
+    (sectionId: string, bottom: number) => {
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      if (!selectionIndex || !committedPage) return;
+      const result = stretchSectionSourceRangeBottom({
+        blueprint: blueprintRef.current,
+        sectionId,
+        bottom,
+        index: selectionIndex,
+        pageHeight: getPageDimensions(committedPage).height,
+      });
+      if (result.ok) {
+        blueprintRef.current = result.blueprint;
+        commitBlueprint(result.blueprint);
+      }
+    },
+    [commitBlueprint, committedPage, persistGate, selectionIndex],
+  );
+
   const contextOutlines = useMemo((): SiteCreatorUnitOutline[] => {
     if (!selectionIndex || displayUnits.length === 0) return [];
     const outlines: SiteCreatorUnitOutline[] = [];
@@ -2089,8 +2359,15 @@ export function SiteCreatorStudio({
         isContainer: child.isContainer || child.kind === "semantic",
       });
     }
+    if (subject.kind === "blueprintNode" && isSiteMultiCardNode(blueprint.nodes[subject.nodeId])) {
+      const mold = responsive?.multiCard?.containers.find((item) => item.nodeId === subject.nodeId);
+      const card1 = mold?.cardRects[0];
+      if (card1) {
+        ghosts.unshift({ bounds: card1, emphasized: true, isContainer: true });
+      }
+    }
     return ghosts;
-  }, [blueprint.nodes, displayUnits, hoverUnit, presentationTree, selectionIndex]);
+  }, [blueprint.nodes, displayUnits, hoverUnit, presentationTree, responsive?.multiCard, selectionIndex]);
 
   const sectionOutlines = useMemo((): SiteCreatorUnitOutline[] => {
     return [];
@@ -2694,6 +2971,155 @@ export function SiteCreatorStudio({
         const current = segments.find((segment) => segment.current);
         if (current) current.label = `Fondo · ${current.label}`;
       }
+      const multiCardNode =
+        unit.kind === "blueprintNode" ? blueprint.nodes[unit.nodeId] : null;
+      const multiCardActiveCardId =
+        multiCardNode && isSiteMultiCardNode(multiCardNode)
+          ? multiCardActiveCardByNodeId[multiCardNode.id] ??
+            multiCardNode.cards[Math.max(0, multiCardNode.cards.length - 1)]?.id ??
+            multiCardNode.cards[0]?.id ??
+            null
+          : null;
+      const multiCardActiveIndex =
+        multiCardNode && isSiteMultiCardNode(multiCardNode) && multiCardActiveCardId
+          ? Math.max(
+              0,
+              multiCardNode.cards.findIndex((card) => card.id === multiCardActiveCardId),
+            )
+          : 0;
+      const multiCardSlot =
+        multiCardNode && isSiteMultiCardNode(multiCardNode) ? (
+          <div className="flex items-center gap-1">
+            <SiteCreatorMultiCardControl
+              model={{
+                nodeId: multiCardNode.id,
+                count: multiCardNode.count,
+                layoutMode: resolveMultiCardBandPresentation(
+                  blueprint,
+                  multiCardNode,
+                  responsiveBand,
+                  layoutWidth,
+                  referenceWidth,
+                ).layoutMode,
+                activeCardIndex: multiCardActiveIndex,
+                canDuplicate: multiCardNode.count < MULTICARD_COUNT_MAX && Boolean(multiCardActiveCardId),
+                canRemoveActive: multiCardActiveIndex > 0 && multiCardNode.count > 1,
+                canMoveLeft: multiCardActiveIndex > 1,
+                canMoveRight:
+                  multiCardActiveIndex > 0 &&
+                  multiCardActiveIndex < multiCardNode.cards.length - 1,
+              }}
+              onCountChange={(count) => commitMultiCardOp(setMultiCardCount(blueprint, multiCardNode.id, count))}
+              onLayoutMode={(mode) =>
+                commitMultiCardOp(
+                  setMultiCardLayoutMode(
+                    blueprint,
+                    multiCardNode.id,
+                    mode,
+                    viewportBand === "original" ? "wide" : responsiveBand === "wide" ? "wide" : responsiveBand,
+                  ),
+                )
+              }
+              onDuplicateActive={() => {
+                if (!multiCardActiveCardId) return;
+                const result = duplicateMultiCardCard(
+                  blueprint,
+                  multiCardNode.id,
+                  multiCardActiveCardId,
+                );
+                if (result.ok && result.blueprint) {
+                  const nextNode = result.blueprint.nodes[multiCardNode.id];
+                  if (nextNode && isSiteMultiCardNode(nextNode)) {
+                    const from = nextNode.cards.findIndex((card) => card.id === multiCardActiveCardId);
+                    const copy = from >= 0 ? nextNode.cards[from + 1] : null;
+                    if (copy) {
+                      setMultiCardActiveCardByNodeId((current) => ({
+                        ...current,
+                        [multiCardNode.id]: copy.id,
+                      }));
+                    }
+                  }
+                }
+                commitMultiCardOp(result);
+              }}
+              onRemoveActive={() => {
+                if (!multiCardActiveCardId) return;
+                const result = removeMultiCardCard(
+                  blueprint,
+                  multiCardNode.id,
+                  multiCardActiveCardId,
+                );
+                if (result.ok && result.blueprint) {
+                  const nextNode = result.blueprint.nodes[multiCardNode.id];
+                  if (nextNode && isSiteMultiCardNode(nextNode)) {
+                    const fallback =
+                      nextNode.cards[Math.min(multiCardActiveIndex, nextNode.cards.length - 1)] ??
+                      nextNode.cards[0];
+                    if (fallback) {
+                      setMultiCardActiveCardByNodeId((current) => ({
+                        ...current,
+                        [multiCardNode.id]: fallback.id,
+                      }));
+                    }
+                  }
+                }
+                commitMultiCardOp(result);
+              }}
+              onMoveActive={(direction) => {
+                if (!multiCardActiveCardId) return;
+                commitMultiCardOp(
+                  moveMultiCardCard(blueprint, multiCardNode.id, multiCardActiveCardId, direction),
+                );
+              }}
+            />
+            {multiCardTextEdit && multiCardTextEdit.nodeId === multiCardNode.id ? (
+              <input
+                data-testid="site-creator-multicard-text-edit"
+                aria-label="Texto de la card"
+                className="h-6 w-28 rounded border border-white/15 bg-white/10 px-1.5 text-[10px] text-white outline-none"
+                value={multiCardTextEdit.text}
+                autoFocus
+                onChange={(e) =>
+                  setMultiCardTextEdit((current) =>
+                    current ? { ...current, text: e.target.value } : current,
+                  )
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitMultiCardOp(
+                      setMultiCardSlotOverride({
+                        blueprint,
+                        nodeId: multiCardTextEdit.nodeId,
+                        cardId: multiCardTextEdit.cardId,
+                        moldLayerId: multiCardTextEdit.moldLayerId,
+                        patch: { text: multiCardTextEdit.text },
+                      }),
+                    );
+                    setMultiCardTextEdit(null);
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setMultiCardTextEdit(null);
+                  }
+                }}
+                onBlur={() => {
+                  if (!multiCardTextEdit) return;
+                  commitMultiCardOp(
+                    setMultiCardSlotOverride({
+                      blueprint,
+                      nodeId: multiCardTextEdit.nodeId,
+                      cardId: multiCardTextEdit.cardId,
+                      moldLayerId: multiCardTextEdit.moldLayerId,
+                      patch: { text: multiCardTextEdit.text },
+                    }),
+                  );
+                  setMultiCardTextEdit(null);
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null;
       return {
         bounds,
         segments,
@@ -2710,6 +3136,7 @@ export function SiteCreatorStudio({
         refineSlot: refineModel ? (
           <SiteCreatorRefineControl model={refineModel} handlers={refineHandlers} />
         ) : null,
+        multiCardSlot,
       };
     }
 
@@ -2748,6 +3175,13 @@ export function SiteCreatorStudio({
     selectionIndex,
     snapshot,
     unitOutlines,
+    commitMultiCardOp,
+    layoutWidth,
+    multiCardActiveCardByNodeId,
+    multiCardTextEdit,
+    referenceWidth,
+    responsiveBand,
+    viewportBand,
   ]);
 
   const onMicrobarNavigate = useCallback(
@@ -3420,11 +3854,18 @@ export function SiteCreatorStudio({
               onSpineScrollChange={handleSpineScrollChange}
               onSpineHeightModeChange={handleSpineHeightModeChange}
               onSpineCustomHeightChange={handleSpineCustomHeightChange}
+              onSpineSourceRangeBottomChange={handleSpineSourceRangeBottomChange}
               microbar={pagePreviewMode || clipImageEdit ? null : microbarModel}
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}
               onCanvasInteraction={() => undefined}
               objectClipById={objectClipById}
+              multiCardNav={responsive?.multiCard?.containers ?? []}
+              onMultiCardScrollIndex={(nodeId, index) => {
+                setMultiCardScrollIndexByNodeId((current) =>
+                  current[nodeId] === index ? current : { ...current, [nodeId]: index },
+                );
+              }}
               floatingPortalHost={pagePreviewMode ? null : floatingHostEl}
               transformEnabled={
                 !pagePreviewMode &&
@@ -3453,6 +3894,17 @@ export function SiteCreatorStudio({
               onCancelFocal={() => setFocalLayerId(null)}
               clipImageEdit={pagePreviewMode ? null : clipImageEdit}
               onEnterClipImageEdit={({ kind = "clip", clipId, imageId }) => {
+                const owning = selectionIndex
+                  ? findOwningMultiCardDisplay(blueprint, imageId, selectionIndex) ??
+                    findOwningMultiCardDisplay(blueprint, clipId, selectionIndex)
+                  : null;
+                if (owning) {
+                  openMultiCardMediaPicker({
+                    ...owning,
+                    moldLayerId: moldLayerIdFromDisplay(imageId),
+                  });
+                  return;
+                }
                 setFocalLayerId(null);
                 setClipImageDraft(null);
                 const initial =
@@ -3693,6 +4145,7 @@ export function SiteCreatorStudio({
                 onClick={() => {
                   if (!pendingParentChoice) return;
                   if (pendingParentChoice.kind === "button") applyButton({ preferredParentId: choice.id });
+                  else if (pendingParentChoice.kind === "multicard") applyMultiCard(choice.id);
                   else applyGroup(choice.id);
                 }}
               >
@@ -3729,6 +4182,29 @@ export function SiteCreatorStudio({
         <div className="pointer-events-none fixed bottom-14 left-1/2 z-[100040] -translate-x-1/2 rounded border border-rose-400/40 bg-[#101820] px-4 py-2 text-xs text-rose-200 shadow-lg">
           {syncErrorMessage === "stale" ? STALE_SYNC_MESSAGE : syncErrorMessage}
         </div>
+      ) : null}
+      {multiCardMediaPick ? (
+        <SiteCreatorMediaPicker
+          items={pickerMediaItems}
+          onClose={() => setMultiCardMediaPick(null)}
+          onPick={(item) => {
+            commitMultiCardOp(
+              setMultiCardSlotOverride({
+                blueprint,
+                nodeId: multiCardMediaPick.nodeId,
+                cardId: multiCardMediaPick.cardId,
+                moldLayerId: multiCardMediaPick.moldLayerId,
+                patch: {
+                  mediaRef: {
+                    src: item.url,
+                    ...(item.s3Key ? { s3Key: item.s3Key } : {}),
+                  },
+                },
+              }),
+            );
+            setMultiCardMediaPick(null);
+          }}
+        />
       ) : null}
     </div>
   );

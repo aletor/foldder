@@ -1,6 +1,10 @@
 import type { ClippingContainerObject } from "../FreehandStudio";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import {
+  CLIP_IMAGE_ZOOM_FLOOR,
+  CLIP_IMAGE_ZOOM_MAX,
+} from "./site-creator-clipping-resize";
+import {
   collectSemanticCoverageLayerIds,
   findLayerSemanticOwner,
 } from "./site-blueprint-ownership";
@@ -300,7 +304,7 @@ export function patchExplicitBackgroundCrop(args: {
         x: Math.min(1, Math.max(0, args.focal.x)),
         y: Math.min(1, Math.max(0, args.focal.y)),
       },
-      zoom: Math.min(4, Math.max(1, args.zoom)),
+      zoom: Math.min(CLIP_IMAGE_ZOOM_MAX, Math.max(CLIP_IMAGE_ZOOM_FLOOR, args.zoom)),
     },
   });
 }

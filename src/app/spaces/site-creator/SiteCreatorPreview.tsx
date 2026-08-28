@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import { collectDesignerPageFontFamilies } from "@/app/spaces/designer/designer-page-text-frame-sync";
 import { ensureGoogleFontPreviewBatchLoaded } from "@/app/spaces/freehand/google-fonts-preview-loader";
@@ -21,6 +21,8 @@ import {
 import type { PageRect } from "./site-creator-coordinate-space";
 import { pageRectToStageRect } from "./site-creator-coordinate-space";
 import { SiteCreatorIsolationBreadcrumb } from "./SiteCreatorSelectionToolbar";
+import { SiteCreatorMultiCardNavOverlay } from "./SiteCreatorMultiCardNav";
+import type { MultiCardContainerLayout } from "./site-creator-multicard-layout";
 import type {
   SiteCreatorSelectionAction,
   SiteCreatorSelectionIndex,
@@ -42,6 +44,10 @@ import {
   scrollFlowUsesKind,
 } from "./site-creator-section-scroll";
 import { bindSectionScroller } from "./site-creator-section-scroll-runtime";
+import {
+  pagePointFromClientRect,
+  resolveMultiCardWheelTarget,
+} from "./site-creator-multicard-wheel";
 import {
   liveViewportHeightInPageUnits,
   sectionDisplayTop,
@@ -100,6 +106,9 @@ export interface SiteCreatorPreviewProps {
   onCanvasBackgroundDoubleClick?: () => void;
   /** Clips por capa del layout responsive resuelto (6B.1). */
   objectClipById?: Record<string, { x: number; y: number; width: number; height: number }>;
+  /** Carruseles MultiCard resueltos (flechas / rueda). */
+  multiCardNav?: MultiCardContainerLayout[];
+  onMultiCardScrollIndex?: (nodeId: string, index: number) => void;
   /** Host para portal de microbarra / popover (capa Studio sin clip). */
   floatingPortalHost?: HTMLElement | null;
   transformEnabled?: boolean;
@@ -145,6 +154,7 @@ export interface SiteCreatorPreviewProps {
   onSpineScrollChange?: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
   onSpineHeightModeChange?: (sectionId: string, mode: SiteSectionHeightMode) => void;
   onSpineCustomHeightChange?: (sectionId: string, heightPx: number) => void;
+  onSpineSourceRangeBottomChange?: (sectionId: string, bottom: number) => void;
   /** false mientras un contenedor semántico está inspeccionado (segundo clic en hijos). */
   canvasHitPassthroughImages?: boolean;
 }
@@ -202,6 +212,8 @@ export function SiteCreatorPreview({
   onCanvasInteraction,
   onCanvasBackgroundDoubleClick,
   objectClipById,
+  multiCardNav = [],
+  onMultiCardScrollIndex,
   floatingPortalHost = null,
   transformEnabled = false,
   transformBounds = null,
@@ -229,6 +241,7 @@ export function SiteCreatorPreview({
   onSpineScrollChange,
   onSpineHeightModeChange,
   onSpineCustomHeightChange,
+  onSpineSourceRangeBottomChange,
   canvasHitPassthroughImages = true,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -241,6 +254,7 @@ export function SiteCreatorPreview({
   const [frameTick, setFrameTick] = useState(0);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   const lastAvailableSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const lastStudioGeometryRef = useRef("");
   const dragRef = useRef<{
     side: "left" | "right";
     startClientX: number;
@@ -372,6 +386,8 @@ export function SiteCreatorPreview({
   }, [deviceMode, readOnly]);
 
   const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
+  const multiCardNavRef = useRef(multiCardNav);
+  multiCardNavRef.current = multiCardNav;
 
   const liveScreenHeight = useCallback((): number => {
     if (deviceMode && deviceFrame) return Math.max(1, deviceFrame.height);
@@ -422,8 +438,27 @@ export function SiteCreatorPreview({
       hops: listSectionScrollHops(blueprint, heightBand),
       stations: () => stationsFnRef.current(),
       bindKeyboard: readOnly,
+      shouldIgnoreWheel: (event) => {
+        const pageEl = pageRef.current;
+        if (!pageEl || multiCardNavRef.current.length === 0) return false;
+        const point = pagePointFromClientRect(
+          event.clientX,
+          event.clientY,
+          pageEl.getBoundingClientRect(),
+          pageWidth,
+          pageHeight,
+        );
+        if (!point) return false;
+        return (
+          resolveMultiCardWheelTarget(multiCardNavRef.current, point, {
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            shiftKey: event.shiftKey,
+          }) != null
+        );
+      },
     });
-  }, [blueprint, deviceMode, heightBand, liveSectionScroll, readOnly]);
+  }, [blueprint, deviceMode, heightBand, liveSectionScroll, pageHeight, pageWidth, readOnly]);
 
   useEffect(() => {
     const onWin = () => setFrameTick((n) => n + 1);
@@ -431,39 +466,35 @@ export function SiteCreatorPreview({
     return () => window.removeEventListener("resize", onWin);
   }, []);
 
+  // After React commits a new stage size (zoom / device), remeasure the microbar.
+  // Do not ResizeObserver the stage or device scroller: their size is React-driven
+  // and observing them + setState looped (Maximum update depth) when fit zoom shifted.
+  useLayoutEffect(() => {
+    setFrameTick((n) => n + 1);
+  }, [contentDisplayHeight, contentDisplayWidth, displayHeight, displayWidth, zoom, deviceMode]);
+
   useEffect(() => {
-    const stage = stageRef.current;
     const studio = viewportRef.current;
-    if (!stage || !studio) return;
+    if (!studio) return;
     let frame = 0;
-    let lastGeometry = "";
     const bump = () => {
       if (frame) return;
       frame = window.requestAnimationFrame(() => {
         frame = 0;
-        const geometry = [
-          stage.offsetWidth,
-          stage.offsetHeight,
-          studio.clientWidth,
-          studio.clientHeight,
-          deviceScrollRef.current?.clientWidth ?? 0,
-          deviceScrollRef.current?.clientHeight ?? 0,
-        ].join(":");
-        if (geometry === lastGeometry) return;
-        lastGeometry = geometry;
+        const geometry = `${studio.clientWidth}:${studio.clientHeight}`;
+        if (geometry === lastStudioGeometryRef.current) return;
+        lastStudioGeometryRef.current = geometry;
         setFrameTick((n) => n + 1);
       });
     };
     const ro = new ResizeObserver(bump);
-    ro.observe(stage);
     ro.observe(studio);
-    if (deviceScrollRef.current) ro.observe(deviceScrollRef.current);
     bump();
     return () => {
       ro.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [contentDisplayHeight, contentDisplayWidth, deviceMode, displayHeight, displayWidth, viewportWidth, zoom]);
+  }, []);
 
   const floatingGeometry = useMemo((): FloatingChromeGeometry | null => {
     void scrollTick;
@@ -637,6 +668,18 @@ export function SiteCreatorPreview({
             onSectionHeight={onSectionHeight}
             floatingPortalHost={floatingPortalHost}
             canvasHitPassthroughImages={canvasHitPassthroughImages}
+            objectClipById={objectClipById}
+          />
+        ) : null}
+        {multiCardNav.length > 0 && onMultiCardScrollIndex ? (
+          <SiteCreatorMultiCardNavOverlay
+            containers={multiCardNav}
+            pageWidth={pageWidth}
+            pageHeight={pageHeight}
+            scrollRootRef={scrollRef}
+            extraScrollRootRef={deviceScrollRef}
+            pageAnchorRef={pageRef}
+            onScrollIndex={onMultiCardScrollIndex}
           />
         ) : null}
       </div>
@@ -681,6 +724,9 @@ export function SiteCreatorPreview({
             onScrollChange={(fromId, toId, kind) => onSpineScrollChange?.(fromId, toId, kind)}
             onHeightModeChange={(id, mode) => onSpineHeightModeChange?.(id, mode)}
             onCustomHeightChange={(id, px) => onSpineCustomHeightChange?.(id, px)}
+            onSourceRangeBottomChange={(id, bottom) =>
+              onSpineSourceRangeBottomChange?.(id, bottom)
+            }
             mode={sectionSpine.mode}
           />
         </div>

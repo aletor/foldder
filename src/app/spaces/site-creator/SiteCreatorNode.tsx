@@ -68,6 +68,9 @@ import { isValidDesignerSourceSnapshotV1 } from "./designer-source-snapshot";
 import { SiteCreatorStudio } from "./SiteCreatorStudio";
 import { SiteCreatorNodeDeviceMosaic } from "./SiteCreatorNodeDeviceMosaic";
 import { buildSiteCreatorNodeDeviceMosaic } from "./site-creator-node-device-mosaic";
+import { collectProjectMedia } from "../project-media-inventory";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import type { SiteCreatorMediaPickItem } from "./SiteCreatorMediaPicker";
 
 const STALE_SYNC_MESSAGE = "Designer volvió a cambiar. Revisa la actualización de nuevo.";
 const AUTO_SYNC_DEBOUNCE_MS = 300;
@@ -229,6 +232,25 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
   const blueprint = graph.blueprint;
   const nodeLabel = graph.label;
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
+  const projectMedia = useMemo(() => {
+    void liveStudioEpoch;
+    const items = collectProjectMedia(getNodes());
+    const out: SiteCreatorMediaPickItem[] = [];
+    const seen = new Set<string>();
+    for (const item of [...items.imported, ...items.generated]) {
+      if (item.kind !== "image") continue;
+      const key = item.url.trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: item.id,
+        url: item.url,
+        s3Key: tryExtractKnowledgeFilesKeyFromUrl(item.url) ?? undefined,
+        sourceLabel: item.sourceLabel,
+      });
+    }
+    return out;
+  }, [getNodes, liveStudioEpoch]);
 
   const sourceStateStatus = resolveSourceStatus(graph);
 
@@ -683,6 +705,7 @@ export const SiteCreatorNode = memo(({ id, data, selected }: NodeProps) => {
               onBlueprintChange={onBlueprintChange}
               publish={parseSiteCreatorNodeData(data).publish ?? null}
               onPublishChange={onPublishChange}
+              projectMedia={projectMedia}
             />,
             document.body,
           )
