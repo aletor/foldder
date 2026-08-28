@@ -515,20 +515,16 @@ describe("5D outline tree", () => {
     );
     expect(heroNode).toBeTruthy();
     if (!heroNode) return;
-    const originalVisibility = screen.getByTestId(
-      `outline-visibility-${heroNode.id}-wide`,
-    );
+    expect(screen.queryByTestId(`outline-visibility-${heroNode.id}-wide`)).toBeNull();
+    expect(screen.getByTestId(`outline-visibility-${heroNode.id}-monitor`)).toBeTruthy();
     const tabletVisibility = screen.getByTestId(
       `outline-visibility-${heroNode.id}-tablet`,
     );
     const mobileVisibility = screen.getByTestId(
       `outline-visibility-${heroNode.id}-mobile`,
     );
-    expect(originalVisibility.getAttribute("aria-disabled")).toBe("true");
     expect(tabletVisibility.getAttribute("aria-disabled")).toBe("false");
     expect(mobileVisibility.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(originalVisibility);
-    expect(visibilityToggles).toEqual([]);
     fireEvent.click(tabletVisibility);
     expect(visibilityToggles).toEqual([`${heroNode.id}:tablet`]);
     fireEvent.click(screen.getByRole("button", { name: "Ocultar panel Página" }));

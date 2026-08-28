@@ -6,6 +6,7 @@ import type { FreehandObject } from "../FreehandStudio";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import { parseMultiCardInstanceId } from "./site-creator-multicard-ids";
 import type { MultiCardContainerLayout } from "./site-creator-multicard-layout";
+import { MULTICARD_SCROLL_DURATION_MS } from "./site-creator-multicard-layout";
 import type { SiteCreatorResponsiveResolveResult } from "./site-creator-responsive";
 import { isSiteMultiCardNode, type SiteBlueprintV1 } from "./site-creator-types";
 
@@ -18,6 +19,7 @@ export type MultiCardPublishBandSpec = {
   step: number;
   overflow: boolean;
   count: number;
+  visibleCount: number;
   pageWidth: number;
   navVisibility: "auto" | "hidden";
   navStyle: "arrows" | "dots";
@@ -63,6 +65,7 @@ function specFromContainer(container: MultiCardContainerLayout, pageWidth: numbe
     step: container.step,
     overflow: container.overflow,
     count: container.count,
+    visibleCount: container.visibleCount,
     pageWidth,
     navVisibility: container.nav.visibility,
     navStyle: container.nav.style,
@@ -130,8 +133,9 @@ export function compilePublishedMultiCardScript(
     var track = root.querySelector(".s-mc-track");
     if (!track) return;
     var index = 0;
-    function clamp(count, value) {
-      var max = Math.max(0, (count || 1) - 1);
+    function clamp(count, value, visible) {
+      var vis = Math.max(1, Math.min(count || 1, visible || 1));
+      var max = Math.max(0, (count || 1) - vis);
       if (!isFinite(value)) return 0;
       return Math.min(max, Math.max(0, Math.round(value)));
     }
@@ -145,7 +149,7 @@ export function compilePublishedMultiCardScript(
         for (var h = 0; h < buttons.length; h++) buttons[h].setAttribute("hidden", "");
         return;
       }
-      index = clamp(spec.count, index);
+      index = clamp(spec.count, index, spec.visibleCount);
       var showNav = spec.navVisibility !== "hidden";
       root.setAttribute("data-nav", showNav ? "1" : "0");
       root.setAttribute("data-nav-style", spec.navStyle || "arrows");
@@ -168,7 +172,7 @@ export function compilePublishedMultiCardScript(
     function go(next) {
       var spec = specFor(id);
       if (!spec || !spec.overflow) return;
-      index = clamp(spec.count, next);
+      index = clamp(spec.count, next, spec.visibleCount);
       apply();
     }
     function takeWheel(event) {
@@ -183,11 +187,11 @@ export function compilePublishedMultiCardScript(
       }
       if (Math.abs(delta) < 4) return false;
       var dir = delta > 0 ? 1 : -1;
-      var next = clamp(spec.count, index + dir);
+      var next = clamp(spec.count, index + dir, spec.visibleCount);
       if (next === index) return false;
       var now = Date.now();
       if (now < lockedUntil) return true;
-      lockedUntil = now + 320;
+      lockedUntil = now + ${MULTICARD_SCROLL_DURATION_MS};
       go(next);
       return true;
     }

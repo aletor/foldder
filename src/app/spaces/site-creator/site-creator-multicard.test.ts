@@ -23,17 +23,20 @@ import {
   type SiteBlueprintMultiCardNode,
 } from "./site-creator-types";
 import { resolveContextualModel } from "./site-creator-contextual-actions";
-import { parseMultiCardInstanceId, encodeMultiCardInstanceId } from "./site-creator-multicard-ids";
+import { parseMultiCardInstanceId, encodeMultiCardInstanceId, isMultiCardInstanceId } from "./site-creator-multicard-ids";
 import {
   clampMultiCardScrollIndex,
+  easePower2InOut,
+  multiCardMaxScrollIndex,
   multiCardNavIsVisible,
+  multiCardVisibleCount,
   planMultiCardGrid,
   resolveMultiCardBandPresentation,
 } from "./site-creator-multicard-layout";
 import { findDisplayObject, resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import { buildSiteCreatorPresentationTree } from "./site-creator-presentation-tree";
 import { resolveRootClickUnit } from "./site-creator-display-labels";
-import { frontmostDirectHit } from "./site-creator-hit-test";
+import { canvasHitTestUnits, canEnterContainer, frontmostDirectHit } from "./site-creator-hit-test";
 import { compilePublishedSite, collectPublishImageRefs, publishAssetPlaceholder } from "./site-creator-publish-compile";
 
 function layer(partial: Partial<FreehandObject> & { id: string; type: FreehandObject["type"] }): FreehandObject {
@@ -118,6 +121,18 @@ function collectDisplayObjects(objects: FreehandObject[] | undefined): FreehandO
   };
   visit(objects);
   return out;
+}
+
+function copiesOfPage(objects: FreehandObject[] | undefined, moldId: string): FreehandObject[] {
+  return collectDisplayObjects(objects).filter(
+    (obj) => parseMultiCardInstanceId(obj.id)?.moldLayerId === moldId,
+  );
+}
+
+function layersNamed(objects: FreehandObject[] | undefined, moldId: string): FreehandObject[] {
+  return collectDisplayObjects(objects).filter(
+    (obj) => obj.id === moldId || parseMultiCardInstanceId(obj.id)?.moldLayerId === moldId,
+  );
 }
 
 beforeEach(() => {
@@ -352,10 +367,7 @@ describe("MultiCard", () => {
       viewportWidth: 1920,
       band: "wide",
     });
-    const copiesOf = (moldId: string) =>
-      (resolved.displayPage.objects ?? []).filter(
-        (obj) => parseMultiCardInstanceId(obj.id)?.moldLayerId === moldId,
-      );
+    const copiesOf = (moldId: string) => copiesOfPage(resolved.displayPage.objects, moldId);
     const plates = copiesOf("plate");
     const swatches = copiesOf("swatch");
     const labels = copiesOf("label");
@@ -372,6 +384,17 @@ describe("MultiCard", () => {
     expect(labels[0]!.x - 115).toBeCloseTo(dx, 1);
     expect(labels[0]!.y - 380).toBeCloseTo(dy, 1);
 
+    const extraCards = (resolved.displayPage.objects ?? []).filter((obj) =>
+      parseMultiCardInstanceId(obj.id),
+    );
+    expect(extraCards).toHaveLength(2);
+    expect(extraCards.every((obj) => obj.type === "groupContainer")).toBe(true);
+    expect(extraCards[0]).toMatchObject({
+      children: expect.arrayContaining([
+        expect.objectContaining({ id: expect.stringMatching(/^scmcinst_/) }),
+      ]),
+    });
+
     const tree = buildSiteCreatorPresentationTree({
       page: resolved.displayPage,
       blueprint: created.blueprint,
@@ -383,6 +406,178 @@ describe("MultiCard", () => {
       (child) => child.kind === "layer" && parseMultiCardInstanceId(child.layerId),
     );
     expect(dumped).toBeFalsy();
+  });
+
+  it("clicking any multiplied card on the canvas selects the MultiCard", () => {
+    const committed = page([
+      layer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 900, fill: "#eee" }),
+      layer({ id: "plate", type: "rect", x: 80, y: 200, width: 220, height: 360, fill: "#fff" }),
+      layer({
+        id: "clip",
+        type: "clippingContainer",
+        x: 90,
+        y: 210,
+        width: 200,
+        height: 180,
+        mask: layer({ id: "mask", type: "rect", x: 0, y: 0, width: 200, height: 180 }),
+        content: [
+          layer({
+            id: "photo",
+            type: "image",
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 180,
+            src: "https://cdn.example/jeans.png",
+          }),
+        ],
+      } as Partial<FreehandObject> & { id: string; type: "clippingContainer" }),
+      layer({ id: "title", type: "text", x: 90, y: 400, width: 200, height: 28, text: "PANTALÓN GENIAL!" }),
+      layer({ id: "price", type: "text", x: 90, y: 430, width: 80, height: 24, text: "35" }),
+      layer({ id: "cta", type: "rect", x: 90, y: 470, width: 200, height: 40, fill: "#d4c4a8" }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "plate", "clip", "title", "price", "cta"],
+      index,
+      committedPage: committed,
+      sectionType: "generic",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const grouped = createLayoutGroupFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["plate", "clip", "title", "price", "cta"],
+      index,
+      preferredParentId: hero.createdNodeId,
+    });
+    expect(grouped.ok).toBe(true);
+    if (!grouped.ok || !grouped.createdNodeId) return;
+    const created = createMultiCardFromSelection({
+      blueprint: grouped.blueprint,
+      selectedLayerIds: ["plate", "clip", "title", "price", "cta"],
+      index,
+      preferredParentId: grouped.createdNodeId,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok || !created.createdNodeId) return;
+    const eight = setMultiCardCount(created.blueprint, created.createdNodeId, 8);
+    expect(eight.ok).toBe(true);
+    if (!eight.ok) return;
+
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page: committed,
+      blueprint: eight.blueprint,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+    });
+    const displayIndex = buildSiteSelectionIndex(resolved.displayPage);
+    const clipById = resolved.resolvedLayout?.objectClipById;
+    const extraCards = (resolved.displayPage.objects ?? []).filter((obj) =>
+      parseMultiCardInstanceId(obj.id),
+    );
+    expect(extraCards.length).toBeGreaterThan(0);
+
+    const moldHit = frontmostDirectHit(
+      displayIndex,
+      [],
+      { x: 190, y: 380 },
+      eight.blueprint,
+      { clipById },
+    );
+    expect(moldHit).toBeTruthy();
+    expect(resolveRootClickUnit(moldHit!.layerId, eight.blueprint, displayIndex)).toEqual({
+      kind: "blueprintNode",
+      nodeId: created.createdNodeId,
+    });
+
+    for (const copy of extraCards) {
+      const bounds = displayIndex.byId[copy.id]?.visualBounds;
+      expect(bounds && bounds.width > 0 && bounds.height > 0).toBe(true);
+      if (!bounds) continue;
+      const point = {
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
+      };
+      const hit = frontmostDirectHit(displayIndex, [], point, eight.blueprint, { clipById });
+      expect(hit, `copy ${copy.id} at ${point.x},${point.y}`).toBeTruthy();
+      expect(resolveRootClickUnit(hit!.layerId, eight.blueprint, displayIndex)).toEqual({
+        kind: "blueprintNode",
+        nodeId: created.createdNodeId,
+      });
+    }
+
+    const units = canvasHitTestUnits(displayIndex, [], eight.blueprint);
+    expect(units.some((entry) => parseMultiCardInstanceId(entry.layerId))).toBe(true);
+  });
+
+  it("clicking a copy still selects the MultiCard after entering the mold folder", () => {
+    const committed = page([
+      layer({
+        id: "folder",
+        type: "groupContainer",
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 900,
+        children: [
+          layer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 900, fill: "#eee" }),
+          layer({ id: "plate", type: "rect", x: 80, y: 200, width: 220, height: 360, fill: "#fff" }),
+          layer({ id: "title", type: "text", x: 90, y: 400, width: 200, height: 28, text: "PANTALÓN GENIAL!" }),
+        ],
+      } as Partial<FreehandObject> & { id: string; type: "groupContainer" }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const section = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["folder"],
+      index,
+      committedPage: committed,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+    const created = createMultiCardFromSelection({
+      blueprint: section.blueprint,
+      selectedLayerIds: ["plate", "title"],
+      index,
+      preferredParentId: section.createdNodeId,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok || !created.createdNodeId) return;
+    const eight = setMultiCardCount(created.blueprint, created.createdNodeId, 8);
+    expect(eight.ok).toBe(true);
+    if (!eight.ok) return;
+
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page: committed,
+      blueprint: eight.blueprint,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+    });
+    const displayIndex = buildSiteSelectionIndex(resolved.displayPage);
+    const clipById = resolved.resolvedLayout?.objectClipById;
+    const extraCards = (resolved.displayPage.objects ?? []).filter((obj) =>
+      parseMultiCardInstanceId(obj.id),
+    );
+    expect(extraCards.length).toBeGreaterThan(0);
+    const copy = extraCards[0]!;
+    expect(canEnterContainer(displayIndex.byId[copy.id] ?? null, eight.blueprint)).toBe(false);
+
+    const bounds = displayIndex.byId[copy.id]?.visualBounds;
+    expect(bounds && bounds.width > 0 && bounds.height > 0).toBe(true);
+    if (!bounds) return;
+    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    const hit = frontmostDirectHit(displayIndex, ["folder"], point, eight.blueprint, { clipById });
+    expect(hit).toBeTruthy();
+    expect(isMultiCardInstanceId(hit!.layerId)).toBe(true);
+    expect(resolveRootClickUnit(hit!.layerId, eight.blueprint, displayIndex)).toEqual({
+      kind: "blueprintNode",
+      nodeId: created.createdNodeId,
+    });
   });
 
   it("shifts Designer groupContainer children with the cloned card", () => {
@@ -630,6 +825,173 @@ describe("MultiCard", () => {
     expect(swatchCopy?.clipMaskId).not.toBe("plate");
   });
 
+  it("multiplies a Site Creator group with an image as whole cards, not loose copies", () => {
+    const committed = page([
+      layer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 900, fill: "#eee" }),
+      layer({ id: "plate", type: "rect", x: 80, y: 200, width: 220, height: 360, fill: "#1a1a1a" }),
+      layer({
+        id: "photo",
+        type: "image",
+        x: 100,
+        y: 230,
+        width: 180,
+        height: 140,
+        src: "https://cdn.example/card.png",
+      }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "plate", "photo"],
+      index,
+      committedPage: committed,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const grouped = createLayoutGroupFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["plate", "photo"],
+      index,
+      preferredParentId: hero.createdNodeId,
+    });
+    expect(grouped.ok).toBe(true);
+    if (!grouped.ok || !grouped.createdNodeId) return;
+    const created = createMultiCardFromSelection({
+      blueprint: grouped.blueprint,
+      selectedLayerIds: ["plate", "photo"],
+      index,
+      preferredParentId: grouped.createdNodeId,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page: committed,
+      blueprint: created.blueprint,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+    });
+    const topLevel = resolved.displayPage.objects ?? [];
+    const originalPhoto = topLevel.find((obj) => obj.id === "photo") as { x: number; src?: string };
+    expect(originalPhoto?.src).toBe("https://cdn.example/card.png");
+    expect(originalPhoto?.x).toBe(100);
+    expect(topLevel.filter((obj) => parseMultiCardInstanceId(obj.id)?.moldLayerId === "photo")).toHaveLength(0);
+    const extraCards = topLevel.filter((obj) => parseMultiCardInstanceId(obj.id));
+    expect(extraCards).toHaveLength(2);
+    expect(extraCards.every((obj) => obj.type === "groupContainer")).toBe(true);
+    const photoCopies = copiesOfPage(topLevel, "photo");
+    expect(photoCopies).toHaveLength(2);
+    expect(photoCopies.every((obj) => (obj as { src?: string }).src === "https://cdn.example/card.png")).toBe(true);
+    expect(photoCopies[0]!.x).toBeGreaterThan(100);
+  });
+
+  it("does not stuff image copies into the original group; clipped photos stay in the mask", () => {
+    const committed = page([
+      layer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 900, fill: "#eee" }),
+      layer({
+        id: "folder",
+        type: "groupContainer",
+        x: 80,
+        y: 200,
+        width: 220,
+        height: 360,
+        children: [
+          layer({ id: "plate", type: "rect", x: 80, y: 200, width: 220, height: 360, fill: "#1a1a1a" }),
+          layer({
+            id: "clip",
+            type: "clippingContainer",
+            x: 100,
+            y: 230,
+            width: 180,
+            height: 140,
+            mask: layer({ id: "mask", type: "rect", x: 0, y: 0, width: 180, height: 140 }),
+            content: [
+              layer({
+                id: "photo",
+                type: "image",
+                x: -20,
+                y: -10,
+                width: 220,
+                height: 160,
+                src: "https://cdn.example/card.png",
+              }),
+            ],
+          } as Partial<FreehandObject> & { id: string; type: "clippingContainer" }),
+        ],
+      } as Partial<FreehandObject> & { id: string; type: "groupContainer" }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "folder"],
+      index,
+      committedPage: committed,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const grouped = createLayoutGroupFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["plate", "clip"],
+      index,
+      preferredParentId: hero.createdNodeId,
+    });
+    expect(grouped.ok).toBe(true);
+    if (!grouped.ok || !grouped.createdNodeId) return;
+    const created = createMultiCardFromSelection({
+      blueprint: grouped.blueprint,
+      selectedLayerIds: ["plate", "clip"],
+      index,
+      preferredParentId: grouped.createdNodeId,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page: committed,
+      blueprint: created.blueprint,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+    });
+    const originalFolder = (resolved.displayPage.objects ?? []).find((obj) => obj.id === "folder") as {
+      children?: Array<{ id: string; type: string; content?: Array<{ id: string; x: number; src?: string }> }>;
+    };
+    expect(originalFolder?.children?.some((child) => parseMultiCardInstanceId(child.id))).toBeFalsy();
+    const originalPhoto = originalFolder?.children
+      ?.find((child) => child.id === "clip")
+      ?.content?.find((child) => child.id === "photo");
+    expect(originalPhoto?.src).toBe("https://cdn.example/card.png");
+    expect(originalPhoto?.x).toBe(-20);
+
+    const topLevel = resolved.displayPage.objects ?? [];
+    const extractedPhotos = topLevel.filter(
+      (obj) => parseMultiCardInstanceId(obj.id)?.moldLayerId === "photo",
+    );
+    expect(extractedPhotos).toHaveLength(0);
+
+    const folderClones = topLevel.filter(
+      (obj) => parseMultiCardInstanceId(obj.id)?.moldLayerId === "folder",
+    );
+    expect(folderClones.length).toBeGreaterThan(0);
+    const cloneClip = (
+      folderClones[0] as {
+        children?: Array<{
+          id: string;
+          x: number;
+          content?: Array<{ id: string; x: number; src?: string }>;
+        }>;
+      }
+    ).children?.find((child) => parseMultiCardInstanceId(child.id)?.moldLayerId === "clip");
+    const clonePhoto = cloneClip?.content?.find(
+      (child) => parseMultiCardInstanceId(child.id)?.moldLayerId === "photo",
+    );
+    expect(clonePhoto?.src).toBe("https://cdn.example/card.png");
+    expect(clonePhoto?.x).toBe(-20);
+    expect(cloneClip?.x).toBeGreaterThan(100);
+  });
+
   it("cloneBlueprint keeps kind multicard (does not become a layoutGroup)", () => {
     const { index, hero } = heroWithCard();
     if (!hero.ok || !hero.createdNodeId) return;
@@ -749,6 +1111,32 @@ describe("MultiCard", () => {
     expect(planned.container.height).toBe(212);
   });
 
+  it("plans scrollH with the full container width and as many cards as fit", () => {
+    const planned = planMultiCardGrid({
+      mold: { x: 40, y: 80, width: 240, height: 212 },
+      count: 7,
+      gap: 24,
+      containerWidth: 800,
+      layoutMode: "scrollH",
+    });
+    expect(planned.container.width).toBe(800);
+    expect(planned.cardRects).toHaveLength(7);
+    expect(planned.cardRects[0]).toEqual({ x: 40, y: 80, width: 240, height: 212 });
+    expect(planned.cardRects[1]?.x).toBe(40 + 240 + 24);
+    const visible = multiCardVisibleCount({
+      viewportSize: planned.container.width,
+      cardSize: 240,
+      gap: 24,
+      count: 7,
+    });
+    expect(visible).toBe(3);
+    expect(multiCardMaxScrollIndex(7, visible)).toBe(4);
+    expect(clampMultiCardScrollIndex(7, 9, visible)).toBe(4);
+    expect(easePower2InOut(0)).toBe(0);
+    expect(easePower2InOut(1)).toBe(1);
+    expect(easePower2InOut(0.5)).toBeCloseTo(0.5, 5);
+  });
+
   it("instantiates 3 cards on Original and keeps Designer sync", () => {
     const { committed, index, hero } = heroWithCard();
     if (!hero.ok || !hero.createdNodeId) return;
@@ -770,12 +1158,8 @@ describe("MultiCard", () => {
       viewportWidth: 1920,
       band: "wide",
     });
-    const photos = (resolved.displayPage.objects ?? []).filter(
-      (obj) => obj.id === "photo" || parseMultiCardInstanceId(obj.id)?.moldLayerId === "photo",
-    );
-    const titles = (resolved.displayPage.objects ?? []).filter(
-      (obj) => obj.id === "title" || parseMultiCardInstanceId(obj.id)?.moldLayerId === "title",
-    );
+    const photos = layersNamed(resolved.displayPage.objects, "photo");
+    const titles = layersNamed(resolved.displayPage.objects, "title");
     expect(photos).toHaveLength(3);
     expect(titles).toHaveLength(3);
     expect(photos[1]!.x).toBeCloseTo(40 + 240 + 24, 1);
@@ -798,9 +1182,7 @@ describe("MultiCard", () => {
       viewportWidth: 1920,
       band: "wide",
     });
-    const syncedTitles = (synced.displayPage.objects ?? []).filter(
-      (obj) => obj.id === "title" || parseMultiCardInstanceId(obj.id)?.moldLayerId === "title",
-    );
+    const syncedTitles = layersNamed(synced.displayPage.objects, "title");
     expect(syncedTitles.every((obj) => (obj as { text?: string }).text === "Live")).toBe(true);
   });
 
@@ -840,10 +1222,7 @@ describe("MultiCard", () => {
     });
     const moldTitle = findDisplayObject(resolved.displayPage, "title");
     expect((moldTitle as { text?: string } | undefined)?.text).toBe("Card");
-    const copies = (resolved.displayPage.objects ?? []).filter((obj) => {
-      const parsed = parseMultiCardInstanceId(obj.id);
-      return parsed?.moldLayerId === "title";
-    });
+    const copies = copiesOfPage(resolved.displayPage.objects, "title");
     const overridden = copies.find((obj) => parseMultiCardInstanceId(obj.id)?.cardId === card2.id);
     expect((overridden as { text?: string } | undefined)?.text).toBe("Otra");
     const other = copies.find((obj) => parseMultiCardInstanceId(obj.id)?.cardId !== card2.id);
@@ -903,10 +1282,7 @@ describe("MultiCard", () => {
     });
     const moldPhoto = findDisplayObject(resolved.displayPage, "photo");
     expect((moldPhoto as { src?: string } | undefined)?.src).toBe("https://cdn.example/mold.png");
-    const copies = (resolved.displayPage.objects ?? []).filter((obj) => {
-      const parsed = parseMultiCardInstanceId(obj.id);
-      return parsed?.moldLayerId === "photo";
-    });
+    const copies = copiesOfPage(resolved.displayPage.objects, "photo");
     const overridden = copies.find((obj) => parseMultiCardInstanceId(obj.id)?.cardId === card2.id);
     expect((overridden as { src?: string } | undefined)?.src).toBe("https://cdn.example/card2.png");
     const other = copies.find((obj) => parseMultiCardInstanceId(obj.id)?.cardId !== card2.id);
@@ -1010,9 +1386,9 @@ describe("MultiCard", () => {
     expect((findDisplayObject(display.displayPage, "photo") as { src?: string } | undefined)?.src).toBe(
       "https://cdn.example/card1.png",
     );
-    const copy3 = (display.displayPage.objects ?? []).find((obj) => {
+    const copy3 = copiesOfPage(display.displayPage.objects, "photo").find((obj) => {
       const parsed = parseMultiCardInstanceId(obj.id);
-      return parsed?.moldLayerId === "photo" && parsed.cardId !== card1.id && parsed.cardId !== card2.id;
+      return parsed?.cardId !== card1.id && parsed?.cardId !== card2.id;
     });
     expect((copy3 as { src?: string } | undefined)?.src).toBe("https://cdn.example/mold.png");
   });
@@ -1163,9 +1539,12 @@ describe("MultiCard", () => {
     const scrolled = setMultiCardLayoutMode(created.blueprint, created.createdNodeId, "scrollH");
     expect(scrolled.ok).toBe(true);
     if (!scrolled.ok) return;
+    const counted = setMultiCardCount(scrolled.blueprint, created.createdNodeId, 8);
+    expect(counted.ok).toBe(true);
+    if (!counted.ok) return;
     const at0 = resolveSiteCreatorResponsiveDisplay({
       page: committed,
-      blueprint: scrolled.blueprint,
+      blueprint: counted.blueprint,
       referenceIndex: index,
       viewportWidth: 1920,
       band: "wide",
@@ -1173,6 +1552,8 @@ describe("MultiCard", () => {
     const container = at0.multiCard?.containers.find((item) => item.nodeId === created.createdNodeId);
     expect(container?.axis).toBe("h");
     expect(container?.overflow).toBe(true);
+    expect(container?.layoutRect.width).toBeGreaterThan(600);
+    expect(container?.visibleCount).toBeGreaterThanOrEqual(2);
     expect(at0.resolvedLayout?.objectClipById.photo).toEqual(container?.clipRect);
     expect(multiCardNavIsVisible({ overflow: false, visibility: "auto" })).toBe(false);
     expect(multiCardNavIsVisible({ overflow: true, visibility: "hidden" })).toBe(false);
@@ -1181,7 +1562,7 @@ describe("MultiCard", () => {
     const mold0 = findDisplayObject(at0.displayPage, "photo");
     const at1 = resolveSiteCreatorResponsiveDisplay({
       page: committed,
-      blueprint: scrolled.blueprint,
+      blueprint: counted.blueprint,
       referenceIndex: index,
       viewportWidth: 1920,
       band: "wide",
@@ -1200,7 +1581,7 @@ describe("MultiCard", () => {
     const outside = { x: mold1!.x + 8, y: mold1!.y + 8 };
     expect(outside.x).toBeLessThan(clip!.x);
     expect(
-      frontmostDirectHit(displayIndex, [], outside, scrolled.blueprint, {
+      frontmostDirectHit(displayIndex, [], outside, counted.blueprint, {
         clipById: at1.resolvedLayout?.objectClipById,
       })?.layerId === "photo",
     ).toBe(false);
@@ -1231,5 +1612,6 @@ describe("MultiCard", () => {
     expect(compiled.css).toContain(".s-mc{");
     expect(compiled.js).toContain("[data-mc]");
     expect(compiled.js).toContain("__sMcConsumeWheel");
+    expect(compiled.css).toContain("cubic-bezier(0.455, 0.03, 0.515, 0.955)");
   });
 });

@@ -101,7 +101,12 @@ import type { SiteCreatorMicrobarModel } from "./SiteCreatorObjectMicrobar";
 import { SiteCreatorMultiCardControl } from "./SiteCreatorMultiCardControl";
 import { SiteCreatorMediaPicker, type SiteCreatorMediaPickItem } from "./SiteCreatorMediaPicker";
 import { findOwningMultiCardDisplay } from "./site-creator-multicard";
-import { clampMultiCardScrollIndex, resolveMultiCardBandPresentation } from "./site-creator-multicard-layout";
+import {
+  clampMultiCardScrollIndex,
+  easePower2InOut,
+  MULTICARD_SCROLL_DURATION_MS,
+  resolveMultiCardBandPresentation,
+} from "./site-creator-multicard-layout";
 import { createPortal } from "react-dom";
 import {
   buildSiteCreatorPresentationTree,
@@ -549,6 +554,9 @@ export function SiteCreatorStudio({
   const [multiCardScrollIndexByNodeId, setMultiCardScrollIndexByNodeId] = useState<
     Record<string, number>
   >({});
+  const multiCardScrollDisplayRef = useRef(multiCardScrollIndexByNodeId);
+  multiCardScrollDisplayRef.current = multiCardScrollIndexByNodeId;
+  const multiCardScrollAnimRef = useRef<Record<string, number>>({});
   const [multiCardActiveCardByNodeId, setMultiCardActiveCardByNodeId] = useState<
     Record<string, string>
   >({});
@@ -770,6 +778,46 @@ export function SiteCreatorStudio({
   const objectClipById = responsive?.resolvedLayout?.objectClipById;
 
   useEffect(() => {
+    const anims = multiCardScrollAnimRef.current;
+    return () => {
+      for (const id of Object.keys(anims)) {
+        const handle = anims[id];
+        if (handle) cancelAnimationFrame(handle);
+      }
+    };
+  }, []);
+
+  const commitMultiCardScrollIndex = useCallback((nodeId: string, index: number) => {
+    const from = multiCardScrollDisplayRef.current[nodeId] ?? 0;
+    const prev = multiCardScrollAnimRef.current[nodeId];
+    if (prev) {
+      cancelAnimationFrame(prev);
+      delete multiCardScrollAnimRef.current[nodeId];
+    }
+    if (Math.abs(from - index) < 1e-4) {
+      setMultiCardScrollIndexByNodeId((current) =>
+        current[nodeId] === index ? current : { ...current, [nodeId]: index },
+      );
+      return;
+    }
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / MULTICARD_SCROLL_DURATION_MS);
+      const value = from + (index - from) * easePower2InOut(t);
+      const nextVal = t >= 1 ? index : value;
+      setMultiCardScrollIndexByNodeId((current) =>
+        current[nodeId] === nextVal ? current : { ...current, [nodeId]: nextVal },
+      );
+      if (t < 1) {
+        multiCardScrollAnimRef.current[nodeId] = requestAnimationFrame(tick);
+      } else {
+        delete multiCardScrollAnimRef.current[nodeId];
+      }
+    };
+    multiCardScrollAnimRef.current[nodeId] = requestAnimationFrame(tick);
+  }, []);
+
+  useEffect(() => {
     const containers = responsive?.multiCard?.containers;
     if (!containers || containers.length === 0) return;
     setMultiCardScrollIndexByNodeId((current) => {
@@ -777,9 +825,18 @@ export function SiteCreatorStudio({
       const next = { ...current };
       for (const container of containers) {
         const clamped = container.overflow
-          ? clampMultiCardScrollIndex(container.count, current[container.nodeId] ?? 0)
+          ? clampMultiCardScrollIndex(
+              container.count,
+              current[container.nodeId] ?? 0,
+              container.visibleCount,
+            )
           : 0;
         if ((current[container.nodeId] ?? 0) !== clamped) {
+          const handle = multiCardScrollAnimRef.current[container.nodeId];
+          if (handle) {
+            cancelAnimationFrame(handle);
+            delete multiCardScrollAnimRef.current[container.nodeId];
+          }
           next[container.nodeId] = clamped;
           changed = true;
         }
@@ -3861,11 +3918,7 @@ export function SiteCreatorStudio({
               onCanvasInteraction={() => undefined}
               objectClipById={objectClipById}
               multiCardNav={responsive?.multiCard?.containers ?? []}
-              onMultiCardScrollIndex={(nodeId, index) => {
-                setMultiCardScrollIndexByNodeId((current) =>
-                  current[nodeId] === index ? current : { ...current, [nodeId]: index },
-                );
-              }}
+              onMultiCardScrollIndex={commitMultiCardScrollIndex}
               floatingPortalHost={pagePreviewMode ? null : floatingHostEl}
               transformEnabled={
                 !pagePreviewMode &&

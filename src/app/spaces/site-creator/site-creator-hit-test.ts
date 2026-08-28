@@ -5,6 +5,7 @@ import {
   sortFrontToBack,
 } from "./build-site-selection-index";
 import { isDesignerContainerMirrorDismissed } from "./site-creator-designer-group-dismiss";
+import { isMultiCardInstanceId, parseMultiCardInstanceId } from "./site-creator-multicard-ids";
 import type {
   SiteCreatorSelectionIndex,
   SiteCreatorSelectionIndexEntry,
@@ -56,6 +57,96 @@ function withoutCanvasLocks(
   return units.filter((entry) => !isLayerCanvasLocked(blueprint, entry.layerId, index));
 }
 
+function isMultiCardInstanceWorldRoot(entry: SiteCreatorSelectionIndexEntry): boolean {
+  if (!isMultiCardInstanceId(entry.layerId)) return false;
+  return !entry.parentLayerId || !isMultiCardInstanceId(entry.parentLayerId);
+}
+
+function moldEntryInIsolationScope(
+  moldLayerId: string,
+  parentId: string,
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  const mold = index.byId[moldLayerId];
+  if (!mold) return false;
+  return (
+    mold.layerId === parentId ||
+    mold.parentLayerId === parentId ||
+    mold.ancestorIds.includes(parentId)
+  );
+}
+
+function instanceWorldRootInIsolationScope(
+  root: SiteCreatorSelectionIndexEntry,
+  isolationIds: string[],
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  if (isolationIds.length === 0) return true;
+  const parentId = isolationIds[isolationIds.length - 1]!;
+  if (root.layerId === parentId || root.ancestorIds.includes(parentId)) return true;
+  const parsed = parseMultiCardInstanceId(root.layerId);
+  if (parsed && moldEntryInIsolationScope(parsed.moldLayerId, parentId, index)) return true;
+  for (const entry of index.entries) {
+    if (entry.layerId !== root.layerId && entry.parentLayerId !== root.layerId && !entry.ancestorIds.includes(root.layerId)) {
+      continue;
+    }
+    const childParsed = parseMultiCardInstanceId(entry.layerId);
+    if (!childParsed) continue;
+    if (moldEntryInIsolationScope(childParsed.moldLayerId, parentId, index)) return true;
+  }
+  return false;
+}
+
+function collectInstanceHitLeaves(
+  containerId: string,
+  index: SiteCreatorSelectionIndex,
+  into: SiteCreatorSelectionIndexEntry[],
+  seen: Set<string>,
+): void {
+  for (const entry of index.entries) {
+    if (entry.parentLayerId !== containerId) continue;
+    if (isClipMaskChild(entry)) continue;
+    if (entry.type === "groupContainer" || entry.type === "booleanGroup") {
+      if (entry.selectableFromCanvas && !seen.has(entry.layerId)) {
+        seen.add(entry.layerId);
+        into.push(entry);
+      }
+      collectInstanceHitLeaves(entry.layerId, index, into, seen);
+      continue;
+    }
+    if (!entry.selectableFromCanvas) continue;
+    if (seen.has(entry.layerId)) continue;
+    seen.add(entry.layerId);
+    into.push(entry);
+  }
+}
+
+/**
+ * Las copias MultiCard se empalman como raíces de página, no dentro de la
+ * carpeta del molde. Hay que exponerlas en el hit-test del ámbito actual.
+ */
+function mergeMultiCardInstanceHitUnits(
+  base: SiteCreatorSelectionIndexEntry[],
+  index: SiteCreatorSelectionIndex,
+  isolationIds: string[],
+): SiteCreatorSelectionIndexEntry[] {
+  const seen = new Set(base.map((entry) => entry.layerId));
+  const extra: SiteCreatorSelectionIndexEntry[] = [];
+  for (const entry of index.entries) {
+    if (!isMultiCardInstanceWorldRoot(entry)) continue;
+    if (!instanceWorldRootInIsolationScope(entry, isolationIds, index)) continue;
+    if (entry.type === "groupContainer" || entry.type === "booleanGroup") {
+      collectInstanceHitLeaves(entry.layerId, index, extra, seen);
+      continue;
+    }
+    if (!entry.selectableFromCanvas || seen.has(entry.layerId)) continue;
+    seen.add(entry.layerId);
+    extra.push(entry);
+  }
+  if (extra.length === 0) return base;
+  return [...base, ...extra];
+}
+
 /**
  * Unidades hittables en el lienzo. Cuando una carpeta Designer fue desagrupada
  * en Site Creator, sus hijos pasan al mismo nivel de hit-test (sin tocar Designer).
@@ -65,7 +156,11 @@ export function canvasHitTestUnits(
   isolationIds: string[],
   blueprint?: SiteBlueprintV1 | null,
 ): SiteCreatorSelectionIndexEntry[] {
-  const base = isolationUnits(index, isolationIds);
+  const base = mergeMultiCardInstanceHitUnits(
+    isolationUnits(index, isolationIds),
+    index,
+    isolationIds,
+  );
   if (!blueprint) return base;
 
   const unlocked = withoutCanvasLocks(base, index, blueprint);
@@ -138,7 +233,7 @@ export function resolveFrontmostHit(
     const hit = hitsFrontToBack[i]!;
     const behind = hitsFrontToBack.slice(i + 1);
     if (behind.length === 0) return hit;
-    if (hit.type === "image") continue;
+    if (hit.type === "image" && !isMultiCardInstanceId(hit.layerId)) continue;
     return hit;
   }
   return hitsFrontToBack[0] ?? null;
@@ -224,6 +319,7 @@ export function canEnterContainer(
 ): boolean {
   if (!isContainerEntry(entry ?? undefined)) return false;
   if (entry?.type === "clippingContainer") return false;
+  if (entry && isMultiCardInstanceId(entry.layerId)) return false;
   if (
     blueprint &&
     entry?.type === "groupContainer" &&

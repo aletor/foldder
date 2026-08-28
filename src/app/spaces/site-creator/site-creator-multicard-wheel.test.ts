@@ -53,6 +53,19 @@ describe("multiCardWheelDecision", () => {
       }),
     ).toEqual({ action: "take", nextIndex: 1 });
   });
+
+  it("stops horizontal scroll when the last visible page is reached", () => {
+    expect(
+      multiCardWheelDecision({
+        axis: "h",
+        overflow: true,
+        scrollIndex: 4,
+        count: 7,
+        visibleCount: 3,
+        gesture: { deltaX: 80, deltaY: 0, shiftKey: false },
+      }),
+    ).toEqual({ action: "pass" });
+  });
 });
 
 describe("resolveMultiCardWheelTarget", () => {
@@ -70,6 +83,7 @@ describe("resolveMultiCardWheelTarget", () => {
     step: 160,
     overflow: true,
     scrollIndex: 0,
+    visibleCount: 1,
     ...partial,
   });
 

@@ -19,6 +19,7 @@ import {
   compilePublishedMultiCardScript,
   type MultiCardPublishPlan,
 } from "./site-creator-multicard-publish";
+import { MULTICARD_SCROLL_DURATION_MS, MULTICARD_SCROLL_EASE_CSS } from "./site-creator-multicard-layout";
 import {
   isSiteButtonNode,
   isSiteMultiCardNode,
@@ -958,7 +959,7 @@ function buildCss(args: {
     ".s-text{white-space:pre-wrap;overflow:visible}",
     ".s-path,.s-paint{width:100%;height:100%;display:block;overflow:visible}",
     ".s-mc{position:absolute;pointer-events:none}",
-    ".s-mc>.s-mc-track{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:auto;will-change:transform}",
+    `.s-mc>.s-mc-track{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:auto;will-change:transform;transition:transform ${MULTICARD_SCROLL_DURATION_MS}ms ${MULTICARD_SCROLL_EASE_CSS}}`,
     ".s-mc-nav{position:absolute;inset:0;pointer-events:none;z-index:20}",
     ".s-mc[data-nav=\"0\"] .s-mc-nav{display:none}",
     ".s-mc[data-nav-style=\"dots\"] .s-mc-btn{display:none}",

@@ -5,6 +5,8 @@ import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from "lucide-react"
 import { pagePointFromClientRect, resolveMultiCardWheelTarget } from "./site-creator-multicard-wheel";
 import {
   clampMultiCardScrollIndex,
+  MULTICARD_SCROLL_DURATION_MS,
+  multiCardMaxScrollIndex,
   multiCardNavIsVisible,
   type MultiCardContainerLayout,
 } from "./site-creator-multicard-layout";
@@ -61,7 +63,7 @@ export function SiteCreatorMultiCardNavOverlay({
       event.stopPropagation();
       const now = Date.now();
       if (now < lockedUntil) return;
-      lockedUntil = now + 320;
+      lockedUntil = now + MULTICARD_SCROLL_DURATION_MS;
       onScrollIndexRef.current(target.nodeId, target.nextIndex);
     };
     for (const root of roots) root.addEventListener("wheel", onWheel, { passive: false });
@@ -95,12 +97,14 @@ function MultiCardNavChrome({
   container: MultiCardContainerLayout;
   onScrollIndex: (nodeId: string, index: number) => void;
 }) {
-  const { clipRect, axis, count, scrollIndex, nav } = container;
+  const { clipRect, axis, count, scrollIndex, nav, visibleCount } = container;
   const visible = multiCardNavIsVisible({ overflow: container.overflow, visibility: nav.visibility });
   if (!visible || !axis) return null;
+  const pageIndex = Math.round(scrollIndex);
+  const maxScroll = multiCardMaxScrollIndex(count, visibleCount);
   const go = (next: number) => {
-    const clamped = clampMultiCardScrollIndex(count, next);
-    if (clamped !== scrollIndex) onScrollIndex(container.nodeId, clamped);
+    const clamped = clampMultiCardScrollIndex(count, next, visibleCount);
+    if (clamped !== pageIndex) onScrollIndex(container.nodeId, clamped);
   };
 
   return (
@@ -121,11 +125,11 @@ function MultiCardNavChrome({
               key={i}
               type="button"
               aria-label={`Card ${i + 1}`}
-              aria-current={i === scrollIndex}
+              aria-current={i === pageIndex}
               data-testid={`site-creator-multicard-dot-${i}`}
               className="h-2 w-2 rounded-full"
               style={{
-                background: i === scrollIndex ? SC_VISUAL.selection : "rgba(255,255,255,0.45)",
+                background: i === pageIndex ? SC_VISUAL.selection : "rgba(255,255,255,0.45)",
               }}
               onClick={(event) => {
                 event.preventDefault();
@@ -140,14 +144,14 @@ function MultiCardNavChrome({
           <NavArrow
             axis={axis}
             direction={-1}
-            disabled={scrollIndex <= 0}
-            onPress={() => go(scrollIndex - 1)}
+            disabled={pageIndex <= 0}
+            onPress={() => go(pageIndex - 1)}
           />
           <NavArrow
             axis={axis}
             direction={1}
-            disabled={scrollIndex >= count - 1}
-            onPress={() => go(scrollIndex + 1)}
+            disabled={pageIndex >= maxScroll}
+            onPress={() => go(pageIndex + 1)}
           />
         </>
       )}

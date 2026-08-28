@@ -35,10 +35,43 @@ import {
   type MultiCardInstanceRef,
 } from "./site-creator-multicard-ids";
 
-export function clampMultiCardScrollIndex(count: number, index: number): number {
-  const max = Math.max(0, count - 1);
+/** Power2 ease-in-out (GSAP Quad.inOut) para el carrusel MultiCard. */
+export const MULTICARD_SCROLL_DURATION_MS = 520;
+export const MULTICARD_SCROLL_EASE_CSS = "cubic-bezier(0.455, 0.03, 0.515, 0.955)";
+
+export function easePower2InOut(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+}
+
+export function multiCardVisibleCount(args: {
+  viewportSize: number;
+  cardSize: number;
+  gap: number;
+  count: number;
+}): number {
+  const n = Math.max(1, args.count);
+  const card = Math.max(1, args.cardSize);
+  const gap = Math.max(0, args.gap);
+  const stride = card + gap;
+  const raw = Math.floor((Math.max(1, args.viewportSize) + gap) / stride);
+  return Math.max(1, Math.min(n, raw));
+}
+
+export function multiCardMaxScrollIndex(count: number, visibleCount = 1): number {
+  const n = Math.max(0, count);
+  const visible = Math.max(1, Math.min(Math.max(1, n), Math.round(visibleCount)));
+  return Math.max(0, n - visible);
+}
+
+export function clampMultiCardScrollIndex(
+  count: number,
+  index: number,
+  visibleCount = 1,
+): number {
+  const max = multiCardMaxScrollIndex(count, visibleCount);
   if (!Number.isFinite(index)) return 0;
-  return Math.min(max, Math.max(0, Math.round(index)));
+  return Math.min(max, Math.max(0, index));
 }
 
 export function multiCardScrollDelta(
@@ -46,7 +79,7 @@ export function multiCardScrollDelta(
   step: number,
   scrollIndex: number,
 ): { dx: number; dy: number } {
-  if (!axis || scrollIndex <= 0 || step <= 0) return { dx: 0, dy: 0 };
+  if (!axis || step <= 0 || Math.abs(scrollIndex) < 1e-9) return { dx: 0, dy: 0 };
   const delta = -scrollIndex * step;
   return axis === "h" ? { dx: delta, dy: 0 } : { dx: 0, dy: delta };
 }
@@ -86,6 +119,8 @@ export type MultiCardContainerLayout = {
   step: number;
   overflow: boolean;
   scrollIndex: number;
+  /** Cards que caben a la vez en el viewport (scroll). Grid = count. */
+  visibleCount: number;
 };
 
 export type ApplyMultiCardLayoutResult = {
@@ -219,13 +254,12 @@ export function planMultiCardGrid(args: {
   let scale = 1;
 
   if (args.layoutMode === "scrollH") {
-    const maxW = Math.max(1, args.containerWidth * MULTICARD_PEEK_RATIO);
-    if (cardW > maxW + 0.5) {
-      scale = maxW / cardW;
+    if (cardW > args.containerWidth + 0.5) {
+      scale = args.containerWidth / cardW;
       cardW *= scale;
       cardH *= scale;
     }
-    const viewportW = Math.min(args.containerWidth, cardW / MULTICARD_PEEK_RATIO);
+    const viewportW = Math.max(1, args.containerWidth);
     const container: PageRect = {
       x: args.mold.x,
       y: args.mold.y,
@@ -324,6 +358,87 @@ function liftFullyCoveredGroupContainers(
     }
   }
   return ids;
+}
+
+const MOLD_WRAP_PREFIX = "__scmcwrap_";
+
+export function multiCardMoldWrapLayerId(nodeId: string): string {
+  return `${MOLD_WRAP_PREFIX}${nodeId}`;
+}
+
+export function isMultiCardMoldWrapId(layerId: string): boolean {
+  if (layerId.startsWith(MOLD_WRAP_PREFIX)) return true;
+  const mold = parseMultiCardInstanceId(layerId)?.moldLayerId;
+  return Boolean(mold?.startsWith(MOLD_WRAP_PREFIX));
+}
+
+function compareZOrderPath(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i += 1) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
+}
+
+function sortWorldRootsByPaintOrder(ids: string[], index: SiteCreatorSelectionIndex): string[] {
+  return [...ids].sort((a, b) =>
+    compareZOrderPath(index.byId[a]?.zOrderPath ?? [], index.byId[b]?.zOrderPath ?? []),
+  );
+}
+
+function isDesignerCompositionRoot(obj: FreehandObject): boolean {
+  return obj.type === "groupContainer" || obj.type === "clippingContainer" || obj.type === "booleanGroup";
+}
+
+function wrapMoldRootsAsGroup(args: {
+  children: FreehandObject[];
+  mold: PageRect;
+  nodeId: string;
+}): FreehandObject {
+  return {
+    id: multiCardMoldWrapLayerId(args.nodeId),
+    type: "groupContainer",
+    name: "MultiCard",
+    x: args.mold.x,
+    y: args.mold.y,
+    width: args.mold.width,
+    height: args.mold.height,
+    rotation: 0,
+    opacity: 1,
+    visible: true,
+    locked: false,
+    fill: { type: "solid", color: "none" },
+    stroke: "none",
+    strokeWidth: 0,
+    strokeLinecap: "butt",
+    strokeLinejoin: "miter",
+    strokeDasharray: "0",
+    children: args.children,
+  } as FreehandObject;
+}
+
+/**
+ * Cards 2…N clonan el molde como una sola carpeta. Si Designer ya tiene
+ * group/clip/boolean, esa es la unidad. Si el Grupo de Site Creator son
+ * capas sueltas, se envuelven para no extraer fotos ni máscaras.
+ */
+function moldCloneTemplates(
+  worldRoots: string[],
+  byId: Map<string, FreehandObject>,
+  index: SiteCreatorSelectionIndex,
+  mold: PageRect,
+  nodeId: string,
+): FreehandObject[] {
+  const sources = sortWorldRootsByPaintOrder(worldRoots, index)
+    .map((id) => byId.get(id))
+    .filter((obj): obj is FreehandObject => Boolean(obj))
+    .map((obj) => structuredClone(obj));
+  if (sources.length === 0) return [];
+  if (sources.length === 1 && isDesignerCompositionRoot(sources[0]!)) {
+    return sources;
+  }
+  if (sources.length === 1) return sources;
+  return [wrapMoldRootsAsGroup({ children: sources, mold, nodeId })];
 }
 
 function moldWorldRootIds(
@@ -453,14 +568,14 @@ function scalePathAround(node: PathObject, scale: number, originX: number, origi
   scalePathObjectUniform(node, scale, originX * (1 - scale), originY * (1 - scale));
 }
 
-function scaleWorldRoot(obj: FreehandObject, scale: number): void {
+function scaleWorldRoot(obj: FreehandObject, scale: number, originX = obj.x, originY = obj.y): void {
   if (scale === 1) return;
-  const originX = obj.x;
-  const originY = obj.y;
   if (obj.type === "path") {
     scalePathAround(obj as PathObject, scale, originX, originY);
     return;
   }
+  obj.x = originX + (obj.x - originX) * scale;
+  obj.y = originY + (obj.y - originY) * scale;
   obj.width = Math.max(1, obj.width * scale);
   obj.height = Math.max(1, obj.height * scale);
   const walk = (node: FreehandObject, scaleLocal: boolean) => {
@@ -683,19 +798,14 @@ export function applyMultiCardLayout(args: {
     });
 
     const worldRoots = moldWorldRootIds(coverage, index);
-    const templates: FreehandObject[] = [];
-    for (const rootId of worldRoots) {
-      const source = byId.get(rootId);
-      if (!source) continue;
-      templates.push(structuredClone(source));
-    }
+    const templates = moldCloneTemplates(worldRoots, byId, index, mold, node.id);
     const card1 = node.cards[0];
     if (card1) {
       for (const rootId of worldRoots) {
         const obj = byId.get(rootId);
         if (!obj) continue;
         applyOverridesToTree(obj, card1.overrides, (id) => id);
-        if (planned.scale !== 1) scaleWorldRoot(obj, planned.scale);
+        if (planned.scale !== 1) scaleWorldRoot(obj, planned.scale, mold.x, mold.y);
       }
     }
 
@@ -815,8 +925,23 @@ export function applyMultiCardLayout(args: {
         : axis === "v"
           ? contentSpan > planned.container.height + 0.5
           : false;
+    const visibleCount = axis
+      ? multiCardVisibleCount({
+          viewportSize: axis === "h" ? planned.container.width : planned.container.height,
+          cardSize:
+            axis === "h"
+              ? (planned.cardRects[0]?.width ?? 0)
+              : (planned.cardRects[0]?.height ?? 0),
+          gap: presentation.gap,
+          count: node.cards.length,
+        })
+      : node.cards.length;
     const scrollIndex = overflow
-      ? clampMultiCardScrollIndex(node.cards.length, args.scrollIndexByNodeId?.[node.id] ?? 0)
+      ? clampMultiCardScrollIndex(
+          node.cards.length,
+          args.scrollIndexByNodeId?.[node.id] ?? 0,
+          visibleCount,
+        )
       : 0;
     const { dx, dy } = multiCardScrollDelta(axis, step, scrollIndex);
     if (dx !== 0 || dy !== 0) {
@@ -859,6 +984,7 @@ export function applyMultiCardLayout(args: {
       step,
       overflow,
       scrollIndex,
+      visibleCount,
     });
   }
 

@@ -31,14 +31,16 @@ export function multiCardWheelDecision(args: {
   overflow: boolean;
   scrollIndex: number;
   count: number;
+  visibleCount?: number;
   gesture: MultiCardWheelGesture;
 }): { action: "take"; nextIndex: number } | { action: "pass" } {
   if (!args.overflow || !args.axis) return { action: "pass" };
   const delta = multiCardWheelAxisDelta(args.axis, args.gesture);
   if (Math.abs(delta) < 4) return { action: "pass" };
   const dir = delta > 0 ? 1 : -1;
-  const next = clampMultiCardScrollIndex(args.count, args.scrollIndex + dir);
-  if (next === args.scrollIndex) return { action: "pass" };
+  const page = Math.round(args.scrollIndex);
+  const next = clampMultiCardScrollIndex(args.count, page + dir, args.visibleCount ?? 1);
+  if (next === page) return { action: "pass" };
   return { action: "take", nextIndex: next };
 }
 
@@ -55,6 +57,7 @@ export function resolveMultiCardWheelTarget(
       overflow: container.overflow,
       scrollIndex: container.scrollIndex,
       count: container.count,
+      visibleCount: container.visibleCount,
       gesture,
     });
     if (decision.action === "take") {

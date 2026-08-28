@@ -1,25 +1,7 @@
 "use client";
 
 import React, { useEffect, useId, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Circle,
-  Component,
-  Crop,
-  Folder,
-  Image as ImageIcon,
-  Layers,
-  LayoutTemplate,
-  Lock,
-  Monitor,
-  PenTool,
-  Smartphone,
-  Square,
-  Tablet,
-  Type,
-  Unlock,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, Monitor, Smartphone, Tablet, Unlock } from "lucide-react";
 import type {
   SiteCreatorPresentationNode,
   SiteCreatorPresentationTree,
@@ -27,23 +9,57 @@ import type {
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { imageFrameHasPhoto, isDesignerImageFrame, sameSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
-import type { ResponsiveVisibilityBand } from "./site-creator-types";
+import type { ResponsiveEditableBand, ResponsiveVisibilityBand } from "./site-creator-types";
 
 type OutlineVisibilityState = {
   hidden: boolean;
   inherited?: boolean;
 };
 
+type OutlineRole = "section" | "group" | "multicard" | "button" | "unorganized" | "layer";
+
 const VISIBILITY_BANDS: Array<{
-  band: ResponsiveVisibilityBand;
+  band: ResponsiveEditableBand;
   label: string;
   Icon: typeof Monitor;
 }> = [
-  { band: "wide", label: "Original", Icon: Square },
   { band: "monitor", label: "Monitor", Icon: Monitor },
   { band: "tablet", label: "Tablet", Icon: Tablet },
   { band: "mobile", label: "Móvil", Icon: Smartphone },
 ];
+
+function outlineRole(node: SiteCreatorPresentationNode): OutlineRole {
+  if (node.kind === "unorganized") return "unorganized";
+  if (node.kind !== "semantic") return "layer";
+  const label = node.label;
+  if (label.startsWith("Botón") || label.startsWith("Boton")) return "button";
+  if (label.startsWith("Hero") || label.startsWith("Sección") || label.startsWith("Seccion")) {
+    return "section";
+  }
+  if (label.startsWith("MultiCard")) return "multicard";
+  return "group";
+}
+
+function stripElementCount(label: string): string {
+  return label.replace(/\s·\s\d+\s+elementos?$/i, "").trim();
+}
+
+function outlineTitle(
+  node: SiteCreatorPresentationNode,
+  open: boolean,
+  closedCount: number | null,
+): { title: string; aside: string | null } {
+  if (!open && closedCount != null && node.kind !== "unorganized") {
+    return { title: node.label, aside: null };
+  }
+  if (node.kind === "unorganized" && open) {
+    return { title: "Contenido sin organizar", aside: null };
+  }
+  const stripped = stripElementCount(node.label);
+  const times = stripped.match(/^(.*)\s·\s(×\d+)$/);
+  if (times) return { title: times[1]!, aside: times[2]! };
+  return { title: stripped, aside: null };
+}
 
 function OutlineDeviceVisibility({
   node,
@@ -64,7 +80,7 @@ function OutlineDeviceVisibility({
 }) {
   if (!node.unit) return null;
   return (
-    <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
+    <span className="ml-1 hidden shrink-0 items-center gap-1 group-hover/row:inline-flex group-focus-within/row:inline-flex">
       {VISIBILITY_BANDS.map(({ band, label, Icon }) => {
         const state = resolveVisibility(node, band);
         const active = band === activeBand;
@@ -86,15 +102,9 @@ function OutlineDeviceVisibility({
             aria-disabled={!enabled}
             data-testid={`outline-visibility-${node.id}-${band}`}
             title={title}
-            className={`relative inline-flex h-[18px] w-[18px] items-center justify-center rounded-[4px] border transition-colors ${
-              active
-                ? hidden
-                  ? "border-white/20 bg-white/[0.04] text-white/30"
-                  : "border-[#A8FF32]/45 bg-[#A8FF32]/10 text-[#A8FF32]/85"
-                : hidden
-                  ? "border-transparent text-white/10"
-                  : "border-transparent text-white/25"
-            } ${enabled ? "cursor-pointer hover:border-white/35 hover:text-white" : "cursor-default"}`}
+            className={`relative inline-flex h-4 w-4 items-center justify-center ${
+              hidden ? "text-white/20" : active ? "text-white/55" : "text-white/22"
+            } ${enabled ? "cursor-pointer hover:text-white/80" : "cursor-default"}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
@@ -102,10 +112,10 @@ function OutlineDeviceVisibility({
               onToggleVisibility?.(node, band);
             }}
           >
-            <Icon className="h-2.5 w-2.5" strokeWidth={1.7} aria-hidden />
+            <Icon className="h-2.5 w-2.5" strokeWidth={1.25} aria-hidden />
             {hidden ? (
               <span
-                className="pointer-events-none absolute h-px w-3 rotate-45 bg-current"
+                className="pointer-events-none absolute h-px w-2.5 rotate-45 bg-current"
                 aria-hidden
               />
             ) : null}
@@ -130,6 +140,17 @@ function solidFillCss(fill: unknown): string | null {
   return stop && stop !== "none" ? stop : null;
 }
 
+function Mark({ className, children }: { className?: string; children?: React.ReactNode }) {
+  return (
+    <span
+      className={`relative inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center text-current ${className ?? ""}`}
+      aria-hidden
+    >
+      {children}
+    </span>
+  );
+}
+
 function OutlineGlyph({
   node,
   selectionIndex,
@@ -137,16 +158,44 @@ function OutlineGlyph({
   node: SiteCreatorPresentationNode;
   selectionIndex?: SiteCreatorSelectionIndex | null;
 }) {
-  const iconClass = "h-3 w-3 shrink-0 text-white/40";
-  if (node.kind === "unorganized") return <Layers className={iconClass} />;
-  if (node.kind === "semantic") {
-    if (node.label.startsWith("Botón") || node.label.startsWith("Boton")) {
-      return <Component className={iconClass} />;
-    }
-    if (node.label.startsWith("Hero") || node.label.startsWith("Sección") || node.label.startsWith("Seccion")) {
-      return <LayoutTemplate className={iconClass} />;
-    }
-    return <Folder className={iconClass} />;
+  const role = outlineRole(node);
+  if (role === "section") {
+    return (
+      <Mark>
+        <span className="block h-px w-2.5 bg-current opacity-60" />
+      </Mark>
+    );
+  }
+  if (role === "unorganized") {
+    return (
+      <Mark className="flex-col gap-px">
+        <span className="block h-px w-2 bg-current opacity-45" />
+        <span className="block h-px w-2 bg-current opacity-45" />
+        <span className="block h-px w-2 bg-current opacity-45" />
+      </Mark>
+    );
+  }
+  if (role === "button") {
+    return (
+      <Mark>
+        <span className="block h-1.5 w-2.5 rounded-[1px] border border-current opacity-55" />
+      </Mark>
+    );
+  }
+  if (role === "multicard") {
+    return (
+      <Mark>
+        <span className="block h-2 w-2 border border-current opacity-45" />
+        <span className="absolute h-1 w-1 bg-current opacity-35" />
+      </Mark>
+    );
+  }
+  if (role === "group") {
+    return (
+      <Mark>
+        <span className="block h-2 w-2 border border-current opacity-40" />
+      </Mark>
+    );
   }
 
   const entry = selectionIndex?.byId[node.layerId];
@@ -163,42 +212,63 @@ function OutlineGlyph({
           (c) => c.type === "image" || Boolean(c.isImageFrame),
         );
     return (
-      <span className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden>
-        <Crop className="h-3 w-3 text-white/40" strokeWidth={1.5} />
-        {hasImage ? (
-          <ImageIcon className="absolute -bottom-0.5 -right-0.5 h-2 w-2 text-white/55" strokeWidth={2} />
-        ) : null}
-      </span>
+      <Mark>
+        <span className="block h-2 w-2 border border-current opacity-40" />
+        {hasImage ? <span className="absolute h-px w-1.5 bg-current opacity-50" /> : null}
+      </Mark>
     );
   }
-  if (isImage) return <ImageIcon className={iconClass} />;
-  if (type === "text" || type === "textOnPath") return <Type className={iconClass} />;
-  if (type === "groupContainer" || type === "booleanGroup") {
-    return <Folder className={iconClass} />;
+  if (isImage) {
+    return (
+      <Mark>
+        <span className="block h-2 w-2 border border-current opacity-40" />
+        <span className="absolute h-px w-1.5 bg-current opacity-50" />
+      </Mark>
+    );
   }
-  if (type === "path") return <PenTool className={iconClass} />;
+  if (type === "text" || type === "textOnPath") {
+    return (
+      <Mark>
+        <span className="text-[8px] font-light leading-none opacity-50">t</span>
+      </Mark>
+    );
+  }
+  if (type === "groupContainer" || type === "booleanGroup") {
+    return (
+      <Mark>
+        <span className="block h-2 w-2 border border-current opacity-40" />
+      </Mark>
+    );
+  }
+  if (type === "path") {
+    return (
+      <Mark>
+        <span className="block h-px w-2.5 origin-center rotate-[-28deg] bg-current opacity-50" />
+      </Mark>
+    );
+  }
   if (type === "ellipse") {
-    if (fill) {
-      return (
+    return (
+      <Mark>
         <span
-          aria-hidden
-          className="inline-block h-3 w-3 shrink-0 rounded-full border border-white/15"
-          style={{ background: fill }}
+          className="block h-2 w-2 rounded-full border border-white/20"
+          style={fill ? { background: fill } : undefined}
         />
-      );
-    }
-    return <Circle className={iconClass} />;
+      </Mark>
+    );
   }
   if (fill) {
     return (
-      <span
-        aria-hidden
-        className="inline-block h-3 w-3 shrink-0 rounded-[2px] border border-white/15"
-        style={{ background: fill }}
-      />
+      <Mark>
+        <span className="block h-2 w-2 border border-white/10" style={{ background: fill }} />
+      </Mark>
     );
   }
-  return <Square className={iconClass} />;
+  return (
+    <Mark>
+      <span className="block h-2 w-2 border border-current opacity-35" />
+    </Mark>
+  );
 }
 
 function rowSelected(
@@ -207,14 +277,6 @@ function rowSelected(
 ): boolean {
   if (!node.unit) return false;
   return selected.some((u) => sameSelectionUnit(u, node.unit!));
-}
-
-function rowLabel(node: SiteCreatorPresentationNode, open: boolean, closedCount: number | null): string {
-  if (closedCount != null && node.kind !== "unorganized") {
-    return node.label.includes("·") ? node.label : `${node.label} · ${closedCount}`;
-  }
-  if (node.kind === "unorganized" && open) return "Contenido sin organizar";
-  return node.label;
 }
 
 function OutlineTreeRow({
@@ -278,6 +340,7 @@ function OutlineTreeRow({
   const closedCount = !open && hasChildren ? node.childCount : null;
   const overrideInfo = resolveOverride?.(node) ?? null;
   const lockInfo = node.unit ? canvasLockForUnit?.(node.unit) ?? { locked: false, inherited: false } : null;
+  const { title, aside } = outlineTitle(node, open, closedCount);
 
   useEffect(() => {
     if (!active) return;
@@ -291,16 +354,16 @@ function OutlineTreeRow({
         type="button"
         draggable={node.kind === "layer" || (node.kind === "semantic" && node.label.startsWith("Botón"))}
         data-testid={`outline-row-${node.id}`}
-        className={`group/row relative flex w-full items-center gap-1.5 rounded-sm py-[5px] pr-1 text-left text-[11px] font-normal tracking-tight ${
+        className={`group/row relative flex w-full items-center gap-2 py-2.5 pr-1 text-left text-[10px] font-light leading-none tracking-[0.02em] ${
           active
-            ? "bg-white/[0.07] text-white"
+            ? "text-white"
             : dropTarget
-              ? "bg-white/[0.05] text-white"
+              ? "text-white/90"
               : hovered
-                ? "bg-white/[0.04] text-white/90"
-                : "text-white/65 hover:bg-white/[0.03] hover:text-white/85"
+                ? "text-white/80"
+                : "text-white/45 hover:text-white/70"
         }`}
-        style={{ paddingLeft: 8 + depth * 10 }}
+        style={{ paddingLeft: 16 + depth * 16 }}
         onClick={(e) => {
           if (node.unit) onSelect(node.unit, e.ctrlKey || e.metaKey, node);
         }}
@@ -330,33 +393,44 @@ function OutlineTreeRow({
         }}
       >
         {active ? (
-          <span className="absolute bottom-1 left-0 top-1 w-px bg-[#A8FF32]/70" aria-hidden />
+          <span className="absolute bottom-2 left-0 top-2 w-px bg-[#A8FF32]/80" aria-hidden />
+        ) : depth > 0 ? (
+          <span
+            className="absolute bottom-0 left-0 top-0 w-px bg-white/[0.06]"
+            style={{ left: 16 + (depth - 1) * 16 + 5 }}
+            aria-hidden
+          />
         ) : null}
         {hasChildren ? (
           <span
             role="presentation"
-            className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-white/30"
+            className="inline-flex h-3 w-3 shrink-0 items-center justify-center text-white/25"
             onClick={(event) => {
               event.stopPropagation();
               onToggle(node.id);
             }}
           >
-            {open ? <ChevronDown className="h-3 w-3" strokeWidth={1.5} /> : <ChevronRight className="h-3 w-3" strokeWidth={1.5} />}
+            {open ? (
+              <ChevronDown className="h-2.5 w-2.5" strokeWidth={1.25} />
+            ) : (
+              <ChevronRight className="h-2.5 w-2.5" strokeWidth={1.25} />
+            )}
           </span>
         ) : (
-          <span className="inline-block h-3.5 w-3.5 shrink-0" />
+          <span className="inline-block h-3 w-3 shrink-0" />
         )}
         <OutlineGlyph node={node} selectionIndex={selectionIndex} />
         <span
-          className={`min-w-0 flex-1 truncate font-normal ${overrideInfo?.hidden ? "opacity-40" : ""}`}
+          className={`min-w-0 flex-1 truncate ${overrideInfo?.hidden ? "opacity-40" : ""}`}
         >
-          {rowLabel(node, open, closedCount)}
+          {title}
+          {aside ? <span className="ml-1.5 text-white/28">{aside}</span> : null}
         </span>
         {overrideInfo?.hidden ? (
           <span
             data-testid={`outline-hidden-${node.id}`}
             title="Oculto en esta vista. Sigue visible en Original."
-            className="ml-0.5 shrink-0 text-[9px] font-normal tracking-wide text-white/30"
+            className="ml-0.5 hidden shrink-0 text-[9px] font-light tracking-[0.08em] text-white/28 group-hover/row:inline group-focus-within/row:inline"
           >
             oculto
           </span>
@@ -365,7 +439,7 @@ function OutlineTreeRow({
           <span
             data-testid={`outline-override-dot-${node.id}`}
             title={overrideInfo.title}
-            className="ml-0.5 inline-block h-1 w-1 shrink-0 rounded-full"
+            className="ml-0.5 hidden h-px w-1.5 shrink-0 group-hover/row:inline-block group-focus-within/row:inline-block"
             style={{
               background: overrideInfo.dot === "current" ? "#A8FF32" : "rgba(255,255,255,0.22)",
             }}
@@ -380,51 +454,49 @@ function OutlineTreeRow({
             onToggleVisibility={onToggleVisibility}
           />
         ) : null}
-        {dropTarget || lockInfo ? (
-          <span className="flex shrink-0 items-center gap-1">
-            {dropTarget ? (
-              <span className="text-[9px] font-normal text-white/45">
-                {`Añadir a ${node.label.split(" · ")[0]}`}
-              </span>
-            ) : null}
-            {lockInfo && node.unit ? (
-              <span
-                role="button"
-                aria-label={
-                  lockInfo.inherited
-                    ? "Bloqueado por un grupo o sección superior"
-                    : lockInfo.locked
-                      ? "Desbloquear en el lienzo"
-                      : "Bloquear en el lienzo"
-                }
-                aria-pressed={lockInfo.locked}
-                data-testid={`outline-lock-${node.id}`}
-                title={
-                  lockInfo.inherited
-                    ? "Bloqueado por un grupo o sección superior"
-                    : lockInfo.locked
-                      ? "Desbloquear en el lienzo"
-                      : "Bloquear en el lienzo"
-                }
-                className={`inline-flex h-3.5 w-3.5 items-center justify-center ${
-                  lockInfo.locked ? "text-white/55" : "text-white/25 hover:text-white/60"
-                } ${lockInfo.inherited ? "cursor-default" : ""} ${
-                  lockInfo.locked
-                    ? ""
-                    : "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100"
-                }`}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (lockInfo.inherited || !node.unit) return;
-                  onToggleCanvasLock?.(node.unit);
-                }}
-              >
-                {lockInfo.locked ? <Lock className="h-3 w-3" strokeWidth={1.5} /> : <Unlock className="h-3 w-3" strokeWidth={1.5} />}
-              </span>
-            ) : null}
+        {dropTarget ? (
+          <span className="ml-1 shrink-0 text-[9px] font-light tracking-[0.04em] text-white/35">
+            {`Añadir a ${stripElementCount(node.label).split(" · ")[0]}`}
+          </span>
+        ) : null}
+        {lockInfo && node.unit ? (
+          <span
+            role="button"
+            aria-label={
+              lockInfo.inherited
+                ? "Bloqueado por un grupo o sección superior"
+                : lockInfo.locked
+                  ? "Desbloquear en el lienzo"
+                  : "Bloquear en el lienzo"
+            }
+            aria-pressed={lockInfo.locked}
+            data-testid={`outline-lock-${node.id}`}
+            title={
+              lockInfo.inherited
+                ? "Bloqueado por un grupo o sección superior"
+                : lockInfo.locked
+                  ? "Desbloquear en el lienzo"
+                  : "Bloquear en el lienzo"
+            }
+            className={`ml-1 h-3.5 w-3.5 shrink-0 items-center justify-center ${
+              lockInfo.locked
+                ? "inline-flex text-white/45"
+                : "hidden text-white/20 hover:text-white/50 group-hover/row:inline-flex group-focus-within/row:inline-flex"
+            } ${lockInfo.inherited ? "cursor-default" : ""}`}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (lockInfo.inherited || !node.unit) return;
+              onToggleCanvasLock?.(node.unit);
+            }}
+          >
+            {lockInfo.locked ? (
+              <Lock className="h-2.5 w-2.5" strokeWidth={1.25} />
+            ) : (
+              <Unlock className="h-2.5 w-2.5" strokeWidth={1.25} />
+            )}
           </span>
         ) : null}
       </button>
@@ -548,8 +620,8 @@ export function SiteCreatorOutlinePanel({
 
   return (
     <aside
-      className={`site-creator-studio__sidebar flex shrink-0 flex-col border-r border-white/10 bg-[#101820] transition-[width,padding] duration-150 ${
-        panelOpen ? "w-[240px] px-2 py-3" : "w-11 px-1.5 py-2"
+      className={`site-creator-outline site-creator-studio__sidebar flex shrink-0 flex-col border-r border-white/[0.06] bg-[#0c1218] transition-[width,padding] duration-150 ${
+        panelOpen ? "w-[268px] px-4 py-5" : "w-11 px-1.5 py-4"
       }`}
       data-testid="site-creator-outline-panel"
       data-state={panelOpen ? "open" : "closed"}
@@ -561,28 +633,27 @@ export function SiteCreatorOutlinePanel({
         aria-label={panelOpen ? "Ocultar panel Página" : "Mostrar panel Página"}
         title={panelOpen ? "Ocultar Página" : "Mostrar Página"}
         onClick={() => setPanelOpen((open) => !open)}
-        className={`flex h-8 shrink-0 items-center rounded-md text-white/45 transition-colors hover:bg-white/6 hover:text-white/80 ${
-          panelOpen ? "w-full gap-2 px-2" : "w-8 justify-center"
+        className={`flex h-8 shrink-0 items-center text-white/35 transition-colors hover:text-white/70 ${
+          panelOpen ? "w-full gap-3" : "w-8 justify-center"
         }`}
       >
-        <LayoutTemplate className="h-3.5 w-3.5 shrink-0" strokeWidth={1.7} aria-hidden />
         {panelOpen ? (
           <>
-            <span className="min-w-0 flex-1 truncate text-left text-[10px] font-semibold uppercase tracking-[0.16em]">
+            <span className="min-w-0 flex-1 truncate text-left text-[10px] font-light uppercase tracking-[0.22em]">
               Página
             </span>
-            <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+            <ChevronDown className="h-2.5 w-2.5 shrink-0 opacity-50" aria-hidden />
           </>
         ) : (
-          <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-55" aria-hidden />
+          <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-50" aria-hidden />
         )}
       </button>
 
       {panelOpen ? (
         <>
-          <div id={treeId} className="mt-2 min-h-0 flex-1 overflow-auto">
+          <div id={treeId} className="mt-5 min-h-0 flex-1 overflow-auto">
             {tree.roots.length === 0 ? (
-              <p className="px-1.5 text-[11px] font-normal leading-relaxed text-white/35">
+              <p className="text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/30">
                 Selecciona elementos en el diseño. Usa Ctrl/Cmd para añadir varios.
               </p>
             ) : (
@@ -622,15 +693,17 @@ export function SiteCreatorOutlinePanel({
             )}
           </div>
 
-          <div className="mt-3 border-t border-white/10 px-1.5 pt-3">
-            <p className="text-[11px] font-normal text-white/40">{visualLayerCount} capas</p>
+          <div className="mt-6 border-t border-white/[0.06] pt-5">
+            <p className="text-[10px] font-light tracking-[0.08em] text-white/28">
+              {visualLayerCount} capas
+            </p>
             {reviewCount > 0 ? (
-              <p className="mt-2 text-[10px] font-normal tracking-wide text-amber-300/80">
+              <p className="mt-3 text-[10px] font-light tracking-[0.08em] text-amber-300/70">
                 Por revisar · {reviewCount}
               </p>
             ) : null}
             {emptyHint ? (
-              <p className="mt-3 text-[11px] font-normal leading-relaxed text-white/35">
+              <p className="mt-4 text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/28">
                 {emptyHint}
               </p>
             ) : null}
