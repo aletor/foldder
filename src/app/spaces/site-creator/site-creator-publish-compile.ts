@@ -12,12 +12,13 @@ import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import { isSiteButtonNode, type SiteBlueprintSectionNode, type SiteBlueprintV1, type SiteSectionScrollBand } from "./site-creator-types";
 import {
   destinationScrollKind,
+  lastDocumentSection,
   listDocumentSections,
   listSectionScrollHops,
   scrollFlowUsesKind,
 } from "./site-creator-section-scroll";
 import { compilePublishedScrollScript } from "./site-creator-section-scroll-runtime";
-import { bandHasCustomizations, resolveMediaTune } from "./site-creator-responsive-tunes";
+import { resolveMediaTune } from "./site-creator-responsive-tunes";
 import {
   sectionCustomHeightForBand,
   sectionHeightModeForBand,
@@ -565,7 +566,7 @@ export function compilePublishedSite(args: {
     viewportWidth: reference.width,
     expandViewportSections: false,
     preserveExplicitBackgroundSurfaces: true,
-    ...(bandHasCustomizations(args.blueprint, "monitor") ? { band: "monitor" as const } : {}),
+    band: "monitor",
   });
   const tablet = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
@@ -628,7 +629,7 @@ export function compilePublishedSite(args: {
   }
   (["wide", "tablet", "mobile"] as BandName[]).forEach((band) => {
     const map = collectObjectMap(layouts[band].objects);
-    const mediaBand = band === "wide" && bandHasCustomizations(args.blueprint, "monitor") ? "monitor" : band;
+    const mediaBand = band === "wide" ? "monitor" : band;
     for (const [id, layer] of layers) {
       const obj = map.get(id);
       if (
@@ -650,7 +651,7 @@ export function compilePublishedSite(args: {
         if (typeof size === "number") layer.fontSize![band] = size;
       }
       if (layer.imageFrame) {
-        const tune = resolveMediaTune(args.blueprint, id, band);
+        const tune = resolveMediaTune(args.blueprint, id, mediaBand);
         if (tune?.focal || tune?.zoom) {
           layer.imageFrameCrop![band] = {
             focal: tune.focal ?? { x: 0.5, y: 0.5 },
@@ -936,6 +937,7 @@ function emitBandScrollCss(
     lines.push(
       `.s-sec-anchor.s-snap-${band}{scroll-snap-align:start;scroll-snap-stop:always}`,
     );
+    lines.push(".s-sec-last{scroll-snap-align:none;scroll-snap-stop:normal}");
   }
 }
 
@@ -1265,15 +1267,20 @@ function buildHtml(args: {
   ]
     .filter(Boolean)
     .join(" ");
+  const lastSectionId = lastDocumentSection(args.blueprint)?.id;
   const anchors = listDocumentSections(args.blueprint)
     .map((section) => {
+      const isLast = section.id === lastSectionId;
       const snapBands: Array<"wide" | "tablet" | "mobile"> = ["wide", "tablet", "mobile"];
-      const snapClasses = snapBands
-        .filter((band) => destinationScrollKind(args.blueprint, section.id, scrollLookupBand(args.blueprint, band)) === "snap")
-        .map((band) => `s-snap-${band}`)
-        .join(" ");
+      const snapClasses = isLast
+        ? ""
+        : snapBands
+            .filter((band) => destinationScrollKind(args.blueprint, section.id, scrollLookupBand(args.blueprint, band)) === "snap")
+            .map((band) => `s-snap-${band}`)
+            .join(" ");
       const snap = snapClasses ? ` ${snapClasses}` : "";
-      return `    <div class="s-sec-anchor s-sec-anchor-${cssSafeId(section.id)}${snap}" id="s-sec-${cssSafeId(section.id)}" data-section="${escapeHtml(section.id)}"></div>`;
+      const last = isLast ? " s-sec-last" : "";
+      return `    <div class="s-sec-anchor s-sec-anchor-${cssSafeId(section.id)}${snap}${last}" id="s-sec-${cssSafeId(section.id)}" data-section="${escapeHtml(section.id)}"></div>`;
     })
     .join("\n");
   const fontLink = args.fontHref

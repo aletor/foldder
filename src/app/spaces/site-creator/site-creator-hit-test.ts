@@ -126,10 +126,18 @@ export function entriesUnderPoint(
  * hit de Freehand/Designer). Para seleccionar la imagen: clic donde no haya
  * otra capa, o el menú “Elegir capa”.
  */
+export type FrontmostHitOptions = {
+  /** false al inspeccionar un contenedor: el clic debe poder elegir la imagen frontal. */
+  passthroughImages?: boolean;
+};
+
 export function resolveFrontmostHit(
   hitsFrontToBack: SiteCreatorSelectionIndexEntry[],
+  options?: FrontmostHitOptions,
 ): SiteCreatorSelectionIndexEntry | null {
   if (hitsFrontToBack.length === 0) return null;
+  const passthroughImages = options?.passthroughImages !== false;
+  if (!passthroughImages) return hitsFrontToBack[0] ?? null;
   for (let i = 0; i < hitsFrontToBack.length; i++) {
     const hit = hitsFrontToBack[i]!;
     const behind = hitsFrontToBack.slice(i + 1);
@@ -145,10 +153,11 @@ export function frontmostDirectHit(
   isolationIds: string[],
   point: PagePoint,
   blueprint?: SiteBlueprintV1 | null,
+  options?: FrontmostHitOptions,
 ): SiteCreatorSelectionIndexEntry | null {
   const units = canvasHitTestUnits(index, isolationIds, blueprint);
   const hits = entriesUnderPoint(units, point, { directClickOnly: true });
-  return resolveFrontmostHit(hits);
+  return resolveFrontmostHit(hits, options);
 }
 
 /** Capas bajo el punto, de frontal a posterior, para el menú Elegir capa. */

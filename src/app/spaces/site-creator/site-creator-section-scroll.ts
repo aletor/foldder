@@ -226,6 +226,11 @@ export function scrollFlowUsesKind(
   );
 }
 
+export function lastDocumentSection(blueprint: SiteBlueprintV1): SiteBlueprintSectionNode | null {
+  const sections = listDocumentSections(blueprint);
+  return sections[sections.length - 1] ?? null;
+}
+
 export function destinationScrollKind(
   blueprint: SiteBlueprintV1,
   sectionId: string,

@@ -217,6 +217,24 @@ export function bandForEditorDevice(
   return bandForViewportWidth(viewportWidth, referenceWidth);
 }
 
+export type PreviewResponsiveLayout = {
+  band: Exclude<ResponsiveBand, "wide">;
+  viewportWidth: number;
+};
+
+/** Preview y publicación desktop: layout Ordenador, no composición Original. */
+export function previewResponsiveLayout(
+  viewportWidth: number,
+  referenceWidth: number,
+): PreviewResponsiveLayout {
+  const widthBand = bandForViewportWidth(viewportWidth, referenceWidth);
+  if (widthBand === "wide") {
+    return { band: "monitor", viewportWidth: referenceWidth };
+  }
+  const liveWidth = clampViewportWidth(viewportWidth, referenceWidth);
+  return { band: widthBand, viewportWidth: liveWidth };
+}
+
 function insetForBand(band: ResponsiveBand): number {
   if (band === "mobile") return 20;
   if (band === "tablet") return 28;

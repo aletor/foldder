@@ -46,11 +46,25 @@ export function hopKindBetween(
   return hop?.kind ?? "natural";
 }
 
+function topForStation(
+  stations: ScrollStation[],
+  toId: string,
+  y: number,
+  maxScrollTop?: number,
+): number {
+  if (maxScrollTop == null) return y;
+  const last = stations[stations.length - 1];
+  if (last && toId === last.id) return Math.min(y, maxScrollTop);
+  return y;
+}
+
 export function planScrollStep(args: {
   stations: ScrollStation[];
   hops: SectionScrollHop[];
   scrollY: number;
   direction: 1 | -1;
+  /** Tope real del scroller: la última sección no inventa altura extra. */
+  maxScrollTop?: number;
 }): PlannedScrollStep | null {
   const stations = [...args.stations].sort((a, b) => a.y - b.y);
   if (stations.length < 1) return null;
@@ -61,14 +75,14 @@ export function planScrollStep(args: {
     if (!from || !to) return null;
     const kind = hopKindBetween(args.hops, from.id, to.id);
     if (kind === "natural") return null;
-    return { kind, toId: to.id, targetY: to.y };
+    return { kind, toId: to.id, targetY: topForStation(stations, to.id, to.y, args.maxScrollTop) };
   }
   const current = stations[index] ?? stations[0]!;
   const prev = stations[index - 1];
   if (!prev) return null;
   const kind = hopKindBetween(args.hops, prev.id, current.id);
   if (kind === "natural") return null;
-  return { kind, toId: prev.id, targetY: prev.y };
+  return { kind, toId: prev.id, targetY: topForStation(stations, prev.id, prev.y, args.maxScrollTop) };
 }
 
 export function scrollBehaviorForKind(kind: SiteSectionScrollKind): ScrollBehavior {
@@ -122,6 +136,7 @@ export function bindSectionScroller(args: {
       hops: args.hops,
       scrollY: readY(),
       direction,
+      maxScrollTop: maxScrollTopForScroller(args.scroller),
     });
     if (!planned) {
       anchoredId = null;

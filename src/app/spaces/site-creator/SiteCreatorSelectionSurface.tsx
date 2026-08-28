@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClippingContainerObject, FreehandObject } from "../FreehandStudio";
 import {
   canEnterContainer,
@@ -227,6 +227,11 @@ export interface SiteCreatorSelectionSurfaceProps {
   pageAnchorRef?: React.RefObject<HTMLElement | null>;
   /** Área scroll del preview; permite marquee desde fuera de la página. */
   captureRootRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * En raíz, atraviesa imágenes frontales para alcanzar capas debajo (p. ej. sección).
+   * Desactivar mientras se inspecciona un contenedor para poder elegir la imagen.
+   */
+  canvasHitPassthroughImages?: boolean;
 }
 
 export function SiteCreatorSelectionSurface({
@@ -262,6 +267,7 @@ export function SiteCreatorSelectionSurface({
   floatingPortalHost = null,
   pageAnchorRef,
   captureRootRef,
+  canvasHitPassthroughImages = true,
 }: SiteCreatorSelectionSurfaceProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -310,14 +316,19 @@ export function SiteCreatorSelectionSurface({
     [pageAnchorRef, scale],
   );
 
+  const frontHitOptions = useMemo(
+    () => ({ passthroughImages: canvasHitPassthroughImages }),
+    [canvasHitPassthroughImages],
+  );
+
   const resolveFrontHit = useCallback(
     (point: PagePoint) => {
       if (!isPointOnPage(point, pageWidth, pageHeight)) return null;
       const units = canvasHitTestUnits(index, selection.isolationIds, blueprint);
       const directHits = entriesUnderPoint(units, point, { directClickOnly: true });
-      return resolveFrontmostHit(directHits);
+      return resolveFrontmostHit(directHits, frontHitOptions);
     },
-    [blueprint, index, pageHeight, pageWidth, selection.isolationIds],
+    [blueprint, frontHitOptions, index, pageHeight, pageWidth, selection.isolationIds],
   );
 
   const handlePointerMove = useCallback(
@@ -362,7 +373,13 @@ export function SiteCreatorSelectionSurface({
         }
         return;
       }
-      const hit = frontmostDirectHit(index, selection.isolationIds, point, blueprint);
+      const hit = frontmostDirectHit(
+        index,
+        selection.isolationIds,
+        point,
+        blueprint,
+        frontHitOptions,
+      );
       const nextHover = hit?.layerId ?? null;
       if (nextHover === lastHoverRef.current) return;
       pendingHoverRef.current = nextHover;
@@ -380,8 +397,8 @@ export function SiteCreatorSelectionSurface({
       blueprint,
       clipImageEdit,
       dispatch,
+      frontHitOptions,
       index,
-      marqueeStart,
       onClipImageTuneChange,
       pageHeight,
       pageWidth,
@@ -676,7 +693,13 @@ export function SiteCreatorSelectionSurface({
       if (isEventFromFloatingUi(event)) return;
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
-      const hit = frontmostDirectHit(index, selection.isolationIds, point, blueprint);
+      const hit = frontmostDirectHit(
+        index,
+        selection.isolationIds,
+        point,
+        blueprint,
+        frontHitOptions,
+      );
       if (!hit) {
         event.preventDefault();
         event.stopPropagation();
@@ -694,7 +717,13 @@ export function SiteCreatorSelectionSurface({
       }
       // Designer groupContainer dive OR Studio handles blueprint inspect via special action
       if (canEnterContainer(hit, blueprint)) {
-        const childHit = frontmostDirectHit(index, [...selection.isolationIds, hit.layerId], point, blueprint);
+        const childHit = frontmostDirectHit(
+          index,
+          [...selection.isolationIds, hit.layerId],
+          point,
+          blueprint,
+          frontHitOptions,
+        );
         dispatch({
           type: "doubleClickEnter",
           containerId: hit.layerId,

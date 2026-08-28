@@ -75,6 +75,49 @@ function twoSectionsBlueprint() {
   };
 }
 
+function threeSectionsBlueprint() {
+  const page = makePage([
+    makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+    makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+    makeLayer({ id: "c", type: "rect", x: 0, y: 1000, width: 1920, height: 280, fill: "#333" }),
+  ]);
+  const index = buildSiteSelectionIndex(page);
+  const hero = createSectionFromSelection({
+    blueprint: createEmptySiteBlueprintV1(),
+    selectedLayerIds: ["h"],
+    index,
+    committedPage: page,
+    sectionType: "hero",
+  });
+  expect(hero.ok).toBe(true);
+  if (!hero.ok || !hero.createdNodeId) throw new Error("hero");
+  const mid = createSectionFromSelection({
+    blueprint: hero.blueprint,
+    selectedLayerIds: ["b"],
+    index,
+    committedPage: page,
+    sectionType: "generic",
+  });
+  expect(mid.ok).toBe(true);
+  if (!mid.ok || !mid.createdNodeId) throw new Error("mid");
+  const last = createSectionFromSelection({
+    blueprint: mid.blueprint,
+    selectedLayerIds: ["c"],
+    index,
+    committedPage: page,
+    sectionType: "generic",
+  });
+  expect(last.ok).toBe(true);
+  if (!last.ok || !last.createdNodeId) throw new Error("last");
+  return {
+    page,
+    blueprint: last.blueprint,
+    heroId: hero.createdNodeId,
+    midId: mid.createdNodeId,
+    lastId: last.createdNodeId,
+  };
+}
+
 describe("site-creator section scroll flow", () => {
   it("lists Hero first by document order", () => {
     const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
@@ -457,13 +500,37 @@ describe("site-creator section scroll flow", () => {
     });
     expect(compiled.html).toContain('class="s-scroll-smooth s-scroll-snap"');
     expect(compiled.html).toContain(`data-section="${sectionId}"`);
-    expect(compiled.html).toContain("s-snap");
+    expect(compiled.html).toContain("s-sec-last");
+    expect(compiled.html).not.toMatch(/s-sec-last[^"]*s-snap/);
+    expect(compiled.html).not.toMatch(/s-snap-[^"]*s-sec-last/);
     expect(compiled.css).toContain("scroll-behavior:smooth");
     expect(compiled.css).toContain("scroll-snap-type:y proximity");
     expect(compiled.css).toContain("scroll-snap-align:start");
+    expect(compiled.css).toContain(".s-sec-last{scroll-snap-align:none;scroll-snap-stop:normal}");
     expect(compiled.js).toContain("scrollTo");
     expect(compiled.js).toContain('"kind":"snap"');
     expect(compiled.js).not.toMatch(/foldder/i);
+  });
+
+  it("keeps snap on middle sections and never on the last one", () => {
+    const { page, blueprint, heroId, midId, lastId } = threeSectionsBlueprint();
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: setSectionScrollHop(
+        setSectionScrollHop(blueprint, heroId, midId, "snap"),
+        midId,
+        lastId,
+        "snap",
+      ),
+      title: "Última corta",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.html).toContain("s-snap-wide");
+    expect(compiled.html).toContain("s-sec-last");
+    expect(compiled.html).not.toMatch(/s-sec-last[^"]*s-snap/);
+    expect(compiled.html).not.toMatch(/s-snap-[^"]*s-sec-last/);
+    expect(compiled.css).not.toContain("padding-bottom:max(0px,100dvh");
+    expect(compiled.css).toContain(".s-sec-last{scroll-snap-align:none;scroll-snap-stop:normal}");
   });
 
   it("publishes a different scroll flow for each responsive band", () => {
@@ -482,10 +549,12 @@ describe("site-creator section scroll flow", () => {
       imageHrefByLayerId: {},
     });
 
-    expect(compiled.html).toContain("s-snap-wide");
+    expect(compiled.html).toContain("s-sec-last");
+    expect(compiled.html).not.toContain("s-snap-wide");
     expect(compiled.html).not.toContain("s-snap-tablet");
     expect(compiled.html).not.toContain("s-snap-mobile");
     expect(compiled.css).toContain(".s-sec-anchor.s-snap-wide");
+    expect(compiled.css).toContain(".s-sec-last{scroll-snap-align:none;scroll-snap-stop:normal}");
     expect(compiled.js).toContain(`"wide":[`);
     expect(compiled.js).toContain(`"tablet":[`);
     expect(compiled.js).toContain(`"mobile":[`);
@@ -523,6 +592,8 @@ describe("site-creator section scroll flow", () => {
     });
     expect(compiled.css).not.toContain("padding-bottom:max(0px,100dvh");
     expect(compiled.css).not.toContain("padding-bottom:100vh");
+    expect(compiled.html).toContain("s-sec-last");
+    expect(compiled.html).not.toMatch(/s-sec-last[^"]*s-snap/);
     expect(compiled.js).toContain("Math.min(next.y, limit)");
   });
 
@@ -702,5 +773,24 @@ describe("bindSectionScroller", () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 200, behavior: "smooth" });
 
     dispose();
+  });
+
+  it("plans the last hop to the page end when the last section is shorter than the screen", () => {
+    expect(
+      planScrollStep({
+        stations: [
+          { id: "hero", y: 0 },
+          { id: "products", y: 900 },
+        ],
+        hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+        scrollY: 0,
+        direction: 1,
+        maxScrollTop: 200,
+      }),
+    ).toEqual({
+      kind: "smooth",
+      toId: "products",
+      targetY: 200,
+    });
   });
 });

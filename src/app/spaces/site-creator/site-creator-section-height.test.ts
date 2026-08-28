@@ -441,7 +441,7 @@ describe("section height mode", () => {
     });
     expect(compiled.html).toContain('<div class="s-clip-content">');
     expect(compiled.css).toContain(
-      ".s-group-clip>.s-clip-content{position:absolute;left:50%;top:50%;height:max(100%,calc(100cqw * 400 / 1920));width:auto;aspect-ratio:1920 / 400",
+      ".s-group-clip>.s-clip-content{position:absolute;left:50%;top:50%;height:max(100%,calc(100cqw * 1000 / 1920));width:auto;aspect-ratio:1920 / 1000",
     );
   });
 
@@ -666,7 +666,7 @@ describe("section height mode", () => {
       "top:calc((max(0px,100dvh - 100cqw * 576 / 768)) / 2 + calc(100cqw * 186 / 768))",
     );
 
-    const custom = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    const custom = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "monitor", 1000);
     expect(custom.ok).toBe(true);
     if (!custom.ok) return;
     const customCompiled = compilePublishedSite({
@@ -676,12 +676,9 @@ describe("section height mode", () => {
       imageHrefByLayerId: {},
     });
     expect(customCompiled.html).toContain("s-has-vh-secs");
-    expect(customCompiled.css).toContain(
-      "top:calc((calc(100cqw * 600 / 1920)) / 2 + calc(100cqw * 120 / 1920))",
-    );
-    expect(customCompiled.css).toContain(
-      "height:calc(calc(100cqw * 400 / 1920) + calc(100cqw * 600 / 1920))",
-    );
+    const customWideCss = customCompiled.css.split("@media")[0] ?? "";
+    expect(customWideCss).toContain("top:calc(100cqw * 420 / 1920)");
+    expect(customWideCss).toContain("height:calc(100cqw * 1000 / 1920)");
   });
 
   it("maps the live window to page units so height changes with resize", () => {

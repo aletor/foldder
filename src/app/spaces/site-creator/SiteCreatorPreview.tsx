@@ -145,6 +145,8 @@ export interface SiteCreatorPreviewProps {
   onSpineScrollChange?: (fromId: string | null, toId: string, kind: SiteSectionScrollKind) => void;
   onSpineHeightModeChange?: (sectionId: string, mode: SiteSectionHeightMode) => void;
   onSpineCustomHeightChange?: (sectionId: string, heightPx: number) => void;
+  /** false mientras un contenedor semántico está inspeccionado (segundo clic en hijos). */
+  canvasHitPassthroughImages?: boolean;
 }
 
 function ResizeHandle({
@@ -227,6 +229,7 @@ export function SiteCreatorPreview({
   onSpineScrollChange,
   onSpineHeightModeChange,
   onSpineCustomHeightChange,
+  canvasHitPassthroughImages = true,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -302,6 +305,22 @@ export function SiteCreatorPreview({
     if (scrollRef.current) ro.observe(scrollRef.current);
     return () => ro.disconnect();
   }, [onAvailableSizeChange, readOnly]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    const outer = scrollRef.current;
+    const inner = deviceScrollRef.current;
+    if (outer) {
+      outer.scrollTop = 0;
+      outer.scrollLeft = 0;
+    }
+    if (inner) {
+      inner.scrollTop = 0;
+      inner.scrollLeft = 0;
+    }
+    setDeviceScrollTop(0);
+    setScrollTick((n) => n + 1);
+  }, [readOnly]);
 
   useEffect(() => {
     const bump = () => setScrollTick((n) => n + 1);
@@ -617,6 +636,7 @@ export function SiteCreatorPreview({
             sectionHeight={sectionHeight}
             onSectionHeight={onSectionHeight}
             floatingPortalHost={floatingPortalHost}
+            canvasHitPassthroughImages={canvasHitPassthroughImages}
           />
         ) : null}
       </div>

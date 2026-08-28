@@ -189,6 +189,40 @@ describe("SiteCreatorPreview", () => {
     expect(canvas!.scrollTop).toBe(0);
   });
 
+  it("clears preview scroll when returning to the work area", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 400, fill: "#222" }),
+    ]);
+
+    const { rerender } = render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1920}
+        referenceWidth={1920}
+        previewZoom={1}
+        readOnly
+      />,
+    );
+
+    const canvas = document.querySelector(".site-creator-preview-scroll") as HTMLElement;
+    Object.defineProperty(canvas, "scrollTop", { configurable: true, writable: true, value: 240 });
+    expect(canvas.scrollTop).toBe(240);
+
+    rerender(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1920}
+        referenceWidth={1920}
+        previewZoom={1}
+        readOnly={false}
+      />,
+    );
+
+    expect(canvas.scrollTop).toBe(0);
+    expect(canvas.className).toContain("overflow-hidden");
+  });
+
   it("does not add a dummy scroll pad inside a device frame for Suave hops", () => {
     const page = makePage([
       makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),

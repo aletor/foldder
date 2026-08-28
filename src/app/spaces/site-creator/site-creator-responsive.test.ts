@@ -12,6 +12,7 @@ import {
   assertNoHorizontalOverflow,
   bandForEditorDevice,
   bandForViewportWidth,
+  previewResponsiveLayout,
   classifyContainerBackground,
   findDisplayObject,
   resolveSiteCreatorResponsiveDisplay,
@@ -267,6 +268,14 @@ describe("site-creator-responsive 6B.1", () => {
     expect(bandForViewportWidth(1024, 1920)).toBe("tablet");
     expect(bandForViewportWidth(768, 1920)).toBe("tablet");
     expect(bandForViewportWidth(390, 1920)).toBe("mobile");
+  });
+
+  it("maps preview desktop widths to monitor layout at reference width", () => {
+    expect(previewResponsiveLayout(1920, 1920)).toEqual({ band: "monitor", viewportWidth: 1920 });
+    expect(previewResponsiveLayout(1440, 1920)).toEqual({ band: "monitor", viewportWidth: 1920 });
+    expect(previewResponsiveLayout(1025, 1920)).toEqual({ band: "monitor", viewportWidth: 1920 });
+    expect(previewResponsiveLayout(1024, 1920)).toEqual({ band: "tablet", viewportWidth: 1024 });
+    expect(previewResponsiveLayout(390, 1920)).toEqual({ band: "mobile", viewportWidth: 390 });
   });
 
   it("keeps tablet/mobile device band in landscape even when CSS width is another breakpoint", () => {

@@ -40,7 +40,7 @@ import {
 import {
   resolveSiteCreatorResponsiveDisplay,
   bandForEditorDevice,
-  bandForViewportWidth,
+  previewResponsiveLayout,
 } from "./site-creator-responsive";
 import { countContainerReflowUnits } from "./site-creator-responsive-apply";
 import {
@@ -548,9 +548,15 @@ export function SiteCreatorStudio({
                 ? ("tablet" as const)
                 : ("mobile" as const),
         };
+  const previewLayout = pagePreviewMode
+    ? previewResponsiveLayout(effectiveViewportWidth, referenceWidth)
+    : null;
   const responsiveBand = pagePreviewMode
-    ? bandForViewportWidth(effectiveViewportWidth, referenceWidth)
+    ? previewLayout!.band
     : bandForEditorDevice(viewportBand, effectiveViewportWidth, referenceWidth);
+  const layoutViewportWidth = pagePreviewMode
+    ? previewLayout!.viewportWidth
+    : effectiveViewportWidth;
   const mediaBand: ResponsiveMediaBand = responsiveBand;
   const displayBlueprint = useMemo(() => {
     if (
@@ -631,9 +637,10 @@ export function SiteCreatorStudio({
 
   const liveViewportHeight = useMemo(() => {
     if (deviceFrame) return Math.max(1, deviceFrame.height);
-    const liveBand = bandForViewportWidth(effectiveViewportWidth, referenceWidth);
     const layoutWidthForLive =
-      liveBand === "wide" ? referenceWidth : Math.max(1, effectiveViewportWidth);
+      responsiveBand === "wide" || responsiveBand === "monitor"
+        ? referenceWidth
+        : Math.max(1, layoutViewportWidth);
     if (availablePreviewSize && availablePreviewSize.width > 1 && availablePreviewSize.height > 1) {
       return liveViewportHeightInPageUnits({
         pageWidth: layoutWidthForLive,
@@ -642,7 +649,14 @@ export function SiteCreatorStudio({
       });
     }
     return referenceHeight;
-  }, [availablePreviewSize, deviceFrame, effectiveViewportWidth, referenceHeight, referenceWidth]);
+  }, [
+    availablePreviewSize,
+    deviceFrame,
+    layoutViewportWidth,
+    referenceHeight,
+    referenceWidth,
+    responsiveBand,
+  ]);
 
   const responsive = useMemo(() => {
     if (!page || !referenceIndex) return null;
@@ -650,13 +664,13 @@ export function SiteCreatorStudio({
       page,
       blueprint: displayBlueprint,
       referenceIndex,
-      viewportWidth: effectiveViewportWidth,
+      viewportWidth: layoutViewportWidth,
       viewportHeight: liveViewportHeight,
       band: responsiveBand,
     });
   }, [
     displayBlueprint,
-    effectiveViewportWidth,
+    layoutViewportWidth,
     liveViewportHeight,
     page,
     referenceIndex,
@@ -3381,6 +3395,7 @@ export function SiteCreatorStudio({
               selectionIndex={pagePreviewMode ? undefined : selectionIndex ?? undefined}
               blueprint={displayBlueprint}
               onSelectionAction={pagePreviewMode ? undefined : dispatchSelection}
+              canvasHitPassthroughImages={pagePreviewMode ? undefined : !displayInspectNodeId}
               unitOutlines={pagePreviewMode ? undefined : unitOutlines}
               hoverOutline={pagePreviewMode ? undefined : hoverOutline}
               contextOutlines={pagePreviewMode ? undefined : contextOutlines}

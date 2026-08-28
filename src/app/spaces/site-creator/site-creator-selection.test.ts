@@ -135,6 +135,18 @@ describe("site creator hit testing", () => {
     expect(frontmostDirectHit(index, [], { x: 60, y: 50 })?.layerId).toBe("title");
   });
 
+  it("selects a front image when passthrough is disabled", () => {
+    const index = buildSiteSelectionIndex(
+      page([
+        layer({ id: "title", type: "rect", x: 40, y: 40, width: 120, height: 40 }),
+        layer({ id: "bg", type: "image", x: 0, y: 0, width: 400, height: 300, src: "data:," }),
+      ]),
+    );
+    expect(
+      frontmostDirectHit(index, [], { x: 60, y: 50 }, null, { passthroughImages: false })?.layerId,
+    ).toBe("bg");
+  });
+
   it("still selects an image when it is the only hit under the cursor", () => {
     const index = buildSiteSelectionIndex(
       page([
