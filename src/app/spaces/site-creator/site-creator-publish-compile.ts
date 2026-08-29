@@ -20,6 +20,8 @@ import {
   type MultiCardPublishPlan,
 } from "./site-creator-multicard-publish";
 import { MULTICARD_SCROLL_DURATION_MS, MULTICARD_SCROLL_EASE_CSS } from "./site-creator-multicard-layout";
+import type { Dataset } from "../dataset/dataset-types";
+import { mergedOverridesForCard } from "./site-creator-multicard-dataset";
 import {
   isSiteButtonNode,
   isSiteMultiCardNode,
@@ -198,6 +200,7 @@ export function escapeHtml(value: string): string {
 export function collectPublishImageRefs(
   page: DesignerPageState,
   blueprint?: SiteBlueprintV1,
+  dataset?: Dataset | null,
 ): PublishImageRef[] {
   const refs: PublishImageRef[] = [];
   const seen = new Set<string>();
@@ -222,7 +225,7 @@ export function collectPublishImageRefs(
   };
   visit(page.objects);
   if (blueprint) {
-    for (const extra of collectMultiCardOverrideImageRefs(blueprint)) {
+    for (const extra of collectMultiCardOverrideImageRefs(blueprint, dataset)) {
       if (seen.has(extra.layerId)) continue;
       seen.add(extra.layerId);
       refs.push(extra);
@@ -231,41 +234,56 @@ export function collectPublishImageRefs(
   return refs;
 }
 
-function collectMultiCardOverrideImageRefs(blueprint: SiteBlueprintV1): PublishImageRef[] {
+function publishFieldsFromMediaRef(media: { src?: string; s3Key?: string } | undefined): {
+  s3Key?: string;
+  src?: string;
+} | null {
+  if (!media) return null;
+  const s3Key = pickS3Key(media.s3Key);
+  const src = usableSrc(media.src);
+  if (!s3Key && !src) return null;
+  return { s3Key, src };
+}
+
+function collectMultiCardOverrideImageRefs(
+  blueprint: SiteBlueprintV1,
+  dataset?: Dataset | null,
+): PublishImageRef[] {
   const refs: PublishImageRef[] = [];
   for (const node of Object.values(blueprint.nodes)) {
     if (!isSiteMultiCardNode(node)) continue;
-    for (const card of node.cards) {
-      for (const [moldLayerId, slot] of Object.entries(card.overrides)) {
-        const media = slot.mediaRef;
-        if (!media) continue;
-        const s3Key = pickS3Key(media.s3Key);
-        const src = usableSrc(media.src);
-        if (!s3Key && !src) continue;
+    node.cards.forEach((card, cardIndex) => {
+      const overrides = mergedOverridesForCard({ dataset, node, card, cardIndex });
+      for (const [moldLayerId, slot] of Object.entries(overrides)) {
+        const fields = publishFieldsFromMediaRef(slot.mediaRef);
+        if (!fields) continue;
         refs.push({
           layerId: encodeMultiCardInstanceId({
             nodeId: node.id,
             cardId: card.id,
             moldLayerId,
           }),
-          s3Key,
-          src,
+          ...fields,
         });
       }
-    }
+    });
   }
   return refs;
 }
 
 /** Card 1 override lives on the instance id so clones falling back to the mold keep the original asset. */
-function card1OverrideHrefKeys(blueprint: SiteBlueprintV1): Map<string, string> {
+function card1OverrideHrefKeys(
+  blueprint: SiteBlueprintV1,
+  dataset?: Dataset | null,
+): Map<string, string> {
   const map = new Map<string, string>();
   for (const node of Object.values(blueprint.nodes)) {
     if (!isSiteMultiCardNode(node)) continue;
     const card1 = node.cards[0];
     if (!card1) continue;
-    for (const [moldLayerId, slot] of Object.entries(card1.overrides)) {
-      if (!slot.mediaRef) continue;
+    const overrides = mergedOverridesForCard({ dataset, node, card: card1, cardIndex: 0 });
+    for (const [moldLayerId, slot] of Object.entries(overrides)) {
+      if (!publishFieldsFromMediaRef(slot.mediaRef)) continue;
       map.set(
         moldLayerId,
         encodeMultiCardInstanceId({
@@ -645,7 +663,7 @@ export function compilePublishedSite(args: {
   blueprint: SiteBlueprintV1;
   title: string;
   imageHrefByLayerId: Record<string, string>;
-  dataset?: import("../dataset/dataset-types").Dataset | null;
+  dataset?: Dataset | null;
 }): CompiledPublishedSite {
   const referenceIndex = buildSiteSelectionIndex(args.page);
   const reference = getPageDimensions(args.page);
@@ -707,7 +725,7 @@ export function compilePublishedSite(args: {
   });
 
   const buttonLabels = buttonLabelByLayerId(args.blueprint);
-  const card1OverrideKeys = card1OverrideHrefKeys(args.blueprint);
+  const card1OverrideKeys = card1OverrideHrefKeys(args.blueprint, args.dataset);
   const layers = new Map<string, CompiledLayer>();
   const imageHrefByLayerId = { ...args.imageHrefByLayerId };
   for (const rule of args.blueprint.responsive?.backgrounds ?? []) {

@@ -20,8 +20,8 @@ import {
   syncBlueprintDatasetMultiCards,
   unusedDatasetFields,
 } from "./site-creator-multicard-dataset";
-import { compilePublishedSite } from "./site-creator-publish-compile";
-import { parseMultiCardInstanceId } from "./site-creator-multicard-ids";
+import { compilePublishedSite, collectPublishImageRefs, publishAssetPlaceholder } from "./site-creator-publish-compile";
+import { encodeMultiCardInstanceId, parseMultiCardInstanceId } from "./site-creator-multicard-ids";
 import { findDisplayObject, resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import {
   createEmptySiteBlueprintV1,
@@ -468,5 +468,77 @@ describe("MultiCard × Dataset", () => {
     });
     expect(compiled.html).toContain("Pieza 1");
     expect(compiled.html).toContain("Pieza 2");
+  });
+
+  it("copia las fotos del Dataset al publicar, no solo los textos", () => {
+    const { committed, index, nodeId, blueprint } = createCatalogMultiCard();
+    const dataset = catalog({ rows: 2 });
+    const claimed = claimMultiCardDatasetList({
+      blueprint,
+      nodeId,
+      dataset,
+      listId: "list_products",
+      index,
+    });
+    if (!claimed.ok || !claimed.blueprint) return;
+    const node = claimed.blueprint.nodes[nodeId];
+    if (!node || !isSiteMultiCardNode(node)) return;
+
+    const refs = collectPublishImageRefs(committed, claimed.blueprint, dataset);
+    const card1PhotoId = encodeMultiCardInstanceId({
+      nodeId,
+      cardId: node.cards[0]!.id,
+      moldLayerId: "photo",
+    });
+    const card2PhotoId = encodeMultiCardInstanceId({
+      nodeId,
+      cardId: node.cards[1]!.id,
+      moldLayerId: "photo",
+    });
+    expect(refs.find((ref) => ref.layerId === card1PhotoId)?.src).toBe("https://cdn.example/p1.png");
+    expect(refs.find((ref) => ref.layerId === card2PhotoId)?.src).toBe("https://cdn.example/p2.png");
+
+    const hrefMap = Object.fromEntries(
+      refs.map((ref) => [ref.layerId, publishAssetPlaceholder(ref.layerId)]),
+    );
+    const compiled = compilePublishedSite({
+      page: committed,
+      blueprint: claimed.blueprint,
+      title: "Tienda",
+      imageHrefByLayerId: hrefMap,
+      dataset,
+    });
+    expect(compiled.html).toContain(publishAssetPlaceholder(card1PhotoId));
+    expect(compiled.html).toContain(publishAssetPlaceholder(card2PhotoId));
+    expect(compiled.html).not.toMatch(/https:\/\/cdn\.example\/p[12]\.png/);
+  });
+
+  it("publica fotos de Dataset con s3Key aunque la preview sea un blob local", () => {
+    const { committed, index, nodeId, blueprint } = createCatalogMultiCard();
+    const dataset = catalog({ rows: 1 });
+    const photo = dataset.lists[0]!.cards[0]!.values.f_photo;
+    if (photo?.type === "image") {
+      photo.url = "blob:http://localhost/preview";
+      photo.s3Key = "knowledge-files/catalog/p1.png";
+    }
+    const claimed = claimMultiCardDatasetList({
+      blueprint,
+      nodeId,
+      dataset,
+      listId: "list_products",
+      index,
+    });
+    if (!claimed.ok || !claimed.blueprint) return;
+    const node = claimed.blueprint.nodes[nodeId];
+    if (!node || !isSiteMultiCardNode(node)) return;
+    const card1PhotoId = encodeMultiCardInstanceId({
+      nodeId,
+      cardId: node.cards[0]!.id,
+      moldLayerId: "photo",
+    });
+    const refs = collectPublishImageRefs(committed, claimed.blueprint, dataset);
+    const photoRef = refs.find((ref) => ref.layerId === card1PhotoId);
+    expect(photoRef?.s3Key).toBe("knowledge-files/catalog/p1.png");
+    expect(photoRef?.src).toBeUndefined();
   });
 });

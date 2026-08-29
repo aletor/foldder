@@ -1037,7 +1037,7 @@ export function SiteCreatorStudio({
     setPublishing(true);
     setPublishError(null);
     try {
-      const refs = collectPublishImageRefs(publishPage, blueprint);
+      const refs = collectPublishImageRefs(publishPage, blueprint, dataset);
       const imageHrefByLayerId = Object.fromEntries(
         refs.map((ref) => [ref.layerId, publishAssetPlaceholder(ref.layerId)]),
       );
