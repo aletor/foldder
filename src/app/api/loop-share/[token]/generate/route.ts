@@ -10,7 +10,11 @@ import {
   GeminiGenerateError,
   OpenAiGenerateError,
 } from "@/lib/loop-share-generate";
-import { estimateGeminiImageGenerationUsd, estimateOpenAiImageGenerationUsd } from "@/lib/pricing-config";
+import {
+  estimateGeminiImageGenerationUsd,
+  estimateOpenAiImageGenerationUsd,
+  resolveOpenAiImageQuality,
+} from "@/lib/pricing-config";
 import {
   releaseApiWalletChargeOnError,
   reserveApiWalletCharge,
@@ -128,7 +132,11 @@ export async function POST(req: Request, context: { params: Promise<{ token: str
 
     const estimatedCostUsd =
       provider === "openai"
-        ? estimateOpenAiImageGenerationUsd(payload.templateModel.resolution)
+        ? estimateOpenAiImageGenerationUsd(
+            payload.templateModel.resolution,
+            resolveOpenAiImageQuality(payload.templateModel.resolution),
+            payload.templateModel.aspectRatio,
+          )
         : estimateGeminiImageGenerationUsd(
             payload.templateModel.modelKey,
             payload.templateModel.resolution,

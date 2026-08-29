@@ -17,6 +17,9 @@ import {
 } from "../indesign/page-formats";
 import { createArtboard, type Artboard } from "../freehand/artboard";
 import type { VectorPdfExportOptions } from "../freehand/text-outline";
+import type { ExportDestination, ProfessionalExportOptions } from "../freehand/FreehandExportModal";
+import { deliverProfessionalExportEntries } from "../freehand/deliver-professional-export";
+import { exportPageFilename } from "../freehand/freehand-export-modal-logic";
 import { StudioCanvasPresetPanel } from "../studio-node/StudioCanvasPresetPanel";
 import { findStudioCanvasPresetIdForSize } from "../studio-node/studio-canvas-presets";
 import {
@@ -161,6 +164,17 @@ export function safeDesignerExportFilenameBase(raw: string | undefined): string 
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
   return base || "diseno";
+}
+
+function downloadDesignerExportBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function flatStoryText(nodes: StoryNode[]): string {
@@ -1796,7 +1810,9 @@ export default function DesignerStudio({
     }
   }, [multiPdfBusy]);
 
-  const handleExportMultiPageVectorPdf = useCallback(async (pdfOpts: VectorPdfExportOptions = {}): Promise<boolean> => {
+  const handleExportMultiPageVectorPdf = useCallback(async (
+    pdfOpts: VectorPdfExportOptions & { destination?: ExportDestination } = {},
+  ): Promise<boolean> => {
     if (multiPdfExportingRef.current) return false;
     const pageCount = pagesRef.current.length;
     if (pageCount === 0) return false;
@@ -1806,7 +1822,7 @@ export default function DesignerStudio({
     const markups: string[] = [];
     const isHeadless = Boolean(headlessPdfExport);
     try {
-      const { downloadMultiPageVectorPdf } = await import("../freehand/download-vector-pdf");
+      const { multiPageVectorPdfToBlob } = await import("../freehand/download-vector-pdf");
       for (let i = 0; i < pageCount; i++) {
         const pg = pagesRef.current[i];
         if (!pg) continue;
@@ -1867,16 +1883,25 @@ export default function DesignerStudio({
       }
       const filenameBase = headlessPdfExport?.filenameBase ?? safeDesignerExportFilenameBase(undefined);
       const pdfName = `${filenameBase}.pdf`;
-      await downloadMultiPageVectorPdf(markups, pdfName, {
+      const destination = pdfOpts.destination ?? "download";
+      const pdfBlob = await multiPageVectorPdfToBlob(markups, {
         optimizeImages: pdfOpts.optimizeImages === true,
       });
-      onFinalExport?.({
-        name: pdfName,
-        extension: ".pdf",
-        mimeType: "application/pdf",
+      if (!pdfBlob) {
+        const msg = "No se pudo generar el PDF.";
+        if (!isHeadless) alert(msg);
+        return false;
+      }
+      const projectId =
+        inspirationProjectId && inspirationProjectId !== "__local__" ? inspirationProjectId : null;
+      await deliverProfessionalExportEntries({
+        entries: [{ blob: pdfBlob, name: pdfName, ext: "pdf" }],
+        destination,
+        projectId,
         exportedFrom: "designer",
-        exportFormat: "pdf",
-        metadata: { pageCount, exportFormat: "vector_pdf" },
+        extraMetadata: { pageCount, exportFormat: "vector_pdf" },
+        onFinalExport,
+        downloadBlob: downloadDesignerExportBlob,
       });
       const imgSnap = countDesignerImagesInPages(pagesRef.current);
       logDesignerExportImagesSummary({
@@ -1914,7 +1939,100 @@ export default function DesignerStudio({
       multiPdfExportingRef.current = false;
       setMultiPdfBusy(false);
     }
-  }, [headlessPdfExport, onFinalExport]);
+  }, [headlessPdfExport, onFinalExport, inspirationProjectId, designerCanvasInstanceKey]);
+
+  const handleExportDesignerPages = useCallback(
+    async (opts: ProfessionalExportOptions) => {
+      const list = pagesRef.current;
+      const pageCount = list.length;
+      if (pageCount === 0) return;
+      const destination = opts.destination ?? "download";
+      const ext =
+        opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
+      const savedIdx = activeIdxRef.current;
+      const entries: Array<{ blob: Blob; name: string; ext: string; width: number; height: number }> = [];
+      flushSync(() => {
+        setDesignerPageCaptureBusy(true);
+        setDesignerPageCaptureProgress({ done: 0, total: pageCount });
+      });
+      try {
+        for (let i = 0; i < pageCount; i++) {
+          const pg = list[i] ?? pagesRef.current[i];
+          if (!pg) continue;
+          const pd = getPageDimensions(pg);
+          const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, pg.id, pd.width, pd.height);
+          flushSync(() => {
+            setDesignerPageEnterDirection(null);
+            setActivePageIndex(i);
+          });
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => resolve());
+            });
+          });
+          syncTextFrameLayoutsRef.current();
+          await new Promise<void>((r) => setTimeout(r, 120));
+          let api: DesignerStudioApi | null = null;
+          for (let t = 0; t < 200; t++) {
+            api = studioApiRef.current;
+            const sessionOk = api?.getExportSessionKey?.() === expectedKey;
+            if (api?.getProfessionalExportBlob && sessionOk) break;
+            await new Promise((r) => setTimeout(r, 12));
+          }
+          if (!api?.getProfessionalExportBlob || api.getExportSessionKey?.() !== expectedKey) {
+            continue;
+          }
+          const filename = exportPageFilename({
+            base: opts.filename,
+            ext,
+            pageIndex: i,
+            pageCount,
+            slideName: pg.slideName,
+          });
+          let built: Awaited<ReturnType<NonNullable<DesignerStudioApi["getProfessionalExportBlob"]>>> = null;
+          for (let r = 0; r < 8; r++) {
+            try {
+              built = await api.getProfessionalExportBlob({ ...opts, filename });
+            } catch (e) {
+              console.warn("[Designer] Export páginas: error en página", i + 1, e);
+              built = null;
+            }
+            if (built) break;
+            syncTextFrameLayoutsRef.current();
+            await new Promise((res) => setTimeout(res, 60));
+          }
+          if (built) entries.push(built);
+          setDesignerPageCaptureProgress({ done: i + 1, total: pageCount });
+        }
+        if (entries.length === 0) {
+          throw new Error("No se pudo preparar ninguna página para exportar.");
+        }
+        const projectId =
+          inspirationProjectId && inspirationProjectId !== "__local__" ? inspirationProjectId : null;
+        await deliverProfessionalExportEntries({
+          entries,
+          destination,
+          projectId,
+          exportedFrom: "designer",
+          extraMetadata: {
+            pageCount: entries.length,
+            exportScope: "all_pages",
+            scale: opts.scale,
+          },
+          onFinalExport,
+          downloadBlob: downloadDesignerExportBlob,
+        });
+      } finally {
+        flushSync(() => {
+          setDesignerPageEnterDirection(null);
+          setActivePageIndex(savedIdx);
+          setDesignerPageCaptureBusy(false);
+          setDesignerPageCaptureProgress(null);
+        });
+      }
+    },
+    [designerCanvasInstanceKey, inspirationProjectId, onFinalExport],
+  );
 
   useEffect(() => {
     registerLiveDesignerMultipagePdfExport(designerCanvasInstanceKey, handleExportMultiPageVectorPdf);
@@ -2325,9 +2443,8 @@ export default function DesignerStudio({
     designerMultipageVectorPdfExport: {
       pageCount: pages.length,
       busy: multiPdfBusy,
-      onExport: (opts) => {
-        void handleExportMultiPageVectorPdf(opts);
-      },
+      onExport: (opts) => handleExportMultiPageVectorPdf(opts),
+      onExportPages: (opts) => handleExportDesignerPages(opts),
     },
     designerDeDocument: {
       onExport: handleExportDe,

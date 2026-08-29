@@ -97,6 +97,7 @@ import {
 } from "lucide-react";
 import { ScrubNumberInput } from "./ScrubNumberInput";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
+import { deliverProfessionalExportEntries } from "./freehand/deliver-professional-export";
 import type { FoldderExportCreatedDetail } from "./foldder-export-events";
 
 /** Campos numéricos arrastrables del panel Propiedades: un solo estilo y comportamiento (ver `ScrubNumberInput`). */
@@ -1150,6 +1151,17 @@ export interface DesignerStudioApi {
     fullResolution?: boolean;
     brainExportTelemetry?: boolean;
   }) => Promise<string | null>;
+  /** Export profesional del pliego actual (PNG/JPG/SVG/PDF) como Blob. */
+  getProfessionalExportBlob?: (
+    opts: ProfessionalExportOptions,
+  ) => Promise<{
+    blob: Blob;
+    name: string;
+    ext: string;
+    width: number;
+    height: number;
+    pngDataUrl?: string;
+  } | null>;
 }
 
 
@@ -8469,20 +8481,97 @@ function safeExportFilenameBase(raw: string | undefined, fallback = "export"): s
   return base || fallback;
 }
 
-function mimeForExportExtension(extension: string): string {
-  switch (extension.toLowerCase()) {
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "svg":
-      return "image/svg+xml";
-    case "pdf":
-      return "application/pdf";
-    default:
-      return "application/octet-stream";
+async function buildProfessionalExportBlob(args: {
+  svg: SVGSVGElement;
+  objects: FreehandObject[];
+  exportIds: Set<string> | null;
+  bounds: ExportRect;
+  opts: ProfessionalExportOptions;
+  suffix?: string;
+}): Promise<{
+  blob: Blob;
+  name: string;
+  ext: string;
+  width: number;
+  height: number;
+  pngDataUrl?: string;
+} | null> {
+  const { svg, objects: objs, exportIds, bounds: b, opts } = args;
+  if (b.w < 1 || b.h < 1) return null;
+  const bg =
+    opts.format === "jpg"
+      ? opts.background === "transparent"
+        ? "#ffffff"
+        : opts.background
+      : opts.background;
+  const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+    exportIds,
+    bounds: b,
+    scale: opts.scale,
+    background: bg,
+  });
+  const str =
+    opts.format === "svg" || opts.format === "pdf"
+      ? strRaw
+      : await substituteTextForRasterExport(strRaw, objs);
+  const base = opts.filename.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "");
+  const ext =
+    opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
+  const suffix = (args.suffix || "").trim();
+  const name = suffix ? `${base}-${suffix}.${ext}` : `${base}.${ext}`;
+  const pw = Math.max(1, Math.round(b.w * opts.scale));
+  const ph = Math.max(1, Math.round(b.h * opts.scale));
+
+  if (opts.format === "svg") {
+    return {
+      blob: new Blob([strRaw], { type: "image/svg+xml;charset=utf-8" }),
+      name,
+      ext,
+      width: pw,
+      height: ph,
+    };
   }
+  if (opts.format === "pdf") {
+    const { svgMarkupToPdfBlob } = await import("./freehand/download-vector-pdf");
+    let pdfMarkup = strRaw;
+    const textObjs = collectVisibleTextObjectsDeep(objs);
+    if (textObjs.length > 0) {
+      pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
+        strRaw,
+        textObjs.map(textObjectToVectorPdfOutlineItem),
+        {
+          selectableText: opts.pdfSelectableText !== false,
+          makeUrlsClickable: opts.pdfMakeUrlsClickable === true,
+          outlineLinkRects: opts.pdfOutlineLinkRects === true,
+        },
+      );
+    }
+    const blob = await svgMarkupToPdfBlob(pdfMarkup, { optimizeImages: opts.optimizeImages === true });
+    return { blob, name, ext, width: pw, height: ph };
+  }
+
+  const bgForCanvas =
+    opts.format === "jpg"
+      ? opts.background === "transparent"
+        ? "#ffffff"
+        : opts.background
+      : opts.background === "transparent"
+        ? undefined
+        : opts.background;
+  const canvas = await svgStringToCanvasSafe(str, pw, ph, bgForCanvas);
+  const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
+  const quality = opts.format === "jpg" ? 0.92 : undefined;
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((bl) => (bl ? resolve(bl) : reject(new Error("toBlob"))), mime, quality);
+  });
+  return {
+    blob,
+    name,
+    ext,
+    width: pw,
+    height: ph,
+    pngDataUrl: opts.format === "png" ? canvasToPngDataUrlSafe(canvas) : undefined,
+  };
 }
 
 function svgStringToCanvas(svgStr: string, w: number, h: number, bgColor?: string): Promise<HTMLCanvasElement> {
@@ -11460,6 +11549,22 @@ export function FreehandStudioCanvas({
           console.warn("[Freehand] getNodePreviewPngDataUrl:", msg);
           return null;
         }
+      },
+      getProfessionalExportBlob: async (opts: ProfessionalExportOptions) => {
+        const svg = svgRef.current;
+        if (!svg) return null;
+        const objs = objectsRef.current;
+        const abs = artboardsRef.current;
+        const ab = pickPrimaryArtboard(abs, null);
+        const visible = objs.filter((o) => o.visible);
+        const b = ab ? artboardToRect(ab) : getGroupBounds(visible);
+        return buildProfessionalExportBlob({
+          svg,
+          objects: objs,
+          exportIds: null,
+          bounds: b,
+          opts,
+        });
       },
     };
     return () => {
@@ -18866,178 +18971,96 @@ export function FreehandStudioCanvas({
 
   const runProfessionalExport = useCallback(
     async (opts: ProfessionalExportOptions) => {
-      const svg = svgRef.current;
-      if (!svg) return;
-      const objs = objectsRef.current;
-      const sel = selectedIdsRef.current;
-      const cmap = clipMapFromObjects(objs);
+      const destination = opts.destination ?? "download";
+      const pageScope = opts.pageScope ?? "current";
+      const exportedFrom = photoRoomStudioEmbed ? "photoroom" : designerMode ? "designer" : "freehand";
+      const projectId =
+        projectScopeId && projectScopeId !== "__local__" ? projectScopeId : null;
       const scope = exportModalScope;
 
-      const bgForCanvas =
-        opts.format === "jpg"
-          ? opts.background === "transparent"
-            ? "#ffffff"
-            : opts.background
-          : opts.background === "transparent"
-            ? undefined
-            : opts.background;
-
-      const downloadSvg = (str: string, name: string) => {
-        downloadBlob(new Blob([str], { type: "image/svg+xml;charset=utf-8" }), name);
-      };
-
-      const rasterize = async (str: string, bw: number, bh: number, name: string) => {
-        const canvas = await svgStringToCanvasSafe(str, bw, bh, bgForCanvas);
-        const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
-        const quality = opts.format === "jpg" ? 0.92 : undefined;
-        if (photoRoomStudioEmbed && opts.format === "png" && onExport) {
-          onExport(canvasToPngDataUrlSafe(canvas));
-        }
-        await new Promise<void>((res) => {
-          canvas.toBlob(
-            (blob) => {
-              if (blob) downloadBlob(blob, name);
-              res();
-            },
-            mime,
-            quality,
-          );
+      const finishWithEntries = async (
+        entries: Array<{ blob: Blob; name: string; ext: string; width?: number; height?: number }>,
+        extraMetadata: Record<string, unknown>,
+        toastMsg: string,
+      ) => {
+        if (entries.length === 0) return;
+        await deliverProfessionalExportEntries({
+          entries,
+          destination,
+          projectId,
+          exportedFrom,
+          extraMetadata,
+          onFinalExport,
+          downloadBlob,
         });
-      };
-
-      const forceTransparentSelectionSvg =
-        scope === "selection" && opts.format === "svg";
-
-      const runOne = async (exportIds: Set<string> | null, b: ExportRect, suffix: string) => {
-        const bg =
-          forceTransparentSelectionSvg
-            ? "transparent"
-            : opts.format === "jpg"
-            ? opts.background === "transparent"
-              ? "#ffffff"
-              : opts.background
-            : opts.background;
-        const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
-          exportIds,
-          bounds: b,
-          scale: opts.scale,
-          background: bg,
-        });
-        const str =
-          opts.format === "svg" || opts.format === "pdf"
-            ? strRaw
-            : await substituteTextForRasterExport(strRaw, objs);
-        const base = opts.filename.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "");
-        const ext =
-          opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
-        const name = suffix ? `${base}-${suffix}.${ext}` : `${base}.${ext}`;
-        const pw = Math.max(1, Math.round(b.w * opts.scale));
-        const ph = Math.max(1, Math.round(b.h * opts.scale));
-        if (opts.format === "svg") {
-          downloadSvg(strRaw, name);
-        } else if (opts.format === "pdf") {
-          const { downloadSvgAsVectorPdf } = await import("./freehand/download-vector-pdf");
-          let pdfMarkup = strRaw;
-          const textObjs = collectVisibleTextObjectsDeep(objs);
-          if (textObjs.length > 0) {
-            pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
-              strRaw,
-              textObjs.map(textObjectToVectorPdfOutlineItem),
-              {
-                selectableText: opts.pdfSelectableText !== false,
-              },
-            );
-          }
-          await downloadSvgAsVectorPdf(pdfMarkup, name, { optimizeImages: opts.optimizeImages === true });
-        } else {
-          await rasterize(str, pw, ph, name);
-        }
-        onFinalExport?.({
-          name,
-          extension: `.${ext}`,
-          mimeType: mimeForExportExtension(ext),
-          exportedFrom: photoRoomStudioEmbed ? "photoroom" : designerMode ? "designer" : "freehand",
-          exportFormat: ext,
-          metadata: {
-            exportScope: scope,
-            width: pw,
-            height: ph,
-            scale: opts.scale,
-          },
-        });
-        triggerExportFlash(b);
+        setToast(toastMsg);
+        window.setTimeout(() => setToast(null), 2800);
+        setShowExportModal(false);
       };
 
       try {
+        if (designerMode && pageScope === "all" && designerMultipageVectorPdfExport) {
+          if (opts.format === "pdf") {
+            const ok = await designerMultipageVectorPdfExport.onExport({
+              makeUrlsClickable: opts.pdfMakeUrlsClickable === true,
+              outlineLinkRects: opts.pdfOutlineLinkRects === true,
+              optimizeImages: opts.optimizeImages === true,
+              selectableText: opts.pdfSelectableText !== false,
+              destination,
+            });
+            if (ok === false) throw new Error("No se pudo generar el PDF.");
+          } else if (designerMultipageVectorPdfExport.onExportPages) {
+            await designerMultipageVectorPdfExport.onExportPages(opts);
+          } else {
+            throw new Error("No se puede exportar todas las páginas en este documento.");
+          }
+          setToast(
+            destination === "foldder"
+              ? `Guardado ${opts.format.toUpperCase()} en Foldder`
+              : `Exportado ${opts.format.toUpperCase()}`,
+          );
+          window.setTimeout(() => setToast(null), 2800);
+          setShowExportModal(false);
+          return;
+        }
+
+        const svg = svgRef.current;
+        if (!svg) return;
+        const objs = objectsRef.current;
+        const sel = selectedIdsRef.current;
+        const cmap = clipMapFromObjects(objs);
+
+        const forceTransparentSelectionSvg = scope === "selection" && opts.format === "svg";
+        const optsForBlob: ProfessionalExportOptions = forceTransparentSelectionSvg
+          ? { ...opts, background: "transparent" }
+          : opts;
+
         if (opts.batchArtboardIds && opts.batchArtboardIds.length > 0 && scope === "full") {
           const abs = artboardsRef.current;
-          const { default: JSZip } = await import("jszip");
-          const { svgMarkupToPdfBlob } = await import("./freehand/download-vector-pdf");
-          const mapTextForPdf = (tx: TextObject) => textObjectToVectorPdfOutlineItem(tx);
-          const entries: { fname: string; blob: Blob }[] = [];
+          const entries: Array<{ blob: Blob; name: string; ext: string; width: number; height: number }> = [];
           const ext =
             opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
           for (const abId of opts.batchArtboardIds) {
             const ab = abs.find((a) => a.id === abId);
             if (!ab) continue;
             const b = artboardToRect(ab);
-            if (b.w < 1 || b.h < 1) continue;
-            const bg =
-              opts.format === "jpg"
-                ? opts.background === "transparent"
-                  ? "#ffffff"
-                  : opts.background
-                : opts.background;
-            const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+            const safeName = (ab.name || "artboard").replace(/[^a-z0-9-_]+/gi, "_").slice(0, 80);
+            const built = await buildProfessionalExportBlob({
+              svg,
+              objects: objs,
               exportIds: null,
               bounds: b,
-              scale: opts.scale,
-              background: bg,
+              opts: { ...optsForBlob, filename: `${safeName}.${ext}` },
             });
-            const safeName = (ab.name || "artboard").replace(/[^a-z0-9-_]+/gi, "_").slice(0, 80);
-            const fname = `${safeName}.${ext}`;
-            if (opts.format === "svg") {
-              entries.push({ fname, blob: new Blob([strRaw], { type: "image/svg+xml;charset=utf-8" }) });
-            } else if (opts.format === "pdf") {
-              let pdfMarkup = strRaw;
-              const textObjs = collectVisibleTextObjectsDeep(objs);
-              if (textObjs.length > 0) {
-                pdfMarkup = await substituteTextWithOutlinedPathsInSvg(strRaw, textObjs.map(mapTextForPdf), {
-                  selectableText: opts.pdfSelectableText !== false,
-                });
-              }
-              entries.push({
-                fname,
-                blob: await svgMarkupToPdfBlob(pdfMarkup, { optimizeImages: opts.optimizeImages === true }),
-              });
-            } else {
-              const str = await substituteTextForRasterExport(strRaw, objs);
-              const pw = Math.max(1, Math.round(b.w * opts.scale));
-              const ph = Math.max(1, Math.round(b.h * opts.scale));
-              const canvas = await svgStringToCanvasSafe(str, pw, ph, bgForCanvas);
-              const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
-              const quality = opts.format === "jpg" ? 0.92 : undefined;
-              const blob = await new Promise<Blob>((resolve, reject) => {
-                canvas.toBlob((bl) => (bl ? resolve(bl) : reject(new Error("toBlob"))), mime, quality);
-              });
-              entries.push({ fname, blob });
-            }
+            if (!built) continue;
+            entries.push(built);
             triggerExportFlash(b);
           }
           if (entries.length === 0) return;
-          if (entries.length === 1) {
-            downloadBlob(entries[0].blob, entries[0].fname);
-            onFinalExport?.({
-              name: entries[0].fname,
-              extension: `.${ext}`,
-              mimeType: mimeForExportExtension(ext),
-              exportedFrom: photoRoomStudioEmbed ? "photoroom" : designerMode ? "designer" : "freehand",
-              exportFormat: ext,
-              metadata: { exportScope: "artboard", artboardCount: 1, scale: opts.scale },
-            });
-          } else {
+          if (destination === "download" && entries.length > 1) {
+            const { default: JSZip } = await import("jszip");
             const zip = new JSZip();
-            for (const e of entries) zip.file(e.fname, e.blob);
+            for (const e of entries) zip.file(e.name, e.blob);
             const zb = await zip.generateAsync({ type: "blob" });
             const zipBase = opts.filename.replace(/\.[^.]+$/i, "").replace(/[^a-z0-9-_]+/gi, "_") || "export";
             const zipName = `${zipBase}-artboards.zip`;
@@ -19046,16 +19069,54 @@ export function FreehandStudioCanvas({
               name: zipName,
               extension: ".zip",
               mimeType: "application/zip",
-              exportedFrom: photoRoomStudioEmbed ? "photoroom" : designerMode ? "designer" : "freehand",
+              exportedFrom,
               exportFormat: "zip",
               metadata: { exportScope: "artboard_batch", artboardCount: entries.length, scale: opts.scale },
             });
+            setToast(`Exportados ${entries.length} artboards`);
+            window.setTimeout(() => setToast(null), 2800);
+            setShowExportModal(false);
+            return;
           }
-          setToast(`Exported ${entries.length} artboard(s)`);
-          window.setTimeout(() => setToast(null), 2800);
-          setShowExportModal(false);
+          await finishWithEntries(
+            entries,
+            { exportScope: "artboard", artboardCount: entries.length, scale: opts.scale },
+            destination === "foldder"
+              ? `Guardados ${entries.length} artboard(s) en Foldder`
+              : `Exportado ${entries.length} artboard(s)`,
+          );
           return;
         }
+
+        const runOne = async (exportIds: Set<string> | null, b: ExportRect, suffix: string) => {
+          const built = await buildProfessionalExportBlob({
+            svg,
+            objects: objs,
+            exportIds,
+            bounds: b,
+            opts: optsForBlob,
+            suffix,
+          });
+          if (!built) return;
+          if (photoRoomStudioEmbed && opts.format === "png" && onExport && built.pngDataUrl) {
+            onExport(built.pngDataUrl);
+          }
+          await deliverProfessionalExportEntries({
+            entries: [built],
+            destination,
+            projectId,
+            exportedFrom,
+            extraMetadata: {
+              exportScope: scope,
+              width: built.width,
+              height: built.height,
+              scale: opts.scale,
+            },
+            onFinalExport,
+            downloadBlob,
+          });
+          triggerExportFlash(b);
+        };
 
         if (scope === "full") {
           const abs = artboardsRef.current;
@@ -19076,30 +19137,59 @@ export function FreehandStudioCanvas({
             sel.size > 1 &&
             (opts.format === "png" || opts.format === "svg" || opts.format === "jpg" || opts.format === "pdf")
           ) {
+            const entries: Array<{ blob: Blob; name: string; ext: string; width: number; height: number }> = [];
             let i = 0;
             for (const id of sel) {
               const oneIds = expandExportIds(new Set([id]), objs, cmap);
               const targs = objs.filter((o) => oneIds.has(o.id) && o.visible);
               const bb = getGroupBounds(targs);
-              if (bb.w >= 1 && bb.h >= 1) await runOne(oneIds, bb, `${++i}`);
+              if (bb.w < 1 || bb.h < 1) continue;
+              const built = await buildProfessionalExportBlob({
+                svg,
+                objects: objs,
+                exportIds: oneIds,
+                bounds: bb,
+                opts: optsForBlob,
+                suffix: `${++i}`,
+              });
+              if (!built) continue;
+              entries.push(built);
+              triggerExportFlash(bb);
             }
-            setToast(`Exported ${sel.size} assets`);
-            window.setTimeout(() => setToast(null), 2800);
-            setShowExportModal(false);
+            await finishWithEntries(
+              entries,
+              { exportScope: "selection_split", scale: opts.scale },
+              destination === "foldder"
+                ? `Guardados ${entries.length} archivos en Foldder`
+                : `Exportados ${entries.length} archivos`,
+            );
             return;
           }
           await runOne(exportIds, b, "");
         }
-        setToast(`Exported ${opts.format.toUpperCase()}${opts.scale !== 1 ? ` (${opts.scale}×)` : ""}`);
+        setToast(
+          destination === "foldder"
+            ? `Guardado ${opts.format.toUpperCase()} en Foldder${opts.scale !== 1 ? ` (${opts.scale}×)` : ""}`
+            : `Exportado ${opts.format.toUpperCase()}${opts.scale !== 1 ? ` (${opts.scale}×)` : ""}`,
+        );
         window.setTimeout(() => setToast(null), 2800);
         setShowExportModal(false);
       } catch (err) {
         console.error(err);
-        setToast("Export failed");
+        setToast("No se pudo exportar");
         window.setTimeout(() => setToast(null), 3000);
       }
     },
-    [exportModalScope, triggerExportFlash, onFinalExport, onExport, photoRoomStudioEmbed, designerMode],
+    [
+      exportModalScope,
+      triggerExportFlash,
+      onFinalExport,
+      onExport,
+      photoRoomStudioEmbed,
+      designerMode,
+      designerMultipageVectorPdfExport,
+      projectScopeId,
+    ],
   );
 
   // ── Keyboard ──────────────────────────────────────────────────────
@@ -25339,7 +25429,7 @@ export function FreehandStudioCanvas({
             aria-busy
             aria-live="polite"
           >
-            <p className="mb-3 text-[12px] text-zinc-400">Preparando miniaturas…</p>
+            <p className="mb-3 text-[12px] text-zinc-400">Preparando páginas…</p>
             {designerPageCaptureProgress && designerPageCaptureProgress.total > 0 ? (
               <>
                 <div className="h-1.5 w-52 max-w-[min(22rem,85vw)] overflow-hidden rounded-full bg-zinc-800">
@@ -30611,12 +30701,12 @@ export function FreehandStudioCanvas({
             data-foldder-studio-panel
             role="progressbar"
             aria-busy="true"
-            aria-valuetext="Generando PDF del documento"
+            aria-valuetext="Generando el documento"
           >
             <div className="pointer-events-none mx-6 flex max-w-md flex-col items-center gap-6 rounded-2xl border border-white/[0.09] bg-[#12151a]/96 px-10 py-9 shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-violet-500/25">
               <div className="text-center">
-                <p className="text-[15px] font-semibold tracking-tight text-white">Generando PDF del documento</p>
-                <p className="mt-2 text-[12px] leading-relaxed text-zinc-400">Preparando las páginas para descarga…</p>
+                <p className="text-[15px] font-semibold tracking-tight text-white">Generando el documento</p>
+                <p className="mt-2 text-[12px] leading-relaxed text-zinc-400">Preparando las páginas…</p>
               </div>
               <div className="h-[5px] w-[min(360px,85vw)] overflow-hidden rounded-full bg-zinc-800/95 ring-1 ring-white/[0.07]">
                 <div className="designer-pdf-indeterminate-bar h-full min-h-[5px]" />

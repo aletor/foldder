@@ -4,6 +4,7 @@ import type { Dataset } from "@/app/spaces/dataset/dataset-types";
 import type { GenerativeFillRect } from "@/lib/designer/generative-fill/types";
 import type { FreehandObject, DesignerStudioApi } from "../FreehandStudio";
 import type { VectorPdfExportOptions } from "./text-outline";
+import type { ExportDestination, ProfessionalExportOptions } from "./freehand-export-modal-logic";
 
 /**
  * Props opcionales que conectan FreehandStudio con el documento multipágina (DesignerStudio).
@@ -75,7 +76,9 @@ export type DesignerEmbedProps = {
   designerMultipageVectorPdfExport?: {
     pageCount: number;
     busy: boolean;
-    onExport: (opts: VectorPdfExportOptions) => void | Promise<void>;
+    onExport: (opts: VectorPdfExportOptions & { destination?: ExportDestination }) => void | Promise<void | boolean>;
+    /** PNG/JPG/SVG de todas las páginas (un archivo por página). */
+    onExportPages?: (opts: ProfessionalExportOptions) => void | Promise<void>;
   } | null;
   /** Designer: fichero autocontenido `.de` (documento + imágenes embebidas). */
   designerDeDocument?: {

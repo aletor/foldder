@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     }
 
     const quality = resolveOpenAiImageQuality(body.resolution);
-    estimatedCostUsd = estimateOpenAiImageGenerationUsd(body.resolution, quality);
+    estimatedCostUsd = estimateOpenAiImageGenerationUsd(body.resolution, quality, body.aspect_ratio);
     walletCharge = await reserveApiWalletCharge({
       req,
       userEmail: usageUserEmail,

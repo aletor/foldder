@@ -3,6 +3,8 @@
  * `recordApiUsage` y rutas que fijan `costUsd` manualmente deben basarse aquí cuando aplique.
  */
 
+import { openAiImageSizePixelFactor } from "@/lib/openai-image-size";
+
 /** USD / 1M tokens — OpenAI chat (aprox.). */
 export function openaiCostPerMillion(model: string | undefined): { in: number; out: number } {
   const m = (model || "").toLowerCase();
@@ -70,7 +72,18 @@ function normalizeGeminiImageResolution(resolution: string | undefined): "0.5k" 
 /** Coste por generación de imagen cuando no hay usageMetadata de tokens. */
 export function estimateGeminiImageGenerationUsd(modelKey: string, resolution?: string): number {
   const m = (modelKey || "").trim().toLowerCase();
-  if (m === "pro3" || m.includes("3-pro")) return 0.12;
+  if (m === "pro3" || m.includes("3-pro")) {
+    switch (normalizeGeminiImageResolution(resolution)) {
+      case "0.5k":
+      case "1k":
+        return 0.12;
+      case "4k":
+        return 0.24;
+      case "2k":
+      default:
+        return 0.134;
+    }
+  }
   if (m === "flash25" || m.includes("2.5-flash-image")) return 0.02;
 
   if (m === "flash31" || m.includes("3.1-flash-image")) {
@@ -105,11 +118,16 @@ export function resolveOpenAiImageQuality(resolutionInput?: string): "low" | "me
   return "medium";
 }
 
-export function estimateOpenAiImageGenerationUsd(resolution?: string, quality: "low" | "medium" | "high" = "medium"): number {
+export function estimateOpenAiImageGenerationUsd(
+  resolution?: string,
+  quality: "low" | "medium" | "high" = "medium",
+  aspectRatio?: string,
+): number {
   const tier = normalizeOpenAiImageResolution(resolution);
   const qualityFactor = quality === "high" ? 1.45 : quality === "low" ? 0.55 : 1;
   const base = tier === "4k" ? 0.18 : tier === "2k" ? 0.09 : 0.05;
-  return Math.round(base * qualityFactor * 1_000_000) / 1_000_000;
+  const pixelFactor = openAiImageSizePixelFactor(aspectRatio, resolution);
+  return Math.round(base * qualityFactor * pixelFactor * 1_000_000) / 1_000_000;
 }
 
 /** Veo: coste orientativo por segundo de salida (sin breakdown de tokens en la API). */

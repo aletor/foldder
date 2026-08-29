@@ -1,6 +1,7 @@
 "use client";
 
-type NanoBananaImageProvider = "gemini" | "openai";
+import { NanoBananaNodeDockSelect } from "./nano-banana-node-dock-select";
+import type { NanoBananaImageProvider } from "./nano-banana-output-options";
 
 export function NanoBananaNodeDockProviderSelect({
   value,
@@ -12,20 +13,15 @@ export function NanoBananaNodeDockProviderSelect({
   disabled?: boolean;
 }) {
   return (
-    <select
-      className="nano-banana-node-dock-provider-select nodrag nopan"
+    <NanoBananaNodeDockSelect
       value={value}
       disabled={disabled}
-      aria-label="Proveedor de imagen"
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => {
-        e.stopPropagation();
-        onChange(e.target.value === "openai" ? "openai" : "gemini");
-      }}
-    >
-      <option value="gemini">Gemini</option>
-      <option value="openai">ChatGPT</option>
-    </select>
+      ariaLabel="Proveedor de imagen"
+      options={[
+        { value: "gemini", label: "Gemini" },
+        { value: "openai", label: "ChatGPT" },
+      ]}
+      onChange={(next) => onChange(next === "openai" ? "openai" : "gemini")}
+    />
   );
 }

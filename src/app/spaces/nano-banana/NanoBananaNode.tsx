@@ -42,6 +42,18 @@ import { resolveNodeFrameWidth } from "../studio-node-aspect";
 import { NanoBananaNodeExteriorGridCell } from "./nano-banana-node-exterior-grid-cell";
 import { NanoBananaNodeExteriorHistoryThumb } from "./nano-banana-node-exterior-history-thumb";
 import { NanoBananaNodeDockProviderSelect } from "./nano-banana-node-dock-provider-select";
+import { NanoBananaNodeDockSelect } from "./nano-banana-node-dock-select";
+import {
+  coerceNanoBananaAspect,
+  coerceNanoBananaResolution,
+  nanoBananaAspectSelectOptions,
+  nanoBananaResolutionSelectOptions,
+  normalizeNanoBananaResolution,
+  resolveNanoBananaImageProvider,
+  type NanoBananaAspectRatio,
+  type NanoBananaImageProvider,
+  type NanoBananaResolution,
+} from "./nano-banana-output-options";
 import {
   FoldderStudioHeader,
   foldderStudioHeaderActionClassName,
@@ -120,11 +132,7 @@ function mapNanoBananaStatusLabel(status: string, isEmpty: boolean, isActivelyGe
   return "Conectado";
 }
 
-export type NanoBananaImageProvider = "gemini" | "openai";
-
-function resolveNanoBananaImageProvider(value: unknown): NanoBananaImageProvider {
-  return value === "openai" ? "openai" : "gemini";
-}
+export type { NanoBananaImageProvider } from "./nano-banana-output-options";
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
   return <NodeResizer {...props} />;
@@ -500,12 +508,6 @@ interface NBChange {
   isGlobal?: boolean;         // if true: no paintData needed — applies to whole image
 }
 
-/** Output resolution for Nano Banana (Studio + nodo). Default 1k; invalid/missing → 1k */
-function normalizeNanoBananaResolution(r: string | undefined): '1k' | '2k' | '4k' {
-  if (r === '1k' || r === '2k' || r === '4k') return r;
-  return '1k';
-}
-
 interface NanoBananaStudioProps {
   nodeId: string;
   nodeLabel?: string;
@@ -514,6 +516,7 @@ interface NanoBananaStudioProps {
   modelKey: string;
   aspectRatio: string;
   resolution: string;
+  imageProvider?: NanoBananaImageProvider;
   thinking: boolean;
   prompt: string;
   /**
@@ -534,7 +537,9 @@ interface NanoBananaStudioProps {
   topBarCloseMode?: 'default' | 'returnCine' | 'returnDesigner';
   onClose: () => void;
   onGenerated: (dataUrl: string, s3Key?: string) => void;
-  onResolutionChange?: (resolution: '1k' | '2k' | '4k') => void;
+  onResolutionChange?: (resolution: NanoBananaResolution) => void;
+  onAspectRatioChange?: (aspectRatio: NanoBananaAspectRatio) => void;
+  onModelKeyChange?: (modelKey: string) => void;
   /** Historial de generaciones previas (estado en el nodo para no perderlo al cerrar Studio). */
   generationHistory: string[];
   onGenerationHistoryChange: React.Dispatch<React.SetStateAction<string[]>>;
@@ -669,10 +674,11 @@ function mergeNanoBananaStudioPromptWithBrain(
 
 const NanoBananaStudio = memo(({
   nodeId, nodeLabel = "Image Creation", initialImage, lastGenerated, modelKey, aspectRatio, resolution,
+  imageProvider = "gemini",
   thinking, prompt, externalPromptIgnored,
   composeBrainImageGeneratorPrompt: composeBrainImageGeneratorPromptProp,
   onBrainImageGeneratorDiagnostics,
-  topBarCloseMode = 'default', onClose, onGenerated, onResolutionChange,
+  topBarCloseMode = 'default', onClose, onGenerated, onResolutionChange, onAspectRatioChange, onModelKeyChange,
   generationHistory, onGenerationHistoryChange,
 }: NanoBananaStudioProps) => {
   const { isTouchUI } = useInputMode();
@@ -688,11 +694,21 @@ const NanoBananaStudio = memo(({
 
   // ── Studio-local model/resolution overrides ──────────────────────────────
   const [studioModelKey, setStudioModelKey] = useState(modelKey);
-  const normalizedRes = normalizeNanoBananaResolution(resolution);
-  const [studioResolution, setStudioResolution] = useState(normalizedRes);
+  const [studioResolution, setStudioResolution] = useState(() =>
+    coerceNanoBananaResolution(imageProvider, modelKey, resolution),
+  );
+  const [studioAspect, setStudioAspect] = useState(() => coerceNanoBananaAspect(aspectRatio));
   useEffect(() => {
-    setStudioResolution(normalizeNanoBananaResolution(resolution));
-  }, [resolution]);
+    setStudioModelKey(modelKey);
+  }, [modelKey]);
+  useEffect(() => {
+    setStudioResolution(
+      coerceNanoBananaResolution(imageProvider, studioModelKey, resolution),
+    );
+  }, [imageProvider, resolution, studioModelKey]);
+  useEffect(() => {
+    setStudioAspect(coerceNanoBananaAspect(aspectRatio));
+  }, [aspectRatio]);
 
   // ── Change layers ────────────────────────────────────────────────────────
   const [changes, setChanges] = useState<NBChange[]>([]);
@@ -882,7 +898,23 @@ const NanoBananaStudio = memo(({
   }, [reSendGenerated, lastGenerated, initialImage, generatedOnce]);
 
   const isPro = studioModelKey === 'pro3';
-  const isFlash25 = studioModelKey === 'flash25';
+  const lockFlash25Res = imageProvider !== "openai" && studioModelKey === "flash25";
+  const effectiveStudioResolution = lockFlash25Res ? "1k" : studioResolution;
+
+  const runStudioImageGenerate = (
+    body: {
+      prompt: string;
+      images: string[];
+      aspect_ratio: string;
+      resolution: string;
+      model: string;
+      thinking: boolean;
+    },
+    onProgress: (pct: number) => void,
+  ) =>
+    imageProvider === "openai"
+      ? openaiGenerateWithServerProgress(body, onProgress)
+      : geminiGenerateWithServerProgress(body, onProgress);
 
   // Block left sidebar hover while studio is fullscreen
   useEffect(() => {
@@ -1334,12 +1366,12 @@ const NanoBananaStudio = memo(({
             zoneBody,
             "DETALLE POR ZONAS Y MAPA (prioridad local de máscaras; estética global según bloque Brain anterior)",
           );
-          const json = await geminiGenerateWithServerProgress(
+          const json = await runStudioImageGenerate(
             {
               prompt: nanoBananaPromptExcludeZoneGuideArtifacts(mergedZone),
               images: refImages,
-              aspect_ratio: aspectRatio,
-              resolution: isFlash25 ? '1k' : studioResolution,
+              aspect_ratio: studioAspect,
+              resolution: effectiveStudioResolution,
               model: studioModelKey,
               thinking: thinking && isPro,
             },
@@ -1384,7 +1416,7 @@ const NanoBananaStudio = memo(({
     const graphPrompt = externalPromptIgnored
       ? ''
       : normalizeGenerativeImagePrompt(String(prompt ?? ''), {
-          targetAspectRatio: aspectRatio,
+          targetAspectRatio: studioAspect,
           textOnlyRecreation: !initialImage,
         });
     if (!externalPromptIgnored && !graphPrompt.trim()) {
@@ -1429,15 +1461,15 @@ const NanoBananaStudio = memo(({
     let genFinishedOkLegacy = false;
     try {
       const ok = await runAiJobWithNotification({ nodeId, label: 'Image Creation Studio' }, async () => {
-        const json = await geminiGenerateWithServerProgress(
+        const json = await runStudioImageGenerate(
           {
             prompt:
               maskImages.length > 0
                 ? nanoBananaPromptExcludeZoneGuideArtifacts(promptForModel)
                 : promptForModel,
             images: refImages,
-            aspect_ratio: aspectRatio,
-            resolution: isFlash25 ? '1k' : studioResolution,
+            aspect_ratio: studioAspect,
+            resolution: effectiveStudioResolution,
             model: studioModelKey,
             thinking: thinking && isPro,
           },
@@ -1525,12 +1557,12 @@ const NanoBananaStudio = memo(({
     let genFinishedOk = false;
     try {
       const ok = await runAiJobWithNotification({ nodeId, label: 'Image Creation Studio' }, async () => {
-        const json = await geminiGenerateWithServerProgress(
+        const json = await runStudioImageGenerate(
           {
             prompt: nanoBananaPromptExcludeZoneGuideArtifacts(mergedCall),
             images: refImages,
-            aspect_ratio: aspectRatio,
-            resolution: isFlash25 ? '1k' : studioResolution,
+            aspect_ratio: studioAspect,
+            resolution: effectiveStudioResolution,
             model: studioModelKey,
             thinking: thinking && isPro,
           },
@@ -1601,7 +1633,7 @@ const NanoBananaStudio = memo(({
         }
       />
 
-      <div className="nb-studio-controls flex h-9 shrink-0 items-stretch divide-x divide-white/10 border-b border-white/10 bg-white/[0.04]">
+      <div className="nb-studio-controls flex h-9 shrink-0 items-stretch divide-x divide-white/10 overflow-x-auto border-b border-white/10 bg-white/[0.04]">
         <div className="flex items-stretch" role="group" aria-label="Modelo de imagen">
           {[
             { key: "flash25", label: "NB 1", color: "#34d399" },
@@ -1613,7 +1645,19 @@ const NanoBananaStudio = memo(({
               <button
                 key={m.key}
                 type="button"
-                onClick={() => setStudioModelKey(m.key)}
+                onClick={() => {
+                  setStudioModelKey(m.key);
+                  onModelKeyChange?.(m.key);
+                  const nextRes = coerceNanoBananaResolution(
+                    imageProvider,
+                    m.key,
+                    studioResolution,
+                  );
+                  if (nextRes !== studioResolution) {
+                    setStudioResolution(nextRes);
+                    onResolutionChange?.(nextRes);
+                  }
+                }}
                 className={`flex h-full items-center gap-1 px-2.5 text-[8px] font-black uppercase tracking-[0.06em] transition ${
                   active
                     ? "bg-white text-slate-950"
@@ -1630,10 +1674,10 @@ const NanoBananaStudio = memo(({
           })}
         </div>
 
-        {studioModelKey !== "flash25" ? (
+        {!lockFlash25Res ? (
           <div className="flex items-stretch" role="group" aria-label="Resolución de salida">
             {(["1k", "2k", "4k"] as const).map((r) => {
-              const active = studioResolution === r;
+              const active = effectiveStudioResolution === r;
               return (
                 <button
                   key={r}
@@ -1648,7 +1692,7 @@ const NanoBananaStudio = memo(({
                       : "text-white/40 hover:bg-white/[0.07] hover:text-white/80"
                   }`}
                 >
-                  {r}
+                  {r.toUpperCase()}
                 </button>
               );
             })}
@@ -1658,6 +1702,29 @@ const NanoBananaStudio = memo(({
             1K fijo
           </div>
         )}
+
+        <div className="flex items-stretch" role="group" aria-label="Formato de imagen">
+          {nanoBananaAspectSelectOptions().map((option) => {
+            const active = studioAspect === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setStudioAspect(option.value);
+                  onAspectRatioChange?.(option.value);
+                }}
+                className={`min-w-[2.4rem] px-2 text-[8px] font-black uppercase tracking-[0.06em] transition ${
+                  active
+                    ? "bg-[#6C5CE7]/28 text-violet-100"
+                    : "text-white/40 hover:bg-white/[0.07] hover:text-white/80"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
 
         {generatedOnce ? (
           <div className="flex items-center gap-1.5 px-2">
@@ -2665,12 +2732,23 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const selectedModel = nodeData.modelKey || 'flash31';
   const modelInfo = NB_MODELS.find(m => m.id === selectedModel) || NB_MODELS[0];
   const isPro = selectedModel === 'pro3';
-  const isFlash25 = selectedModel === 'flash25';
   const imageProvider = resolveNanoBananaImageProvider(nodeData.imageProvider);
   const isOpenAiProvider = imageProvider === 'openai';
+  const dockAspect = coerceNanoBananaAspect(nodeData.aspect_ratio);
+  const dockResolution = coerceNanoBananaResolution(imageProvider, selectedModel, nodeData.resolution);
 
   const updateData = (key: string, val: unknown) =>
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
+
+  useEffect(() => {
+    if (dockResolution !== normalizeNanoBananaResolution(nodeData.resolution)) {
+      updateData("resolution", dockResolution);
+    }
+    if (dockAspect !== (nodeData.aspect_ratio || "16:9").trim()) {
+      updateData("aspect_ratio", dockAspect);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al cambiar proveedor/modelo o valores incompatibles
+  }, [imageProvider, selectedModel, dockResolution, dockAspect]);
 
   const inlinePromptText = typeof nodeData.promptText === "string" ? nodeData.promptText : "";
   /** Prompt efectivo: el conectado manda; si no, el inline. */
@@ -2683,7 +2761,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     const textOnlyRecreation = connectedRefImages.length === 0;
 
     const userPromptRaw = normalizeGenerativeImagePrompt(String(effectivePromptValue ?? ""), {
-      targetAspectRatio: nodeData.aspect_ratio || "16:9",
+      targetAspectRatio: dockAspect,
       textOnlyRecreation,
     });
     const promptToSend = userPromptRaw;
@@ -2698,8 +2776,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         const generateBody = {
           prompt: promptToSend,
           images: connectedRefImages,
-          aspect_ratio: nodeData.aspect_ratio || '16:9',
-          resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
+          aspect_ratio: dockAspect,
+          resolution: dockResolution,
           model: selectedModel,
           thinking: nodeData.thinking && isPro,
         };
@@ -2798,8 +2876,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     () => false,
   );
   const isActivelyGenerating = isAiExecutionActive;
-  const nbResLabel = isFlash25 ? '1K' : normalizeNanoBananaResolution(nodeData.resolution).toUpperCase();
-  const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
+  const nbResLabel = dockResolution.toUpperCase();
+  const nanoAspect = parseAspectRatioValue(dockAspect) ?? { width: 16, height: 9 };
 
   const hasConnections = brainConnected || promptConnected || connectedSlots.some(Boolean);
   const hasGeneratedOutput = Boolean(outputImage);
@@ -2871,7 +2949,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
   const headerTitle = String(nodeData.label || "Image Creation");
   const modelLabel = isOpenAiProvider ? "GPT Image 2" : modelInfo.label;
-  const formatLabel = nodeData.aspect_ratio || "16:9";
+  const formatLabel = dockAspect;
   const inputsLabel = useMemo(() => {
     const parts: string[] = [];
     if (brainConnected) parts.push("Marca");
@@ -3173,13 +3251,50 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                       <NanoBananaNodeDockProviderSelect
                         value={imageProvider}
                         disabled={isActivelyGenerating}
-                        onChange={(provider) => updateData("imageProvider", provider)}
+                        onChange={(provider) => {
+                          updateData("imageProvider", provider);
+                          const nextRes = coerceNanoBananaResolution(
+                            provider,
+                            selectedModel,
+                            nodeData.resolution,
+                          );
+                          if (nextRes !== normalizeNanoBananaResolution(nodeData.resolution)) {
+                            updateData("resolution", nextRes);
+                          }
+                        }}
                       />
                     }
                   />
                   <FoldderNodeContentMetaRow label="Modelo" value={modelLabel} />
-                  <FoldderNodeContentMetaRow label="Formato" value={formatLabel} />
-                  <FoldderNodeContentMetaRow label="Resolución" value={nbResLabel} />
+                  <FoldderNodeContentMetaRow
+                    label="Formato"
+                    value={
+                      <NanoBananaNodeDockSelect
+                        value={dockAspect}
+                        disabled={isActivelyGenerating}
+                        ariaLabel="Formato de imagen"
+                        options={nanoBananaAspectSelectOptions()}
+                        onChange={(next) => updateData("aspect_ratio", coerceNanoBananaAspect(next))}
+                      />
+                    }
+                  />
+                  <FoldderNodeContentMetaRow
+                    label="Resolución"
+                    value={
+                      <NanoBananaNodeDockSelect
+                        value={dockResolution}
+                        disabled={isActivelyGenerating}
+                        ariaLabel="Resolución de imagen"
+                        options={nanoBananaResolutionSelectOptions(imageProvider, selectedModel)}
+                        onChange={(next) =>
+                          updateData(
+                            "resolution",
+                            coerceNanoBananaResolution(imageProvider, selectedModel, next),
+                          )
+                        }
+                      />
+                    }
+                  />
                   <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
                   <FoldderNodeContentMetaRow label="Versiones" value={versionsLabel} />
                   <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
@@ -3228,8 +3343,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             initialImage={connected0}
             lastGenerated={studioLastGenerated}
             modelKey={nodeData.modelKey || 'flash31'}
-            aspectRatio={nodeData.aspect_ratio || '16:9'}
-            resolution={normalizeNanoBananaResolution(nodeData.resolution)}
+            aspectRatio={dockAspect}
+            resolution={dockResolution}
+            imageProvider={imageProvider}
             thinking={!!nodeData.thinking}
             prompt={studioPrompt}
             externalPromptIgnored={
@@ -3268,7 +3384,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                   value: url,
                   type: 'image',
                   generatedByAi: true,
-                  generatedByAiSource: "gemini-image-generator:studio",
+                  generatedByAiSource: isOpenAiProvider
+                    ? "openai-image-generator:studio"
+                    : "gemini-image-generator:studio",
                 });
                 if (s3Key) data.s3Key = s3Key;
                 else delete data.s3Key;
@@ -3276,6 +3394,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               }));
             }}
             onResolutionChange={(r) => updateData('resolution', r)}
+            onAspectRatioChange={(ratio) => updateData('aspect_ratio', ratio)}
+            onModelKeyChange={(key) => updateData('modelKey', key)}
           />
         );
       })()}

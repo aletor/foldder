@@ -165,6 +165,26 @@ describe("wallet-cost-estimates", () => {
     expect(estimateWalletCostForRoute("/api/spaces/search", { query: "cat", verify: false })).toBeNull();
   });
 
+  it("estimates Gemini Pro 3 image reserves by resolution", () => {
+    const estimate = estimateWalletCostForRoute("/api/gemini/generate-stream", {
+      model: "pro3",
+      resolution: "4k",
+    });
+    expect(estimate?.estimatedCostMicros).toBe(240_000);
+  });
+
+  it("scales ChatGPT image reserves with aspect ratio", () => {
+    const wide = estimateWalletCostForRoute("/api/openai/generate-stream", {
+      resolution: "2k",
+      aspect_ratio: "16:9",
+    });
+    const square = estimateWalletCostForRoute("/api/openai/generate-stream", {
+      resolution: "2k",
+      aspect_ratio: "1:1",
+    });
+    expect(square?.estimatedCostMicros).toBeGreaterThan(wide?.estimatedCostMicros ?? 0);
+  });
+
   it("ignores routes without a wallet-facing estimate", () => {
     expect(estimateWalletCostForRoute("/api/runway/status/task_1", {})).toBeNull();
   });

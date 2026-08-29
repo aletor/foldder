@@ -9763,7 +9763,8 @@
   min-height: 40px;
 }
 
-.custom-node.nano-banana-node .nano-banana-node-dock-provider-select {
+.custom-node.nano-banana-node .nano-banana-node-dock-provider-select,
+.custom-node.nano-banana-node .nano-banana-node-dock-select {
   appearance: none;
   -webkit-appearance: none;
   display: block;
@@ -9789,16 +9790,19 @@
   outline: none;
 }
 
-.custom-node.nano-banana-node .nano-banana-node-dock-provider-select:hover:not(:disabled) {
+.custom-node.nano-banana-node .nano-banana-node-dock-provider-select:hover:not(:disabled),
+.custom-node.nano-banana-node .nano-banana-node-dock-select:hover:not(:disabled) {
   color: rgba(20, 24, 31, 1) !important;
 }
 
-.custom-node.nano-banana-node .nano-banana-node-dock-provider-select:disabled {
+.custom-node.nano-banana-node .nano-banana-node-dock-provider-select:disabled,
+.custom-node.nano-banana-node .nano-banana-node-dock-select:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.custom-node.nano-banana-node .foldder-node-content-meta-value:has(.nano-banana-node-dock-provider-select) {
+.custom-node.nano-banana-node .foldder-node-content-meta-value:has(.nano-banana-node-dock-provider-select),
+.custom-node.nano-banana-node .foldder-node-content-meta-value:has(.nano-banana-node-dock-select) {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;

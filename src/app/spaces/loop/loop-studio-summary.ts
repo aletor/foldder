@@ -71,6 +71,7 @@ export function estimateLoopImageCostUsd(model: LoopTemplateModel): number {
     return estimateOpenAiImageGenerationUsd(
       model.resolution,
       resolveOpenAiImageQuality(model.resolution),
+      model.aspectRatio,
     );
   }
   return estimateGeminiImageGenerationUsd(model.modelKey, model.resolution);

@@ -115,7 +115,11 @@ export function estimateWalletCostForRoute(
   if (route === "/api/openai/generate-stream") {
     const resolution = stringValue(body.resolution);
     const quality = resolveOpenAiImageQuality(resolution);
-    const estimated = estimateOpenAiImageGenerationUsd(resolution, quality);
+    const estimated = estimateOpenAiImageGenerationUsd(
+      resolution,
+      quality,
+      stringValue(body.aspect_ratio, "16:9"),
+    );
     return {
       label: "Generar imagen ChatGPT",
       route,

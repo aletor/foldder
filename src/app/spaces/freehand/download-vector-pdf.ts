@@ -552,12 +552,11 @@ export async function svgMarkupToPdfBlob(svgMarkup: string, opts?: VectorPdfPipe
 /**
  * Une varias páginas SVG (ya preparadas para PDF, p. ej. con texto como trazos) en un solo PDF vectorial.
  */
-export async function downloadMultiPageVectorPdf(
+export async function multiPageVectorPdfToBlob(
   svgMarkups: string[],
-  filename: string,
   opts?: VectorPdfPipelineOptions,
-): Promise<void> {
-  if (svgMarkups.length === 0) return;
+): Promise<Blob | null> {
+  if (svgMarkups.length === 0) return null;
   let pdf: InstanceType<typeof jsPDF> | null = null;
   for (let i = 0; i < svgMarkups.length; i++) {
     const svgMarkup = svgMarkups[i]!;
@@ -592,5 +591,22 @@ export async function downloadMultiPageVectorPdf(
       cleanup();
     }
   }
-  if (pdf) pdf.save(filename);
+  return pdf ? (pdf.output("blob") as Blob) : null;
+}
+
+export async function downloadMultiPageVectorPdf(
+  svgMarkups: string[],
+  filename: string,
+  opts?: VectorPdfPipelineOptions,
+): Promise<void> {
+  const blob = await multiPageVectorPdfToBlob(svgMarkups, opts);
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
