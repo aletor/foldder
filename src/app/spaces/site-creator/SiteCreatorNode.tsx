@@ -70,6 +70,7 @@ import { SiteCreatorNodeDeviceMosaic } from "./SiteCreatorNodeDeviceMosaic";
 import { buildSiteCreatorNodeDeviceMosaic } from "./site-creator-node-device-mosaic";
 import { collectProjectMedia } from "../project-media-inventory";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import { type SiteCreatorMediaPickItem } from "./SiteCreatorMediaPicker";
 import { useDesignerConnectedDataset } from "../designer/use-designer-connected-dataset";
 import {
   freezeBlueprintDatasetMultiCards,
