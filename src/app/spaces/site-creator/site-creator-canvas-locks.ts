@@ -42,7 +42,7 @@ export function isLayerCanvasLocked(
   let owner = findLayerSemanticOwner(blueprint, layerId, index);
   while (owner) {
     if (nodes.has(owner.id)) return true;
-    owner = owner.parentId ? blueprint.nodes[owner.parentId] : undefined;
+    owner = owner.parentId ? blueprint.nodes[owner.parentId] ?? null : null;
   }
   return false;
 }

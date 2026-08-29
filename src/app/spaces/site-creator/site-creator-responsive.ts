@@ -277,7 +277,7 @@ function resolveSectionLayoutMetrics(args: {
   viewportWidth: number;
   sectionType: "hero" | "generic";
 }): SectionLayoutMetrics {
-  const editable = isResponsiveEditableBand(args.band) ? args.band : null;
+  const editable = args.band && isResponsiveEditableBand(args.band) ? args.band : null;
   const tune = editable
     ? resolveContainerTune(args.blueprint, { kind: "blueprintNode", nodeId: args.sectionId }, editable)
     : null;
@@ -626,7 +626,7 @@ function placeBackgroundLayers(args: {
   band?: ResponsiveBand;
 }): Record<string, NormalizedFocalPoint> {
   const focals: Record<string, NormalizedFocalPoint> = {};
-  const editable = isResponsiveEditableBand(args.band) ? args.band : null;
+  const editable = args.band && isResponsiveEditableBand(args.band) ? args.band : null;
   for (const bgId of args.backgroundLayerIds) {
     const obj = args.byId.get(bgId);
     const entry = args.index.byId[bgId];

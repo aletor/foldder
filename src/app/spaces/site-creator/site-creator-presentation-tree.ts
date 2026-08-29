@@ -97,7 +97,7 @@ function makePresentationLayerNode(
   layerId: string,
   index: SiteCreatorSelectionIndex,
   snapshot: DesignerSourceSnapshotV1 | null,
-): SiteCreatorPresentationNode | null {
+): Extract<SiteCreatorPresentationNode, { kind: "layer" }> | null {
   const entry = index.byId[layerId];
   if (!entry) return null;
   const id = clipOwnerLayerId(entry, index);

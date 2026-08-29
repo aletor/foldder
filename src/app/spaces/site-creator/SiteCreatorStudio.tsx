@@ -346,7 +346,7 @@ function slotKindFromObject(
 function mediaItemsFromPage(page: DesignerPageState | null | undefined): SiteCreatorMediaPickItem[] {
   if (!page) return [];
   const out: SiteCreatorMediaPickItem[] = [];
-  const visit = (objects: DesignerPageState["objects"]) => {
+  const visit = (objects: DesignerPageState["objects"] | undefined) => {
     for (const obj of objects ?? []) {
       const src =
         (obj as { src?: string }).src ||
@@ -2378,13 +2378,11 @@ export function SiteCreatorStudio({
         const node = current.nodes[sectionId];
         const designed =
           node && isSiteSectionNode(node)
-            ? spineHeightBand === "wide"
-              ? Math.max(1, node.sourceRange.bottom - node.sourceRange.top)
-              : Math.max(
-                  1,
-                  sectionScrollStations.find((station) => station.id === sectionId)
-                    ?.naturalHeight ?? 1,
-                )
+            ? Math.max(
+                1,
+                sectionScrollStations.find((station) => station.id === sectionId)
+                  ?.naturalHeight ?? 1,
+              )
             : 1;
         const existing = isSiteSectionNode(node)
           ? sectionCustomHeightForBand(current, node, spineHeightBand)

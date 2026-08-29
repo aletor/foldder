@@ -210,7 +210,9 @@ export function publishedLayerTransform(obj: FreehandObject, rotation: number): 
   if (rotation) parts.push(`rotate(${rotation}deg)`);
   if (obj.skewX) parts.push(`skewX(${obj.skewX}deg)`);
   if (obj.skewY) parts.push(`skewY(${obj.skewY}deg)`);
-  const sx = obj.flipX ? -1 : obj.scaleX && obj.scaleX !== 1 ? obj.scaleX : 1;
+  const sx = obj.flipX ? -1 : (obj as { scaleX?: number }).scaleX && (obj as { scaleX?: number }).scaleX !== 1
+    ? (obj as { scaleX?: number }).scaleX!
+    : 1;
   const sy = obj.flipY ? -1 : (obj as { scaleY?: number }).scaleY && (obj as { scaleY?: number }).scaleY !== 1
     ? (obj as { scaleY?: number }).scaleY!
     : 1;

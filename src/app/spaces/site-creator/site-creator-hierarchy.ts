@@ -299,8 +299,15 @@ export function commonContainersForFreeLayers(
     if (owner) return [];
     const hits = containersFullyContainingUnit({ kind: "layer", layerId }, blueprint, index);
     const hitSet = new Set(hits);
-    if (common === null) common = hitSet;
-    else common = new Set([...common].filter((id) => hitSet.has(id)));
+    if (common === null) {
+      common = hitSet;
+    } else {
+      const next = new Set<string>();
+      for (const id of common) {
+        if (hitSet.has(id)) next.add(id);
+      }
+      common = next;
+    }
   }
   if (!common || common.size === 0) return [];
   return deepestContainerCandidates([...common], blueprint);

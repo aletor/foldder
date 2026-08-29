@@ -11,6 +11,7 @@ import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type {
   ResponsiveEditableBand,
   ResponsiveTargetRef,
+  SiteBlueprintNode,
   SiteBlueprintV1,
   SiteMultiCardInstanceV1,
 } from "./site-creator-types";
@@ -128,7 +129,7 @@ function findOwningSection(
     if (!node.layerIds.includes(layerId)) continue;
     let walk: string | null = node.id;
     while (walk) {
-      const current = blueprint.nodes[walk];
+      const current: SiteBlueprintNode | undefined = blueprint.nodes[walk];
       if (!current) break;
       if (isSiteSectionNode(current)) return current.id;
       walk = current.parentId;

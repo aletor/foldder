@@ -889,9 +889,9 @@ export function alignXLabel(align: ResponsiveAlignX): string {
   return "Centro horizontal";
 }
 
-export function widthModeLabel(mode: ResponsiveWidthMode): string {
+export function widthModeLabel(mode: ResponsiveWidthMode | "scale"): string {
   if (mode === "container") return "Contenedor";
-  if (mode === "full") return "Completo";
+  if (mode === "full" || mode === "scale") return "Completo";
   return "Contenido";
 }
 

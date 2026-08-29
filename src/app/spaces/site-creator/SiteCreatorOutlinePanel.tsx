@@ -198,6 +198,14 @@ function OutlineGlyph({
     );
   }
 
+  if (node.kind !== "layer") {
+    return (
+      <Mark>
+        <span className="block h-2 w-2 border border-current opacity-40" />
+      </Mark>
+    );
+  }
+
   const entry = selectionIndex?.byId[node.layerId];
   const obj = entry?.object;
   const type = obj?.type ?? entry?.type;
