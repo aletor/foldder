@@ -151,7 +151,28 @@ export interface SiteBlueprintV1 {
    * Siguen seleccionables en el árbol de la izquierda.
    */
   canvasLocks?: SiteBlueprintCanvasLocksV1;
+  /**
+   * Márgenes horizontales de página por dispositivo (monitor / tablet / móvil).
+   * Ausente = se siembran desde el gutter del Original. Original no tiene rail.
+   */
+  pageInsets?: SitePageInsetsV1;
+  /**
+   * Ancho máximo de la página en Ordenador (preview y publicación).
+   * Ausente = 1500. No aplica a tablet ni móvil.
+   */
+  monitorMaxWidth?: number;
 }
+
+export type SitePageInsetBandV1 = {
+  left: number;
+  right: number;
+  /** Si es true, izquierda y derecha se mueven juntas. */
+  linked: boolean;
+  /** false = a sangre. Ausente = true. Al apagar se recuerdan left/right. */
+  enabled?: boolean;
+};
+
+export type SitePageInsetsV1 = Partial<Record<ResponsiveEditableBand, SitePageInsetBandV1>>;
 
 export type SiteBlueprintCanvasLocksV1 = {
   layerIds?: string[];
@@ -429,8 +450,44 @@ export function sanitizeSiteBlueprintV1(blueprint: SiteBlueprintV1): SiteBluepri
       nodes[id] = node;
     }
   }
-  if (!changed) return blueprint;
-  return { ...blueprint, nodes };
+  const pageInsets = parseSanitizedPageInsets(blueprint.pageInsets);
+  const insetsChanged = pageInsets !== blueprint.pageInsets;
+  const monitorMaxWidth = parseSanitizedMonitorMaxWidth(blueprint.monitorMaxWidth);
+  const maxWidthChanged = monitorMaxWidth !== blueprint.monitorMaxWidth;
+  if (!changed && !insetsChanged && !maxWidthChanged) return blueprint;
+  const next: SiteBlueprintV1 = changed ? { ...blueprint, nodes } : { ...blueprint };
+  if (pageInsets) next.pageInsets = pageInsets;
+  else delete next.pageInsets;
+  if (monitorMaxWidth != null) next.monitorMaxWidth = monitorMaxWidth;
+  else delete next.monitorMaxWidth;
+  return next;
+}
+
+function parseSanitizedMonitorMaxWidth(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return Math.round(raw);
+}
+
+function parseSanitizedPageInsets(
+  raw: SitePageInsetsV1 | undefined,
+): SitePageInsetsV1 | undefined {
+  if (!raw) return undefined;
+  const next: SitePageInsetsV1 = {};
+  for (const band of RESPONSIVE_EDITABLE_BANDS) {
+    const value = raw[band];
+    if (!value) continue;
+    const left =
+      typeof value.left === "number" && Number.isFinite(value.left) ? Math.max(0, value.left) : 0;
+    const right =
+      typeof value.right === "number" && Number.isFinite(value.right) ? Math.max(0, value.right) : 0;
+    next[band] = {
+      left,
+      right,
+      linked: value.linked !== false,
+      enabled: value.enabled !== false,
+    };
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 export function parseMultiCardNode(raw: unknown): SiteBlueprintMultiCardNode {

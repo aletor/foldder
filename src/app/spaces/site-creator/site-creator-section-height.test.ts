@@ -435,7 +435,7 @@ describe("section height mode", () => {
 
     const compiled = compilePublishedSite({
       page,
-      blueprint: custom.blueprint,
+      blueprint: { ...custom.blueprint, monitorMaxWidth: 1920 },
       title: "Máscara adaptable",
       imageHrefByLayerId: {},
     });
@@ -654,7 +654,7 @@ describe("section height mode", () => {
     if (!tablet.ok) return;
     const compiled = compilePublishedSite({
       page,
-      blueprint: tablet.blueprint,
+      blueprint: { ...tablet.blueprint, monitorMaxWidth: 1920 },
       title: "Centrado",
       imageHrefByLayerId: {},
     });
@@ -671,7 +671,7 @@ describe("section height mode", () => {
     if (!custom.ok) return;
     const customCompiled = compilePublishedSite({
       page,
-      blueprint: custom.blueprint,
+      blueprint: { ...custom.blueprint, monitorMaxWidth: 1920 },
       title: "Centrado custom",
       imageHrefByLayerId: {},
     });

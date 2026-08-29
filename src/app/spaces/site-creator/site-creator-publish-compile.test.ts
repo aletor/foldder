@@ -41,11 +41,30 @@ describe("site-creator-publish-compile", () => {
     expect(compiled.css.toLowerCase()).not.toContain("foldder");
     expect(compiled.js.toLowerCase()).not.toContain("foldder");
     expect(compiled.css).toContain(".s-page{");
+    expect(compiled.css).toContain("max-width:1920px");
+    expect(compiled.css).toContain("margin-inline:auto");
     expect(compiled.css).toContain("@media (max-width:767px)");
     expect(compiled.css).toContain("@media (max-width:1024px) and (min-width:768px)");
+    expect(compiled.css).toContain(".s-page{max-width:none;margin-inline:0}");
     expect(compiled.css).not.toContain("max-width:1919px");
     expect(compiled.css).toContain(".s-el-hero{");
     expect(compiled.css).toContain(".s-el-title{");
+  });
+
+  it("publishes the stored Ordenador max width and ignores it on tablet and mobile", () => {
+    const page = makePage([
+      makeLayer({ id: "hero", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#112233" }),
+    ]);
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: { ...createEmptySiteBlueprintV1(), monitorMaxWidth: 1400 },
+      title: "Tope",
+      imageHrefByLayerId: {},
+    });
+    const wideCss = compiled.css.split("@media")[0] ?? "";
+    expect(wideCss).toContain("max-width:1400px");
+    expect(wideCss).toMatch(/\/ 1400\)/);
+    expect(compiled.css).toContain(".s-page{max-width:none;margin-inline:0}");
   });
 
   it("uses relative asset paths instead of session URLs", () => {
@@ -419,7 +438,7 @@ describe("site-creator-publish-compile", () => {
     if (!fitted.ok) return;
     const compiled = compilePublishedSite({
       page,
-      blueprint: fitted.blueprint,
+      blueprint: { ...fitted.blueprint, monitorMaxWidth: 1920 },
       title: "Ordenador",
       imageHrefByLayerId: {},
     });

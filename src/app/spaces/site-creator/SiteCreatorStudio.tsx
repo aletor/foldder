@@ -23,6 +23,17 @@ import {
   SITE_CREATOR_SECTION_SPINE_GUTTER_PX,
   SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX,
 } from "./SiteCreatorSectionSpine";
+import { SITE_CREATOR_PAGE_INSET_RAIL_GUTTER_PX } from "./SiteCreatorPageInsetRail";
+import {
+  detectPageContentInsets,
+  resolvePageInsetsForBand,
+  scalePageInsets,
+  setPageInsets,
+} from "./site-creator-page-insets";
+import {
+  resolveMonitorMaxWidth,
+  setMonitorMaxWidth,
+} from "./site-creator-monitor-max-width";
 import {
   SiteCreatorDeviceSelector,
   SiteCreatorOrientationToggle,
@@ -33,7 +44,11 @@ import {
   computeFitPreviewZoom,
   cycleViewportBand,
   defaultDeviceConfig,
+  reserveDeviceFrameFitSize,
   resolveDeviceDimensions,
+  resolveSiteCreatorDeviceChromeKind,
+  siteCreatorDeviceChrome,
+  SITE_CREATOR_DEFAULT_MONITOR_MAX_WIDTH,
   type SiteCreatorDeviceConfig,
   type SiteCreatorViewportBand,
 } from "./site-creator-viewport";
@@ -151,6 +166,7 @@ import type {
   ResponsiveVisibilityBand,
   SiteBlueprintV1,
   SiteCreatorPublishStateV1,
+  SitePageInsetBandV1,
   SiteSectionHeightMode,
   SiteSectionScrollKind,
 } from "./site-creator-types";
@@ -512,9 +528,14 @@ export function SiteCreatorStudio({
   }, []);
   const [viewportBand, setViewportBand] = useState<SiteCreatorViewportBand>("original");
   const [originalViewportWidth, setOriginalViewportWidth] = useState<number | null>(null);
-  const [monitorDevice, setMonitorDevice] = useState<SiteCreatorDeviceConfig>(() =>
-    defaultDeviceConfig("monitor"),
-  );
+  const [monitorDevice, setMonitorDevice] = useState<SiteCreatorDeviceConfig>(() => {
+    const base = defaultDeviceConfig("monitor");
+    return {
+      ...base,
+      sizeId: "custom",
+      customWidth: SITE_CREATOR_DEFAULT_MONITOR_MAX_WIDTH,
+    };
+  });
   const [tabletDevice, setTabletDevice] = useState<SiteCreatorDeviceConfig>(() =>
     defaultDeviceConfig("tablet"),
   );
@@ -661,6 +682,7 @@ export function SiteCreatorStudio({
       (typeof window !== "undefined" ? window.innerWidth : referenceWidth),
     referenceWidth,
   );
+  const monitorMaxWidth = resolveMonitorMaxWidth(blueprint, referenceWidth);
   const effectiveViewportWidth = pagePreviewMode
     ? livePreviewWidth
     : viewportBand === "original"
@@ -680,7 +702,7 @@ export function SiteCreatorStudio({
                 : ("mobile" as const),
         };
   const previewLayout = pagePreviewMode
-    ? previewResponsiveLayout(effectiveViewportWidth, referenceWidth)
+    ? previewResponsiveLayout(effectiveViewportWidth, referenceWidth, monitorMaxWidth)
     : null;
   const responsiveBand = pagePreviewMode
     ? previewLayout!.band
@@ -908,6 +930,25 @@ export function SiteCreatorStudio({
     setOriginalViewportWidth(pageDimensions.width);
   }, [pageDimensions?.width, pageDimensions?.height, snapshot?.contentHash]);
 
+  useEffect(() => {
+    if (blueprint.monitorMaxWidth == null) return;
+    const width = resolveMonitorMaxWidth(blueprint, referenceWidth);
+    setMonitorDevice((prev) => {
+      const current = resolveDeviceDimensions({
+        band: "monitor",
+        config: prev,
+        referenceWidth,
+      }).width;
+      if (current === width) return prev;
+      return {
+        ...prev,
+        sizeId: "custom",
+        customWidth: prev.orientation === "portrait" ? prev.customWidth : width,
+        customHeight: prev.orientation === "portrait" ? width : prev.customHeight,
+      };
+    });
+  }, [blueprint.monitorMaxWidth, referenceWidth]);
+
   const fitTargetWidth = deviceFrame?.width ?? layoutWidth;
   const fitTargetHeight = deviceFrame?.height ?? layoutHeight;
 
@@ -915,9 +956,12 @@ export function SiteCreatorStudio({
     if (!availablePreviewSize) return;
     if (availablePreviewSize.width < 80 || availablePreviewSize.height < 80) return;
     if (pagePreviewMode) {
+      const desktopPreview =
+        responsiveBand === "wide" || responsiveBand === "monitor";
       const z = computeFillWidthPreviewZoom({
         layoutWidth,
         availableWidth: availablePreviewSize.width,
+        maxCssWidth: desktopPreview ? monitorMaxWidth : undefined,
       });
       setPreviewZoom((prev) => (Math.abs(prev - z) < 1e-4 ? prev : z));
       return;
@@ -925,11 +969,25 @@ export function SiteCreatorStudio({
     const spineReserve = deviceFrame
       ? SITE_CREATOR_SECTION_SPINE_GUTTER_PX + SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX
       : 0;
+    const chrome = deviceFrame
+      ? siteCreatorDeviceChrome(resolveSiteCreatorDeviceChromeKind(deviceFrame))
+      : null;
+    const fitBox = chrome
+      ? reserveDeviceFrameFitSize({
+          availableWidth: Math.max(1, availablePreviewSize.width - spineReserve),
+          availableHeight: availablePreviewSize.height,
+          bezelPx: chrome.bezelPx,
+          railGutterPx: SITE_CREATOR_PAGE_INSET_RAIL_GUTTER_PX,
+        })
+      : {
+          width: Math.max(1, availablePreviewSize.width - spineReserve),
+          height: availablePreviewSize.height,
+        };
     const z = computeFitPreviewZoom({
       layoutWidth: fitTargetWidth,
       layoutHeight: fitTargetHeight,
-      availableWidth: Math.max(1, availablePreviewSize.width - spineReserve),
-      availableHeight: availablePreviewSize.height,
+      availableWidth: fitBox.width,
+      availableHeight: fitBox.height,
     });
     setPreviewZoom((prev) => (Math.abs(prev - z) < 1e-4 ? prev : z));
   }, [
@@ -938,7 +996,9 @@ export function SiteCreatorStudio({
     fitTargetHeight,
     fitTargetWidth,
     layoutWidth,
+    monitorMaxWidth,
     pagePreviewMode,
+    responsiveBand,
   ]);
 
   useEffect(() => {
@@ -2238,6 +2298,38 @@ export function SiteCreatorStudio({
   const blueprintRef = useRef(blueprint);
   blueprintRef.current = blueprint;
 
+  const applyMonitorMaxWidth = useCallback(
+    (width: number) => {
+      const next = clampViewportWidth(width, referenceWidth);
+      setMonitorDevice((prev) => ({
+        ...prev,
+        sizeId: "custom",
+        customWidth: prev.orientation === "portrait" ? prev.customWidth : next,
+        customHeight: prev.orientation === "portrait" ? next : prev.customHeight,
+      }));
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      const updated = setMonitorMaxWidth(blueprintRef.current, next, referenceWidth);
+      blueprintRef.current = updated;
+      commitBlueprint(updated);
+    },
+    [commitBlueprint, persistGate, referenceWidth],
+  );
+
+  useEffect(() => {
+    if (!persistGate.allowed) return;
+    if (blueprint.monitorMaxWidth != null) return;
+    const seeded = setMonitorMaxWidth(
+      blueprintRef.current,
+      SITE_CREATOR_DEFAULT_MONITOR_MAX_WIDTH,
+      referenceWidth,
+    );
+    blueprintRef.current = seeded;
+    commitBlueprint(seeded);
+  }, [blueprint.monitorMaxWidth, commitBlueprint, persistGate.allowed, referenceWidth]);
+
   const sectionSpineModel = useMemo(() => {
     if (pagePreviewMode || !selectionIndex) return null;
     const selectedId =
@@ -2456,6 +2548,49 @@ export function SiteCreatorStudio({
       }
     },
     [commitBlueprint, committedPage, persistGate, selectionIndex],
+  );
+
+  const pageInsetBand: ResponsiveEditableBand | null =
+    viewportBand === "monitor" || viewportBand === "tablet" || viewportBand === "mobile"
+      ? viewportBand
+      : null;
+  const pageInsetsModel = useMemo(() => {
+    if (pagePreviewMode || !pageInsetBand || !page) return null;
+    const originalDetected = detectPageContentInsets(page, referenceWidth);
+    const designInsets = scalePageInsets(
+      originalDetected,
+      referenceWidth,
+      layoutViewportWidth,
+    );
+    return {
+      band: pageInsetBand,
+      insets: resolvePageInsetsForBand(
+        blueprint.pageInsets,
+        pageInsetBand,
+        layoutViewportWidth,
+        designInsets,
+      ),
+      designInsets,
+    };
+  }, [blueprint, layoutViewportWidth, page, pageInsetBand, pagePreviewMode, referenceWidth]);
+
+  const handlePageInsetsChange = useCallback(
+    (next: SitePageInsetBandV1) => {
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      if (!pageInsetBand) return;
+      const updated = setPageInsets(
+        blueprintRef.current,
+        pageInsetBand,
+        next,
+        layoutViewportWidth,
+      );
+      blueprintRef.current = updated;
+      commitBlueprint(updated);
+    },
+    [commitBlueprint, layoutViewportWidth, pageInsetBand, persistGate],
   );
 
   const contextOutlines = useMemo((): SiteCreatorUnitOutline[] => {
@@ -3683,6 +3818,15 @@ export function SiteCreatorStudio({
         onConfigChange={(config) => {
           setMonitorDevice(config);
           setViewportBand("monitor");
+          const width = resolveDeviceDimensions({
+            band: "monitor",
+            config,
+            referenceWidth,
+          }).width;
+          if (!persistGate.allowed) return;
+          const updated = setMonitorMaxWidth(blueprintRef.current, width, referenceWidth);
+          blueprintRef.current = updated;
+          commitBlueprint(updated);
         }}
       />
       <SiteCreatorDeviceSelector
@@ -4000,7 +4144,17 @@ export function SiteCreatorStudio({
               previewZoom={previewZoom}
               deviceFrame={deviceFrame}
               readOnly={pagePreviewMode}
-              onViewportWidthChange={pagePreviewMode ? undefined : setOriginalViewportWidth}
+              previewPageMaxWidth={
+                pagePreviewMode &&
+                (responsiveBand === "wide" || responsiveBand === "monitor")
+                  ? monitorMaxWidth
+                  : undefined
+              }
+              onViewportWidthChange={
+                pagePreviewMode || viewportBand !== "monitor"
+                  ? undefined
+                  : applyMonitorMaxWidth
+              }
               onAvailableSizeChange={setAvailablePreviewSize}
               selection={pagePreviewMode ? undefined : displayShadow}
               selectionIndex={pagePreviewMode ? undefined : selectionIndex ?? undefined}
@@ -4032,6 +4186,8 @@ export function SiteCreatorStudio({
               onSpineHeightModeChange={handleSpineHeightModeChange}
               onSpineCustomHeightChange={handleSpineCustomHeightChange}
               onSpineSourceRangeBottomChange={handleSpineSourceRangeBottomChange}
+              pageInsets={pageInsetsModel}
+              onPageInsetsChange={pagePreviewMode ? undefined : handlePageInsetsChange}
               microbar={pagePreviewMode || clipImageEdit ? null : microbarModel}
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}

@@ -108,6 +108,16 @@ import {
 import {
   resolveExplicitBackground,
 } from "./site-creator-background-assignment";
+import {
+  applyPageInsetsToObjects,
+  detectPageContentInsets,
+  pageInsetApplyTarget,
+  pageInsetsAreActive,
+  pageInsetsMatch,
+  remapLayoutRectForPageInsets,
+  resolvePageInsetsForBand,
+  scalePageInsets,
+} from "./site-creator-page-insets";
 
 export type ResponsiveBand = "wide" | "monitor" | "tablet" | "mobile";
 
@@ -239,10 +249,14 @@ export type PreviewResponsiveLayout = {
 export function previewResponsiveLayout(
   viewportWidth: number,
   referenceWidth: number,
+  monitorMaxWidth = referenceWidth,
 ): PreviewResponsiveLayout {
   const widthBand = bandForViewportWidth(viewportWidth, referenceWidth);
   if (widthBand === "wide") {
-    return { band: "monitor", viewportWidth: referenceWidth };
+    return {
+      band: "monitor",
+      viewportWidth: clampViewportWidth(monitorMaxWidth, referenceWidth),
+    };
   }
   const liveWidth = clampViewportWidth(viewportWidth, referenceWidth);
   return { band: widthBand, viewportWidth: liveWidth };
@@ -2407,6 +2421,7 @@ function withLayoutGroupWidthModes(
   preserveExplicitBackgroundSurfaces?: boolean,
   multiCardScrollIndexByNodeId?: Record<string, number>,
   dataset?: Dataset | null,
+  sourcePage?: DesignerPageState,
 ): SiteCreatorResponsiveResolveResult {
   const laidOut = applyLayoutGroupWidthModes({
     page: result.displayPage,
@@ -2458,20 +2473,152 @@ function withLayoutGroupWidthModes(
     band: result.band,
   });
   if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
-    return withMultiCardInstances(result, blueprint, multiCardScrollIndexByNodeId, dataset);
+    return applyPageInsetsToResolved(
+      withMultiCardInstances(result, blueprint, multiCardScrollIndexByNodeId, dataset),
+      blueprint,
+      sourcePage,
+    );
   }
   page.customWidth = result.layout.layoutWidth;
   page.customHeight = layoutHeight;
-  return withMultiCardInstances(
-    {
-      ...result,
-      displayPage: page,
-      layout: { ...result.layout, layoutHeight },
-    },
+  return applyPageInsetsToResolved(
+    withMultiCardInstances(
+      {
+        ...result,
+        displayPage: page,
+        layout: { ...result.layout, layoutHeight },
+      },
+      blueprint,
+      multiCardScrollIndexByNodeId,
+      dataset,
+    ),
     blueprint,
-    multiCardScrollIndexByNodeId,
-    dataset,
+    sourcePage,
   );
+}
+
+function applyPageInsetsToResolved(
+  result: SiteCreatorResponsiveResolveResult,
+  blueprint: SiteBlueprintV1,
+  sourcePage?: DesignerPageState,
+): SiteCreatorResponsiveResolveResult {
+  if (!isResponsiveEditableBand(result.band)) return result;
+  const layoutWidth = result.layout.layoutWidth;
+  const sourceWidth = result.layout.referenceWidth;
+  const seed = sourcePage
+    ? scalePageInsets(detectPageContentInsets(sourcePage, sourceWidth), sourceWidth, layoutWidth)
+    : null;
+  const insets = resolvePageInsetsForBand(blueprint.pageInsets, result.band, layoutWidth, seed);
+  const current = detectPageContentInsets(result.displayPage, layoutWidth);
+  const stored = blueprint.pageInsets?.[result.band];
+  const sameCanvas = Math.abs(layoutWidth - sourceWidth) <= 2;
+  let target = pageInsetApplyTarget(insets);
+  if (!stored) {
+    if (sameCanvas) return result;
+    if (!seed || !pageInsetsAreActive(seed) || pageInsetsAreActive(current)) return result;
+    target = { left: seed.left, right: seed.right };
+  }
+  if (pageInsetsMatch(current, target)) return result;
+
+  const fromInner = Math.max(1, layoutWidth - current.left - current.right);
+  const toInner = Math.max(1, layoutWidth - target.left - target.right);
+  const scaleX = toInner / fromInner;
+  applyPageInsetsToObjects(result.displayPage.objects ?? [], current.left, target.left, scaleX);
+
+  let resolvedLayout = result.resolvedLayout;
+  if (resolvedLayout) {
+    const objectClipById: Record<string, PageRect> = {};
+    for (const [id, rect] of Object.entries(resolvedLayout.objectClipById)) {
+      objectClipById[id] = remapLayoutRectForPageInsets(
+        rect,
+        current,
+        target,
+        layoutWidth,
+        scaleX,
+      );
+    }
+    resolvedLayout = {
+      ...resolvedLayout,
+      regions: resolvedLayout.regions.map((region) => ({
+        ...region,
+        layoutRect: remapLayoutRectForPageInsets(
+          region.layoutRect,
+          current,
+          target,
+          layoutWidth,
+          scaleX,
+        ),
+        clipRect: remapLayoutRectForPageInsets(
+          region.clipRect,
+          current,
+          target,
+          layoutWidth,
+          scaleX,
+        ),
+      })),
+      objectClipById,
+    };
+  }
+
+  let resolvedScene = result.resolvedScene;
+  if (resolvedScene) {
+    resolvedScene = {
+      ...resolvedScene,
+      instances: resolvedScene.instances.map((instance) => ({
+        ...instance,
+        matrix: {
+          ...instance.matrix,
+          a: instance.matrix.a * scaleX,
+          e: target.left + (instance.matrix.e - current.left) * scaleX,
+        },
+        clipRect: instance.clipRect
+          ? remapLayoutRectForPageInsets(
+              instance.clipRect,
+              current,
+              target,
+              layoutWidth,
+              scaleX,
+            )
+          : undefined,
+      })),
+    };
+  }
+
+  let multiCard = result.multiCard;
+  if (multiCard) {
+    multiCard = {
+      ...multiCard,
+      containers: multiCard.containers.map((container) => ({
+        ...container,
+        layoutRect: remapLayoutRectForPageInsets(
+          container.layoutRect,
+          current,
+          target,
+          layoutWidth,
+          scaleX,
+        ),
+        clipRect: remapLayoutRectForPageInsets(
+          container.clipRect,
+          current,
+          target,
+          layoutWidth,
+          scaleX,
+        ),
+        cardRects: container.cardRects.map((rect) =>
+          remapLayoutRectForPageInsets(rect, current, target, layoutWidth, scaleX),
+        ),
+        gap: container.axis === "h" ? container.gap * scaleX : container.gap,
+        step: container.axis === "h" ? container.step * scaleX : container.step,
+      })),
+    };
+  }
+
+  return {
+    ...result,
+    resolvedLayout,
+    resolvedScene,
+    multiCard,
+  };
 }
 
 function withMultiCardInstances(
@@ -2601,6 +2748,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.preserveExplicitBackgroundSurfaces,
       args.multiCardScrollIndexByNodeId,
       args.dataset,
+      args.page,
     );
   }
 
@@ -2701,6 +2849,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.preserveExplicitBackgroundSurfaces,
       args.multiCardScrollIndexByNodeId,
       args.dataset,
+      args.page,
     );
   }
 
@@ -2962,6 +3111,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     args.preserveExplicitBackgroundSurfaces,
     args.multiCardScrollIndexByNodeId,
     args.dataset,
+    args.page,
   );
 }
 

@@ -16,6 +16,8 @@ export function siteCreatorTabletMediaMaxWidth(referenceWidth: number): number {
   );
 }
 export const SITE_CREATOR_MIN_VIEWPORT_WIDTH = 280;
+/** Ancho máximo inicial de la vista Ordenador. */
+export const SITE_CREATOR_DEFAULT_MONITOR_MAX_WIDTH = 1500;
 export const SITE_CREATOR_MIN_DEVICE_HEIGHT = 320;
 export const SITE_CREATOR_MAX_DEVICE_HEIGHT = 2880;
 
@@ -248,6 +250,28 @@ export function resolveSiteCreatorLayout(args: {
 }
 
 /** Zoom para encajar el layout en el área visible del preview. */
+/**
+ * Espacio extra (bisel + rail de márgenes) que el zoom de dispositivo
+ * debe reservar para que el marco quepa entero.
+ */
+export function reserveDeviceFrameFitSize(args: {
+  availableWidth: number;
+  availableHeight: number;
+  bezelPx: number;
+  railGutterPx: number;
+}): { width: number; height: number } {
+  const bezel = Math.max(0, args.bezelPx) * 2;
+  /** py-8 es 64px; measureSiteCreatorPreviewAvailableSize ya resta 48. */
+  const padCorrection = 16;
+  return {
+    width: Math.max(1, args.availableWidth - bezel),
+    height: Math.max(
+      1,
+      args.availableHeight - Math.max(0, args.railGutterPx) - bezel - padCorrection,
+    ),
+  };
+}
+
 export function computeFitPreviewZoom(args: {
   layoutWidth: number;
   layoutHeight: number;
@@ -271,10 +295,14 @@ export function computeFitPreviewZoom(args: {
 export function computeFillWidthPreviewZoom(args: {
   layoutWidth: number;
   availableWidth: number;
+  /** En Ordenador, no estirar la página por encima de este ancho CSS. */
+  maxCssWidth?: number;
 }): number {
   const lw = Math.max(1, args.layoutWidth);
   const aw = Math.max(1, args.availableWidth);
-  return Math.max(0.05, aw / lw);
+  const displayed =
+    args.maxCssWidth != null ? Math.min(aw, Math.max(1, args.maxCssWidth)) : aw;
+  return Math.max(0.05, displayed / lw);
 }
 
 /** Área útil del preview: en edición resta el padding del lienzo; en Preview de página usa el ancho real. */

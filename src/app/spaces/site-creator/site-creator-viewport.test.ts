@@ -20,6 +20,7 @@ import {
   resolveDeviceDimensions,
   resolveSiteCreatorLayout,
   cycleViewportBand,
+  reserveDeviceFrameFitSize,
   siteCreatorTabletMediaMaxWidth,
   viewportWidthDeltaFromCenteredEdgeDrag,
   applyWorkAreaWheelDelta,
@@ -72,6 +73,17 @@ describe("site-creator-viewport", () => {
     expect(clampViewportWidth(5000, 5000)).toBe(5000);
   });
 
+  it("reserves rail and bezel so the device frame can fit in height", () => {
+    expect(
+      reserveDeviceFrameFitSize({
+        availableWidth: 1000,
+        availableHeight: 800,
+        bezelPx: 12,
+        railGutterPx: 52,
+      }),
+    ).toEqual({ width: 976, height: 708 });
+  });
+
   it("computes fit zoom once as a number, capped at 200%", () => {
     const z = computeFitPreviewZoom({
       layoutWidth: 1920,
@@ -110,6 +122,20 @@ describe("site-creator-viewport", () => {
         availableWidth: 2560,
       }),
     ).toBeCloseTo(2560 / 1920);
+    expect(
+      computeFillWidthPreviewZoom({
+        layoutWidth: 1500,
+        availableWidth: 1800,
+        maxCssWidth: 1500,
+      }),
+    ).toBe(1);
+    expect(
+      computeFillWidthPreviewZoom({
+        layoutWidth: 1500,
+        availableWidth: 1200,
+        maxCssWidth: 1500,
+      }),
+    ).toBeCloseTo(0.8);
   });
 
   it("measures full client size in page preview and padded size in edit", () => {

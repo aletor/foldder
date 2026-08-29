@@ -9,6 +9,7 @@ import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { isLayerExplicitBackgroundSurface } from "./site-creator-background-assignment";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
+import { resolveMonitorMaxWidth } from "./site-creator-monitor-max-width";
 import {
   encodeMultiCardInstanceId,
   moldLayerIdFromDisplay,
@@ -667,11 +668,16 @@ export function compilePublishedSite(args: {
 }): CompiledPublishedSite {
   const referenceIndex = buildSiteSelectionIndex(args.page);
   const reference = getPageDimensions(args.page);
+  const desktopWidth = resolveMonitorMaxWidth(
+    args.blueprint,
+    reference.width,
+    reference.width,
+  );
   const wide = resolveSiteCreatorResponsiveDisplay({
     page: args.page,
     blueprint: args.blueprint,
     referenceIndex,
-    viewportWidth: reference.width,
+    viewportWidth: desktopWidth,
     expandViewportSections: false,
     preserveExplicitBackgroundSurfaces: true,
     band: "monitor",
@@ -715,7 +721,7 @@ export function compilePublishedSite(args: {
     },
     blueprint: args.blueprint,
     index: referenceIndex,
-    pageRect: { x: 0, y: 0, width: reference.width, height: reference.height },
+    pageRect: { x: 0, y: 0, width: layouts.wide.width, height: layouts.wide.height },
   });
   const multiCardPlan = buildMultiCardPublishPlan({
     blueprint: args.blueprint,
@@ -965,7 +971,7 @@ function buildCss(args: {
     "*,*::before,*::after{box-sizing:border-box}",
     "html,body{margin:0;padding:0;width:100%;min-height:100%}",
     `body{background:${args.pageBg};-webkit-font-smoothing:antialiased}`,
-    `.s-page{position:relative;width:100%;overflow:${flow ? "visible" : "hidden"};container-type:inline-size}`,
+    `.s-page{position:relative;width:100%;max-width:${Math.max(1, args.layouts.wide.width)}px;margin-inline:auto;overflow:${flow ? "visible" : "hidden"};container-type:inline-size}`,
     ".s-el,.s-group{position:absolute;display:block;margin:0;border:0;padding:0;max-width:none}",
     ".s-group{container-type:inline-size;overflow:visible}",
     ".s-group.s-clip{overflow:hidden}",
@@ -1034,6 +1040,7 @@ function buildCss(args: {
   );
 
   lines.push(`@media (max-width:${tabletMax}px) and (min-width:${SITE_CREATOR_TABLET_WIDTH}px){`);
+  lines.push(".s-page{max-width:none;margin-inline:0}");
   lines.push(bandPageCss(args.layouts.tablet, flow));
   emitBandScrollCss(lines, args.blueprint, "tablet");
   emitSectionViewportCss(
@@ -1068,6 +1075,7 @@ function buildCss(args: {
   lines.push("}");
 
   lines.push(`@media (max-width:${SITE_CREATOR_TABLET_WIDTH - 1}px){`);
+  lines.push(".s-page{max-width:none;margin-inline:0}");
   lines.push(bandPageCss(args.layouts.mobile, flow));
   emitBandScrollCss(lines, args.blueprint, "mobile");
   emitSectionViewportCss(

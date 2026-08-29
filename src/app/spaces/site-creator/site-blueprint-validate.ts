@@ -320,6 +320,12 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
       ...(blueprint.canvasLocks.nodeIds ? { nodeIds: [...blueprint.canvasLocks.nodeIds] } : {}),
     };
   }
+  if (blueprint.pageInsets) {
+    next.pageInsets = structuredClone(blueprint.pageInsets);
+  }
+  if (typeof blueprint.monitorMaxWidth === "number" && Number.isFinite(blueprint.monitorMaxWidth)) {
+    next.monitorMaxWidth = Math.round(blueprint.monitorMaxWidth);
+  }
   return next;
 }
 

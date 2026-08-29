@@ -8,6 +8,7 @@ import { createSectionFromSelection } from "./site-blueprint-ops";
 import { setSectionScrollHop } from "./site-creator-section-scroll";
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
+import { resolvePageInsetsForBand } from "./site-creator-page-insets";
 
 vi.mock("@/app/spaces/presenter/DesignerPageCanvasView", () => ({
   DesignerPageCanvasView: ({
@@ -847,5 +848,138 @@ describe("SiteCreatorPreview", () => {
     expect(onSelectionAction).not.toHaveBeenCalled();
     const stage = screen.getByTestId("site-creator-preview-stage");
     expect(stage.getAttribute("style")).toContain("width: 100%");
+  });
+
+  it("capping Preview Ordenador uses the page max width", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 1920,
+      customHeight: 1080,
+      objects: [],
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={1500}
+        referenceWidth={1920}
+        previewZoom={1}
+        readOnly
+        previewPageMaxWidth={1500}
+      />,
+    );
+
+    const stage = screen.getByTestId("site-creator-preview-stage");
+    expect(stage.getAttribute("style")).toContain("max-width: 1500px");
+    expect(stage.getAttribute("style")).toContain("margin-left: auto");
+  });
+
+  it("pinta el rail de márgenes solo en vistas de dispositivo", () => {
+    const page: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 390,
+      customHeight: 844,
+      objects: [],
+    };
+    const insets = resolvePageInsetsForBand(
+      { mobile: { left: 24, right: 24, linked: true } },
+      "mobile",
+      390,
+    );
+    const { rerender } = render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+      />,
+    );
+    expect(screen.queryByTestId("site-creator-page-inset-rail")).toBeNull();
+
+    rerender(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 844, kind: "mobile" }}
+        pageInsets={{ band: "mobile", insets }}
+        onPageInsetsChange={() => undefined}
+      />,
+    );
+    expect(screen.getByTestId("site-creator-page-inset-rail")).toBeTruthy();
+    expect(screen.getByTestId("site-creator-page-inset-handle-left")).toBeTruthy();
+    expect(screen.getByTestId("site-creator-page-inset-handle-right")).toBeTruthy();
+    expect(screen.getByTestId("site-creator-page-inset-enabled")).toBeTruthy();
+    expect(screen.queryByTestId("site-creator-page-inset-copy-monitor")).toBeNull();
+
+    rerender(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 844, kind: "mobile" }}
+        pageInsets={{
+          band: "mobile",
+          insets: { ...insets, enabled: false },
+        }}
+        onPageInsetsChange={() => undefined}
+      />,
+    );
+    expect(screen.queryByTestId("site-creator-page-inset-handle-left")).toBeNull();
+    expect(screen.getByTestId("site-creator-page-inset-rail").getAttribute("data-site-creator-page-inset-enabled")).toBe(
+      "0",
+    );
+    expect(screen.getByTestId("site-creator-page-inset-enabled")).toBeTruthy();
+  });
+
+  it("muestra Ancho máximo solo en la vista Ordenador", () => {
+    const page: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 1920,
+      customHeight: 1080,
+      objects: [],
+    };
+    const onViewportWidthChange = vi.fn();
+    const { rerender } = render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1920}
+        referenceWidth={1920}
+        previewZoom={1}
+        onViewportWidthChange={onViewportWidthChange}
+      />,
+    );
+    expect(screen.queryByTestId("site-creator-monitor-max-width")).toBeNull();
+
+    rerender(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1500}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 1500, height: 1080, kind: "monitor" }}
+        onViewportWidthChange={onViewportWidthChange}
+      />,
+    );
+    expect(screen.getByTestId("site-creator-monitor-max-width")).toHaveTextContent("Ancho máximo:");
+    const input = screen.getByLabelText("Ancho máximo") as HTMLInputElement;
+    expect(input.value).toBe("1500");
+
+    rerender(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 844, kind: "mobile" }}
+        onViewportWidthChange={onViewportWidthChange}
+      />,
+    );
+    expect(screen.queryByTestId("site-creator-monitor-max-width")).toBeNull();
   });
 });

@@ -276,6 +276,14 @@ describe("site-creator-responsive 6B.1", () => {
     expect(previewResponsiveLayout(1025, 1920)).toEqual({ band: "monitor", viewportWidth: 1920 });
     expect(previewResponsiveLayout(1024, 1920)).toEqual({ band: "tablet", viewportWidth: 1024 });
     expect(previewResponsiveLayout(390, 1920)).toEqual({ band: "mobile", viewportWidth: 390 });
+    expect(previewResponsiveLayout(1800, 1920, 1500)).toEqual({
+      band: "monitor",
+      viewportWidth: 1500,
+    });
+    expect(previewResponsiveLayout(800, 1920, 1500)).toEqual({
+      band: "tablet",
+      viewportWidth: 800,
+    });
   });
 
   it("keeps tablet/mobile device band in landscape even when CSS width is another breakpoint", () => {

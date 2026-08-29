@@ -31,13 +31,24 @@ import type {
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorPrimaryAction } from "./site-creator-contextual-actions";
-import type { SiteBlueprintV1, SiteSectionHeightMode, SiteSectionScrollKind } from "./site-creator-types";
+import type {
+  ResponsiveEditableBand,
+  SiteBlueprintV1,
+  SitePageInsetBandV1,
+  SiteSectionHeightMode,
+  SiteSectionScrollKind,
+} from "./site-creator-types";
 import {
   SiteCreatorSectionSpine,
   SITE_CREATOR_SECTION_SPINE_GUTTER_PX,
   SITE_CREATOR_SECTION_SPINE_PAGE_GAP_PX,
   type SectionSpineStation,
 } from "./SiteCreatorSectionSpine";
+import {
+  SiteCreatorPageInsetRail,
+  SITE_CREATOR_PAGE_INSET_RAIL_GUTTER_PX,
+} from "./SiteCreatorPageInsetRail";
+import type { ResolvedPageInsets } from "./site-creator-page-insets";
 import {
   listDocumentSections,
   listSectionScrollHops,
@@ -61,10 +72,12 @@ import {
   measureSiteCreatorPreviewAvailableSize,
   resolveSiteCreatorDeviceChromeKind,
   shouldRedirectCanvasWheelToWorkArea,
+  SITE_CREATOR_MIN_VIEWPORT_WIDTH,
   siteCreatorDeviceChrome,
   viewportWidthDeltaFromCenteredEdgeDrag,
   type SiteCreatorDeviceFrame,
 } from "./site-creator-viewport";
+import { ScrubNumberInput } from "@/app/spaces/ScrubNumberInput";
 
 /** @deprecated Prefer numeric previewZoom (6A). Kept for import compatibility. */
 export type SiteCreatorPreviewZoomMode = "fit" | 0.5 | 1;
@@ -135,6 +148,8 @@ export interface SiteCreatorPreviewProps {
   onExitClipImageEdit?: () => void;
   /** Vista de página: sin selección, edición, ni chrome de diseño. */
   readOnly?: boolean;
+  /** Tope CSS de la página en Preview Ordenador. Ausente = llenar el ancho. */
+  previewPageMaxWidth?: number;
   groupFit?: { opportunity: GroupFitOpportunity; displayBounds: PageRect } | null;
   onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
   sectionHeight?: { opportunity: SectionHeightOpportunity; displayBounds: PageRect } | null;
@@ -161,6 +176,13 @@ export interface SiteCreatorPreviewProps {
   onSpineSourceRangeBottomChange?: (sectionId: string, bottom: number) => void;
   /** false mientras un contenedor semántico está inspeccionado (segundo clic en hijos). */
   canvasHitPassthroughImages?: boolean;
+  /** Rail horizontal de márgenes de página (solo vistas de dispositivo). */
+  pageInsets?: {
+    band: ResponsiveEditableBand;
+    insets: ResolvedPageInsets;
+    designInsets?: SitePageInsetBandV1 | null;
+  } | null;
+  onPageInsetsChange?: (next: SitePageInsetBandV1) => void;
 }
 
 function ResizeHandle({
@@ -233,6 +255,7 @@ export function SiteCreatorPreview({
   onResetClipImageEdit,
   onExitClipImageEdit,
   readOnly = false,
+  previewPageMaxWidth,
   groupFit = null,
   onGroupFit,
   sectionHeight = null,
@@ -249,6 +272,8 @@ export function SiteCreatorPreview({
   onSpineCustomHeightChange,
   onSpineSourceRangeBottomChange,
   canvasHitPassthroughImages = true,
+  pageInsets = null,
+  onPageInsetsChange,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -288,6 +313,9 @@ export function SiteCreatorPreview({
   const contentDisplayHeight = Math.max(1, Math.round(layoutHeight * zoom));
   const showSpine = Boolean(
     !readOnly && sectionSpine && onSpineSelectSection && onSpineAddSection,
+  );
+  const showInsetRail = Boolean(
+    !readOnly && deviceMode && pageInsets && onPageInsetsChange,
   );
   const spineGutterPx = showSpine ? SITE_CREATOR_SECTION_SPINE_GUTTER_PX : 0;
   const displayWidth = deviceMode
@@ -759,6 +787,36 @@ export function SiteCreatorPreview({
           />
         </div>
       ) : null}
+      {!readOnly && deviceFrame?.kind === "monitor" && onViewportWidthChange ? (
+        <div
+          className="flex shrink-0 items-center justify-center gap-2 border-b border-white/10 bg-[#101820] px-3 py-1.5"
+          data-testid="site-creator-monitor-max-width"
+        >
+          <label
+            htmlFor="site-creator-monitor-max-width-input"
+            className="text-[11px] font-medium text-white/55"
+          >
+            Ancho máximo:
+          </label>
+          <div className="flex items-stretch border border-white/12 bg-black/35">
+            <ScrubNumberInput
+              id="site-creator-monitor-max-width-input"
+              value={viewportWidth}
+              min={SITE_CREATOR_MIN_VIEWPORT_WIDTH}
+              step={1}
+              title="Arrastra horizontalmente para cambiar el valor · Mayús = ×10 · Clic para escribir"
+              aria-label="Ancho máximo"
+              onKeyboardCommit={(n) => applyWidth(n)}
+              onScrubLive={(n) => applyWidth(n)}
+              onScrubEnd={() => undefined}
+              className="w-[4.5rem] cursor-ew-resize bg-transparent px-2 py-1 text-center font-mono text-[12px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span className="flex items-center border-l border-white/10 px-1.5 text-[10px] font-semibold text-white/40">
+              px
+            </span>
+          </div>
+        </div>
+      ) : null}
       <div
         ref={scrollRef}
         data-site-creator-dataset-armed={datasetChipArmed ? "1" : undefined}
@@ -785,9 +843,36 @@ export function SiteCreatorPreview({
                 ? "items-center justify-center px-8 py-8"
                 : "items-center px-8 py-8"
           }`}
+          style={
+            showInsetRail
+              ? { paddingTop: 32 + SITE_CREATOR_PAGE_INSET_RAIL_GUTTER_PX }
+              : undefined
+          }
         >
           <div className="relative">
             {spineLayer}
+            {showInsetRail && pageInsets && onPageInsetsChange ? (
+              <div
+                className="pointer-events-none absolute z-[46] overflow-visible"
+                style={{
+                  left: deviceChrome?.bezelPx ?? 0,
+                  width: displayWidth,
+                  top: -SITE_CREATOR_PAGE_INSET_RAIL_GUTTER_PX,
+                  height: SITE_CREATOR_PAGE_INSET_RAIL_GUTTER_PX + displayHeight,
+                }}
+                data-testid="site-creator-page-inset-rail-host"
+              >
+                <SiteCreatorPageInsetRail
+                  band={pageInsets.band}
+                  layoutWidth={pageWidth}
+                  scale={zoom}
+                  pageScreenHeight={displayHeight}
+                  insets={pageInsets.insets}
+                  designInsets={pageInsets.designInsets}
+                  onChange={onPageInsetsChange}
+                />
+              </div>
+            ) : null}
             <div
               className={deviceChrome ? "site-creator-device-chrome" : undefined}
               data-testid={deviceChrome ? "site-creator-device-chrome" : undefined}
@@ -813,7 +898,13 @@ export function SiteCreatorPreview({
               }`}
               style={
                 readOnly
-                  ? { width: "100%", height: contentDisplayHeight }
+                  ? {
+                      width: "100%",
+                      maxWidth: previewPageMaxWidth,
+                      marginLeft: previewPageMaxWidth ? "auto" : undefined,
+                      marginRight: previewPageMaxWidth ? "auto" : undefined,
+                      height: contentDisplayHeight,
+                    }
                   : {
                       width: displayWidth,
                       height: displayHeight,
