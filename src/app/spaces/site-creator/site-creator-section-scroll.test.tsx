@@ -696,6 +696,9 @@ describe("site-creator section scroll flow", () => {
     expect(compiled.js).toContain(heroId);
     expect(compiled.js).toContain(sectionId);
     expect(compiled.js).toContain("scrollHeight");
+    expect(compiled.js).toContain('querySelector(".s-pin")');
+    expect(compiled.js).toContain("function pinPad()");
+    expect(compiled.js).toContain("function dockY(");
     expect(compiled.css).not.toContain("padding-bottom:max(0px,100dvh");
     expect(compiled.css).not.toContain("padding-bottom:100vh");
     expect(compiled.js).toContain("visualViewport");
@@ -744,6 +747,16 @@ describe("planScrollStep", () => {
     });
   });
 
+  it("docks the next section below a pinned header instead of viewport top", () => {
+    expect(
+      planScrollStep({ stations, hops, scrollY: 0, direction: 1, pinPadPx: 120 }),
+    ).toEqual({
+      kind: "smooth",
+      toId: "products",
+      targetY: 780,
+    });
+  });
+
   it("does not intercept wheel when the next hop is natural", () => {
     expect(planScrollStep({ stations, hops, scrollY: 900, direction: 1 })).toBeNull();
   });
@@ -755,6 +768,25 @@ describe("planScrollStep", () => {
       kind: "smooth",
       toId: "hero",
       targetY: 0,
+    });
+  });
+
+  it("scrolls up to the previous section while keeping pin padding for mid stations", () => {
+    expect(
+      planScrollStep({
+        stations,
+        hops: [
+          { fromId: "hero", toId: "products", kind: "smooth" },
+          { fromId: "products", toId: "contact", kind: "smooth" },
+        ],
+        scrollY: 1580,
+        direction: -1,
+        pinPadPx: 120,
+      }),
+    ).toEqual({
+      kind: "smooth",
+      toId: "products",
+      targetY: 780,
     });
   });
 
@@ -810,6 +842,44 @@ describe("bindSectionScroller", () => {
     expect(up.defaultPrevented).toBe(false);
 
     dispose();
+  });
+
+  it("docks wheel hops below the pinned header height", () => {
+    vi.useFakeTimers();
+    const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1800, 800);
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      pinPadPx: 120,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 900 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+    });
+
+    const down = new WheelEvent("wheel", { deltaY: 120, cancelable: true });
+    scroller.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 780, behavior: "smooth" });
+
+    vi.advanceTimersByTime(900);
+    scroller.scrollTop = 780;
+    scrollTo.mockClear();
+    const up = new WheelEvent("wheel", { deltaY: -120, cancelable: true });
+    scroller.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+
+    dispose();
+    vi.useRealTimers();
   });
 
   it("does not snap when shouldIgnoreWheel returns true", () => {

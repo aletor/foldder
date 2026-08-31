@@ -595,6 +595,7 @@ export function SiteCreatorPreview({
       scroller,
       hops: listSectionScrollHops(blueprint, heightBand),
       stations: () => stationsFnRef.current(),
+      pinPadPx: () => (pinPreviewActive ? pinDisplayHeight : 0),
       bindKeyboard: readOnly,
       shouldIgnoreWheel: (event) => {
         const pageEl = pageRef.current;
@@ -616,7 +617,17 @@ export function SiteCreatorPreview({
         );
       },
     });
-  }, [blueprint, deviceMode, heightBand, liveSectionScroll, pageHeight, pageWidth, readOnly]);
+  }, [
+    blueprint,
+    deviceMode,
+    heightBand,
+    liveSectionScroll,
+    pageHeight,
+    pageWidth,
+    pinDisplayHeight,
+    pinPreviewActive,
+    readOnly,
+  ]);
 
   useEffect(() => {
     const onWin = () => setFrameTick((n) => n + 1);

@@ -28,11 +28,24 @@ export function reachableScrollTop(scroller: HTMLElement | Window, top: number):
   return Math.min(Math.max(0, top), maxScrollTopForScroller(scroller));
 }
 
-export function stationIndexAtY(stations: ScrollStation[], scrollY: number): number {
+/**
+ * Destino de scroll para encajar una estación cuando hay cabecera fija:
+ * el top de la sección queda justo debajo del pin, no bajo el viewport 0.
+ */
+export function dockScrollYForPinnedHeader(rawY: number, pinPadPx = 0): number {
+  return Math.max(0, rawY - Math.max(0, pinPadPx));
+}
+
+export function stationIndexAtY(
+  stations: ScrollStation[],
+  scrollY: number,
+  pinPadPx = 0,
+): number {
   if (stations.length === 0) return -1;
+  const effectiveY = scrollY + Math.max(0, pinPadPx);
   let index = 0;
   for (let i = 0; i < stations.length; i += 1) {
-    if (stations[i]!.y <= scrollY + AT_STATION) index = i;
+    if (stations[i]!.y <= effectiveY + AT_STATION) index = i;
   }
   return index;
 }
@@ -65,24 +78,37 @@ export function planScrollStep(args: {
   direction: 1 | -1;
   /** Tope real del scroller: la última sección no inventa altura extra. */
   maxScrollTop?: number;
+  /** Altura visible de la cabecera fija (`pinToTop`); desplaza el anclaje bajo el pin. */
+  pinPadPx?: number;
 }): PlannedScrollStep | null {
+  const pinPad = Math.max(0, args.pinPadPx ?? 0);
   const stations = [...args.stations].sort((a, b) => a.y - b.y);
   if (stations.length < 1) return null;
-  const index = stationIndexAtY(stations, args.scrollY);
+  const index = stationIndexAtY(stations, args.scrollY, pinPad);
   if (args.direction > 0) {
     const from = stations[index];
     const to = stations[index + 1];
     if (!from || !to) return null;
     const kind = hopKindBetween(args.hops, from.id, to.id);
     if (kind === "natural") return null;
-    return { kind, toId: to.id, targetY: topForStation(stations, to.id, to.y, args.maxScrollTop) };
+    const dockY = dockScrollYForPinnedHeader(to.y, pinPad);
+    return {
+      kind,
+      toId: to.id,
+      targetY: topForStation(stations, to.id, dockY, args.maxScrollTop),
+    };
   }
   const current = stations[index] ?? stations[0]!;
   const prev = stations[index - 1];
   if (!prev) return null;
   const kind = hopKindBetween(args.hops, prev.id, current.id);
   if (kind === "natural") return null;
-  return { kind, toId: prev.id, targetY: topForStation(stations, prev.id, prev.y, args.maxScrollTop) };
+  const dockY = dockScrollYForPinnedHeader(prev.y, pinPad);
+  return {
+    kind,
+    toId: prev.id,
+    targetY: topForStation(stations, prev.id, dockY, args.maxScrollTop),
+  };
 }
 
 export function scrollBehaviorForKind(kind: SiteSectionScrollKind): ScrollBehavior {
@@ -97,6 +123,11 @@ export function bindSectionScroller(args: {
   bindKeyboard?: boolean;
   /** True si un MultiCard (u otro scroller interno) consume este gesto. */
   shouldIgnoreWheel?: (event: WheelEvent) => boolean;
+  /**
+   * Altura de la cabecera fija en px del scroller (o getter live).
+   * Sin esto, Suave/Ancla encajan la sección en top 0 y el pin la tapa.
+   */
+  pinPadPx?: number | (() => number);
 }): () => void {
   let locked = false;
   let lockedDirection: 1 | -1 | null = null;
@@ -105,6 +136,10 @@ export function bindSectionScroller(args: {
   const isWindow = args.scroller === window;
   const target = isWindow ? window : (args.scroller as HTMLElement);
   const readY = () => (isWindow ? window.scrollY : (args.scroller as HTMLElement).scrollTop);
+  const readPinPad = () => {
+    const value = typeof args.pinPadPx === "function" ? args.pinPadPx() : (args.pinPadPx ?? 0);
+    return Math.max(0, value);
+  };
   const go = (
     top: number,
     kind: Exclude<SiteSectionScrollKind, "natural">,
@@ -139,6 +174,7 @@ export function bindSectionScroller(args: {
       scrollY: readY(),
       direction,
       maxScrollTop: maxScrollTopForScroller(args.scroller),
+      pinPadPx: readPinPad(),
     });
     if (!planned) {
       anchoredId = null;
@@ -157,16 +193,22 @@ export function bindSectionScroller(args: {
     const list = args.stations();
     if (list.length === 0) return;
     const y = readY();
+    const pinPad = readPinPad();
     let id = anchoredId;
     if (!id) {
-      const index = stationIndexAtY(list, y);
+      const index = stationIndexAtY(list, y, pinPad);
       const station = list[index];
-      if (!station || Math.abs(y - station.y) > AT_STATION) return;
+      if (!station || Math.abs(y - dockScrollYForPinnedHeader(station.y, pinPad)) > AT_STATION) {
+        return;
+      }
       id = station.id;
     }
     const station = list.find((item) => item.id === id);
     if (!station) return;
-    const nextTop = reachableScrollTop(args.scroller, station.y);
+    const nextTop = reachableScrollTop(
+      args.scroller,
+      dockScrollYForPinnedHeader(station.y, pinPad),
+    );
     if (Math.abs(y - nextTop) < 1) return;
     target.scrollTo({ top: nextTop, behavior: "auto" });
   };
@@ -198,7 +240,13 @@ export function bindSectionScroller(args: {
   const onScroll = () => {
     if (locked || !anchoredId) return;
     const station = args.stations().find((item) => item.id === anchoredId);
-    if (!station || Math.abs(readY() - station.y) > AT_STATION * 4) anchoredId = null;
+    const pinPad = readPinPad();
+    if (
+      !station ||
+      Math.abs(readY() - dockScrollYForPinnedHeader(station.y, pinPad)) > AT_STATION * 4
+    ) {
+      anchoredId = null;
+    }
   };
   const wheelTarget: EventTarget = args.scroller;
   wheelTarget.addEventListener("wheel", onWheel, { passive: false, capture: true });
@@ -269,6 +317,15 @@ export function compilePublishedScrollScript(
     if (width <= tabletMax) return flows.tablet;
     return flows.wide;
   }
+  function pinPad() {
+    var pin = document.querySelector(".s-pin");
+    if (!pin) return 0;
+    var h = pin.getBoundingClientRect().height;
+    return h > 0 ? h : 0;
+  }
+  function dockY(rawY, pad) {
+    return Math.max(0, rawY - (pad > 0 ? pad : 0));
+  }
   function stations() {
     return Array.prototype.slice
       .call(document.querySelectorAll("[data-section]"))
@@ -286,32 +343,34 @@ export function compilePublishedScrollScript(
     }
     return "natural";
   }
-  function indexAt(list, y) {
+  function indexAt(list, y, pad) {
+    var effective = y + (pad > 0 ? pad : 0);
     var index = 0;
     for (var i = 0; i < list.length; i++) {
-      if (list[i].y <= y + 16) index = i;
+      if (list[i].y <= effective + 16) index = i;
     }
     return index;
   }
   function plan(direction) {
     var list = stations();
     if (list.length < 1) return null;
+    var pad = pinPad();
     var y = window.scrollY;
-    var index = indexAt(list, y);
+    var index = indexAt(list, y, pad);
     if (direction > 0) {
       var from = list[index];
       var to = list[index + 1];
       if (!from || !to) return null;
       var kind = hopKind(from.id, to.id);
       if (kind === "natural") return null;
-      return { kind: kind, id: to.id, y: to.y };
+      return { kind: kind, id: to.id, y: dockY(to.y, pad) };
     }
     var current = list[index] || list[0];
     var prev = list[index - 1];
     if (!prev) return null;
     var upKind = hopKind(prev.id, current.id);
     if (upKind === "natural") return null;
-    return { kind: upKind, id: prev.id, y: prev.y };
+    return { kind: upKind, id: prev.id, y: dockY(prev.y, pad) };
   }
   function go(top, kind, toId, direction) {
     locked = true;
@@ -354,21 +413,24 @@ export function compilePublishedScrollScript(
     if (locked) return;
     var list = stations();
     if (!list.length) return;
+    var pad = pinPad();
     var y = window.scrollY;
     var id = anchoredId;
     if (!id) {
-      var index = indexAt(list, y);
+      var index = indexAt(list, y, pad);
       var near = list[index];
-      if (!near || Math.abs(y - near.y) > 16) return;
+      if (!near || Math.abs(y - dockY(near.y, pad)) > 16) return;
       id = near.id;
     }
     var station = null;
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === id) station = list[i];
     }
-    if (!station || Math.abs(y - station.y) < 1) return;
+    if (!station) return;
+    var dock = dockY(station.y, pad);
+    if (Math.abs(y - dock) < 1) return;
     var limit = Math.max(0, (document.documentElement ? document.documentElement.scrollHeight : 0) - window.innerHeight);
-    window.scrollTo({ top: Math.max(0, Math.min(station.y, limit)), behavior: "auto" });
+    window.scrollTo({ top: Math.max(0, Math.min(dock, limit)), behavior: "auto" });
   }
   window.addEventListener("wheel", function (event) {
     if (event.ctrlKey) return;
@@ -390,11 +452,12 @@ export function compilePublishedScrollScript(
   window.addEventListener("scroll", function () {
     if (locked || !anchoredId) return;
     var list = stations();
+    var pad = pinPad();
     var station = null;
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === anchoredId) station = list[i];
     }
-    if (!station || Math.abs(window.scrollY - station.y) > 64) anchoredId = null;
+    if (!station || Math.abs(window.scrollY - dockY(station.y, pad)) > 64) anchoredId = null;
   }, { passive: true });
   window.addEventListener("resize", realign);
   if (window.visualViewport) window.visualViewport.addEventListener("resize", realign);
