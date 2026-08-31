@@ -23,6 +23,7 @@ import {
 } from "./site-creator-display-labels";
 import { looksTechnicalName } from "./site-creator-display-labels";
 import { collectMultiCardInstanceLayerIds } from "./site-creator-multicard-layout";
+import { strokePathOutlineBounds } from "./site-creator-stroke-path";
 import { isMultiCardInstanceId } from "./site-creator-multicard-ids";
 import {
   collectDesignerGroupIdClusters,
@@ -545,9 +546,13 @@ export function presentationBoundsForUnit(
   index: SiteCreatorSelectionIndex,
 ): PageRect | null {
   const key = unit.kind === "layer" ? `layer:${unit.layerId}` : `node:${unit.nodeId}`;
-  if (tree.boundsByKey[key]) return tree.boundsByKey[key]!;
-  if (unit.kind === "layer") return index.byId[unit.layerId]?.visualBounds ?? null;
-  return null;
+  const geometric =
+    tree.boundsByKey[key] ??
+    (unit.kind === "layer" ? index.byId[unit.layerId]?.visualBounds ?? null : null);
+  if (!geometric) return null;
+  if (unit.kind !== "layer") return geometric;
+  const obj = index.byId[unit.layerId]?.object;
+  return obj ? strokePathOutlineBounds(obj, geometric) : geometric;
 }
 
 export function presentationDirectChildren(

@@ -399,7 +399,7 @@ describe("5D radiography overlay", () => {
 });
 
 describe("5D microbar + actions", () => {
-  it("microbar lives in HTML (not SVG) and shows path + actions", () => {
+  it("microbar lives in HTML (not SVG) and shows actions without a path", () => {
     const { container } = render(
       <div style={{ position: "relative", width: 400, height: 300 }}>
         <SiteCreatorObjectMicrobar
@@ -424,8 +424,19 @@ describe("5D microbar + actions", () => {
     expect(container.querySelector("[data-site-creator-microbar]")).toBeTruthy();
     expect(container.querySelector("svg [data-site-creator-microbar]")).toBeNull();
     expect(screen.getByTestId("site-creator-micro-undoButton")).toBeTruthy();
+    expect(screen.queryByText("Hero")).toBeNull();
+    expect(screen.queryByText("Botón “BOTOM”")).toBeNull();
     expect(screen.queryByText("Editar contenido")).toBeNull();
     expect(screen.queryByText("Dentro de Hero")).toBeNull();
+  });
+
+  it("hides remove-from-section in the selection microbar", () => {
+    expect(
+      visibleMicrobarActions([
+        { id: "createMultiCard", label: "Multiplicar" },
+        { id: "removeFromContainer", label: "Sacar de Sección" },
+      ]).map((action) => action.id),
+    ).toEqual(["createMultiCard"]);
   });
 
   it("hides group width actions and keeps structural ones", () => {

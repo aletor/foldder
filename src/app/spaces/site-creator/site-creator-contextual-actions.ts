@@ -364,7 +364,7 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
     actions.push({ id: "keepTogether", label: groupActionLabel(units, blueprint) });
   }
 
-  if (n >= 1 && persistGate.allowed) {
+  if (n >= 2 && persistGate.allowed) {
     actions.push({ id: "createMultiCard", label: "Multiplicar" });
   }
 
@@ -452,9 +452,6 @@ function resolveAddToContainerActions(
 function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextualModel {
   const { units, inspectNodeId, blueprint, index, snapshot, persistGate } = args;
   const node = inspectNodeId ? blueprint.nodes[inspectNodeId] : null;
-  const nodeLabel = node
-    ? deriveBlueprintNodeDisplayLabel(node, snapshot, index)
-    : "Componente";
   const inner = units[0];
   const innerLabel =
     inner?.kind === "layer"
@@ -469,7 +466,7 @@ function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextual
       primaryActions: [],
       overflowActions: [],
       canvasLabel: innerLabel,
-      breadcrumb: innerLabel ? `${nodeLabel} › ${innerLabel}` : nodeLabel,
+      breadcrumb: null,
     };
   }
 
@@ -482,20 +479,8 @@ function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextual
     if (units.length >= 2) {
       actions.push({ id: "keepTogether", label: groupActionLabel(units, blueprint) });
     }
-    if (units.length >= 1) {
+    if (units.length >= 2) {
       actions.push({ id: "createMultiCard", label: "Multiplicar" });
-    }
-    if (inspectNodeId && (isSiteSectionNode(node!) || node?.kind === "layoutGroup" || isSiteMultiCardNode(node!))) {
-      const dest = shortContainerName(node!);
-      actions.push({
-        id: "removeFromContainer",
-        label: isSiteSectionNode(node!)
-          ? node!.sectionType === "hero"
-            ? "Sacar de Hero"
-            : "Sacar de Sección"
-          : "Sacar del grupo",
-        targetContainerId: inspectNodeId,
-      });
     }
   }
 
@@ -504,7 +489,7 @@ function resolveInspectModel(args: ResolveContextualArgs): SiteCreatorContextual
     primaryActions: actions.slice(0, 3),
     overflowActions: [],
     canvasLabel: innerLabel,
-    breadcrumb: innerLabel ? `${nodeLabel} › ${innerLabel}` : nodeLabel,
+    breadcrumb: null,
     statusMessage:
       units.length > 0 && !unitsShareCompatibleParent(units, blueprint, index)
         ? "Los elementos deben estar en el mismo nivel. Muévelos primero al mismo contenedor."

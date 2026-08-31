@@ -1281,11 +1281,11 @@ export function SiteCreatorSelectionSurface({
             <div
               data-testid="site-creator-font-scale"
               data-site-creator-floating-ui="true"
-              className="pointer-events-auto absolute flex items-center gap-1.5 rounded border border-white/15 bg-[#101820]/92 px-1.5 py-0.5 shadow-lg"
+              className="pointer-events-auto absolute flex items-center gap-1.5 rounded-full border border-white/12 bg-[#101820]/75 px-2 py-1 shadow-md"
               style={{
                 left: transformBounds.x,
                 top: Math.max(0, transformBounds.y - 28),
-                width: Math.max(88, transformBounds.width),
+                width: Math.min(148, Math.max(110, transformBounds.width * 0.45)),
               }}
             >
               <input
@@ -1294,11 +1294,11 @@ export function SiteCreatorSelectionSurface({
                 min={Math.round(ITEM_FONT_SCALE_MIN * 100)}
                 max={Math.round(ITEM_FONT_SCALE_MAX * 100)}
                 value={fontPct}
-                className="h-1 min-w-0 flex-1 accent-[#A8FF32]"
+                className="site-creator-font-scale-input h-1.5 min-w-0 flex-1 cursor-ew-resize appearance-none rounded-full bg-white/30 accent-[#A8FF32] [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#A8FF32] [&::-webkit-slider-thumb]:shadow-[0_0_0_2px_rgba(16,24,32,0.85)] [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#A8FF32]"
                 onPointerDown={(event) => event.stopPropagation()}
                 onChange={(event) => onFontScale?.(Number(event.target.value) / 100)}
               />
-              <span className="w-8 shrink-0 text-right text-[10px] font-semibold tabular-nums text-white/90">
+              <span className="w-8 shrink-0 text-right text-[10px] font-semibold tabular-nums text-white/85">
                 {fontPct}%
               </span>
             </div>

@@ -152,6 +152,7 @@ import {
 import { resolveSiteBlueprintReferenceState } from "./site-creator-blueprint-refs";
 import { countSnapshotLayers } from "./designer-source-layers";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
+import { strokePathOutlineBounds } from "./site-creator-stroke-path";
 import {
   reduceSiteCreatorSelection,
   reconcileSelectionToIndex,
@@ -262,7 +263,6 @@ import {
 } from "./site-creator-display-labels";
 import { moldLayerIdFromDisplay } from "./site-creator-multicard-ids";
 import {
-  buildBreadcrumbSegments,
   containerDisplayLabel,
   isSemanticContainerNode,
 } from "./site-creator-hierarchy";
@@ -412,7 +412,10 @@ function boundsForUnit(
   if (unit.kind === "blueprintNode") {
     return semanticNodeBounds(blueprint, unit.nodeId, index);
   }
-  return index.byId[unit.layerId]?.visualBounds ?? null;
+  const geometric = index.byId[unit.layerId]?.visualBounds ?? null;
+  if (!geometric) return null;
+  const obj = index.byId[unit.layerId]?.object;
+  return obj ? strokePathOutlineBounds(obj, geometric) : geometric;
 }
 
 function parentChoiceLabel(
@@ -3435,7 +3438,7 @@ export function SiteCreatorStudio({
       return {
         bounds,
         segments: [],
-        summary: contextualModel.summary ?? `${displayUnits.length} elementos seleccionados`,
+        summary: null,
         actions: contextualModel.primaryActions,
         hoverOnly: false,
       };
@@ -3447,17 +3450,7 @@ export function SiteCreatorStudio({
         presentationBoundsForUnit(unit, presentationTree, selectionIndex) ??
         boundsForUnit(unit, blueprint, selectionIndex);
       if (!bounds) return null;
-      const segments = buildBreadcrumbSegments(unit, blueprint, selectionIndex, snapshot).map(
-        (s) => ({ unit: s.unit, label: s.label, current: s.current }),
-      );
-      const explicitBackground =
-        unit.kind === "layer"
-          ? resolveExplicitBackground(blueprint, unit.layerId, mediaBand)
-          : null;
-      if (explicitBackground) {
-        const current = segments.find((segment) => segment.current);
-        if (current) current.label = `Fondo · ${current.label}`;
-      }
+      const segments: SiteCreatorMicrobarModel["segments"] = [];
       const multiCardNode =
         unit.kind === "blueprintNode" ? blueprint.nodes[unit.nodeId] : null;
       const datasetBound =
@@ -3622,7 +3615,7 @@ export function SiteCreatorStudio({
         bounds,
         segments,
         actions: contextualModel.primaryActions,
-        summary: contextualModel.summary,
+        summary: null,
         hoverOnly: false,
         adaptationSlot: adaptationModel ? (
           <SiteCreatorAdaptationControl
@@ -3648,7 +3641,8 @@ export function SiteCreatorStudio({
           : containerDisplayLabel(blueprint.nodes[hoverUnit.nodeId]!, snapshot, selectionIndex));
       return {
         bounds,
-        segments: [{ unit: hoverUnit, label, current: true }],
+        segments: [],
+        summary: label,
         actions: [],
         hoverOnly: true,
       };

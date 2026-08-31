@@ -32,6 +32,7 @@ export type SiteCreatorMicrobarModel = {
 const MICROBAR_HIDDEN_ACTION_IDS = new Set<SiteCreatorPrimaryAction["id"]>([
   "groupWidthFull",
   "groupWidthContent",
+  "removeFromContainer",
 ]);
 
 const MICROBAR_HOVER_H = 22;
@@ -91,7 +92,7 @@ export function SiteCreatorObjectMicrobar({
   model,
   floatingGeometry,
   portalHost,
-  onNavigate,
+  onNavigate: _onNavigate,
   onAction,
 }: SiteCreatorObjectMicrobarProps) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -99,6 +100,7 @@ export function SiteCreatorObjectMicrobar({
   void scale;
   void stageWidth;
   void stageHeight;
+  void _onNavigate;
 
   useLayoutEffect(() => {
     if (!model || !floatingGeometry) {
@@ -121,22 +123,18 @@ export function SiteCreatorObjectMicrobar({
   }, [floatingGeometry, model]);
 
   if (!model) return null;
-  if (
-    model.segments.length === 0 &&
-    !model.summary &&
-    !model.adaptationSlot &&
-    !model.multiCardSlot &&
-    (model.hoverOnly || visibleMicrobarActions(model.actions).length === 0)
-  ) {
-    return null;
-  }
 
-  const title =
-    model.segments.length > 0
-      ? model.segments.map((s) => s.label).join(" › ")
-      : model.summary ?? "";
   const actions = visibleMicrobarActions(model.actions, model.hoverOnly);
-  const crumb = visibleMicrobarSegments(model.segments);
+  // Sin ruta: solo etiqueta en hover; en selección bastan las acciones / slots.
+  const showSummary = Boolean(model.summary) && Boolean(model.hoverOnly);
+  const hasChrome =
+    showSummary ||
+    Boolean(model.adaptationSlot) ||
+    Boolean(model.multiCardSlot) ||
+    actions.length > 0;
+  if (!hasChrome) return null;
+
+  const title = model.summary ?? "";
 
   const barWidth = ref.current?.offsetWidth ?? (model.hoverOnly ? 120 : 220);
   const barHeight = model.hoverOnly ? MICROBAR_HOVER_H : MICROBAR_H;
@@ -162,68 +160,33 @@ export function SiteCreatorObjectMicrobar({
 
   const barInner = (
     <>
-      <div className="flex min-w-0 items-center gap-0.5">
-        {crumb.truncated ? (
-          <span className="shrink-0" style={{ color: SC_VISUAL.chipMuted }} aria-hidden>
-            …
-          </span>
-        ) : null}
-        {crumb.segments.map((seg, i) => (
-          <React.Fragment key={`${seg.label}-${i}`}>
-            {i > 0 || crumb.truncated ? (
-              <span className="shrink-0" style={{ color: SC_VISUAL.chipMuted }}>
-                ›
-              </span>
-            ) : null}
-            {seg.current || !onNavigate ? (
-              <span
-                className="min-w-0 truncate font-medium"
-                style={{ color: seg.current ? SC_VISUAL.chipFg : SC_VISUAL.chipMuted }}
-                title={seg.label}
-              >
-                {seg.label}
-              </span>
-            ) : (
-              <button
-                type="button"
-                className="min-w-0 truncate font-medium hover:underline"
-                style={{ color: SC_VISUAL.chipMuted }}
-                title={seg.label}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onNavigate(seg.unit);
-                }}
-              >
-                {seg.label}
-              </button>
-            )}
-          </React.Fragment>
-        ))}
-        {model.segments.length === 0 && model.summary ? (
-          <span className="min-w-0 truncate font-medium" title={model.summary}>
-            {model.summary}
-          </span>
-        ) : null}
-      </div>
+      {showSummary ? (
+        <span className="min-w-0 truncate font-medium" title={model.summary ?? undefined}>
+          {model.summary}
+        </span>
+      ) : null}
 
       {adaptationSlot && !model.hoverOnly ? (
         <>
-          <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
+          {showSummary ? <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden /> : null}
           {adaptationSlot}
         </>
       ) : null}
 
       {model.multiCardSlot && !model.hoverOnly ? (
         <>
-          <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
+          {showSummary || adaptationSlot ? (
+            <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
+          ) : null}
           {model.multiCardSlot}
         </>
       ) : null}
 
       {actions.length > 0 ? (
         <>
-          <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
+          {showSummary || adaptationSlot || model.multiCardSlot ? (
+            <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
+          ) : null}
           <div className="flex shrink-0 items-center gap-0.5">
             {actions.map((action) => {
               const primary = action.id === "createButton" || action.id === "addToContainer";

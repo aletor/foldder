@@ -12,6 +12,11 @@ import type {
 } from "./site-creator-selection-types";
 import type { SiteBlueprintV1 } from "./site-creator-types";
 import { isLayerCanvasLocked } from "./site-creator-canvas-locks";
+import {
+  isLineLikePath,
+  strokePathHitsPoint,
+  strokePathIntersectsRect,
+} from "./site-creator-stroke-path";
 
 function isClipMaskChild(entry: SiteCreatorSelectionIndexEntry): boolean {
   return (
@@ -206,6 +211,21 @@ export type FrontmostHitOptions = {
   clipById?: Record<string, PageRect>;
 };
 
+function entryHitsPoint(
+  entry: SiteCreatorSelectionIndexEntry,
+  point: PagePoint,
+  clip?: PageRect,
+): boolean {
+  if (clip && !pointInPageRect(point, clip)) return false;
+  if (isLineLikePath(entry.object)) return strokePathHitsPoint(entry.object, point);
+  return pointInPageRect(point, entry.visualBounds);
+}
+
+function entryHitsRect(entry: SiteCreatorSelectionIndexEntry, rect: PageRect): boolean {
+  if (isLineLikePath(entry.object)) return strokePathIntersectsRect(entry.object, rect);
+  return pageRectsIntersect(rect, entry.visualBounds);
+}
+
 export function entriesUnderPoint(
   units: SiteCreatorSelectionIndexEntry[],
   point: PagePoint,
@@ -214,9 +234,7 @@ export function entriesUnderPoint(
   const hits = units.filter((entry) => {
     if (!entry.selectableFromCanvas) return false;
     if (options?.directClickOnly && !entry.directClickable) return false;
-    if (!pointInPageRect(point, entry.visualBounds)) return false;
-    const clip = options?.clipById?.[entry.layerId];
-    if (clip && !pointInPageRect(point, clip)) return false;
+    if (!entryHitsPoint(entry, point, options?.clipById?.[entry.layerId])) return false;
     return true;
   });
   return sortFrontToBack(hits);
@@ -288,7 +306,7 @@ export function marqueeHits(
 ): SiteCreatorSelectionIndexEntry[] {
   const units = marqueeHitTestUnits(index, isolationIds, blueprint);
   return units.filter(
-    (entry) => entry.selectableFromCanvas && pageRectsIntersect(rect, entry.visualBounds),
+    (entry) => entry.selectableFromCanvas && entryHitsRect(entry, rect),
   );
 }
 

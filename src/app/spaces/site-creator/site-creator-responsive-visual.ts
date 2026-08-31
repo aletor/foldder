@@ -10,6 +10,7 @@ import {
   unionPageRects,
   type PageRect,
 } from "./site-creator-coordinate-space";
+import { isLineLikePath } from "./site-creator-stroke-path";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { SiteBlueprintV1 } from "./site-creator-types";
 import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
@@ -397,6 +398,7 @@ export function buildSectionPresentationUnits(args: {
     // Hojas bajo grupo ya capturado
     if (entry.ancestorIds.some((a) => used.has(a))) continue;
     used.add(id);
+    const lineLike = isLineLikePath(entry.object);
     const small = area(entry.visualBounds) < area(boundsOfIds(coverage, index) ?? entry.visualBounds) * 0.02;
     units.push({
       id: `layer:${id}`,
@@ -404,7 +406,7 @@ export function buildSectionPresentationUnits(args: {
       layerIds: [id],
       bounds: entry.visualBounds,
       zOrder: entry.zOrderPath,
-      role: small && isShapeType(entry.type) ? "decoration" : "content",
+      role: lineLike || (small && isShapeType(entry.type)) ? "decoration" : "content",
     });
   }
 
@@ -465,7 +467,7 @@ export function buildUnorganizedPresentationUnits(args: {
       layerIds: [id],
       bounds: entry.visualBounds,
       zOrder: entry.zOrderPath,
-      role: "content",
+      role: isLineLikePath(entry.object) ? "decoration" : "content",
     });
   }
 
@@ -511,6 +513,7 @@ function isSurfaceCandidateLayer(
   if (unit.kind !== "layer" || unit.layerIds.length !== 1) return false;
   const entry = index.byId[unit.layerIds[0]!];
   if (!entry) return false;
+  if (isLineLikePath(entry.object)) return false;
   return isShapeType(entry.type);
 }
 
@@ -664,6 +667,18 @@ export function buildResponsiveVisualClusters(args: {
           cl.units.push(unit);
           cl.allLayerIds = unique([...cl.allLayerIds, ...unit.layerIds]);
           cl.bounds = unionPageRects([cl.bounds, unit.bounds])!;
+          claimed.add(unit.id);
+          continue;
+        }
+        if (cl.kind === "solo") {
+          clusters[bestIndex] = {
+            kind: "preserve",
+            id: cl.id,
+            reason: "decoration-with-content",
+            units: [cl.unit, unit],
+            bounds: unionPageRects([cl.bounds, unit.bounds])!,
+            allLayerIds: unique([...cl.allLayerIds, ...unit.layerIds]),
+          };
           claimed.add(unit.id);
           continue;
         }

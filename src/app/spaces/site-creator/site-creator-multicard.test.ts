@@ -1101,7 +1101,7 @@ describe("MultiCard", () => {
     expect(section?.layerIds).toEqual(expect.arrayContaining(["photo", "title"]));
   });
 
-  it("shows Multiplicar on a layer selection inside a section", () => {
+  it("shows Multiplicar on a multi-layer selection inside a section", () => {
     const { committed, index, hero } = heroWithCard();
     expect(hero.ok).toBe(true);
     if (!hero.ok) return;
@@ -1121,6 +1121,21 @@ describe("MultiCard", () => {
       "Multiplicar",
     );
     void committed;
+  });
+
+  it("does not show Multiplicar for a single layer", () => {
+    const { index, hero } = heroWithCard();
+    expect(hero.ok).toBe(true);
+    if (!hero.ok) return;
+    const model = resolveContextualModel({
+      units: [{ kind: "layer", layerId: "title" }],
+      inspectNodeId: null,
+      blueprint: hero.blueprint,
+      index,
+      snapshot: null,
+      persistGate: { allowed: true, mode: "synced" },
+    });
+    expect(model.primaryActions.some((action) => action.id === "createMultiCard")).toBe(false);
   });
 
   it("plans a 3-card grid with automatic columns", () => {

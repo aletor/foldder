@@ -60,8 +60,8 @@ export const ITEM_SCALE_MIN = 0.15;
 export const ITEM_SCALE_MAX = 6;
 export const ITEM_BOX_MIN = 0.2;
 export const ITEM_BOX_MAX = 4;
-export const ITEM_FONT_SCALE_MIN = 0.7;
-export const ITEM_FONT_SCALE_MAX = 1.6;
+export const ITEM_FONT_SCALE_MIN = 0.5;
+export const ITEM_FONT_SCALE_MAX = 2;
 
 export function normalizeItemShift(value: number): number {
   if (!Number.isFinite(value)) return 0;

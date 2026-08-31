@@ -87,6 +87,7 @@ import {
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
+import { isStrokeLikeBox } from "./site-creator-stroke-path";
 import { applyMultiCardLayout } from "./site-creator-multicard-layout";
 import type { MultiCardInstanceRef } from "./site-creator-multicard-ids";
 import type { MultiCardContainerLayout } from "./site-creator-multicard-layout";
@@ -1966,13 +1967,46 @@ function groupLeftoverClustersIntoRows(
       rows.push([cluster]);
       continue;
     }
+    if (isStrokeLikeBox(cluster.bounds)) {
+      const cy = cluster.bounds.y + cluster.bounds.height / 2;
+      if (cy >= lastUnion.y - 24 && cy <= lastUnion.y + lastUnion.height + 24) {
+        last.push(cluster);
+        continue;
+      }
+    }
     const rowMid = lastUnion.y + lastUnion.height / 2;
     const clusterMid = cluster.bounds.y + cluster.bounds.height / 2;
     const band = Math.max(lastUnion.height, cluster.bounds.height) * 0.45;
     if (Math.abs(clusterMid - rowMid) <= band) last.push(cluster);
     else rows.push([cluster]);
   }
-  return rows;
+  return foldStrokeLeftoverRows(rows);
+}
+
+/** Filetes sueltos no abren una fila propia: se pegan al bloque de contenido más cercano. */
+function foldStrokeLeftoverRows(
+  rows: ResponsiveVisualCluster[][],
+): ResponsiveVisualCluster[][] {
+  const out: ResponsiveVisualCluster[][] = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]!;
+    const strokeOnly = row.length > 0 && row.every((cluster) => isStrokeLikeBox(cluster.bounds));
+    if (!strokeOnly) {
+      out.push(row);
+      continue;
+    }
+    if (out.length > 0) {
+      out[out.length - 1]!.push(...row);
+      continue;
+    }
+    const next = rows[i + 1];
+    if (next) {
+      next.unshift(...row);
+      continue;
+    }
+    out.push(row);
+  }
+  return out;
 }
 
 /**
