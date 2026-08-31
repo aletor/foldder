@@ -24,11 +24,36 @@ export type SiteCreatorMicrobarModel = {
   avoidBounds?: PageRect[];
   /** Slot 6B.2 — control de adaptación (ReactNode). */
   adaptationSlot?: React.ReactNode;
-  /** Slot 6C — ajustes contextuales de la vista. */
-  refineSlot?: React.ReactNode;
   /** Slot MultiCard — stepper de N y modos de layout. */
   multiCardSlot?: React.ReactNode;
 };
+
+/** Ancho de grupo se cambia con las flechas del lienzo, no desde este menú. */
+const MICROBAR_HIDDEN_ACTION_IDS = new Set<SiteCreatorPrimaryAction["id"]>([
+  "groupWidthFull",
+  "groupWidthContent",
+]);
+
+const MICROBAR_HOVER_H = 22;
+const MICROBAR_H = 26;
+const MICROBAR_ACTION_CAP = 3;
+
+export function visibleMicrobarActions(
+  actions: SiteCreatorPrimaryAction[],
+  hoverOnly?: boolean,
+): SiteCreatorPrimaryAction[] {
+  if (hoverOnly) return [];
+  return actions.filter((action) => !MICROBAR_HIDDEN_ACTION_IDS.has(action.id)).slice(0, MICROBAR_ACTION_CAP);
+}
+
+/** Ruta corta: últimos dos tramos si hay más; el title lleva el path completo. */
+export function visibleMicrobarSegments(segments: MicrobarSegment[]): {
+  truncated: boolean;
+  segments: MicrobarSegment[];
+} {
+  if (segments.length <= 2) return { truncated: false, segments };
+  return { truncated: true, segments: segments.slice(-2) };
+}
 
 export type FloatingChromeGeometry = {
   /** Stage / frame en coords cliente. */
@@ -80,8 +105,8 @@ export function SiteCreatorObjectMicrobar({
       setPos((prev) => (prev == null ? prev : null));
       return;
     }
-    const w = ref.current?.offsetWidth ?? (model.hoverOnly ? 140 : 280);
-    const h = model.hoverOnly ? 24 : 32;
+    const w = ref.current?.offsetWidth ?? (model.hoverOnly ? 120 : 220);
+    const h = model.hoverOnly ? MICROBAR_HOVER_H : MICROBAR_H;
     const placed = resolveFloatingEditorPlacement({
       anchorRect: floatingGeometry.selectionClientRect,
       floatingSize: { width: w, height: h },
@@ -100,9 +125,8 @@ export function SiteCreatorObjectMicrobar({
     model.segments.length === 0 &&
     !model.summary &&
     !model.adaptationSlot &&
-    !model.refineSlot &&
     !model.multiCardSlot &&
-    (model.hoverOnly || model.actions.length === 0)
+    (model.hoverOnly || visibleMicrobarActions(model.actions).length === 0)
   ) {
     return null;
   }
@@ -111,10 +135,11 @@ export function SiteCreatorObjectMicrobar({
     model.segments.length > 0
       ? model.segments.map((s) => s.label).join(" › ")
       : model.summary ?? "";
-  const actions = model.hoverOnly ? [] : model.actions.slice(0, 3);
+  const actions = visibleMicrobarActions(model.actions, model.hoverOnly);
+  const crumb = visibleMicrobarSegments(model.segments);
 
-  const barWidth = ref.current?.offsetWidth ?? (model.hoverOnly ? 140 : 280);
-  const barHeight = model.hoverOnly ? 24 : 32;
+  const barWidth = ref.current?.offsetWidth ?? (model.hoverOnly ? 120 : 220);
+  const barHeight = model.hoverOnly ? MICROBAR_HOVER_H : MICROBAR_H;
   const microbarClientRect: PageRect | null = pos
     ? { x: pos.left, y: pos.top, width: barWidth, height: barHeight }
     : null;
@@ -135,35 +160,24 @@ export function SiteCreatorObjectMicrobar({
         )
       : model.adaptationSlot;
 
-  const refineSlot =
-    model.refineSlot && React.isValidElement(model.refineSlot)
-      ? React.cloneElement(
-          model.refineSlot as React.ReactElement<{
-            floatingGeometry?: FloatingChromeGeometry | null;
-            microbarClientRect?: PageRect | null;
-            portalHost?: HTMLElement | null;
-          }>,
-          {
-            floatingGeometry: floatingGeometry ?? null,
-            microbarClientRect,
-            portalHost: portalHost ?? null,
-          },
-        )
-      : model.refineSlot;
-
   const barInner = (
     <>
-      <div className="flex min-w-0 items-center gap-1">
-        {model.segments.map((seg, i) => (
+      <div className="flex min-w-0 items-center gap-0.5">
+        {crumb.truncated ? (
+          <span className="shrink-0" style={{ color: SC_VISUAL.chipMuted }} aria-hidden>
+            …
+          </span>
+        ) : null}
+        {crumb.segments.map((seg, i) => (
           <React.Fragment key={`${seg.label}-${i}`}>
-            {i > 0 ? (
+            {i > 0 || crumb.truncated ? (
               <span className="shrink-0" style={{ color: SC_VISUAL.chipMuted }}>
                 ›
               </span>
             ) : null}
             {seg.current || !onNavigate ? (
               <span
-                className="min-w-0 truncate font-semibold"
+                className="min-w-0 truncate font-medium"
                 style={{ color: seg.current ? SC_VISUAL.chipFg : SC_VISUAL.chipMuted }}
                 title={seg.label}
               >
@@ -172,7 +186,7 @@ export function SiteCreatorObjectMicrobar({
             ) : (
               <button
                 type="button"
-                className="min-w-0 truncate font-semibold hover:underline"
+                className="min-w-0 truncate font-medium hover:underline"
                 style={{ color: SC_VISUAL.chipMuted }}
                 title={seg.label}
                 onClick={(e) => {
@@ -187,7 +201,7 @@ export function SiteCreatorObjectMicrobar({
           </React.Fragment>
         ))}
         {model.segments.length === 0 && model.summary ? (
-          <span className="min-w-0 truncate font-semibold" title={model.summary}>
+          <span className="min-w-0 truncate font-medium" title={model.summary}>
             {model.summary}
           </span>
         ) : null}
@@ -195,40 +209,24 @@ export function SiteCreatorObjectMicrobar({
 
       {adaptationSlot && !model.hoverOnly ? (
         <>
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
+          <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
           {adaptationSlot}
-        </>
-      ) : null}
-
-      {refineSlot && !model.hoverOnly ? (
-        <>
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
-          {refineSlot}
         </>
       ) : null}
 
       {model.multiCardSlot && !model.hoverOnly ? (
         <>
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
+          <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
           {model.multiCardSlot}
         </>
       ) : null}
 
       {actions.length > 0 ? (
         <>
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
-          <div className="flex shrink-0 items-center gap-1">
+          <span className="mx-0.5 h-3 w-px shrink-0 bg-white/12" aria-hidden />
+          <div className="flex shrink-0 items-center gap-0.5">
             {actions.map((action) => {
-              const primary =
-                Boolean(action.primary) ||
-                action.id === "createButton" ||
-                action.id === "addToContainer";
-              const destructive =
-                action.id === "undoButton" ||
-                action.id === "undoSection" ||
-                action.id === "undoMultiCard" ||
-                action.id === "separateGroup" ||
-                action.id === "removeFromContainer";
+              const primary = action.id === "createButton" || action.id === "addToContainer";
               return (
                 <button
                   key={action.id + (action.targetContainerId ?? "")}
@@ -236,18 +234,18 @@ export function SiteCreatorObjectMicrobar({
                   data-testid={`site-creator-micro-${action.id}`}
                   aria-label={action.label}
                   title={action.label}
-                  className="h-6 max-w-[140px] truncate rounded px-2 text-[10px] font-semibold outline-none focus-visible:ring-1 focus-visible:ring-white/40"
+                  className="h-5 max-w-[120px] truncate rounded px-1.5 text-[10px] font-medium outline-none focus-visible:ring-1 focus-visible:ring-white/40"
                   style={
-                    primary && !destructive
+                    primary
                       ? {
-                          background: "rgba(168,255,50,0.18)",
+                          background: "rgba(168,255,50,0.14)",
                           color: SC_VISUAL.selection,
-                          border: "1px solid rgba(168,255,50,0.35)",
+                          border: "1px solid rgba(168,255,50,0.28)",
                         }
                       : {
-                          background: "rgba(255,255,255,0.06)",
-                          color: "rgba(255,255,255,0.88)",
-                          border: "1px solid rgba(255,255,255,0.12)",
+                          background: "transparent",
+                          color: "rgba(255,255,255,0.78)",
+                          border: "1px solid transparent",
                         }
                   }
                   onClick={(e) => {
@@ -278,15 +276,15 @@ export function SiteCreatorObjectMicrobar({
         data-testid="site-creator-microbar"
         data-hover-only={model.hoverOnly ? "true" : "false"}
         title={title}
-        className="pointer-events-auto absolute z-[5] flex max-w-[min(420px,94%)] items-center gap-1.5 rounded-md border px-2 shadow-lg"
+        className="pointer-events-auto absolute z-[5] flex max-w-[min(320px,92%)] items-center gap-1 rounded border px-1.5 shadow-md"
         style={{
           left: 8,
           top: 8,
-          height: model.hoverOnly ? 24 : 32,
+          height: model.hoverOnly ? MICROBAR_HOVER_H : MICROBAR_H,
           background: SC_VISUAL.chipBg,
           borderColor: SC_VISUAL.chipBorder,
           color: SC_VISUAL.chipFg,
-          fontSize: 11,
+          fontSize: 10,
         }}
       >
         {barInner}
@@ -302,15 +300,15 @@ export function SiteCreatorObjectMicrobar({
       data-site-creator-floating-ui="true"
       data-hover-only={model.hoverOnly ? "true" : "false"}
       title={title}
-      className="site-creator-floating-panel pointer-events-auto fixed z-[100055] flex max-w-[min(420px,94vw)] items-center gap-1.5 rounded-md border px-2 shadow-lg"
+      className="site-creator-floating-panel pointer-events-auto fixed z-[100055] flex max-w-[min(320px,92vw)] items-center gap-1 rounded border px-1.5 shadow-md"
       style={{
         left: pos?.left ?? -9999,
         top: pos?.top ?? -9999,
-        height: model.hoverOnly ? 24 : 32,
+        height: model.hoverOnly ? MICROBAR_HOVER_H : MICROBAR_H,
         background: SC_VISUAL.chipBg,
         borderColor: SC_VISUAL.chipBorder,
         color: SC_VISUAL.chipFg,
-        fontSize: 11,
+        fontSize: 10,
         transition: "opacity 100ms linear",
         opacity: pos ? 1 : 0,
       }}

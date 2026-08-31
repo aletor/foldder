@@ -246,7 +246,7 @@ export function SiteCreatorAdaptationControl({
         ref={triggerRef}
         type="button"
         data-testid="site-creator-adaptation-trigger"
-        className="h-6 max-w-[180px] truncate rounded px-2 text-[10px] font-semibold"
+        className="h-5 max-w-[160px] truncate rounded px-1.5 text-[10px] font-medium"
         style={{
           background: "rgba(255,255,255,0.06)",
           color: "rgba(255,255,255,0.88)",

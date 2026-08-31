@@ -22,7 +22,11 @@ import {
 } from "./site-creator-types";
 import { resolveContextualModel } from "./site-creator-contextual-actions";
 import { SiteCreatorSelectionOverlay } from "./SiteCreatorSelectionOverlay";
-import { SiteCreatorObjectMicrobar } from "./SiteCreatorObjectMicrobar";
+import {
+  SiteCreatorObjectMicrobar,
+  visibleMicrobarActions,
+  visibleMicrobarSegments,
+} from "./SiteCreatorObjectMicrobar";
 import { SiteCreatorOutlinePanel } from "./SiteCreatorOutlinePanel";
 import {
   buildSiteCreatorPresentationTree,
@@ -31,6 +35,7 @@ import {
 } from "./site-creator-presentation-tree";
 import { deriveLayerDisplayLabel } from "./site-creator-display-labels";
 import { EMPTY_SITE_CREATOR_SELECTION } from "./site-creator-selection-types";
+import { SC_VISUAL } from "./site-creator-visual-tokens";
 import { canPersistSiteStructure } from "./site-blueprint-history";
 import { buildBreadcrumbSegments } from "./site-creator-hierarchy";
 
@@ -337,7 +342,7 @@ describe("5D radiography overlay", () => {
     expect(rects[1]!.getAttribute("stroke-opacity")).toBe("0.82");
   });
 
-  it("no scope veil element exists", () => {
+  it("no scope veil element exists when nothing is selected", () => {
     const { container } = render(
       <SiteCreatorSelectionOverlay
         pageWidth={100}
@@ -349,6 +354,47 @@ describe("5D radiography overlay", () => {
       />,
     );
     expect(container.querySelector("[data-site-creator-scope-veil]")).toBeNull();
+  });
+
+  it("grouping selection darkens the page and uses a thicker box", () => {
+    const { container } = render(
+      <SiteCreatorSelectionOverlay
+        pageWidth={400}
+        pageHeight={240}
+        index={buildSiteSelectionIndex(makePage())}
+        selection={EMPTY_SITE_CREATOR_SELECTION}
+        marquee={null}
+        hoverName={null}
+        unitOutlines={[
+          { bounds: { x: 20, y: 20, width: 200, height: 80 }, kind: "section" },
+        ]}
+      />,
+    );
+    const veil = container.querySelector("[data-site-creator-scope-veil]");
+    expect(veil).toBeTruthy();
+    expect(veil!.getAttribute("fill")).toBe(SC_VISUAL.veil);
+    expect(veil!.getAttribute("fill-rule")).toBe("evenodd");
+    const groupBox = container.querySelector('[data-site-creator-selection][data-scope="group"] rect');
+    expect(groupBox).toBeTruthy();
+    expect(groupBox!.getAttribute("stroke-width")).toBe(String(SC_VISUAL.groupSelectionStroke));
+  });
+
+  it("leaf object selection has no veil and the regular stroke", () => {
+    const { container } = render(
+      <SiteCreatorSelectionOverlay
+        pageWidth={400}
+        pageHeight={240}
+        index={buildSiteSelectionIndex(makePage())}
+        selection={EMPTY_SITE_CREATOR_SELECTION}
+        marquee={null}
+        hoverName={null}
+        unitOutlines={[{ bounds: { x: 20, y: 20, width: 80, height: 24 }, kind: "layer" }]}
+      />,
+    );
+    expect(container.querySelector("[data-site-creator-scope-veil]")).toBeNull();
+    const leafBox = container.querySelector('[data-site-creator-selection][data-scope="object"] rect');
+    expect(leafBox).toBeTruthy();
+    expect(leafBox!.getAttribute("stroke-width")).toBe(String(SC_VISUAL.selectionStroke));
   });
 });
 
@@ -380,6 +426,48 @@ describe("5D microbar + actions", () => {
     expect(screen.getByTestId("site-creator-micro-undoButton")).toBeTruthy();
     expect(screen.queryByText("Editar contenido")).toBeNull();
     expect(screen.queryByText("Dentro de Hero")).toBeNull();
+  });
+
+  it("hides group width actions and keeps structural ones", () => {
+    expect(
+      visibleMicrobarActions([
+        { id: "groupWidthFull", label: "Ancho completo", primary: true },
+        { id: "separateGroup", label: "Desagrupar" },
+        { id: "createMultiCard", label: "Multiplicar" },
+      ]).map((action) => action.id),
+    ).toEqual(["separateGroup", "createMultiCard"]);
+    expect(visibleMicrobarActions([{ id: "groupWidthContent", label: "Ancho natural" }])).toEqual([]);
+  });
+
+  it("shortens a long breadcrumb to the last two segments", () => {
+    const crumb = visibleMicrobarSegments([
+      { unit: { kind: "blueprintNode", nodeId: "s1" }, label: "Hero", current: false },
+      { unit: { kind: "blueprintNode", nodeId: "g1" }, label: "Grupo", current: false },
+      { unit: { kind: "layer", layerId: "t1" }, label: "Título", current: true },
+    ]);
+    expect(crumb.truncated).toBe(true);
+    expect(crumb.segments.map((s) => s.label)).toEqual(["Grupo", "Título"]);
+  });
+
+  it("does not mount refine controls in the selection microbar", () => {
+    render(
+      <SiteCreatorObjectMicrobar
+        scale={1}
+        stageWidth={400}
+        stageHeight={300}
+        model={{
+          bounds: { x: 40, y: 140, width: 100, height: 36 },
+          segments: [{ unit: { kind: "blueprintNode", nodeId: "g1" }, label: "Grupo", current: true }],
+          actions: [
+            { id: "groupWidthFull", label: "Ancho completo", primary: true },
+            { id: "separateGroup", label: "Desagrupar" },
+          ],
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("site-creator-refine")).toBeNull();
+    expect(screen.queryByTestId("site-creator-micro-groupWidthFull")).toBeNull();
+    expect(screen.getByTestId("site-creator-micro-separateGroup")).toBeTruthy();
   });
 
   it("Hero selected has Deshacer Hero, never Editar contenido", () => {

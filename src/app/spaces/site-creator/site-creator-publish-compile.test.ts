@@ -8,7 +8,7 @@ import {
   publishAssetPlaceholder,
 } from "./site-creator-publish-compile";
 import { applyPublishedAssetHrefs, rewritePublishedHtmlForPublicUrl } from "./site-creator-publish-placeholders";
-import { createMultiCardFromSelection, createSectionFromSelection, setSectionHeightMode } from "./site-blueprint-ops";
+import { createMultiCardFromSelection, createSectionFromSelection, setSectionHeightMode, setSectionPinToTop } from "./site-blueprint-ops";
 import { createEmptySiteBlueprintV1, parseSiteCreatorNodeData } from "./site-creator-types";
 import { fixtureHeroPanelButton, makeLayer, makePage } from "./site-creator-responsive-fixtures";
 
@@ -531,5 +531,99 @@ describe("site-creator-publish-compile", () => {
     expect(titles.length).toBeGreaterThanOrEqual(3);
     expect(compiled.html).toContain("s-mc-track");
     expect(compiled.js).toContain("[data-mc]");
+  });
+
+  it("publishes a fixed pin shell for the first section when pinToTop is set", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 120, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 400, width: 1920, height: 200, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const body = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(body.ok).toBe(true);
+    if (!body.ok) return;
+    const pinned = setSectionPinToTop(body.blueprint, hero.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: pinned.blueprint,
+      title: "Pin",
+      imageHrefByLayerId: {},
+    });
+    expect(compiled.html).toContain('class="s-has-pin"');
+    expect(compiled.html).toContain(`data-section-pin="${hero.createdNodeId}"`);
+    expect(compiled.css).toContain(".s-pin{position:fixed");
+    expect(compiled.css).toContain("background:transparent");
+    expect(compiled.css).toContain("z-index:2147483646!important");
+    expect(compiled.css).toMatch(/\.s-pin .s-el[\s\S]*z-index:2147483646!important/);
+    expect(compiled.css).toContain("scroll-padding-top:");
+    const mainClose = compiled.html.indexOf("</main>");
+    const pinAt = compiled.html.indexOf('class="s-pin"');
+    const bodyLayer = compiled.html.indexOf("s-el-b");
+    expect(mainClose).toBeGreaterThan(-1);
+    expect(pinAt).toBeGreaterThan(mainClose);
+    if (bodyLayer >= 0) expect(bodyLayer).toBeLessThan(mainClose);
+  });
+
+  it("pins solid section fills with the header and keeps the pin shell transparent", () => {
+    const page = makePage([
+      makeLayer({ id: "fill", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#e8e4dc" }),
+      makeLayer({ id: "photo", type: "image", x: 0, y: 0, width: 1920, height: 320, src: "data:," }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 200, fill: "#222" }),
+    ]);
+
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["fill", "photo"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const body = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(body.ok).toBe(true);
+    if (!body.ok) return;
+    const pinned = setSectionPinToTop(body.blueprint, hero.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+
+    const compiled = compilePublishedSite({
+      page,
+      blueprint: pinned.blueprint,
+      title: "Pin mask",
+      imageHrefByLayerId: { photo: "assets/photo.webp" },
+    });
+    const pinHtml = compiled.html.slice(compiled.html.indexOf('class="s-pin"'));
+    expect(pinHtml).toContain("s-el-photo");
+    expect(pinHtml).toContain("s-el-fill");
+    expect(compiled.html.indexOf("s-el-b")).toBeGreaterThan(-1);
+    expect(compiled.html.indexOf("s-el-b")).toBeLessThan(compiled.html.indexOf("</main>"));
+    expect(compiled.html.indexOf('class="s-pin"')).toBeGreaterThan(compiled.html.indexOf("</main>"));
+    expect(compiled.css).toMatch(/\.s-pin\{[^}]*background:transparent/);
   });
 });

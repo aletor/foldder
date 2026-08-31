@@ -8,6 +8,10 @@ import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { isLayerExplicitBackgroundSurface } from "./site-creator-background-assignment";
+import {
+  resolveDesignerPageBackground,
+  resolvePageBackgroundCss,
+} from "./site-creator-page-background";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import { resolveMonitorMaxWidth } from "./site-creator-monitor-max-width";
 import {
@@ -56,6 +60,7 @@ import {
   type PublishForest,
   type PublishTreeNode,
 } from "./site-creator-publish-tree";
+import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import { containerIsFullWidthForBand } from "./site-creator-group-width-layout";
 import { ellipseClipPathCss, publishedPathGeom } from "./site-creator-publish-path";
 import {
@@ -461,6 +466,36 @@ function blueprintHasExpandedSection(
   );
 }
 
+/** Cabecera fija: solo la primera sección con `pinToTop`. */
+function resolvePinnedTopSection(blueprint: SiteBlueprintV1): SiteBlueprintSectionNode | null {
+  const first = listDocumentSections(blueprint)[0] ?? null;
+  return first?.pinToTop ? first : null;
+}
+
+function publishTreeTouchesPinned(node: PublishTreeNode, pinnedLayerIds: Set<string>): boolean {
+  if (node.kind === "row") {
+    return node.children.some((child) => publishTreeTouchesPinned(child, pinnedLayerIds));
+  }
+  if (pinnedLayerIds.has(node.id)) return true;
+  if (node.kind === "group") {
+    return node.children.some((child) => publishTreeTouchesPinned(child, pinnedLayerIds));
+  }
+  return false;
+}
+
+function partitionPinnedPublishRoots(
+  roots: PublishTreeNode[],
+  pinnedLayerIds: Set<string>,
+): { pinned: PublishTreeNode[]; rest: PublishTreeNode[] } {
+  const pinned: PublishTreeNode[] = [];
+  const rest: PublishTreeNode[] = [];
+  for (const node of roots) {
+    if (publishTreeTouchesPinned(node, pinnedLayerIds)) pinned.push(node);
+    else rest.push(node);
+  }
+  return { pinned, rest };
+}
+
 function sectionExtraExpr(
   blueprint: SiteBlueprintV1,
   section: SiteBlueprintSectionNode,
@@ -792,12 +827,25 @@ export function compilePublishedSite(args: {
     if (layer) layer.z = node.z;
   });
 
+  const detectedPageBg = resolveDesignerPageBackground(args.page, args.blueprint);
+  const designerPageBgCss =
+    detectedPageBg?.kind === "image"
+      ? resolvePageBackgroundCss(
+          args.page,
+          args.blueprint,
+          args.imageHrefByLayerId[detectedPageBg.imageLayerId] ??
+            args.imageHrefByLayerId[detectedPageBg.sourceLayerId],
+        )
+      : detectedPageBg?.kind === "color" || detectedPageBg?.kind === "gradient"
+        ? detectedPageBg.css
+        : null;
   const pageBg =
-    args.page.pageBackground === "black"
+    designerPageBgCss ??
+    (args.page.pageBackground === "black"
       ? "#000000"
       : args.page.pageBackground === "transparent"
         ? "transparent"
-        : "#fafafa";
+        : "#fafafa");
 
   const css = buildCss({
     pageBg,
@@ -979,6 +1027,7 @@ function buildCss(args: {
     ".s-row{position:relative;display:flex;flex-wrap:wrap;align-items:flex-start;width:100%;left:auto;top:auto;box-sizing:border-box}",
     ".s-row>.s-flow-item{position:relative;flex:0 0 auto;top:auto;left:auto}",
     ".s-row-full>.s-flow-item{flex:0 0 100%;width:100%}",
+    ".s-row-rest>.s-group.s-flow-item{flex:1 1 0;min-width:0;width:auto}",
     ".s-group.s-has-flow{height:auto}",
     ".s-page.s-flow{height:auto;overflow:visible}",
     ".s-page.s-flow>.s-row{position:relative;left:auto;top:auto;width:100%}",
@@ -1005,6 +1054,22 @@ function buildCss(args: {
 
   emitBandScrollCss(lines, args.blueprint, "wide");
   const sections = listDocumentSections(args.blueprint);
+  const pinned = resolvePinnedTopSection(args.blueprint);
+  if (pinned) {
+    const pinHint = sectionLayoutHint(pinned, args.hintsByBand.wide);
+    const pinH = Math.max(1, pinHint.designed);
+    const pinW = Math.max(1, args.layouts.wide.width);
+    lines.push(
+      `.s-pin{position:fixed;top:0;left:50%;translate:-50% 0;width:100%;max-width:${pinW}px;z-index:2147483646;isolation:isolate;pointer-events:none;background:transparent;height:auto;min-height:0}`,
+    );
+    lines.push(
+      ".s-pin>.s-el,.s-pin>.s-group,.s-pin>.s-row{pointer-events:auto;z-index:2147483646}",
+    );
+    lines.push(".s-pin .s-el,.s-pin .s-group{z-index:2147483646}");
+    lines.push(
+      `html.s-has-pin{scroll-padding-top:calc(100cqw * ${pinH} / ${pinW})}`,
+    );
+  }
   if (sections.length > 0) {
     lines.push(".s-sec-anchor{position:absolute;left:0;width:100%;height:0;pointer-events:none}");
     emitSectionViewportCss(
@@ -1041,6 +1106,13 @@ function buildCss(args: {
 
   lines.push(`@media (max-width:${tabletMax}px) and (min-width:${SITE_CREATOR_TABLET_WIDTH}px){`);
   lines.push(".s-page{max-width:none;margin-inline:0}");
+  if (pinned) {
+    lines.push(".s-pin{max-width:none;left:0;translate:none;width:100%}");
+    const pinHint = sectionLayoutHint(pinned, args.hintsByBand.tablet);
+    lines.push(
+      `html.s-has-pin{scroll-padding-top:calc(100cqw * ${Math.max(1, pinHint.designed)} / ${Math.max(1, args.layouts.tablet.width)})}`,
+    );
+  }
   lines.push(bandPageCss(args.layouts.tablet, flow));
   emitBandScrollCss(lines, args.blueprint, "tablet");
   emitSectionViewportCss(
@@ -1076,6 +1148,13 @@ function buildCss(args: {
 
   lines.push(`@media (max-width:${SITE_CREATOR_TABLET_WIDTH - 1}px){`);
   lines.push(".s-page{max-width:none;margin-inline:0}");
+  if (pinned) {
+    lines.push(".s-pin{max-width:none;left:0;translate:none;width:100%}");
+    const pinHint = sectionLayoutHint(pinned, args.hintsByBand.mobile);
+    lines.push(
+      `html.s-has-pin{scroll-padding-top:calc(100cqw * ${Math.max(1, pinHint.designed)} / ${Math.max(1, args.layouts.mobile.width)})}`,
+    );
+  }
   lines.push(bandPageCss(args.layouts.mobile, flow));
   emitBandScrollCss(lines, args.blueprint, "mobile");
   emitSectionViewportCss(
@@ -1108,6 +1187,16 @@ function buildCss(args: {
     args.hintsByBand.mobile,
   );
   lines.push("}");
+
+  if (pinned) {
+    // Después de todo el CSS de capas: el pin debe ganar siempre el apilado.
+    lines.push(
+      ".s-pin{position:fixed!important;top:0!important;z-index:2147483646!important;isolation:isolate!important;pointer-events:none;background:transparent!important}",
+    );
+    lines.push(
+      ".s-pin .s-el,.s-pin .s-group,.s-pin .s-row,.s-pin .s-mc{z-index:2147483646!important;pointer-events:auto}",
+    );
+  }
 
   return `${lines.filter(Boolean).join("\n")}\n`;
 }
@@ -1218,7 +1307,7 @@ function groupBoxCss(
       : shift != null
         ? `top:calc(${shift} + ${cqwLen(local.y, unit)})`
         : `top:${cqwLen(local.y, unit)}`,
-    full ? "width:100%" : `width:${cqwLen(local.width, unit)}`,
+    full ? "width:100%" : inRow ? "width:auto;flex:1 1 0;min-width:0" : `width:${cqwLen(local.width, unit)}`,
     inRow && full ? "flex:0 0 100%" : "",
     full || inRow
       ? `height:auto;aspect-ratio:${Math.max(1, box.width)} / ${Math.max(1, box.height)}`
@@ -1583,13 +1672,43 @@ function buildHtml(args: {
   blueprint: SiteBlueprintV1;
   multiCardPlan: MultiCardPublishPlan;
 }): string {
-  const body = serializeTreeHtml(args.forest.children, args.layers, "    ", false, args.multiCardPlan.layerToNode);
+  const pinned = resolvePinnedTopSection(args.blueprint);
+  let mainBody: string;
+  let pinShell = "";
+  if (pinned) {
+    const coverage = new Set(collectSemanticCoverageLayerIds(args.blueprint, pinned.id));
+    const { pinned: pinRoots, rest } = partitionPinnedPublishRoots(args.forest.children, coverage);
+    const pinInner = serializeTreeHtml(
+      pinRoots,
+      args.layers,
+      "    ",
+      false,
+      args.multiCardPlan.layerToNode,
+    );
+    mainBody = serializeTreeHtml(
+      rest,
+      args.layers,
+      "    ",
+      false,
+      args.multiCardPlan.layerToNode,
+    );
+    pinShell = `  <div class="s-pin" data-section-pin="${escapeHtml(pinned.id)}">\n${pinInner}\n  </div>`;
+  } else {
+    mainBody = serializeTreeHtml(
+      args.forest.children,
+      args.layers,
+      "    ",
+      false,
+      args.multiCardPlan.layerToNode,
+    );
+  }
   const multiCardHtml = serializeMultiCardHtml(args.multiCardPlan, args.layers);
   const pageClass = args.forest.usesFlow ? "s-page s-flow" : "s-page";
   const htmlClass = [
     scrollFlowUsesKind(args.blueprint, "smooth") ? "s-scroll-smooth" : "",
     scrollFlowUsesKind(args.blueprint, "snap") ? "s-scroll-snap" : "",
     blueprintHasExpandedSection(args.blueprint) ? "s-has-vh-secs" : "",
+    pinned ? "s-has-pin" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -1623,9 +1742,9 @@ ${fontLink}  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="${pageClass}">
-${anchors ? `${anchors}\n` : ""}${body}${multiCardHtml ? `\n${multiCardHtml}` : ""}
+${anchors ? `${anchors}\n` : ""}${mainBody}${multiCardHtml ? `\n${multiCardHtml}` : ""}
   </main>
-  <script src="script.js"></script>
+${pinShell ? `${pinShell}\n` : ""}  <script src="script.js"></script>
 </body>
 </html>
 `;

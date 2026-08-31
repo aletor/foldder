@@ -5,7 +5,23 @@ import { unionPageRects, type PageRect } from "./site-creator-coordinate-space";
 import { isolationUnits } from "./build-site-selection-index";
 import type { SiteCreatorSelectionIndex, SiteCreatorSelectionState } from "./site-creator-selection-types";
 import type { SiteCreatorUnitOutline } from "./SiteCreatorSelectionSurface";
-import { SC_VISUAL } from "./site-creator-visual-tokens";
+import { isGroupingOutlineKind, SC_VISUAL } from "./site-creator-visual-tokens";
+
+function groupingScopeVeilPath(
+  pageWidth: number,
+  pageHeight: number,
+  holes: Array<{ x: number; y: number; width: number; height: number }>,
+): string {
+  const outer = `M0 0H${pageWidth}V${pageHeight}H0Z`;
+  const inner = holes
+    .filter((bounds) => bounds.width > 0 && bounds.height > 0)
+    .map(
+      (bounds) =>
+        `M${bounds.x} ${bounds.y}H${bounds.x + bounds.width}V${bounds.y + bounds.height}H${bounds.x}Z`,
+    )
+    .join("");
+  return `${outer}${inner}`;
+}
 
 function CornerMarks({
   bounds,
@@ -90,6 +106,11 @@ export function SiteCreatorSelectionOverlay({
     return unionPageRects(unitOutlines.map((o) => o.bounds));
   }, [unitOutlines]);
 
+  const groupingOutlines = useMemo(
+    () => unitOutlines.filter((outline) => isGroupingOutlineKind(outline.kind)),
+    [unitOutlines],
+  );
+
   return (
     <svg
       className="site-creator-selection-overlay pointer-events-none absolute inset-0 block h-full w-full"
@@ -134,7 +155,7 @@ export function SiteCreatorSelectionOverlay({
             height={outline.bounds.height}
             fill="none"
             stroke={SC_VISUAL.selection}
-            strokeWidth={1.5}
+            strokeWidth={SC_VISUAL.selectionStroke}
             vectorEffect="non-scaling-stroke"
           />
           <CornerMarks bounds={outline.bounds} color={SC_VISUAL.selection} />
@@ -157,32 +178,48 @@ export function SiteCreatorSelectionOverlay({
             strokeWidth={1}
             vectorEffect="non-scaling-stroke"
           />
-          {hoverOutline.kind === "section" ||
-          hoverOutline.kind === "group" ||
-          hoverOutline.kind === "component" ? (
+          {isGroupingOutlineKind(hoverOutline.kind) ? (
             <CornerMarks bounds={hoverOutline.bounds} color={SC_VISUAL.hover} />
           ) : null}
         </g>
       ) : null}
 
-      {unitOutlines.map((outline, i) => (
-        <g key={`unit-${i}`} data-site-creator-selection>
-          <rect
-            x={outline.bounds.x}
-            y={outline.bounds.y}
-            width={outline.bounds.width}
-            height={outline.bounds.height}
-            fill={SC_VISUAL.selectionFill}
-            stroke={SC_VISUAL.selection}
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-            style={{ filter: `drop-shadow(0 0 2px ${SC_VISUAL.selectionGlow})` }}
-          />
-          {outline.kind === "section" || outline.kind === "group" || outline.kind === "component" ? (
-            <CornerMarks bounds={outline.bounds} color={SC_VISUAL.selection} />
-          ) : null}
-        </g>
-      ))}
+      {groupingOutlines.length > 0 ? (
+        <path
+          data-site-creator-scope-veil
+          d={groupingScopeVeilPath(
+            pageWidth,
+            pageHeight,
+            groupingOutlines.map((outline) => outline.bounds),
+          )}
+          fill={SC_VISUAL.veil}
+          fillRule="evenodd"
+        />
+      ) : null}
+
+      {unitOutlines.map((outline, i) => {
+        const grouping = isGroupingOutlineKind(outline.kind);
+        return (
+          <g
+            key={`unit-${i}`}
+            data-site-creator-selection
+            data-scope={grouping ? "group" : "object"}
+          >
+            <rect
+              x={outline.bounds.x}
+              y={outline.bounds.y}
+              width={outline.bounds.width}
+              height={outline.bounds.height}
+              fill={SC_VISUAL.selectionFill}
+              stroke={SC_VISUAL.selection}
+              strokeWidth={grouping ? SC_VISUAL.groupSelectionStroke : SC_VISUAL.selectionStroke}
+              vectorEffect="non-scaling-stroke"
+              style={{ filter: `drop-shadow(0 0 2px ${SC_VISUAL.selectionGlow})` }}
+            />
+            {grouping ? <CornerMarks bounds={outline.bounds} color={SC_VISUAL.selection} /> : null}
+          </g>
+        );
+      })}
 
       {legacyRects.length === 1 && legacyRects[0] ? (
         <rect
@@ -192,7 +229,7 @@ export function SiteCreatorSelectionOverlay({
           height={legacyRects[0].height}
           fill={SC_VISUAL.selectionFill}
           stroke={SC_VISUAL.selection}
-          strokeWidth={1.5}
+          strokeWidth={SC_VISUAL.selectionStroke}
           vectorEffect="non-scaling-stroke"
         />
       ) : null}

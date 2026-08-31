@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
-import { createSectionFromSelection } from "./site-blueprint-ops";
+import { createSectionFromSelection, setSectionHeightMode, setSectionPinToTop } from "./site-blueprint-ops";
 import { cloneBlueprint } from "./site-blueprint-validate";
 import { compilePublishedSite } from "./site-creator-publish-compile";
-import { setSectionHeightMode } from "./site-blueprint-ops";
 import {
   applySectionViewportHeights,
   describeSectionHeightOpportunity,
   designedSectionGapPx,
+  designedSectionTopPaddingPx,
   liveViewportHeightInPageUnits,
   planSectionHeightLayout,
   resolveBandSectionTargetHeight,
@@ -24,7 +24,11 @@ import {
   makeLayer,
   makePage,
 } from "./site-creator-responsive-fixtures";
-import { findDisplayObject, resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
+import {
+  findDisplayObject,
+  resolveAutomaticHeroMinHeight,
+  resolveSiteCreatorResponsiveDisplay,
+} from "./site-creator-responsive";
 import { SITE_CREATOR_TABLET_WIDTH } from "./site-creator-viewport";
 
 function twoSections() {
@@ -127,34 +131,73 @@ describe("section height mode", () => {
     expect(hero.fitted).toBe(false);
     expect(hero.height).toBe(900);
     expect(hero.extra).toBe(500);
-    // El hueco de diseño entre hero (0–400) y body (500) se conserva al empujar.
-    expect(next.top).toBe(1000);
+    // El margen entre secciones está reclamado por la inferior: no hay hueco externo.
+    expect(next.top).toBe(900);
   });
 
-  it("keeps the original gap between sections on tablet and mobile", () => {
-    const { page, index, blueprint, heroId, sectionId } = twoSections();
-    const hero = blueprint.nodes[heroId];
-    const section = blueprint.nodes[sectionId];
-    expect(hero?.kind).toBe("section");
-    expect(section?.kind).toBe("section");
-    if (hero?.kind !== "section" || section?.kind !== "section") return;
-    expect(designedSectionGapPx(hero, section)).toBe(100);
+  it("keeps designed top padding of the following section on tablet and mobile", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 200, y: 0, width: 400, height: 80, fill: "#111" }),
+      makeLayer({ id: "h2", type: "rect", x: 200, y: 100, width: 280, height: 40, fill: "#111" }),
+      makeLayer({ id: "title", type: "rect", x: 240, y: 500, width: 480, height: 48, fill: "#222" }),
+      makeLayer({ id: "sub", type: "rect", x: 240, y: 560, width: 320, height: 32, fill: "#333" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h", "h2"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["title", "sub"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+    const heroNode = section.blueprint.nodes[hero.createdNodeId];
+    const sectionNode = section.blueprint.nodes[section.createdNodeId];
+    expect(heroNode?.kind).toBe("section");
+    expect(sectionNode?.kind).toBe("section");
+    if (heroNode?.kind !== "section" || sectionNode?.kind !== "section") return;
+    expect(heroNode.sourceRange.top).toBe(0);
+    expect(heroNode.sourceRange.bottom).toBe(140);
+    expect(designedSectionGapPx(heroNode, sectionNode)).toBe(0);
+    expect(sectionNode.sourceRange.top).toBe(140);
+    expect(designedSectionTopPaddingPx(sectionNode, { y: 500, height: 92 })).toBe(360);
 
-    for (const width of [SITE_CREATOR_TABLET_WIDTH, 390]) {
+    for (const width of [1920, SITE_CREATOR_TABLET_WIDTH, 390]) {
+      const band = width === 1920 ? "monitor" : width === SITE_CREATOR_TABLET_WIDTH ? "tablet" : "mobile";
       const resolved = resolveSiteCreatorResponsiveDisplay({
         page,
-        blueprint,
+        blueprint: section.blueprint,
         referenceIndex: index,
         viewportWidth: width,
+        band,
       });
-      const heroRegion = resolved.resolvedLayout?.regions.find((region) => region.sectionId === heroId);
-      const nextRegion = resolved.resolvedLayout?.regions.find((region) => region.sectionId === sectionId);
+      const heroRegion = resolved.resolvedLayout?.regions.find(
+        (region) => region.sectionId === hero.createdNodeId,
+      );
+      const nextRegion = resolved.resolvedLayout?.regions.find(
+        (region) => region.sectionId === section.createdNodeId,
+      );
       expect(heroRegion).toBeTruthy();
       expect(nextRegion).toBeTruthy();
       if (!heroRegion || !nextRegion) return;
-      const gap = scaledDesignedSectionGap(hero, section, width, 1920);
-      expect(gap).toBeGreaterThan(0);
-      expect(nextRegion.layoutRect.y).toBe(heroRegion.layoutRect.y + heroRegion.layoutRect.height + gap);
+      expect(scaledDesignedSectionGap(heroNode, sectionNode, width, 1920)).toBe(0);
+      expect(nextRegion.layoutRect.y).toBeCloseTo(
+        heroRegion.layoutRect.y + heroRegion.layoutRect.height,
+        1,
+      );
+      const scale = width / 1920;
+      // El marco incluye el margen superior reclamado (no queda como hueco externo).
+      expect(nextRegion.layoutRect.height).toBeGreaterThanOrEqual(360 * scale + 90 * scale - 1);
     }
   });
 
@@ -199,6 +242,76 @@ describe("section height mode", () => {
     });
     expect(expandedRegion.layoutRect.height).toBeCloseTo(target, 4);
     expect(expandedRegion.layoutRect.height).toBeGreaterThan(baselineRegion.layoutRect.height);
+  });
+
+  it("keeps a pinned hero to content height on mobile after Ordenador custom", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 120, fill: "#fff" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 400, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok) return;
+    const heroId = hero.createdNodeId;
+
+    const pinned = setSectionPinToTop(section.blueprint, heroId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+    const custom = setSectionHeightMode(pinned.blueprint, heroId, "custom", "monitor", 160);
+    expect(custom.ok).toBe(true);
+    if (!custom.ok) return;
+
+    const unpinnedMobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: section.blueprint,
+      referenceIndex: index,
+      viewportWidth: 390,
+      band: "mobile",
+    });
+    const mobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: custom.blueprint,
+      referenceIndex: index,
+      viewportWidth: 390,
+      band: "mobile",
+    });
+    const monitor = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: custom.blueprint,
+      referenceIndex: index,
+      viewportWidth: 1440,
+      band: "monitor",
+    });
+    const unpinnedH = unpinnedMobile.resolvedLayout?.regions.find(
+      (region) => region.sectionId === heroId,
+    )?.layoutRect.height;
+    const mobileRegion = mobile.resolvedLayout?.regions.find((region) => region.sectionId === heroId);
+    const monitorRegion = monitor.resolvedLayout?.regions.find((region) => region.sectionId === heroId);
+    expect(unpinnedH).toBeGreaterThanOrEqual(resolveAutomaticHeroMinHeight(390, "mobile"));
+    expect(monitorRegion?.layoutRect.height).toBe(160);
+    expect(mobileRegion).toBeTruthy();
+    if (!mobileRegion) return;
+    // Sin pin, el Hero móvil fuerza ~520px; con pin sigue el contenido (y el custom de Ordenador no se filtra).
+    expect(mobileRegion.layoutRect.height).toBeLessThan(200);
+    expect(mobileRegion.layoutRect.height).toBeLessThan(
+      resolveAutomaticHeroMinHeight(390, "mobile"),
+    );
   });
 
   it("keeps original side insets of a section background on tablet and mobile", () => {
@@ -714,7 +827,7 @@ describe("section height mode", () => {
       title: "Alto",
       imageHrefByLayerId: {},
     });
-    expect(compiled.css).toMatch(/100cqw \* 500 \//);
+    expect(compiled.css).toMatch(/100cqw \* 400 \//);
     expect(compiled.css).not.toMatch(/100cqw \* 1180 \//);
     const wideCss = compiled.css.split("@media")[0] ?? "";
     expect(wideCss).not.toContain("100dvh");

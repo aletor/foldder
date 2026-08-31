@@ -2,10 +2,15 @@ import type { FreehandObject } from "../FreehandStudio";
 import type { DesignerSourceSnapshotV1, SiteBlueprintNode, SiteBlueprintV1 } from "./site-creator-types";
 import { isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode } from "./site-creator-types";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
-import { collectSemanticCoverageLayerIds, findLayerSemanticOwner } from "./site-blueprint-ownership";
+import {
+  collectSemanticCoverageLayerIds,
+  findLayerSemanticOwner,
+  outermostSemanticAncestor,
+} from "./site-blueprint-ownership";
 import { expandLayerIdsWithDesignerGroups } from "./site-creator-designer-group-id";
 import { resolveSnapshotLayerById } from "./designer-source-layers";
-import { moldLayerIdFromDisplay, parseMultiCardInstanceId } from "./site-creator-multicard-ids";
+import { parseMultiCardInstanceId } from "./site-creator-multicard-ids";
+import { isMultiCardMoldWrapId, multiCardNodeIdFromWrapLayer } from "./site-creator-multicard-layout";
 
 /** Unidad de selección orientada al usuario (no se persiste). */
 export type SiteCreatorSelectionUnit =
@@ -236,32 +241,93 @@ function readLabelFromLayer(
   return null;
 }
 
+function semanticOwnerFromDisplayLayer(
+  layerId: string,
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): { owner: SiteBlueprintNode | null; resolvedLayerId: string } {
+  const instance = parseMultiCardInstanceId(layerId);
+  const resolvedLayerId = instance?.moldLayerId ?? layerId;
+  if (instance && blueprint.nodes[instance.nodeId] && isSiteMultiCardNode(blueprint.nodes[instance.nodeId]!)) {
+    return { owner: blueprint.nodes[instance.nodeId]!, resolvedLayerId };
+  }
+  const wrapNodeId = multiCardNodeIdFromWrapLayer(layerId);
+  if (wrapNodeId && isSiteMultiCardNode(blueprint.nodes[wrapNodeId])) {
+    return { owner: blueprint.nodes[wrapNodeId]!, resolvedLayerId };
+  }
+  return {
+    owner: findLayerSemanticOwner(blueprint, resolvedLayerId, index),
+    resolvedLayerId,
+  };
+}
+
 /**
- * En el nivel raíz (sin inspección), una capa poseída por Button, LayoutGroup
- * o Section se resuelve a esa unidad. Las Sections no capturan clics cuando
- * se inspecciona su contenido.
+ * En el nivel raíz (sin inspección), el clic resuelve al ancestro semántico
+ * más externo (sección si existe; si no, grupo / MultiCard).
+ * Excepción: los botones van primero — se seleccionan saltando sección y grupos.
+ * Los siguientes clics descienden con `resolveInspectClickUnit`.
  */
 export function resolveRootClickUnit(
   layerId: string,
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
 ): SiteCreatorSelectionUnit {
-  const instance = parseMultiCardInstanceId(layerId);
-  const resolvedLayerId = instance?.moldLayerId ?? layerId;
-  if (instance && blueprint.nodes[instance.nodeId] && isSiteMultiCardNode(blueprint.nodes[instance.nodeId]!)) {
-    return { kind: "blueprintNode", nodeId: instance.nodeId };
+  const { owner, resolvedLayerId } = semanticOwnerFromDisplayLayer(layerId, blueprint, index);
+  const button = nearestButtonAncestor(blueprint, owner);
+  if (button) {
+    return { kind: "blueprintNode", nodeId: button.id };
   }
-  const owner = findLayerSemanticOwner(blueprint, resolvedLayerId, index);
   if (
     owner &&
-    (isSiteButtonNode(owner) ||
-      owner.kind === "layoutGroup" ||
-      isSiteMultiCardNode(owner) ||
-      isSiteSectionNode(owner))
+    (owner.kind === "layoutGroup" || isSiteMultiCardNode(owner) || isSiteSectionNode(owner))
   ) {
-    return { kind: "blueprintNode", nodeId: owner.id };
+    const outermost = outermostSemanticAncestor(blueprint, owner);
+    return { kind: "blueprintNode", nodeId: outermost.id };
   }
   return { kind: "layer", layerId: resolvedLayerId };
+}
+
+/**
+ * Rollover: el botón va primero (por encima de sección y grupo).
+ * Si no hay botón: sección; si no, grupo más externo.
+ */
+export function resolveHoverScopeUnit(
+  layerId: string,
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): SiteCreatorSelectionUnit | null {
+  const { owner } = semanticOwnerFromDisplayLayer(layerId, blueprint, index);
+  if (!owner) return null;
+  const button = nearestButtonAncestor(blueprint, owner);
+  if (button) return { kind: "blueprintNode", nodeId: button.id };
+  let current: SiteBlueprintNode | null = owner;
+  let sectionId: string | null = null;
+  let groupId: string | null = null;
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (isSiteSectionNode(current)) sectionId = current.id;
+    if (current.kind === "layoutGroup") groupId = current.id;
+    current = current.parentId ? blueprint.nodes[current.parentId] ?? null : null;
+  }
+  if (sectionId) return { kind: "blueprintNode", nodeId: sectionId };
+  if (groupId) return { kind: "blueprintNode", nodeId: groupId };
+  return null;
+}
+
+/** Botón más cercano hacia la raíz (sección/grupos se saltan). */
+function nearestButtonAncestor(
+  blueprint: SiteBlueprintV1,
+  start: SiteBlueprintNode | null,
+): SiteBlueprintNode | null {
+  let current = start;
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (isSiteButtonNode(current)) return current;
+    current = current.parentId ? blueprint.nodes[current.parentId] ?? null : null;
+  }
+  return null;
 }
 
 /** Dentro de un contenedor semántico (Button/Grupo/Sección). */
@@ -271,8 +337,7 @@ export function resolveInspectClickUnit(
   blueprint: SiteBlueprintV1,
   index: SiteCreatorSelectionIndex,
 ): SiteCreatorSelectionUnit {
-  const resolvedLayerId = moldLayerIdFromDisplay(layerId);
-  const owner = findLayerSemanticOwner(blueprint, resolvedLayerId, index);
+  const { owner, resolvedLayerId } = semanticOwnerFromDisplayLayer(layerId, blueprint, index);
   if (!owner || owner.id === inspectNodeId) {
     return { kind: "layer", layerId: resolvedLayerId };
   }
@@ -285,7 +350,7 @@ export function resolveInspectClickUnit(
     }
     current = node.parentId;
   }
-  return { kind: "layer", layerId };
+  return { kind: "layer", layerId: resolvedLayerId };
 }
 
 /** Capas que “pertenecen” a una unidad para hit/outline. */
@@ -306,8 +371,84 @@ export function unitCoverageLayerIds(
   return [...mold, ...extra];
 }
 
+export const MARQUEE_GROUP_BLOCK_MESSAGE = "Desagrupa primero los elementos agrupados";
+
+function isNonSectionGroupingNode(node: SiteBlueprintNode): boolean {
+  return node.kind === "layoutGroup" || isSiteButtonNode(node) || isSiteMultiCardNode(node);
+}
+
+/** Grupo / botón / MultiCard más externo; las secciones no cuentan. */
+function outermostNonSectionGrouping(
+  blueprint: SiteBlueprintV1,
+  start: SiteBlueprintNode,
+): SiteBlueprintNode | null {
+  let current: SiteBlueprintNode | null = start;
+  let found: SiteBlueprintNode | null = null;
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (isNonSectionGroupingNode(current)) found = current;
+    current = current.parentId ? blueprint.nodes[current.parentId] ?? null : null;
+  }
+  return found;
+}
+
 /**
- * Colapsa capas de marquee/hit a unidades de usuario.
+ * Marquee: si una capa está dentro de un grupo/botón/MultiCard, se selecciona
+ * esa agrupación (no las capas internas). Las secciones no absorben la selección.
+ */
+export function layersToMarqueeSelectionUnits(
+  layerIds: string[],
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): SiteCreatorSelectionUnit[] {
+  const units: SiteCreatorSelectionUnit[] = [];
+  const seen = new Set<string>();
+  for (const layerId of layerIds) {
+    const { owner, resolvedLayerId } = semanticOwnerFromDisplayLayer(layerId, blueprint, index);
+    if (isMultiCardMoldWrapId(resolvedLayerId)) continue;
+    const grouping = owner ? outermostNonSectionGrouping(blueprint, owner) : null;
+    const unit: SiteCreatorSelectionUnit = grouping
+      ? { kind: "blueprintNode", nodeId: grouping.id }
+      : { kind: "layer", layerId: resolvedLayerId };
+    const key = selectionUnitKey(unit);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    units.push(unit);
+  }
+  return units;
+}
+
+export function layerBelongsToNonSectionGrouping(
+  layerId: string,
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  const { owner } = semanticOwnerFromDisplayLayer(layerId, blueprint, index);
+  let current = owner;
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (isNonSectionGroupingNode(current)) return true;
+    current = current.parentId ? blueprint.nodes[current.parentId] ?? null : null;
+  }
+  return false;
+}
+
+/** Tras un marquee, Agrupar se bloquea si algún objeto suelto ya está en grupo/botón/MultiCard. */
+export function marqueeUnitsBlockGrouping(
+  units: SiteCreatorSelectionUnit[],
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  return units.some((unit) => {
+    if (unit.kind !== "layer") return false;
+    return layerBelongsToNonSectionGrouping(unit.layerId, blueprint, index);
+  });
+}
+
+/**
+ * Colapsa capas de clic a unidades de usuario.
  * No mezcla un Component con sus capas.
  */
 export function collapseLayersToSelectionUnits(

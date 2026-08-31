@@ -35,7 +35,7 @@ import {
 } from "./site-creator-multicard-layout";
 import { findDisplayObject, resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
 import { buildSiteCreatorPresentationTree } from "./site-creator-presentation-tree";
-import { resolveRootClickUnit } from "./site-creator-display-labels";
+import { resolveInspectClickUnit, resolveRootClickUnit } from "./site-creator-display-labels";
 import { canvasHitTestUnits, canEnterContainer, frontmostDirectHit } from "./site-creator-hit-test";
 import { compilePublishedSite, collectPublishImageRefs, publishAssetPlaceholder } from "./site-creator-publish-compile";
 
@@ -490,6 +490,28 @@ describe("MultiCard", () => {
     expect(moldHit).toBeTruthy();
     expect(resolveRootClickUnit(moldHit!.layerId, eight.blueprint, displayIndex)).toEqual({
       kind: "blueprintNode",
+      nodeId: hero.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit(
+        moldHit!.layerId,
+        hero.createdNodeId,
+        eight.blueprint,
+        displayIndex,
+      ),
+    ).toEqual({
+      kind: "blueprintNode",
+      nodeId: grouped.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit(
+        moldHit!.layerId,
+        grouped.createdNodeId,
+        eight.blueprint,
+        displayIndex,
+      ),
+    ).toEqual({
+      kind: "blueprintNode",
       nodeId: created.createdNodeId,
     });
 
@@ -505,7 +527,7 @@ describe("MultiCard", () => {
       expect(hit, `copy ${copy.id} at ${point.x},${point.y}`).toBeTruthy();
       expect(resolveRootClickUnit(hit!.layerId, eight.blueprint, displayIndex)).toEqual({
         kind: "blueprintNode",
-        nodeId: created.createdNodeId,
+        nodeId: hero.createdNodeId,
       });
     }
 
@@ -575,6 +597,12 @@ describe("MultiCard", () => {
     expect(hit).toBeTruthy();
     expect(isMultiCardInstanceId(hit!.layerId)).toBe(true);
     expect(resolveRootClickUnit(hit!.layerId, eight.blueprint, displayIndex)).toEqual({
+      kind: "blueprintNode",
+      nodeId: section.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit(hit!.layerId, section.createdNodeId, eight.blueprint, displayIndex),
+    ).toEqual({
       kind: "blueprintNode",
       nodeId: created.createdNodeId,
     });
@@ -1451,6 +1479,12 @@ describe("MultiCard", () => {
     expect(copy).toBeTruthy();
     const displayIndex = buildSiteSelectionIndex(resolved.displayPage);
     expect(resolveRootClickUnit(copy!.id, created.blueprint, displayIndex)).toEqual({
+      kind: "blueprintNode",
+      nodeId: hero.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit(copy!.id, hero.createdNodeId, created.blueprint, displayIndex),
+    ).toEqual({
       kind: "blueprintNode",
       nodeId: created.createdNodeId,
     });

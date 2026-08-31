@@ -35,6 +35,11 @@ export interface SiteBlueprintSectionNode extends SiteBlueprintNodeBase {
   heightMode?: SiteSectionHeightMode;
   /** Solo con `heightMode: "custom"` (vista Original). */
   customHeight?: number;
+  /**
+   * Cabecera fija: la sección permanece arriba al hacer scroll.
+   * Solo tiene efecto en la primera sección del documento.
+   */
+  pinToTop?: boolean;
   /** Sección creada al adaptar un grupo de raíz al ancho de página. */
   promotedFromGroupId?: string;
 }
@@ -161,7 +166,18 @@ export interface SiteBlueprintV1 {
    * Ausente = 1500. No aplica a tablet ni móvil.
    */
   monitorMaxWidth?: number;
+  /**
+   * Rectángulo de fondo del Designer promovido a fondo de página.
+   * Solo Site Creator: el archivo de Designer no se modifica.
+   */
+  pageBackground?: SitePageBackgroundV1;
 }
+
+export type SitePageBackgroundV1 = {
+  sourceLayerId: string;
+  focal?: { x: number; y: number };
+  zoom?: number;
+};
 
 export type SitePageInsetBandV1 = {
   left: number;
@@ -454,12 +470,37 @@ export function sanitizeSiteBlueprintV1(blueprint: SiteBlueprintV1): SiteBluepri
   const insetsChanged = pageInsets !== blueprint.pageInsets;
   const monitorMaxWidth = parseSanitizedMonitorMaxWidth(blueprint.monitorMaxWidth);
   const maxWidthChanged = monitorMaxWidth !== blueprint.monitorMaxWidth;
-  if (!changed && !insetsChanged && !maxWidthChanged) return blueprint;
+  const pageBackground = parseSanitizedPageBackground(blueprint.pageBackground);
+  const pageBackgroundChanged = pageBackground !== blueprint.pageBackground;
+  if (!changed && !insetsChanged && !maxWidthChanged && !pageBackgroundChanged) return blueprint;
   const next: SiteBlueprintV1 = changed ? { ...blueprint, nodes } : { ...blueprint };
   if (pageInsets) next.pageInsets = pageInsets;
   else delete next.pageInsets;
   if (monitorMaxWidth != null) next.monitorMaxWidth = monitorMaxWidth;
   else delete next.monitorMaxWidth;
+  if (pageBackground) next.pageBackground = pageBackground;
+  else delete next.pageBackground;
+  return next;
+}
+
+function parseSanitizedPageBackground(
+  raw: SiteBlueprintV1["pageBackground"],
+): SiteBlueprintV1["pageBackground"] | undefined {
+  if (!raw || typeof raw.sourceLayerId !== "string" || !raw.sourceLayerId.trim()) return undefined;
+  const next: SitePageBackgroundV1 = { sourceLayerId: raw.sourceLayerId.trim() };
+  if (
+    raw.focal &&
+    typeof raw.focal.x === "number" &&
+    Number.isFinite(raw.focal.x) &&
+    typeof raw.focal.y === "number" &&
+    Number.isFinite(raw.focal.y)
+  ) {
+    next.focal = {
+      x: Math.min(1, Math.max(0, raw.focal.x)),
+      y: Math.min(1, Math.max(0, raw.focal.y)),
+    };
+  }
+  if (typeof raw.zoom === "number" && Number.isFinite(raw.zoom)) next.zoom = raw.zoom;
   return next;
 }
 

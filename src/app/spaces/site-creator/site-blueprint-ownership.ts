@@ -54,6 +54,22 @@ export function collectOwnedLayerIds(node: SiteBlueprintNode): string[] {
 }
 
 /** Cobertura recursiva: layerIds propios + de todos los descendientes semánticos. */
+/** Camina `parentId` hasta el contenedor semántico más externo. */
+export function outermostSemanticAncestor(
+  blueprint: SiteBlueprintV1,
+  node: SiteBlueprintNode,
+): SiteBlueprintNode {
+  let current = node;
+  const seen = new Set<string>([current.id]);
+  while (current.parentId) {
+    const parent = blueprint.nodes[current.parentId];
+    if (!parent || seen.has(parent.id)) break;
+    seen.add(parent.id);
+    current = parent;
+  }
+  return current;
+}
+
 export function collectSemanticCoverageLayerIds(
   blueprint: SiteBlueprintV1,
   nodeId: string,

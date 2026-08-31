@@ -6,6 +6,7 @@ import {
   Magnet,
   Maximize2,
   MoveVertical,
+  Pin,
   Square,
   UnfoldVertical,
   Waves,
@@ -56,6 +57,10 @@ export type SectionSpineStation = {
   heightMode: SiteSectionHeightMode;
   customHeight: number | null;
   selected: boolean;
+  /** Primera sección: puede fijarse como cabecera al hacer scroll. */
+  canPinToTop?: boolean;
+  /** Cabecera fija activa. */
+  pinToTop?: boolean;
   /** Tramo que sale de esta sección hacia la siguiente. La última no tiene. */
   outgoing: { fromId: string; toId: string; kind: SiteSectionScrollKind } | null;
 };
@@ -77,6 +82,8 @@ export type SiteCreatorSectionSpineProps = {
   onCustomHeightChange: (sectionId: string, heightPx: number) => void;
   /** Original: estira sourceRange.bottom (padding inferior). */
   onSourceRangeBottomChange?: (sectionId: string, bottom: number) => void;
+  /** Dispositivo: fija la primera sección arriba al hacer scroll. */
+  onPinToTopChange?: (sectionId: string, pinToTop: boolean) => void;
   /** Original: marcas de sección. Dispositivo: alto, recorrido y raya. */
   mode?: "structure" | "device";
 };
@@ -248,6 +255,30 @@ function ScrollChip({
   );
 }
 
+function PinChip({
+  pinned,
+  testId,
+  onToggle,
+}: {
+  pinned: boolean;
+  testId: string;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-pressed={pinned}
+      aria-label={pinned ? "Cabecera fija: activada" : "Fijar cabecera arriba"}
+      title={pinned ? "Cabecera fija · clic para soltar" : "Fijar arriba al hacer scroll"}
+      onClick={() => onToggle(!pinned)}
+      className={`${CHIP_BUTTON} ${pinned ? "border-white/45 bg-white/12 text-white" : ""}`}
+    >
+      <Pin className="h-3.5 w-3.5" strokeWidth={2.2} aria-hidden />
+    </button>
+  );
+}
+
 function HeightChip({
   station,
   liveCustom,
@@ -350,6 +381,7 @@ function StationModule({
   onHeightModeChange,
   onCustomHeightChange,
   onSourceRangeBottomChange,
+  onPinToTopChange,
   mode = "device",
 }: {
   station: SectionSpineStation;
@@ -361,6 +393,7 @@ function StationModule({
   onHeightModeChange: (mode: SiteSectionHeightMode) => void;
   onCustomHeightChange: (heightPx: number) => void;
   onSourceRangeBottomChange?: (bottom: number) => void;
+  onPinToTopChange?: (pinToTop: boolean) => void;
   mode?: "structure" | "device";
 }) {
   const [liveCustom, setLiveCustom] = useState<number | null>(null);
@@ -373,6 +406,7 @@ function StationModule({
     minimumHeight: number;
     maximumHeight: number;
     pointerId: number;
+    lastClientY: number;
     lastSent: number;
     pending: number | null;
     raf: number;
@@ -400,12 +434,14 @@ function StationModule({
       const next = drag.pending;
       if (next == null || next === drag.lastSent) return;
       drag.lastSent = next;
+      // Solo preview local: emitir al soltar evita bucles layout → pointermove.
       setLiveCustom(next);
-      emit(drag.kind, next, drag.startTop);
     };
     const onMove = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || event.pointerId !== drag.pointerId) return;
+      if (event.clientY === drag.lastClientY) return;
+      drag.lastClientY = event.clientY;
       const deltaPage =
         (event.clientY - drag.startClientY) / Math.max(0.0001, drag.startScale);
       drag.pending = Math.min(
@@ -431,7 +467,7 @@ function StationModule({
       const kind = drag.kind;
       const top = drag.startTop;
       dragRef.current = null;
-      if (next !== drag.lastSent) emit(kind, next, top);
+      emit(kind, next, top);
       setLiveCustom(null);
     };
     window.addEventListener("pointermove", onMove);
@@ -479,6 +515,7 @@ function StationModule({
       minimumHeight: minHeight,
       maximumHeight: maxHeight,
       pointerId: event.pointerId,
+      lastClientY: event.clientY,
       lastSent: startHeight,
       pending: null,
       raf: 0,
@@ -524,6 +561,14 @@ function StationModule({
             onHeightModeChange(next);
           }}
         />
+
+        {station.canPinToTop && onPinToTopChange ? (
+          <PinChip
+            pinned={Boolean(station.pinToTop)}
+            testId={`site-creator-section-spine-pin-${station.sectionId}`}
+            onToggle={onPinToTopChange}
+          />
+        ) : null}
       </div>
       )}
 
@@ -591,6 +636,7 @@ export function SiteCreatorSectionSpine({
   onHeightModeChange,
   onCustomHeightChange,
   onSourceRangeBottomChange,
+  onPinToTopChange,
   mode = "device",
 }: SiteCreatorSectionSpineProps) {
   const lineBottom = Math.max(
@@ -638,6 +684,9 @@ export function SiteCreatorSectionSpine({
             onSourceRangeBottomChange
               ? (bottom) => onSourceRangeBottomChange(station.sectionId, bottom)
               : undefined
+          }
+          onPinToTopChange={
+            onPinToTopChange ? (pin) => onPinToTopChange(station.sectionId, pin) : undefined
           }
           mode={mode}
         />

@@ -374,6 +374,13 @@ export function isMultiCardMoldWrapId(layerId: string): boolean {
   return Boolean(mold?.startsWith(MOLD_WRAP_PREFIX));
 }
 
+export function multiCardNodeIdFromWrapLayer(layerId: string): string | null {
+  const mold = parseMultiCardInstanceId(layerId)?.moldLayerId ?? layerId;
+  if (!mold.startsWith(MOLD_WRAP_PREFIX)) return null;
+  const nodeId = mold.slice(MOLD_WRAP_PREFIX.length);
+  return nodeId || null;
+}
+
 function compareZOrderPath(a: number[], b: number[]): number {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i += 1) {

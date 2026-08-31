@@ -14,6 +14,7 @@ import {
   mirrorContainerLayerIdFromNode,
 } from "./site-creator-designer-group-bootstrap";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
+import { isThinRule, sameVisualRow } from "./site-creator-group-width-layout";
 import { publishedPathGeom } from "./site-creator-publish-path";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type {
@@ -126,10 +127,6 @@ export function toLocalBox(world: PublishBox, parent: PageRect): PublishBox {
 
 function boxToRect(box: PublishBox): PageRect {
   return { x: box.x, y: box.y, width: box.width, height: box.height };
-}
-
-function rectsYOverlap(a: PageRect, b: PageRect): boolean {
-  return a.y < b.y + b.height && b.y < a.y + a.height;
 }
 
 function unionBoxes(boxes: PublishBox[]): PublishBox | null {
@@ -426,12 +423,16 @@ function isBackgroundLayer(node: RawNode, parent: PageRect): boolean {
   return coversW && coversH;
 }
 
+function rectsOverlap2d(a: PageRect, b: PageRect): boolean {
+  return a.y < b.y + b.height && b.y < a.y + a.height && a.x < b.x + b.width && b.x < a.x + a.width;
+}
+
 function clusterRows(nodes: RawNode[]): RawNode[][] {
   const sorted = [...nodes].sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x || a.z - b.z);
   const rows: RawNode[][] = [];
   for (const node of sorted) {
     const last = rows[rows.length - 1];
-    if (last && last.some((item) => rectsYOverlap(boxToRect(item.box), boxToRect(node.box)))) {
+    if (last && last.some((item) => sameVisualRow(boxToRect(item.box), boxToRect(node.box)))) {
       last.push(node);
     } else {
       rows.push([node]);
@@ -440,10 +441,52 @@ function clusterRows(nodes: RawNode[]): RawNode[][] {
   return rows;
 }
 
+/** Agrupa capas sueltas que se pintan juntas (card sin Agrupar, filete de la fila). */
+function wrapLooseVisualUnits(nodes: RawNode[], parent: PageRect): RawNode[] {
+  const clusters: RawNode[][] = [];
+  for (const node of nodes) {
+    if (node.kind === "group" || node.kind === "row" || isBackgroundLayer(node, parent)) {
+      clusters.push([node]);
+      continue;
+    }
+    const rect = boxToRect(node.box);
+    const host = clusters.find((cluster) => {
+      if (cluster.some((item) => item.kind === "group" || item.kind === "row" || isBackgroundLayer(item, parent))) {
+        return false;
+      }
+      return cluster.some((item) => {
+        const other = boxToRect(item.box);
+        if (isThinRule(rect) || isThinRule(other)) return sameVisualRow(other, rect);
+        return rectsOverlap2d(other, rect);
+      });
+    });
+    if (host) host.push(node);
+    else clusters.push([node]);
+  }
+  return clusters.map((cluster) => {
+    if (cluster.length === 1) return cluster[0]!;
+    if (cluster.every((item) => item.kind === "group" || item.kind === "row")) {
+      return cluster[0]!;
+    }
+    const union = unionBoxes(cluster.map((item) => item.box));
+    if (!union) return cluster[0]!;
+    return {
+      kind: "group",
+      id: `scvu_${cluster.map((item) => item.id).join("_")}`.slice(0, 72),
+      z: Math.min(...cluster.map((item) => item.z)),
+      widthMode: "content",
+      box: union,
+      children: [...cluster].sort((a, b) => a.z - b.z),
+    };
+  });
+}
+
 function promoteFlow(nodes: RawNode[], parent: PageRect): RawNode[] {
-  if (!nodes.some((n) => n.kind === "group")) return nodes;
-  const backgrounds = nodes.filter((n) => isBackgroundLayer(n, parent));
-  const foreground = nodes.filter((n) => !isBackgroundLayer(n, parent));
+  const hasFullGroup = nodes.some((n) => n.kind === "group" && n.widthMode === "full");
+  const packed = hasFullGroup ? wrapLooseVisualUnits(nodes, parent) : nodes;
+  if (!packed.some((n) => n.kind === "group")) return packed;
+  const backgrounds = packed.filter((n) => isBackgroundLayer(n, parent));
+  const foreground = packed.filter((n) => !isBackgroundLayer(n, parent));
   if (foreground.length === 0) return nodes;
   const rows = clusterRows(foreground);
   const flowed: RawNode[] = [...backgrounds];

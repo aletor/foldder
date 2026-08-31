@@ -62,7 +62,6 @@ import {
   SiteCreatorAdaptationControl,
   adaptationButtonLabel,
 } from "./SiteCreatorAdaptationControl";
-import { SiteCreatorRefineControl } from "./SiteCreatorRefineControl";
 import { resolveAdaptationCapability } from "./site-creator-adaptation-capability";
 import {
   bandToEditable,
@@ -104,6 +103,12 @@ import {
   restoreExplicitBackground,
 } from "./site-creator-background-assignment";
 import { imageFrameTuneForSiteCreator } from "./site-creator-image-frame";
+import {
+  isDesignerPageBackgroundLayer,
+  patchPageBackgroundCrop,
+  reconcilePageBackground,
+  resolvePageBackgroundCss,
+} from "./site-creator-page-background";
 import { SiteCreatorChangeOriginDialog } from "./SiteCreatorChangeOriginDialog";
 import { SiteCreatorOutlinePanel, expandPathForUnit } from "./SiteCreatorOutlinePanel";
 import { SiteCreatorButtonLabelPrompt } from "./SiteCreatorSelectionToolbar";
@@ -214,12 +219,12 @@ import {
   moveMultiCardCard,
   setSectionHeightMode,
   stretchSectionSourceRangeBottom,
+  setSectionPinToTop,
 } from "./site-blueprint-ops";
 import {
   applyGroupFitToContainer,
   describeGroupFitOpportunity,
   fitLayoutBandFromViewport,
-  resolveLayoutGroupFromHover,
 } from "./site-creator-group-fit";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import { isUnitCanvasLocked, isUnitOwnCanvasLocked, setUnitCanvasLock } from "./site-creator-canvas-locks";
@@ -240,6 +245,10 @@ import {
   collapseLayersToSelectionUnits,
   deriveBlueprintNodeDisplayLabel,
   deriveLayerDisplayLabel,
+  layersToMarqueeSelectionUnits,
+  MARQUEE_GROUP_BLOCK_MESSAGE,
+  marqueeUnitsBlockGrouping,
+  resolveHoverScopeUnit,
   resolveInspectClickUnit,
   resolveRootClickUnit,
   sameSelectionUnit,
@@ -567,6 +576,9 @@ export function SiteCreatorStudio({
   const [publishError, setPublishError] = useState<string | null>(null);
 
   const [units, setUnits] = useState<SiteCreatorSelectionUnit[]>([]);
+  /** Solo el marquee selecciona objetos sueltos; el clic sigue resolviendo agrupaciones. */
+  const [selectionFromMarquee, setSelectionFromMarquee] = useState(false);
+  const [marqueeGroupBlockOpen, setMarqueeGroupBlockOpen] = useState(false);
   /** Ancestros semánticos de la selección (no es un “modo” visible). */
   const [interactionPath, setInteractionPath] = useState<string[]>([]);
   const [designerShadow, setDesignerShadow] = useState<SiteCreatorSelectionState>(
@@ -718,6 +730,18 @@ export function SiteCreatorStudio({
     ) {
       return blueprint;
     }
+    if (
+      clipImageEditTarget &&
+      page &&
+      isDesignerPageBackgroundLayer(page, clipImageEditTarget.clipId, blueprint)
+    ) {
+      return patchPageBackgroundCrop({
+        blueprint,
+        sourceLayerId: clipImageEditTarget.clipId,
+        focal: clipImageDraft.focal,
+        zoom: clipImageDraft.zoom,
+      }).blueprint;
+    }
     const explicit =
       clipImageEditTarget?.band === mediaBand
         ? resolveExplicitBackground(
@@ -744,7 +768,7 @@ export function SiteCreatorStudio({
         zoom: clipImageDraft.zoom,
       },
     }).blueprint;
-  }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand]);
+  }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand, page]);
   const clipImageEdit = useMemo((): SiteCreatorClipImageEdit | null => {
     if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return null;
     const draft =
@@ -836,6 +860,10 @@ export function SiteCreatorStudio({
 
   const displayPage = responsive?.displayPage ?? page;
   const objectClipById = responsive?.resolvedLayout?.objectClipById;
+  const pageBackgroundCss = useMemo(
+    () => (page ? resolvePageBackgroundCss(page, blueprint) : null),
+    [blueprint, page],
+  );
 
   useEffect(() => {
     const anims = multiCardScrollAnimRef.current;
@@ -1064,6 +1092,8 @@ export function SiteCreatorStudio({
     setStructureError(null);
     setSectionMenuOpen(false);
     setPendingParentChoice(null);
+    setSelectionFromMarquee(false);
+    setMarqueeGroupBlockOpen(false);
   }, []);
 
   const exitPagePreview = useCallback(() => {
@@ -1169,6 +1199,8 @@ export function SiteCreatorStudio({
     : null;
 
   const selectCreatedNode = useCallback((nodeId: string | null | undefined) => {
+    setSelectionFromMarquee(false);
+    setMarqueeGroupBlockOpen(false);
     if (!nodeId) {
       setUnits([]);
       setInteractionPath([]);
@@ -1195,6 +1227,8 @@ export function SiteCreatorStudio({
       });
       setUnits([child]);
       setStructureError(null);
+      setSelectionFromMarquee(false);
+      setMarqueeGroupBlockOpen(false);
     },
     [],
   );
@@ -1275,6 +1309,13 @@ export function SiteCreatorStudio({
       }
       const parentId =
         preferredParentId !== undefined ? preferredParentId : contextualInspectId ?? undefined;
+      if (
+        selectionFromMarquee &&
+        marqueeUnitsBlockGrouping(displayUnits, blueprint, committedIndex)
+      ) {
+        setMarqueeGroupBlockOpen(true);
+        return;
+      }
       const result = createGroupFromSelection({
         blueprint,
         units: displayUnits,
@@ -1306,6 +1347,7 @@ export function SiteCreatorStudio({
       displayUnits,
       persistGate,
       selectCreatedNode,
+      selectionFromMarquee,
     ],
   );
 
@@ -1608,6 +1650,8 @@ export function SiteCreatorStudio({
         }
 
         case "click": {
+          setSelectionFromMarquee(false);
+          setMarqueeGroupBlockOpen(false);
           if (armedDatasetChip) {
             if (!action.layerId) {
               setArmedDatasetChip(null);
@@ -1778,21 +1822,23 @@ export function SiteCreatorStudio({
         }
 
         case "marquee": {
-          const collapsed = collapseLayersToSelectionUnits(
+          const loose = layersToMarqueeSelectionUnits(
             action.layerIds,
             blueprint,
             selectionIndex,
           );
+          setSelectionFromMarquee(true);
+          setMarqueeGroupBlockOpen(false);
           if (action.additive) {
             setUnits((current) => {
               let next = current;
-              for (const unit of collapsed) {
+              for (const unit of loose) {
                 next = toggleSelectionUnit(next, unit, blueprint);
               }
               return next;
             });
           } else {
-            setUnits(collapsed);
+            setUnits(loose);
           }
           setInteractionPath([]);
           setStructureError(null);
@@ -1800,6 +1846,8 @@ export function SiteCreatorStudio({
         }
 
         case "doubleClickLayer": {
+          setSelectionFromMarquee(false);
+          setMarqueeGroupBlockOpen(false);
           if (armedDatasetChip) setArmedDatasetChip(null);
           const hit = selectionIndex?.byId[action.layerId];
           const owning =
@@ -1864,6 +1912,8 @@ export function SiteCreatorStudio({
         }
 
         case "escape": {
+          setSelectionFromMarquee(false);
+          setMarqueeGroupBlockOpen(false);
           if (interactionPath.length > 0) {
             const parentId = interactionPath[interactionPath.length - 1]!;
             setUnits([{ kind: "blueprintNode", nodeId: parentId }]);
@@ -1886,6 +1936,8 @@ export function SiteCreatorStudio({
 
         case "pickExact":
         case "cycle": {
+          setSelectionFromMarquee(false);
+          setMarqueeGroupBlockOpen(false);
           if (action.type === "cycle") {
             const reduced = reduceSiteCreatorSelection(
               reconcileSelectionToIndex(displayShadow, selectionIndex),
@@ -2208,39 +2260,34 @@ export function SiteCreatorStudio({
   }, [blueprint, displayUnits, presentationTree, referenceWidth, selectionIndex, snapshot, viewportBand]);
 
   const hoverOutline = useMemo((): SiteCreatorUnitOutline | null => {
-    if (!hoverUnit || !selectionIndex) return null;
-    if (displayUnits.some((u) => sameSelectionUnit(u, hoverUnit))) return null;
+    const hoverId = displayShadow.hoverId;
+    if (!hoverId || !selectionIndex) return null;
+    const scope = resolveHoverScopeUnit(hoverId, blueprint, selectionIndex);
+    const unit = scope ?? hoverUnit;
+    if (!unit) return null;
+    if (displayUnits.some((u) => sameSelectionUnit(u, unit))) return null;
     const bounds =
-      presentationBoundsForUnit(hoverUnit, presentationTree, selectionIndex) ??
-      boundsForUnit(hoverUnit, blueprint, selectionIndex);
+      presentationBoundsForUnit(unit, presentationTree, selectionIndex) ??
+      boundsForUnit(unit, blueprint, selectionIndex);
     if (!bounds) return null;
     return {
       bounds,
-      kind: unitOutlineKind(hoverUnit, blueprint),
+      kind: unitOutlineKind(unit, blueprint),
       label:
-        hoverUnit.kind === "layer"
-          ? deriveLayerDisplayLabel(hoverUnit.layerId, selectionIndex, snapshot)
-          : containerDisplayLabel(blueprint.nodes[hoverUnit.nodeId]!, snapshot, selectionIndex),
+        unit.kind === "layer"
+          ? deriveLayerDisplayLabel(unit.layerId, selectionIndex, snapshot)
+          : containerDisplayLabel(blueprint.nodes[unit.nodeId]!, snapshot, selectionIndex),
     };
-  }, [blueprint, displayUnits, hoverUnit, presentationTree, selectionIndex, snapshot]);
+  }, [blueprint, displayShadow.hoverId, displayUnits, hoverUnit, presentationTree, selectionIndex, snapshot]);
 
   const groupFitModel = useMemo(() => {
     if (pagePreviewMode || viewportBand === "original" || !selectionIndex || !committedPage) return null;
-    let selectedGroupId: string | null = null;
-    if (displayUnits.length === 1 && displayUnits[0]?.kind === "blueprintNode") {
-      const node = blueprint.nodes[displayUnits[0].nodeId];
-      if (node?.kind === "layoutGroup") selectedGroupId = node.id;
-    }
-    const group = resolveLayoutGroupFromHover({
-      blueprint,
-      index: selectionIndex,
-      hoverLayerId: displayShadow.hoverId,
-      selectedGroupId,
-    });
-    if (!group) return null;
+    if (displayUnits.length !== 1 || displayUnits[0]?.kind !== "blueprintNode") return null;
+    const selected = blueprint.nodes[displayUnits[0].nodeId];
+    if (selected?.kind !== "layoutGroup") return null;
     const opportunity = describeGroupFitOpportunity({
       blueprint,
-      groupId: group.id,
+      groupId: selected.id,
       index: selectionIndex,
       page: committedPage,
       band: fitLayoutBandFromViewport(viewportBand),
@@ -2257,10 +2304,9 @@ export function SiteCreatorStudio({
     ) {
       return null;
     }
-    if (!displayShadow.hoverId && selectedGroupId !== group.id) return null;
     const displayBounds =
       presentationBoundsForUnit(
-        { kind: "blueprintNode", nodeId: group.id },
+        { kind: "blueprintNode", nodeId: selected.id },
         presentationTree,
         selectionIndex,
       ) ?? opportunity.bounds;
@@ -2268,7 +2314,6 @@ export function SiteCreatorStudio({
   }, [
     blueprint,
     committedPage,
-    displayShadow.hoverId,
     displayUnits,
     effectiveViewportWidth,
     pagePreviewMode,
@@ -2330,6 +2375,14 @@ export function SiteCreatorStudio({
     commitBlueprint(seeded);
   }, [blueprint.monitorMaxWidth, commitBlueprint, persistGate.allowed, referenceWidth]);
 
+  useEffect(() => {
+    if (!persistGate.allowed || !page) return;
+    const seeded = reconcilePageBackground(blueprintRef.current, page);
+    if (seeded === blueprintRef.current) return;
+    blueprintRef.current = seeded;
+    commitBlueprint(seeded);
+  }, [commitBlueprint, page, persistGate.allowed, snapshot?.contentHash]);
+
   const sectionSpineModel = useMemo(() => {
     if (pagePreviewMode || !selectionIndex) return null;
     const selectedId =
@@ -2385,6 +2438,8 @@ export function SiteCreatorStudio({
         heightMode: mode,
         customHeight,
         selected: selectedId === section.id,
+        canPinToTop: index === 0,
+        pinToTop: Boolean(section.pinToTop),
         outgoing:
           nextSection && hopToNext
             ? { fromId: section.id, toId: nextSection.id, kind: hopToNext.kind }
@@ -2550,6 +2605,23 @@ export function SiteCreatorStudio({
     [commitBlueprint, committedPage, persistGate, selectionIndex],
   );
 
+  const handleSpinePinToTopChange = useCallback(
+    (sectionId: string, pinToTop: boolean) => {
+      if (!persistGate.allowed) {
+        setStructureError(persistGate.message);
+        return;
+      }
+      const result = setSectionPinToTop(blueprintRef.current, sectionId, pinToTop);
+      if (result.ok) {
+        blueprintRef.current = result.blueprint;
+        commitBlueprint(result.blueprint);
+      } else {
+        setStructureError(result.message);
+      }
+    },
+    [commitBlueprint, persistGate],
+  );
+
   const pageInsetBand: ResponsiveEditableBand | null =
     viewportBand === "monitor" || viewportBand === "tablet" || viewportBand === "mobile"
       ? viewportBand
@@ -2612,7 +2684,7 @@ export function SiteCreatorStudio({
 
   const ghostOutlines = useMemo((): SiteCreatorGhostOutline[] => {
     if (!selectionIndex) return [];
-    // Radiografía: contenedor bajo hover O contenedor seleccionado (sin hijo hover)
+    // Contenedor bajo hover o seleccionado: solo marcar el hijo enfatizado, no todos.
     let subject: SiteCreatorSelectionUnit | null = null;
     if (hoverUnit && hoverUnit.kind === "blueprintNode") {
       const n = blueprint.nodes[hoverUnit.nodeId];
@@ -2624,7 +2696,6 @@ export function SiteCreatorStudio({
       displayUnits[0]!.kind === "blueprintNode" &&
       isSemanticContainerNode(blueprint.nodes[displayUnits[0]!.nodeId])
     ) {
-      // Contenedor seleccionado: radiografía de hijos siempre (hover de hijo enfatiza)
       subject = displayUnits[0]!;
     }
     if (!subject) return [];
@@ -2635,9 +2706,10 @@ export function SiteCreatorStudio({
       const bounds = presentationBoundsForUnit(child.unit, presentationTree, selectionIndex);
       if (!bounds) continue;
       const emphasized = Boolean(hoverUnit && child.unit && sameSelectionUnit(hoverUnit, child.unit));
+      if (!emphasized) continue;
       ghosts.push({
         bounds,
-        emphasized,
+        emphasized: true,
         isContainer: child.isContainer || child.kind === "semantic",
       });
     }
@@ -2790,6 +2862,8 @@ export function SiteCreatorStudio({
     if (c.kind === "blueprintNode") {
       selectCreatedNode(c.nodeId);
     } else {
+      setSelectionFromMarquee(false);
+      setMarqueeGroupBlockOpen(false);
       setUnits([{ kind: "layer", layerId: c.layerId }]);
       setInteractionPath([]);
     }
@@ -3438,9 +3512,6 @@ export function SiteCreatorStudio({
             onFocusController={onAdaptationFocusController}
           />
         ) : null,
-        refineSlot: refineModel ? (
-          <SiteCreatorRefineControl model={refineModel} handlers={refineHandlers} />
-        ) : null,
         multiCardSlot,
       };
     }
@@ -3475,8 +3546,6 @@ export function SiteCreatorStudio({
     onAdaptationFocusController,
     onAdaptationSelectMode,
     presentationTree,
-    refineHandlers,
-    refineModel,
     selectionIndex,
     snapshot,
     unitOutlines,
@@ -3491,6 +3560,8 @@ export function SiteCreatorStudio({
 
   const onMicrobarNavigate = useCallback(
     (unit: SiteCreatorSelectionUnit) => {
+      setSelectionFromMarquee(false);
+      setMarqueeGroupBlockOpen(false);
       if (unit.kind === "blueprintNode") {
         // Clic en ancestro: path = ancestros de ese nodo
         const path: string[] = [];
@@ -4048,6 +4119,8 @@ export function SiteCreatorStudio({
               clearUnitsAndInspect();
               return;
             }
+            setSelectionFromMarquee(false);
+            setMarqueeGroupBlockOpen(false);
             if (additive) {
               setUnits((current) => toggleSelectionUnit(current, unit, blueprint));
             } else {
@@ -4103,6 +4176,8 @@ export function SiteCreatorStudio({
             }
             commitBlueprint(result.blueprint);
             setInteractionPath([targetNodeId]);
+            setSelectionFromMarquee(false);
+            setMarqueeGroupBlockOpen(false);
             setUnits([source.unit]);
           }}
           visualLayerCount={visualLayerCount}
@@ -4143,6 +4218,7 @@ export function SiteCreatorStudio({
               referenceWidth={referenceWidth}
               previewZoom={previewZoom}
               deviceFrame={deviceFrame}
+              canvasBackground={pageBackgroundCss}
               readOnly={pagePreviewMode}
               previewPageMaxWidth={
                 pagePreviewMode &&
@@ -4186,6 +4262,7 @@ export function SiteCreatorStudio({
               onSpineHeightModeChange={handleSpineHeightModeChange}
               onSpineCustomHeightChange={handleSpineCustomHeightChange}
               onSpineSourceRangeBottomChange={handleSpineSourceRangeBottomChange}
+              onSpinePinToTopChange={handleSpinePinToTopChange}
               pageInsets={pageInsetsModel}
               onPageInsetsChange={pagePreviewMode ? undefined : handlePageInsetsChange}
               microbar={pagePreviewMode || clipImageEdit ? null : microbarModel}
@@ -4308,13 +4385,27 @@ export function SiteCreatorStudio({
                   return;
                 }
                 setClipImageDraft(null);
+                const pageBgCrop = isDesignerPageBackgroundLayer(
+                  page ?? displayPage ?? { objects: [] },
+                  clipImageEditTarget.clipId,
+                  blueprint,
+                )
+                  ? patchPageBackgroundCrop({
+                      blueprint,
+                      sourceLayerId: clipImageEditTarget.clipId,
+                      focal: tune.focal,
+                      zoom: tune.zoom,
+                    })
+                  : null;
                 const explicit = resolveExplicitBackground(
                   blueprint,
                   clipImageEditTarget.clipId,
                   mediaBand,
                 );
                 commitTune(
-                  explicit
+                  pageBgCrop && pageBgCrop.changed
+                    ? pageBgCrop
+                    : explicit
                     ? patchExplicitBackgroundCrop({
                         blueprint,
                         sourceLayerId: clipImageEditTarget.clipId,
@@ -4333,13 +4424,25 @@ export function SiteCreatorStudio({
               onResetClipImageEdit={() => {
                 if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return;
                 setClipImageDraft(null);
+                const pageBgReset =
+                  page &&
+                  isDesignerPageBackgroundLayer(page, clipImageEditTarget.clipId, blueprint)
+                    ? patchPageBackgroundCrop({
+                        blueprint,
+                        sourceLayerId: clipImageEditTarget.clipId,
+                        focal: { x: 0.5, y: 0.5 },
+                        zoom: 1,
+                      })
+                    : null;
                 const explicit = resolveExplicitBackground(
                   blueprint,
                   clipImageEditTarget.clipId,
                   mediaBand,
                 );
                 commitTune(
-                  explicit
+                  pageBgReset && pageBgReset.changed
+                    ? pageBgReset
+                    : explicit
                     ? patchExplicitBackgroundCrop({
                         blueprint,
                         sourceLayerId: clipImageEditTarget.clipId,
@@ -4497,6 +4600,31 @@ export function SiteCreatorStudio({
             document.body,
           )
         : null}
+
+      {marqueeGroupBlockOpen ? (
+        <div className="fixed inset-0 z-[100055] flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="w-full max-w-xs rounded-md border border-white/10 bg-[#101820] p-3 shadow-xl"
+            role="dialog"
+            aria-labelledby="site-creator-marquee-group-block-title"
+            data-testid="site-creator-marquee-group-block"
+          >
+            <p
+              id="site-creator-marquee-group-block-title"
+              className="px-2 py-2 text-center text-[13px] text-white"
+            >
+              {MARQUEE_GROUP_BLOCK_MESSAGE}
+            </p>
+            <button
+              type="button"
+              className="mt-1 w-full rounded px-2 py-1.5 text-center text-[12px] text-white/70 hover:bg-white/10"
+              onClick={() => setMarqueeGroupBlockOpen(false)}
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {pendingParentChoice ? (
         <div className="fixed inset-0 z-[100055] flex items-center justify-center bg-black/40 p-4">

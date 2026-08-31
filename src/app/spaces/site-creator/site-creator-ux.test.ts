@@ -9,6 +9,7 @@ import {
   createLayoutGroupFromSelection,
   createSectionFromSelection,
   removeBlueprintNodePreservingContent,
+  wrapSemanticNodesInGroup,
 } from "./site-blueprint-ops";
 import {
   createBlueprintHistory,
@@ -21,6 +22,11 @@ import {
   deriveBlueprintNodeDisplayLabel,
   deriveLayerDisplayLabel,
   collapseLayersToSelectionUnits,
+  layersToMarqueeSelectionUnits,
+  MARQUEE_GROUP_BLOCK_MESSAGE,
+  marqueeUnitsBlockGrouping,
+  resolveHoverScopeUnit,
+  resolveInspectClickUnit,
   resolveRootClickUnit,
   toggleSelectionUnit,
   unitsToStructureLayerIds,
@@ -226,6 +232,293 @@ describe("site creator UX selection units", () => {
     if (!created.ok) return;
     expect(resolveRootClickUnit("btn_text", created.blueprint, index).kind).toBe("blueprintNode");
     expect(resolveRootClickUnit("btn_shape", created.blueprint, index).kind).toBe("blueprintNode");
+  });
+
+  it("root click selects the outermost section, then inspect descends group → layer", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok || !group.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: group.blueprint,
+      selectedLayerIds: ["bg", "title"],
+      index,
+      committedPage: snap.page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+
+    expect(resolveRootClickUnit("title", section.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: section.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit("title", section.createdNodeId, section.blueprint, index),
+    ).toEqual({
+      kind: "blueprintNode",
+      nodeId: group.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit("title", group.createdNodeId, section.blueprint, index),
+    ).toEqual({ kind: "layer", layerId: "title" });
+  });
+
+  it("root click on a Button inside a section selects the Button first", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const btn = createButtonFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["btn_shape", "btn_text"],
+      index,
+      accessibleLabel: "BOTOM",
+      labelLayerId: "btn_text",
+    });
+    expect(btn.ok).toBe(true);
+    if (!btn.ok || !btn.createdNodeId) return;
+    const hero = createSectionFromSelection({
+      blueprint: btn.blueprint,
+      selectedLayerIds: unitsToStructureLayerIds(
+        collapseLayersToSelectionUnits(
+          ["btn_shape", "btn_text", "title", "bg"],
+          btn.blueprint,
+          index,
+        ),
+        btn.blueprint,
+      ),
+      index,
+      committedPage: snap.page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+
+    expect(resolveRootClickUnit("btn_text", hero.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: btn.createdNodeId,
+    });
+    expect(resolveRootClickUnit("title", hero.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: hero.createdNodeId,
+    });
+    expect(
+      resolveInspectClickUnit("btn_text", btn.createdNodeId, hero.blueprint, index),
+    ).toEqual({ kind: "layer", layerId: "btn_text" });
+  });
+
+  it("hover scope prefers a Button over its section", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const btn = createButtonFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["btn_shape", "btn_text"],
+      index,
+      accessibleLabel: "BOTOM",
+      labelLayerId: "btn_text",
+    });
+    expect(btn.ok).toBe(true);
+    if (!btn.ok || !btn.createdNodeId) return;
+    const hero = createSectionFromSelection({
+      blueprint: btn.blueprint,
+      selectedLayerIds: unitsToStructureLayerIds(
+        collapseLayersToSelectionUnits(
+          ["btn_shape", "btn_text", "title", "bg"],
+          btn.blueprint,
+          index,
+        ),
+        btn.blueprint,
+      ),
+      index,
+      committedPage: snap.page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok) return;
+    expect(resolveHoverScopeUnit("btn_text", hero.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: btn.createdNodeId,
+    });
+    expect(resolveHoverScopeUnit("title", hero.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: hero.createdNodeId,
+    });
+  });
+
+  it("marquee over button layers selects the Button, not its parts", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const created = createButtonFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["btn_shape", "btn_text"],
+      index,
+      accessibleLabel: "BOTOM",
+      labelLayerId: "btn_text",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(layersToMarqueeSelectionUnits(["btn_shape", "btn_text"], created.blueprint, index)).toEqual([
+      { kind: "blueprintNode", nodeId: created.createdNodeId },
+    ]);
+    const mixed = layersToMarqueeSelectionUnits(["btn_shape", "title"], created.blueprint, index);
+    expect(mixed).toEqual([
+      { kind: "blueprintNode", nodeId: created.createdNodeId },
+      { kind: "layer", layerId: "title" },
+    ]);
+    expect(marqueeUnitsBlockGrouping(mixed, created.blueprint, index)).toBe(false);
+  });
+
+  it("marquee layers only inside a section stay loose and can still group", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const section = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+      committedPage: snap.page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok) return;
+    const units = layersToMarqueeSelectionUnits(["bg", "title"], section.blueprint, index);
+    expect(units).toEqual([
+      { kind: "layer", layerId: "bg" },
+      { kind: "layer", layerId: "title" },
+    ]);
+    expect(marqueeUnitsBlockGrouping(units, section.blueprint, index)).toBe(false);
+  });
+
+  it("marquee over a layout group selects the group once, not its layers", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok) return;
+    const units = layersToMarqueeSelectionUnits(["bg", "title"], group.blueprint, index);
+    expect(units).toEqual([{ kind: "blueprintNode", nodeId: group.createdNodeId }]);
+    expect(marqueeUnitsBlockGrouping(units, group.blueprint, index)).toBe(false);
+    expect(MARQUEE_GROUP_BLOCK_MESSAGE).toBe("Desagrupa primero los elementos agrupados");
+  });
+
+  it("marquee over a group inside a section selects the group, not the section", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok || !group.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: group.blueprint,
+      selectedLayerIds: ["bg", "title"],
+      index,
+      committedPage: snap.page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok) return;
+    const units = layersToMarqueeSelectionUnits(["bg", "title"], section.blueprint, index);
+    expect(units).toEqual([{ kind: "blueprintNode", nodeId: group.createdNodeId }]);
+    expect(units[0]).not.toEqual({ kind: "blueprintNode", nodeId: section.createdNodeId });
+  });
+
+  it("hover scope prefers the section over an inner group", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const snap = buildDesignerSourceSnapshot("d1", p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok || !group.createdNodeId) return;
+    const section = createSectionFromSelection({
+      blueprint: group.blueprint,
+      selectedLayerIds: ["bg", "title"],
+      index,
+      committedPage: snap.page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok || !section.createdNodeId) return;
+    expect(resolveHoverScopeUnit("title", section.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: section.createdNodeId,
+    });
+  });
+
+  it("hover scope falls back to the group when there is no section", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const group = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title"],
+      index,
+    });
+    expect(group.ok).toBe(true);
+    if (!group.ok || !group.createdNodeId) return;
+    expect(resolveHoverScopeUnit("title", group.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: group.createdNodeId,
+    });
+    expect(resolveHoverScopeUnit("btn_text", group.blueprint, index)).toBeNull();
+  });
+
+  it("hover and root click prefer Button over an enclosing layout group", () => {
+    const p = makeButtonPage();
+    const index = buildSiteSelectionIndex(p);
+    const btn = createButtonFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["btn_shape", "btn_text"],
+      index,
+      accessibleLabel: "BOTOM",
+      labelLayerId: "btn_text",
+    });
+    expect(btn.ok).toBe(true);
+    if (!btn.ok || !btn.createdNodeId) return;
+    const titleGroup = createLayoutGroupFromSelection({
+      blueprint: btn.blueprint,
+      selectedLayerIds: ["title", "bg"],
+      index,
+    });
+    expect(titleGroup.ok).toBe(true);
+    if (!titleGroup.ok || !titleGroup.createdNodeId) return;
+    const wrapped = wrapSemanticNodesInGroup({
+      blueprint: titleGroup.blueprint,
+      selectedNodeIds: [btn.createdNodeId, titleGroup.createdNodeId],
+      index,
+      label: "Fila",
+    });
+    expect(wrapped.ok).toBe(true);
+    if (!wrapped.ok || !wrapped.createdNodeId) return;
+    expect(resolveRootClickUnit("btn_text", wrapped.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: btn.createdNodeId,
+    });
+    expect(resolveHoverScopeUnit("btn_text", wrapped.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: btn.createdNodeId,
+    });
+    expect(resolveRootClickUnit("title", wrapped.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: wrapped.createdNodeId,
+    });
   });
 });
 

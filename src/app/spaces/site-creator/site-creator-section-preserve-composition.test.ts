@@ -475,7 +475,7 @@ describe("section preserve composition", () => {
 
     const blueprint = applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId!);
     const section = Object.values(blueprint.nodes).find((n) => n.kind === "section");
-    expect(section && "sourceRange" in section ? section.sourceRange.top : null).toBe(80);
+    expect(section && "sourceRange" in section ? section.sourceRange.top : null).toBe(0);
 
     const cases: Array<{ viewportWidth: number; band: "monitor" | "tablet" | "mobile" }> = [
       { viewportWidth: 1920, band: "monitor" },
@@ -498,7 +498,7 @@ describe("section preserve composition", () => {
       expect(second.y - first.y, `${band} inner gap`).toBeCloseTo(80 * scale, 1);
       const region = resolved.resolvedLayout?.regions[0];
       expect(region, band).toBeTruthy();
-      expect(region!.layoutRect.y, `${band} section y`).toBeCloseTo(80 * scale, 1);
+      expect(region!.layoutRect.y, `${band} section y`).toBeCloseTo(0, 1);
     }
   });
 
@@ -523,17 +523,10 @@ describe("section preserve composition", () => {
     });
     expect(created.ok).toBe(true);
     if (!created.ok || !created.createdNodeId) return;
-    const withNext = createSectionFromSelection({
-      blueprint: applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId),
-      selectedLayerIds: ["next"],
-      index,
-      committedPage,
-      sectionType: "generic",
-    });
-    expect(withNext.ok).toBe(true);
-    if (!withNext.ok || !withNext.createdNodeId) return;
+    // Estirar el padding inferior antes de crear la siguiente: si no, ese hueco
+    // queda reclamado como margen superior de la sección inferior.
     const stretched = stretchSectionSourceRangeBottom({
-      blueprint: applyNewSectionResponsiveDefaults(withNext.blueprint, withNext.createdNodeId),
+      blueprint: applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId),
       sectionId: created.createdNodeId,
       bottom: 500,
       index,
@@ -541,10 +534,20 @@ describe("section preserve composition", () => {
     });
     expect(stretched.ok).toBe(true);
     if (!stretched.ok) return;
+    const withNext = createSectionFromSelection({
+      blueprint: stretched.blueprint,
+      selectedLayerIds: ["next"],
+      index,
+      committedPage,
+      sectionType: "generic",
+    });
+    expect(withNext.ok).toBe(true);
+    if (!withNext.ok || !withNext.createdNodeId) return;
+    const blueprint = applyNewSectionResponsiveDefaults(withNext.blueprint, withNext.createdNodeId);
 
     const resolved = resolveSiteCreatorResponsiveDisplay({
       page: committedPage,
-      blueprint: stretched.blueprint,
+      blueprint,
       referenceIndex: index,
       viewportWidth: 1920,
       band: "monitor",
@@ -580,17 +583,8 @@ describe("section preserve composition", () => {
     });
     expect(created.ok).toBe(true);
     if (!created.ok || !created.createdNodeId) return;
-    const withNext = createSectionFromSelection({
-      blueprint: applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId),
-      selectedLayerIds: ["next"],
-      index,
-      committedPage,
-      sectionType: "generic",
-    });
-    expect(withNext.ok).toBe(true);
-    if (!withNext.ok || !withNext.createdNodeId) return;
     const stretched = stretchSectionSourceRangeBottom({
-      blueprint: applyNewSectionResponsiveDefaults(withNext.blueprint, withNext.createdNodeId),
+      blueprint: applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId),
       sectionId: created.createdNodeId,
       bottom: 500,
       index,
@@ -598,8 +592,18 @@ describe("section preserve composition", () => {
     });
     expect(stretched.ok).toBe(true);
     if (!stretched.ok) return;
+    const withNext = createSectionFromSelection({
+      blueprint: stretched.blueprint,
+      selectedLayerIds: ["next"],
+      index,
+      committedPage,
+      sectionType: "generic",
+    });
+    expect(withNext.ok).toBe(true);
+    if (!withNext.ok || !withNext.createdNodeId) return;
+    const withDefaults = applyNewSectionResponsiveDefaults(withNext.blueprint, withNext.createdNodeId);
     const custom = setSectionHeightMode(
-      stretched.blueprint,
+      withDefaults,
       created.createdNodeId,
       "custom",
       "monitor",

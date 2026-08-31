@@ -4,11 +4,12 @@ import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { SiteCreatorPreview } from "./SiteCreatorPreview";
-import { createSectionFromSelection } from "./site-blueprint-ops";
+import { createSectionFromSelection, setSectionPinToTop } from "./site-blueprint-ops";
 import { setSectionScrollHop } from "./site-creator-section-scroll";
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
 import { resolvePageInsetsForBand } from "./site-creator-page-insets";
+import type { SectionSpineStation } from "./SiteCreatorSectionSpine";
 
 vi.mock("@/app/spaces/presenter/DesignerPageCanvasView", () => ({
   DesignerPageCanvasView: ({
@@ -981,5 +982,215 @@ describe("SiteCreatorPreview", () => {
       />,
     );
     expect(screen.queryByTestId("site-creator-monitor-max-width")).toBeNull();
+  });
+
+  it("keeps the pinned overlay surface transparent and pins section fills with content", () => {
+    const page = makePage([
+      makeLayer({ id: "fill", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#e8e4dc" }),
+      makeLayer({ id: "photo", type: "image", x: 0, y: 0, width: 1920, height: 320, src: "data:," }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 500, width: 1920, height: 200, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["fill", "photo"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const body = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(body.ok).toBe(true);
+    if (!body.ok) return;
+    const pinned = setSectionPinToTop(body.blueprint, hero.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+
+    const station: SectionSpineStation = {
+      sectionId: hero.createdNodeId,
+      label: "Hero",
+      top: 0,
+      bottom: 400,
+      height: 400,
+      designedHeight: 400,
+      heightMode: "content",
+      customHeight: null,
+      selected: true,
+      outgoing: null,
+      pinToTop: true,
+      canPinToTop: true,
+    };
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 844, kind: "mobile" }}
+        blueprint={pinned.blueprint}
+        sectionSpine={{
+          stations: [station],
+          addSectionY: null,
+          canAddSection: false,
+          mode: "device",
+        }}
+        onSpineSelectSection={() => undefined}
+        onSpineAddSection={() => undefined}
+      />,
+    );
+
+    const surface = screen.getByTestId("site-creator-section-pin-surface");
+    expect(surface.style.background).toBe("transparent");
+    const canvases = screen.getAllByTestId("designer-page-canvas-view");
+    const pinCanvas = canvases.find((node) => node.getAttribute("data-page-height") === "400");
+    // Fondo + foto van juntos al pin (no se desincronizan al hacer scroll).
+    expect(pinCanvas?.getAttribute("data-object-count")).toBe("2");
+  });
+
+  it("renders pinned header overlay in page preview (readOnly) mode", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 120, fill: "#fff" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 400, width: 1920, height: 200, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const body = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(body.ok).toBe(true);
+    if (!body.ok) return;
+    const pinned = setSectionPinToTop(body.blueprint, hero.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1500}
+        referenceWidth={1920}
+        previewZoom={1}
+        readOnly
+        blueprint={pinned.blueprint}
+      />,
+    );
+
+    expect(screen.getByTestId("site-creator-section-pin-overlay")).toBeTruthy();
+    const canvases = screen.getAllByTestId("designer-page-canvas-view");
+    expect(canvases).toHaveLength(2);
+    expect(canvases.map((node) => node.getAttribute("data-object-count")).sort()).toEqual(["1", "1"]);
+  });
+
+  it("uses native sticky pin in page preview (readOnly) mode", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 120, fill: "#fff" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 1200, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const body = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(body.ok).toBe(true);
+    if (!body.ok) return;
+    const pinned = setSectionPinToTop(body.blueprint, hero.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={1500}
+        referenceWidth={1920}
+        previewZoom={1}
+        readOnly
+        blueprint={pinned.blueprint}
+      />,
+    );
+
+    const overlay = screen.getByTestId("site-creator-section-pin-overlay");
+    expect(overlay.getAttribute("data-pin-scroll-mode")).toBe("sticky");
+    expect(overlay.className).toContain("sticky");
+  });
+
+  it("syncs pinned overlay position with device scroll", () => {
+    const page = makePage([
+      makeLayer({ id: "h", type: "rect", x: 0, y: 0, width: 1920, height: 120, fill: "#fff" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 1200, width: 1920, height: 400, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["h"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const body = createSectionFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(body.ok).toBe(true);
+    if (!body.ok) return;
+    const pinned = setSectionPinToTop(body.blueprint, hero.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+
+    render(
+      <SiteCreatorPreview
+        page={page}
+        viewportWidth={390}
+        referenceWidth={1920}
+        previewZoom={1}
+        deviceFrame={{ width: 390, height: 844, kind: "mobile" }}
+        blueprint={pinned.blueprint}
+      />,
+    );
+
+    const scroller = screen.getByTestId("site-creator-device-scroll");
+    const overlay = screen.getByTestId("site-creator-section-pin-overlay");
+
+    scroller.scrollTop = 240;
+    fireEvent.scroll(scroller);
+
+    expect(overlay.getAttribute("data-pin-scroll-mode")).toBe("sync");
+    expect(overlay.getAttribute("data-pin-scroll-offset")).toBe("240");
+    expect(overlay.getAttribute("style")).toContain("translate3d(0, 240px, 0)");
   });
 });

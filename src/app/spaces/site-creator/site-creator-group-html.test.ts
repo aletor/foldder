@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { designerGroupMirrorNodeId, reconcileDesignerGroupMirrors } from "./site-creator-designer-group-bootstrap";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
-import { createLayoutGroupFromSelection, setLayoutGroupWidthMode } from "./site-blueprint-ops";
+import { createLayoutGroupFromSelection, createSectionFromSelection, setLayoutGroupWidthMode } from "./site-blueprint-ops";
 import { compilePublishedSite } from "./site-creator-publish-compile";
 import { buildPublishForest, toLocalBox } from "./site-creator-publish-tree";
 import { resolveSiteCreatorResponsiveDisplay } from "./site-creator-responsive";
@@ -138,7 +138,8 @@ describe("site-creator group html containers", () => {
     const right = laidOut.page.objects?.find((o) => o.id === "right");
     expect(left?.width).toBeGreaterThan(1500);
     expect(right?.y).toBeGreaterThan((left?.y ?? 0) + (left?.height ?? 0) - 1);
-    expect(right?.x).toBeCloseTo(560, 0);
+    expect(right?.width).toBeGreaterThan(1500);
+    expect(right?.x ?? 0).toBeLessThan(40);
     expect(JSON.stringify(page.objects)).not.toContain('"width":1920');
   });
 
@@ -212,9 +213,8 @@ describe("site-creator group html containers", () => {
     expect(mid?.y).toBeGreaterThan(bottom);
     expect(side?.y).toBeGreaterThan(bottom);
     expect(Math.abs((mid?.y ?? 0) - (side?.y ?? 0))).toBeLessThan(40);
-    expect(mid?.x).toBeCloseTo(440, 0);
-    expect(side?.x).toBeCloseTo(760, 0);
     expect((mid?.x ?? 0) < (side?.x ?? 0)).toBe(true);
+    expect((side?.x ?? 0) + (side?.width ?? 0) - (mid?.x ?? 0)).toBeGreaterThan(1400);
   });
 
   it("stacks two full-width groups on separate rows instead of overlapping", () => {
@@ -530,7 +530,7 @@ describe("site-creator group html containers", () => {
     expect(rt?.y).toBeGreaterThan(leftBottom - 1);
     expect(rp1?.y).toBeGreaterThan(leftBottom - 1);
     expect(Math.abs((rbg?.y ?? 0) - (rt?.y ?? 0))).toBeLessThan(80);
-    expect(rbg?.x).toBeGreaterThan((left?.x ?? 0) + 20);
+    expect(rbg?.width).toBeGreaterThan(SITE_CREATOR_TABLET_WIDTH * 0.7);
   });
 
   it("wraps ungrouped siblings when the group was created with Agrupar, not a Designer folder", () => {
@@ -585,5 +585,122 @@ describe("site-creator group html containers", () => {
     expect(rt?.y).toBeGreaterThan(leftBottom - 1);
     expect(rp1?.y).toBeGreaterThan(leftBottom - 1);
     expect(Math.abs((rbg?.y ?? 0) - (rt?.y ?? 0))).toBeLessThan(80);
+  });
+
+  it("pushes section-owned loose layers and a thin rule below a nested full-width group", () => {
+    const page = makePage([
+      makeLayer({ id: "secbg", type: "rect", x: 0, y: 80, width: 1920, height: 520, fill: "#887" }),
+      makeLayer({ id: "lbg", type: "rect", x: 40, y: 100, width: 720, height: 400, fill: "#0a0" }),
+      makeLayer({ id: "lt", type: "text", x: 60, y: 120, width: 400, height: 80, text: "LEFT" }),
+      makeLayer({ id: "rt", type: "text", x: 980, y: 110, width: 400, height: 80, text: "RIGHT" }),
+      makeLayer({ id: "rimg", type: "rect", x: 980, y: 200, width: 400, height: 280, fill: "#ccc" }),
+      makeLayer({ id: "rline", type: "rect", x: 980, y: 490, width: 400, height: 2, fill: "#fff" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const grouped = createLayoutGroupFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["lbg", "lt"],
+      index,
+    });
+    expect(grouped.ok).toBe(true);
+    if (!grouped.ok) return;
+    const section = createSectionFromSelection({
+      blueprint: grouped.blueprint,
+      selectedLayerIds: ["secbg", "lbg", "lt", "rt", "rimg", "rline"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(section.ok).toBe(true);
+    if (!section.ok) return;
+    const full = setLayoutGroupWidthMode(section.blueprint, grouped.createdNodeId!, "full");
+    expect(full.ok).toBe(true);
+    if (!full.ok) return;
+    const laidOut = applyLayoutGroupWidthModes({
+      page,
+      blueprint: full.blueprint,
+      index,
+      viewportWidth: 1920,
+      viewportHeight: 1080,
+    });
+    const lbg = laidOut.page.objects?.find((o) => o.id === "lbg");
+    const rt = laidOut.page.objects?.find((o) => o.id === "rt");
+    const rimg = laidOut.page.objects?.find((o) => o.id === "rimg");
+    const rline = laidOut.page.objects?.find((o) => o.id === "rline");
+    const leftBottom = (lbg?.y ?? 0) + (lbg?.height ?? 0);
+    expect(lbg?.width).toBeGreaterThan(1500);
+    expect(rt?.y).toBeGreaterThan(leftBottom - 1);
+    expect(rimg?.y).toBeGreaterThan(leftBottom - 1);
+    expect(rline?.y).toBeGreaterThan(leftBottom - 1);
+  });
+
+  it("does not swallow a side-by-side column that only touches the group edge", () => {
+    const page = makePage([
+      groupContainer({
+        id: "left",
+        x: 40,
+        y: 80,
+        width: 900,
+        height: 400,
+        children: [makeLayer({ id: "l1", type: "rect", x: 40, y: 80, width: 900, height: 400 })],
+      }),
+      makeLayer({ id: "rimg", type: "rect", x: 930, y: 90, width: 420, height: 360, fill: "#ccc" }),
+    ]);
+    const mirrored = mirroredBlueprint(page);
+    const leftId = designerGroupMirrorNodeId("left");
+    const full = setLayoutGroupWidthMode(mirrored, leftId, "full");
+    expect(full.ok).toBe(true);
+    if (!full.ok) return;
+    const laidOut = applyLayoutGroupWidthModes({
+      page,
+      blueprint: full.blueprint,
+      index: buildSiteSelectionIndex(page),
+      viewportWidth: 1920,
+      viewportHeight: 1080,
+    });
+    const left = laidOut.page.objects?.find((o) => o.id === "left");
+    const rimg = laidOut.page.objects?.find((o) => o.id === "rimg");
+    expect(left?.width).toBeGreaterThan(1500);
+    expect(rimg?.y).toBeGreaterThan((left?.y ?? 0) + (left?.height ?? 0) - 1);
+  });
+
+  it("pushes the next visual row down when leftovers occupy that band", () => {
+    const page = makePage([
+      groupContainer({
+        id: "left",
+        x: 40,
+        y: 80,
+        width: 400,
+        height: 200,
+        children: [makeLayer({ id: "l1", type: "rect", x: 40, y: 80, width: 400, height: 200 })],
+      }),
+      groupContainer({
+        id: "right",
+        x: 480,
+        y: 80,
+        width: 400,
+        height: 200,
+        children: [makeLayer({ id: "r1", type: "rect", x: 480, y: 80, width: 400, height: 200 })],
+      }),
+      makeLayer({ id: "below", type: "rect", x: 40, y: 300, width: 800, height: 120, fill: "#333" }),
+    ]);
+    const mirrored = mirroredBlueprint(page);
+    const leftId = designerGroupMirrorNodeId("left");
+    const full = setLayoutGroupWidthMode(mirrored, leftId, "full");
+    expect(full.ok).toBe(true);
+    if (!full.ok) return;
+    const laidOut = applyLayoutGroupWidthModes({
+      page,
+      blueprint: full.blueprint,
+      index: buildSiteSelectionIndex(page),
+      viewportWidth: 1920,
+      viewportHeight: 1080,
+    });
+    const left = laidOut.page.objects?.find((o) => o.id === "left");
+    const right = laidOut.page.objects?.find((o) => o.id === "right");
+    const below = laidOut.page.objects?.find((o) => o.id === "below");
+    const rightBottom = (right?.y ?? 0) + (right?.height ?? 0);
+    expect(right?.y).toBeGreaterThan((left?.y ?? 0) + (left?.height ?? 0) - 1);
+    expect(below?.y).toBeGreaterThan(rightBottom - 1);
   });
 });

@@ -4,6 +4,8 @@ export const SC_VISUAL = {
   selection: "#A8FF32",
   selectionFill: "rgba(168, 255, 50, 0.06)",
   selectionGlow: "rgba(168, 255, 50, 0.18)",
+  selectionStroke: 1.5,
+  groupSelectionStroke: 2.5,
   hover: "rgba(235, 242, 248, 0.78)",
   context: "rgba(168, 255, 50, 0.36)",
   chipBg: "rgba(13, 19, 28, 0.94)",
@@ -12,9 +14,15 @@ export const SC_VISUAL = {
   chipMuted: "rgba(255, 255, 255, 0.45)",
   marquee: "rgba(143, 204, 255, 0.90)",
   marqueeFill: "rgba(143, 204, 255, 0.08)",
-  veil: "rgba(0, 0, 0, 0.07)",
+  veil: "rgba(0, 0, 0, 0.4)",
   cornerLen: 8,
 } as const;
+
+export function isGroupingOutlineKind(
+  kind: "layer" | "component" | "section" | "group" | undefined,
+): boolean {
+  return kind === "section" || kind === "group" || kind === "component";
+}
 
 export type SiteCreatorOutlineRole =
   | "hover-layer"

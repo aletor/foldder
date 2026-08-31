@@ -335,8 +335,13 @@ describe("site-creator section scroll flow", () => {
             bottom: section.sourceRange.bottom,
             height: section.sourceRange.bottom - section.sourceRange.top,
             designedHeight: section.sourceRange.bottom - section.sourceRange.top,
-            contentHeight: section.sourceRange.bottom - section.sourceRange.top,
-            maxBottom: sections[index + 1]?.sourceRange.top ?? 1200,
+            contentHeight: Math.max(
+              1,
+              section.id === heroId ? 400 : section.sourceRange.bottom - section.sourceRange.top,
+            ),
+            // Hueco reclamado por la sección inferior: el test fuerza tope alto para
+            // verificar que la spine emite estirado de sourceRange (no custom).
+            maxBottom: section.id === heroId ? hero.sourceRange.bottom + 200 : 1200,
             heightMode: "content" as const,
             customHeight: null,
             selected: section.id === heroId,
@@ -430,6 +435,55 @@ describe("site-creator section scroll flow", () => {
     expect(onHeight).toHaveBeenCalledWith(heroId, "custom");
   });
 
+  it("shows pin chip only on the first section in device mode", () => {
+    const { blueprint, heroId, sectionId } = twoSectionsBlueprint();
+    const hops = listSectionScrollHops(blueprint);
+    const sections = listDocumentSections(blueprint);
+    const onPin = vi.fn();
+    render(
+      <div style={{ position: "relative", height: 1200 }}>
+        <SiteCreatorSectionSpine
+          pageHeight={1200}
+          scale={1}
+          mode="device"
+          stations={sections.map((section, index) => ({
+            sectionId: section.id,
+            label: section.label,
+            top: section.sourceRange.top,
+            bottom: section.sourceRange.bottom,
+            height: section.sourceRange.bottom - section.sourceRange.top,
+            designedHeight: section.sourceRange.bottom - section.sourceRange.top,
+            heightMode: "content" as const,
+            customHeight: null,
+            selected: section.id === heroId,
+            canPinToTop: index === 0,
+            pinToTop: false,
+            outgoing: hops[index + 1]
+              ? {
+                  fromId: section.id,
+                  toId: sections[index + 1]!.id,
+                  kind: hops[index + 1]!.kind,
+                }
+              : null,
+          }))}
+          addSectionY={null}
+          canAddSection={false}
+          onSelectSection={() => undefined}
+          onRemoveSection={() => undefined}
+          onAddSection={() => undefined}
+          onScrollChange={() => undefined}
+          onHeightModeChange={() => undefined}
+          onCustomHeightChange={() => undefined}
+          onPinToTopChange={onPin}
+        />
+      </div>,
+    );
+    expect(screen.getByTestId(`site-creator-section-spine-pin-${heroId}`)).toBeTruthy();
+    expect(screen.queryByTestId(`site-creator-section-spine-pin-${sectionId}`)).toBeNull();
+    fireEvent.click(screen.getByTestId(`site-creator-section-spine-pin-${heroId}`));
+    expect(onPin).toHaveBeenCalledWith(heroId, true);
+  });
+
   it("keeps the drag scale stable while custom height rerenders the preview", async () => {
     const { blueprint, heroId } = twoSectionsBlueprint();
     const hero = listDocumentSections(blueprint)[0]!;
@@ -488,8 +542,8 @@ describe("site-creator section scroll flow", () => {
     fireNativePointer(window, "pointermove", { clientY: 200, pointerId: 7 });
     await flushAnimationFrame();
 
-    expect(onCustomHeightChange).toHaveBeenCalledTimes(1);
-    expect(onCustomHeightChange).toHaveBeenLastCalledWith(heroId, 500);
+    // Durante el drag solo se actualiza el preview local (evita bucles layout→pointermove).
+    expect(onCustomHeightChange).toHaveBeenCalledTimes(0);
     expect(
       screen.getByTestId(`site-creator-section-spine-station-${heroId}`).style.top,
     ).toBe("125px");
@@ -497,6 +551,8 @@ describe("site-creator section scroll flow", () => {
       screen.getByTestId(`site-creator-section-spine-boundary-${heroId}`).style.top,
     ).toBe("250px");
     fireNativePointer(window, "pointerup", { clientY: 200, pointerId: 7 });
+    expect(onCustomHeightChange).toHaveBeenCalledTimes(1);
+    expect(onCustomHeightChange).toHaveBeenLastCalledWith(heroId, 500);
   });
 
   it("marks Toda la página after the controlled mode changes", () => {

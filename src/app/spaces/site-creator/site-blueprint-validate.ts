@@ -326,6 +326,17 @@ export function cloneBlueprint(blueprint: SiteBlueprintV1): SiteBlueprintV1 {
   if (typeof blueprint.monitorMaxWidth === "number" && Number.isFinite(blueprint.monitorMaxWidth)) {
     next.monitorMaxWidth = Math.round(blueprint.monitorMaxWidth);
   }
+  if (blueprint.pageBackground?.sourceLayerId) {
+    next.pageBackground = {
+      sourceLayerId: blueprint.pageBackground.sourceLayerId,
+      ...(blueprint.pageBackground.focal
+        ? { focal: { ...blueprint.pageBackground.focal } }
+        : {}),
+      ...(typeof blueprint.pageBackground.zoom === "number"
+        ? { zoom: blueprint.pageBackground.zoom }
+        : {}),
+    };
+  }
   return next;
 }
 
@@ -357,6 +368,7 @@ function cloneNode(node: SiteBlueprintNode): SiteBlueprintNode {
       Number.isFinite(node.customHeight)
         ? { customHeight: Math.max(1, Math.round(node.customHeight)) }
         : {}),
+      ...(node.pinToTop ? { pinToTop: true } : {}),
     };
   }
   return {

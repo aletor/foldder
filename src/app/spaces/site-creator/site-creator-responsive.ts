@@ -11,6 +11,7 @@ import type { DesignerPageState } from "../designer/DesignerNode";
 import type { Dataset } from "../dataset/dataset-types";
 import { getPageDimensions } from "../indesign/page-formats";
 import { deepCloneDesignerPageState } from "./designer-source-snapshot";
+import { applyDesignerPageBackgroundToDisplay } from "./site-creator-page-background";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import {
   isWorldSpaceLayerId,
@@ -92,6 +93,7 @@ import type { MultiCardContainerLayout } from "./site-creator-multicard-layout";
 import {
   applySectionViewportHeights,
   designedSectionBottomPaddingPx,
+  designedSectionTopPaddingPx,
   resolveBandSectionTargetHeight,
   scaleOriginalPxToBand,
   scaledDesignedSectionGap,
@@ -312,8 +314,16 @@ function resolveSectionLayoutMetrics(args: {
     contentWidth: padded,
     boxWidth: Math.min(contentWidth, padded),
   });
-  const editorial =
-    args.sectionType === "hero" ? resolveAutomaticHeroMinHeight(args.viewportWidth, args.band) : 80;
+  // Cabecera fija: el alto lo marca el contenido / custom de cada banda, no el
+  // mínimo editorial del Hero (en tablet/móvil deja un hueco inferior falso).
+  const sectionNode = args.blueprint.nodes[args.sectionId];
+  const pinnedTop =
+    isSiteSectionNode(sectionNode) && Boolean(sectionNode.pinToTop);
+  const editorial = pinnedTop
+    ? 0
+    : args.sectionType === "hero"
+      ? resolveAutomaticHeroMinHeight(args.viewportWidth, args.band)
+      : 80;
   const minHeight = Math.max(editorial, tune?.minHeight ?? 0);
   return {
     inset,
@@ -2466,6 +2476,14 @@ function withLayoutGroupWidthModes(
     layoutWidth: result.layout.layoutWidth,
     hideMaskSurfaces: preserveExplicitBackgroundSurfaces !== true,
   });
+  applyDesignerPageBackgroundToDisplay({
+    displayPage: page,
+    sourcePage: sourcePage ?? page,
+    blueprint,
+    layoutWidth: result.layout.layoutWidth,
+    layoutHeight,
+    forPublish: preserveExplicitBackgroundSurfaces === true,
+  });
   applyDeviceVisibility({
     page,
     blueprint,
@@ -2878,8 +2896,8 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   }
 
   const layoutScale = viewportWidth / Math.max(1, reference.width);
-  // Original deja el hueco de página encima de la primera sección (sourceRange.top).
-  // Sin esto, Ordenador/tablet/móvil restanean desde y=0 y el contenido se pega arriba.
+  // Con margen superior reclamado en sourceRange, la primera sección arranca en su top
+  // (normalmente 0). El hueco hasta el contenido se aplica como padding interno.
   let yCursor =
     sections.length > 0
       ? scaleOriginalPxToBand(
@@ -2925,6 +2943,29 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
           viewportWidth,
         });
       }
+    }
+    const extraTop = scaleOriginalPxToBand(
+      designedSectionTopPaddingPx(section, analysis.containerBounds),
+      viewportWidth,
+      reference.width,
+    );
+    if (extraTop > 0.5) {
+      shiftSectionContentY({
+        byId,
+        blueprint: args.blueprint,
+        index,
+        sectionId: section.id,
+        backgroundLayerIds: region.backgroundLayerIds,
+        deltaY: extraTop,
+      });
+      region.layoutRect = {
+        ...region.layoutRect,
+        height: region.layoutRect.height + extraTop,
+      };
+      region.clipRect = {
+        ...region.clipRect,
+        height: region.clipRect.height + extraTop,
+      };
     }
     const extraBottom = scaleOriginalPxToBand(
       designedSectionBottomPaddingPx(section, analysis.containerBounds),

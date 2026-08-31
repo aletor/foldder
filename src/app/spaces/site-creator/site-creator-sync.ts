@@ -4,6 +4,7 @@ import { getLiveStudioNodePatch } from "../studio-live-documents";
 import { buildSiteSelectionIndex } from "./build-site-selection-index";
 import { captureSnapshotFromDesignerNode } from "./designer-source-snapshot";
 import { reconcileDesignerGroupMirrors } from "./site-creator-designer-group-bootstrap";
+import { reconcilePageBackground } from "./site-creator-page-background";
 import type { DesignerSourceSnapshotV1, SiteCreatorNodeData } from "./site-creator-types";
 
 export type SyncValidationResult =
@@ -83,7 +84,10 @@ export function applySnapshotWithDesignerGroupMirrors(
   const withSnapshot = applyConfirmedSnapshotUpdate(nodeData, candidate);
   const index = buildSiteSelectionIndex(candidate.page);
   try {
-    const blueprint = reconcileDesignerGroupMirrors(withSnapshot.blueprint, index);
+    const blueprint = reconcilePageBackground(
+      reconcileDesignerGroupMirrors(withSnapshot.blueprint, index),
+      candidate.page,
+    );
     return { ...withSnapshot, blueprint };
   } catch {
     return withSnapshot;

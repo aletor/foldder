@@ -20,6 +20,7 @@ import {
   findPartiallyCoveredSemanticNodes,
   removeBlueprintNodePreservingContent,
   resolveButtonParent,
+  setSectionPinToTop,
   stretchSectionSourceRangeBottom,
 } from "./site-blueprint-ops";
 import {
@@ -692,14 +693,123 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const section = result.blueprint.nodes[result.createdNodeId!] as SiteBlueprintSectionNode;
-    expect(section.sourceRange.top).toBe(40);
+    expect(section.sourceRange.top).toBe(0);
     expect(section.sourceRange.bottom).toBe(120);
+  });
+
+  it("claims top margin from previous section bottom when creating below", () => {
+    const committed = page([
+      layer({ id: "top", type: "rect", x: 0, y: 0, width: 100, height: 80 }),
+      layer({ id: "bottom", type: "rect", x: 0, y: 140, width: 100, height: 40 }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const first = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["top"],
+      index,
+      committedPage: committed,
+      sectionType: "hero",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok || !first.createdNodeId) return;
+    expect((first.blueprint.nodes[first.createdNodeId] as SiteBlueprintSectionNode).sourceRange.top).toBe(
+      0,
+    );
+    const second = createSectionFromSelection({
+      blueprint: first.blueprint,
+      selectedLayerIds: ["bottom"],
+      index,
+      committedPage: committed,
+      sectionType: "generic",
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok || !second.createdNodeId) return;
+    const below = second.blueprint.nodes[second.createdNodeId] as SiteBlueprintSectionNode;
+    expect(below.sourceRange.top).toBe(80);
+    expect(below.sourceRange.bottom).toBe(180);
   });
 
   it("stretching the section frame claims empty space below without moving layers", () => {
     const committed = page([
       layer({ id: "top", type: "rect", x: 0, y: 0, width: 100, height: 80 }),
-      layer({ id: "bottom", type: "rect", x: 0, y: 140, width: 100, height: 40 }),
+      layer({ id: "bottom", type: "rect", x: 0, y: 200, width: 100, height: 40 }),
+    ]);
+    const index = buildSiteSelectionIndex(committed);
+    const first = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["top"],
+      index,
+      committedPage: committed,
+      sectionType: "hero",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok || !first.createdNodeId) return;
+    // Leave a gap below the first section before creating the next, so bottom stretch
+    // can claim empty space that is not already owned by the section underneath.
+    const heroId = first.createdNodeId;
+    const withGap = stretchSectionSourceRangeBottom({
+      blueprint: first.blueprint,
+      sectionId: heroId,
+      bottom: 140,
+      index,
+      pageHeight: 400,
+    });
+    expect(withGap.ok).toBe(true);
+    if (!withGap.ok) return;
+    const second = createSectionFromSelection({
+      blueprint: withGap.blueprint,
+      selectedLayerIds: ["bottom"],
+      index,
+      committedPage: committed,
+      sectionType: "generic",
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok || !second.createdNodeId) return;
+    expect((second.blueprint.nodes[second.createdNodeId] as SiteBlueprintSectionNode).sourceRange.top).toBe(
+      140,
+    );
+
+    const stretched = stretchSectionSourceRangeBottom({
+      blueprint: second.blueprint,
+      sectionId: heroId,
+      bottom: 120,
+      index,
+      pageHeight: 400,
+    });
+    expect(stretched.ok).toBe(true);
+    if (!stretched.ok) return;
+    const hero = stretched.blueprint.nodes[heroId] as SiteBlueprintSectionNode;
+    expect(hero.sourceRange.bottom).toBe(120);
+    expect(committed.objects?.find((obj) => obj.id === "top")?.y).toBe(0);
+    expect(committed.objects?.find((obj) => obj.id === "top")?.height).toBe(80);
+
+    const tooLow = stretchSectionSourceRangeBottom({
+      blueprint: stretched.blueprint,
+      sectionId: heroId,
+      bottom: 40,
+      index,
+      pageHeight: 400,
+    });
+    expect(tooLow.ok).toBe(true);
+    if (!tooLow.ok) return;
+    expect((tooLow.blueprint.nodes[heroId] as SiteBlueprintSectionNode).sourceRange.bottom).toBe(80);
+
+    const intoNext = stretchSectionSourceRangeBottom({
+      blueprint: stretched.blueprint,
+      sectionId: heroId,
+      bottom: 200,
+      index,
+      pageHeight: 400,
+    });
+    expect(intoNext.ok).toBe(true);
+    if (!intoNext.ok) return;
+    expect((intoNext.blueprint.nodes[heroId] as SiteBlueprintSectionNode).sourceRange.bottom).toBe(140);
+  });
+
+  it("pins only the first section as a fixed header", () => {
+    const committed = page([
+      layer({ id: "top", type: "rect", x: 0, y: 0, width: 100, height: 80 }),
+      layer({ id: "bottom", type: "rect", x: 0, y: 200, width: 100, height: 40 }),
     ]);
     const index = buildSiteSelectionIndex(committed);
     const first = createSectionFromSelection({
@@ -721,42 +831,22 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
     expect(second.ok).toBe(true);
     if (!second.ok || !second.createdNodeId) return;
 
-    const heroId = first.createdNodeId;
-    const stretched = stretchSectionSourceRangeBottom({
-      blueprint: second.blueprint,
-      sectionId: heroId,
-      bottom: 120,
-      index,
-      pageHeight: 300,
-    });
-    expect(stretched.ok).toBe(true);
-    if (!stretched.ok) return;
-    const hero = stretched.blueprint.nodes[heroId] as SiteBlueprintSectionNode;
-    expect(hero.sourceRange.bottom).toBe(120);
-    expect(committed.objects?.find((obj) => obj.id === "top")?.y).toBe(0);
-    expect(committed.objects?.find((obj) => obj.id === "top")?.height).toBe(80);
+    const pinned = setSectionPinToTop(second.blueprint, first.createdNodeId, true);
+    expect(pinned.ok).toBe(true);
+    if (!pinned.ok) return;
+    expect((pinned.blueprint.nodes[first.createdNodeId] as SiteBlueprintSectionNode).pinToTop).toBe(
+      true,
+    );
 
-    const tooLow = stretchSectionSourceRangeBottom({
-      blueprint: stretched.blueprint,
-      sectionId: heroId,
-      bottom: 40,
-      index,
-      pageHeight: 300,
-    });
-    expect(tooLow.ok).toBe(true);
-    if (!tooLow.ok) return;
-    expect((tooLow.blueprint.nodes[heroId] as SiteBlueprintSectionNode).sourceRange.bottom).toBe(80);
+    const blocked = setSectionPinToTop(pinned.blueprint, second.createdNodeId, true);
+    expect(blocked.ok).toBe(false);
 
-    const intoNext = stretchSectionSourceRangeBottom({
-      blueprint: stretched.blueprint,
-      sectionId: heroId,
-      bottom: 200,
-      index,
-      pageHeight: 300,
-    });
-    expect(intoNext.ok).toBe(true);
-    if (!intoNext.ok) return;
-    expect((intoNext.blueprint.nodes[heroId] as SiteBlueprintSectionNode).sourceRange.bottom).toBe(140);
+    const cleared = setSectionPinToTop(pinned.blueprint, first.createdNodeId, false);
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(
+      (cleared.blueprint.nodes[first.createdNodeId] as SiteBlueprintSectionNode).pinToTop,
+    ).toBeUndefined();
   });
 
   it("25. Sections ordered by vertical position", () => {
@@ -765,17 +855,8 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
       layer({ id: "upper", type: "rect", x: 0, y: 20, width: 80, height: 40 }),
     ]);
     const index = buildSiteSelectionIndex(committed);
-    const lower = createSectionFromSelection({
-      blueprint: createEmptySiteBlueprintV1(),
-      selectedLayerIds: ["lower"],
-      index,
-      committedPage: committed,
-      sectionType: "generic",
-    });
-    expect(lower.ok).toBe(true);
-    if (!lower.ok) return;
     const upper = createSectionFromSelection({
-      blueprint: lower.blueprint,
+      blueprint: createEmptySiteBlueprintV1(),
       selectedLayerIds: ["upper"],
       index,
       committedPage: committed,
@@ -783,7 +864,22 @@ describe("Phase 5 Site Creator Blueprint structure", () => {
     });
     expect(upper.ok).toBe(true);
     if (!upper.ok) return;
-    expect(upper.blueprint.rootChildIds).toEqual([upper.createdNodeId, lower.createdNodeId]);
+    expect((upper.blueprint.nodes[upper.createdNodeId!] as SiteBlueprintSectionNode).sourceRange.top).toBe(
+      0,
+    );
+    const lower = createSectionFromSelection({
+      blueprint: upper.blueprint,
+      selectedLayerIds: ["lower"],
+      index,
+      committedPage: committed,
+      sectionType: "generic",
+    });
+    expect(lower.ok).toBe(true);
+    if (!lower.ok) return;
+    expect((lower.blueprint.nodes[lower.createdNodeId!] as SiteBlueprintSectionNode).sourceRange.top).toBe(
+      60,
+    );
+    expect(lower.blueprint.rootChildIds).toEqual([upper.createdNodeId, lower.createdNodeId]);
   });
 
   it("26. parent suggested by unique sourceRange", () => {

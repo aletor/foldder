@@ -115,6 +115,14 @@ export function designedSectionBottomPaddingPx(
   return Math.max(0, section.sourceRange.bottom - (contentBounds.y + contentBounds.height));
 }
 
+/** Padding superior de diseño: hueco del sourceRange sobre el contenido. */
+export function designedSectionTopPaddingPx(
+  section: SiteBlueprintSectionNode,
+  contentBounds: { y: number; height: number },
+): number {
+  return Math.max(0, contentBounds.y - section.sourceRange.top);
+}
+
 export function clampSectionSourceRangeBottom(args: {
   contentBottom: number;
   nextSectionTop: number | null;

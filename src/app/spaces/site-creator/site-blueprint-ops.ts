@@ -62,6 +62,7 @@ import { commonContainersForFreeLayers } from "./site-creator-hierarchy";
 import { sourceWorldBoundsOfIds } from "./site-creator-layer-world-bounds";
 import { collectMultiCardInstanceLayerIds } from "./site-creator-multicard-layout";
 import { clampSectionSourceRangeBottom } from "./site-creator-section-height";
+import { listDocumentSections } from "./site-creator-section-scroll";
 
 export type BlueprintOpError = {
   ok: false;
@@ -268,6 +269,21 @@ function computeSourceRange(
   };
 }
 
+/**
+ * Absorbe el margen de diseño encima del contenido:
+ * - sin sección superior → desde y=0
+ * - con sección superior → desde el bottom de esa sección
+ */
+function claimSectionSourceRangeTop(
+  contentTop: number,
+  existingSections: SiteBlueprintSectionNode[],
+): number {
+  const above = existingSections.filter((s) => s.sourceRange.top < contentTop - 0.5);
+  if (above.length === 0) return 0;
+  const prevBottom = Math.max(...above.map((s) => s.sourceRange.bottom));
+  return Math.min(contentTop, Math.max(0, prevBottom));
+}
+
 function insertSectionByVerticalOrder(
   rootChildIds: string[],
   nodes: Record<string, SiteBlueprintNode>,
@@ -413,11 +429,18 @@ export function createSectionFromSelection(args: {
     ...sectionLayerIds,
     ...fullyCovered.flatMap((id) => collectSemanticCoverageLayerIds(blueprint, id)),
   ];
-  const sourceRange = computeSourceRange(
+  let sourceRange = computeSourceRange(
     coverageForRange.length ? coverageForRange : selectedLayerIds,
     index,
     committedPage,
   );
+  const existingSections = Object.values(blueprint.nodes).filter(
+    (n): n is SiteBlueprintSectionNode => Boolean(n) && isSiteSectionNode(n),
+  );
+  const claimedTop = claimSectionSourceRangeTop(sourceRange.top, existingSections);
+  if (claimedTop < sourceRange.top - 0.5) {
+    sourceRange = { ...sourceRange, top: claimedTop };
+  }
 
   const section: SiteBlueprintSectionNode = {
     id: sectionId,
@@ -1379,6 +1402,59 @@ export function setSectionHeightMode(
     delete updated.customHeight;
   }
   next.nodes[sectionId] = updated;
+  return { ok: true, blueprint: next };
+}
+
+/** Primera sección del documento (orden vertical) — única candidata a cabecera fija. */
+export function isDocumentTopSection(blueprint: SiteBlueprintV1, sectionId: string): boolean {
+  return listDocumentSections(blueprint)[0]?.id === sectionId;
+}
+
+/**
+ * Activa o desactiva cabecera fija (`pinToTop`).
+ * Solo la primera sección del documento puede fijarse; al activar se limpia el resto.
+ */
+export function setSectionPinToTop(
+  blueprint: SiteBlueprintV1,
+  sectionId: string,
+  pinToTop: boolean,
+): BlueprintOpResult {
+  const node = blueprint.nodes[sectionId];
+  if (!node || !isSiteSectionNode(node)) {
+    return fail("invalid_target", "Selecciona una sección.");
+  }
+  if (pinToTop && !isDocumentTopSection(blueprint, sectionId)) {
+    return fail(
+      "invalid_target",
+      "Solo la primera sección (arriba del todo) puede fijarse como cabecera.",
+    );
+  }
+  if (Boolean(node.pinToTop) === pinToTop && !pinToTop) {
+    return { ok: true, blueprint };
+  }
+  if (Boolean(node.pinToTop) === pinToTop && pinToTop) {
+    // Asegura exclusividad por si hubiera residuos.
+    const othersPinned = Object.values(blueprint.nodes).some(
+      (n) => n && isSiteSectionNode(n) && n.id !== sectionId && n.pinToTop,
+    );
+    if (!othersPinned) return { ok: true, blueprint };
+  }
+
+  const next = cloneBlueprint(blueprint);
+  for (const id of Object.keys(next.nodes)) {
+    const current = next.nodes[id];
+    if (!current || !isSiteSectionNode(current)) continue;
+    if (current.id === sectionId) {
+      const updated: SiteBlueprintSectionNode = { ...current };
+      if (pinToTop) updated.pinToTop = true;
+      else delete updated.pinToTop;
+      next.nodes[id] = updated;
+    } else if (current.pinToTop) {
+      const cleared = { ...current };
+      delete cleared.pinToTop;
+      next.nodes[id] = cleared;
+    }
+  }
   return { ok: true, blueprint: next };
 }
 

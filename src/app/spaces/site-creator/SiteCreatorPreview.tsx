@@ -4,8 +4,11 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import { collectDesignerPageFontFamilies } from "@/app/spaces/designer/designer-page-text-frame-sync";
 import { ensureGoogleFontPreviewBatchLoaded } from "@/app/spaces/freehand/google-fonts-preview-loader";
+import type { FreehandObject } from "@/app/spaces/FreehandStudio";
 import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { DesignerPageCanvasView } from "@/app/spaces/presenter/DesignerPageCanvasView";
+import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
+import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import {
   SiteCreatorSelectionSurface,
   type SiteCreatorClipImageEdit,
@@ -28,7 +31,6 @@ import type {
   SiteCreatorSelectionIndex,
   SiteCreatorSelectionState,
 } from "./site-creator-selection-types";
-import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorGhostOutline } from "./SiteCreatorSelectionOverlay";
 import type { SiteCreatorPrimaryAction } from "./site-creator-contextual-actions";
 import type {
@@ -88,6 +90,22 @@ function pageBackground(page: DesignerPageState): string {
   return "#fafafa";
 }
 
+function objectTreeTouchesPinned(obj: FreehandObject, pinnedIds: Set<string>): boolean {
+  if (pinnedIds.has(obj.id)) return true;
+  if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
+    return ((obj as { children?: FreehandObject[] }).children ?? []).some((child) =>
+      objectTreeTouchesPinned(child, pinnedIds),
+    );
+  }
+  if (obj.type === "clippingContainer") {
+    const clip = obj as { mask?: FreehandObject; content?: FreehandObject[] };
+    return [clip.mask, ...(clip.content ?? [])]
+      .filter(Boolean)
+      .some((child) => objectTreeTouchesPinned(child as FreehandObject, pinnedIds));
+  }
+  return false;
+}
+
 export interface SiteCreatorPreviewProps {
   page: DesignerPageState;
   /** Ancho CSS de la vista web (no es zoom). */
@@ -117,6 +135,8 @@ export interface SiteCreatorPreviewProps {
   onCanvasInteraction?: () => void;
   /** Doble clic en fondo del lienzo → Ajustar. */
   onCanvasBackgroundDoubleClick?: () => void;
+  /** CSS de fondo de página detectado del Designer (color / degradado). */
+  canvasBackground?: string | null;
   /** Clips por capa del layout responsive resuelto (6B.1). */
   objectClipById?: Record<string, { x: number; y: number; width: number; height: number }>;
   /** Carruseles MultiCard resueltos (flechas / rueda). */
@@ -174,6 +194,7 @@ export interface SiteCreatorPreviewProps {
   onSpineHeightModeChange?: (sectionId: string, mode: SiteSectionHeightMode) => void;
   onSpineCustomHeightChange?: (sectionId: string, heightPx: number) => void;
   onSpineSourceRangeBottomChange?: (sectionId: string, bottom: number) => void;
+  onSpinePinToTopChange?: (sectionId: string, pinToTop: boolean) => void;
   /** false mientras un contenedor semántico está inspeccionado (segundo clic en hijos). */
   canvasHitPassthroughImages?: boolean;
   /** Rail horizontal de márgenes de página (solo vistas de dispositivo). */
@@ -237,6 +258,7 @@ export function SiteCreatorPreview({
   onMicrobarAction,
   onCanvasInteraction,
   onCanvasBackgroundDoubleClick,
+  canvasBackground = null,
   objectClipById,
   multiCardNav = [],
   onMultiCardScrollIndex,
@@ -271,12 +293,14 @@ export function SiteCreatorPreview({
   onSpineHeightModeChange,
   onSpineCustomHeightChange,
   onSpineSourceRangeBottomChange,
+  onSpinePinToTopChange,
   canvasHitPassthroughImages = true,
   pageInsets = null,
   onPageInsetsChange,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
+  const pinOverlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
@@ -294,14 +318,104 @@ export function SiteCreatorPreview({
   } | null>(null);
   const setDeviceScrollRef = useCallback((el: HTMLDivElement | null) => {
     deviceScrollRef.current = el;
-    setDeviceScrollTop(el?.scrollTop ?? 0);
+    const next = el?.scrollTop ?? 0;
+    setDeviceScrollTop((prev) => (Math.abs(prev - next) < 0.5 ? prev : next));
   }, []);
 
   const { width: pageWidth, height: pageHeight } = getPageDimensions(page);
-  const objects = page.objects ?? [];
-
   const zoom = previewZoom > 0 ? previewZoom : 1;
   const deviceMode = deviceFrame != null;
+
+  const pinnedTopSection = useMemo(() => {
+    if (!blueprint) return null;
+    const first = listDocumentSections(blueprint)[0] ?? null;
+    return first?.pinToTop ? first : null;
+  }, [blueprint]);
+
+  const pinnedLayerIds = useMemo(() => {
+    if (!blueprint || !pinnedTopSection) return null;
+    const ids = collectSemanticCoverageLayerIds(blueprint, pinnedTopSection.id);
+    return ids.length ? new Set(ids) : null;
+  }, [blueprint, pinnedTopSection]);
+
+  const pinPreviewActive = Boolean(
+    pinnedTopSection && pinnedLayerIds && (deviceMode || readOnly),
+  );
+  /** Preview P: overlay fuera del stage → sticky nativo. Dispositivo: sync DOM (overflow-hidden rompe sticky). */
+  const pinOverlayUsesSticky = Boolean(pinPreviewActive && readOnly && !deviceMode);
+
+  const syncPinOverlayToScroll = useCallback((scrollTop: number) => {
+    const el = pinOverlayRef.current;
+    if (!el) return;
+    el.style.transform = scrollTop > 0.5 ? `translate3d(0, ${scrollTop}px, 0)` : "";
+    el.dataset.pinScrollOffset = String(Math.round(scrollTop));
+  }, []);
+
+  const treeTouchesPinned = useCallback((obj: FreehandObject, coverage: Set<string>): boolean => {
+    return objectTreeTouchesPinned(obj, coverage);
+  }, []);
+
+  const { objects, pinnedObjects, pinPageHeight, pinnedObjectClipById } = useMemo(() => {
+    const base = page.objects ?? [];
+    if (!pinPreviewActive || !pinnedLayerIds || !pinnedTopSection) {
+      return {
+        objects: base,
+        pinnedObjects: null as FreehandObject[] | null,
+        pinPageHeight: 0,
+        pinnedObjectClipById: undefined as
+          | Record<string, { x: number; y: number; width: number; height: number }>
+          | undefined,
+      };
+    }
+    const unpinned: FreehandObject[] = [];
+    const pinned: FreehandObject[] = [];
+    for (const obj of base) {
+      if (treeTouchesPinned(obj, pinnedLayerIds)) pinned.push(obj);
+      else unpinned.push(obj);
+    }
+    // Altura del layout ya resuelto (estación / clips), no sourceRange de Original:
+    // en móvil el rango de diseño deja un hueco enorme bajo la cabecera.
+    const stationH = sectionSpine?.stations.find(
+      (station) => station.sectionId === pinnedTopSection.id,
+    )?.height;
+    let clipBottom = 0;
+    if (objectClipById) {
+      for (const layerId of pinnedLayerIds) {
+        const clip = objectClipById[layerId];
+        if (!clip) continue;
+        clipBottom = Math.max(clipBottom, clip.y + clip.height);
+      }
+    }
+    const pinH =
+      (typeof stationH === "number" && stationH > 0 ? stationH : null) ??
+      (clipBottom > 0.5 ? clipBottom : null) ??
+      Math.max(1, pinnedTopSection.sourceRange.bottom - pinnedTopSection.sourceRange.top);
+    const pinnedObjectClipById =
+      objectClipById && pinnedLayerIds.size
+        ? Object.fromEntries(
+            Object.entries(objectClipById).filter(([layerId]) => pinnedLayerIds.has(layerId)),
+          )
+        : undefined;
+    return {
+      objects: unpinned,
+      pinnedObjects: pinned.length ? pinned : null,
+      pinPageHeight: Math.max(1, pinH),
+      pinnedObjectClipById:
+        pinnedObjectClipById && Object.keys(pinnedObjectClipById).length
+          ? pinnedObjectClipById
+          : undefined,
+    };
+  }, [
+    pinPreviewActive,
+    objectClipById,
+    page.objects,
+    pinnedLayerIds,
+    pinnedTopSection,
+    sectionSpine?.stations,
+    treeTouchesPinned,
+  ]);
+
+  const pinDisplayHeight = Math.max(0, Math.round(pinPageHeight * zoom));
   const deviceChrome =
     !readOnly && deviceMode && deviceFrame
       ? siteCreatorDeviceChrome(resolveSiteCreatorDeviceChromeKind(deviceFrame))
@@ -367,24 +481,34 @@ export function SiteCreatorPreview({
       inner.scrollLeft = 0;
     }
     setDeviceScrollTop(0);
+    syncPinOverlayToScroll(0);
     setScrollTick((n) => n + 1);
-  }, [readOnly]);
+  }, [readOnly, deviceMode, deviceFrame?.width, deviceFrame?.height, previewZoom, syncPinOverlayToScroll]);
+
+  useLayoutEffect(() => {
+    if (!pinPreviewActive || pinOverlayUsesSticky) return;
+    syncPinOverlayToScroll(deviceScrollRef.current?.scrollTop ?? 0);
+  }, [pinPreviewActive, pinOverlayUsesSticky, pinDisplayHeight, syncPinOverlayToScroll]);
 
   useEffect(() => {
     const bump = () => setScrollTick((n) => n + 1);
-    const bumpDevice = () => {
-      setDeviceScrollTop(deviceScrollRef.current?.scrollTop ?? 0);
+    const onDeviceScroll = () => {
+      const top = deviceScrollRef.current?.scrollTop ?? 0;
+      if (!pinOverlayUsesSticky) syncPinOverlayToScroll(top);
+      setDeviceScrollTop(top);
       bump();
     };
+    const onPreviewScroll = () => bump();
     const outer = scrollRef.current;
     const inner = deviceScrollRef.current;
-    outer?.addEventListener("scroll", bump, { passive: true });
-    inner?.addEventListener("scroll", bumpDevice, { passive: true });
+    outer?.addEventListener("scroll", onPreviewScroll, { passive: true });
+    inner?.addEventListener("scroll", onDeviceScroll, { passive: true });
+    onDeviceScroll();
     return () => {
-      outer?.removeEventListener("scroll", bump);
-      inner?.removeEventListener("scroll", bumpDevice);
+      outer?.removeEventListener("scroll", onPreviewScroll);
+      inner?.removeEventListener("scroll", onDeviceScroll);
     };
-  }, [deviceMode]);
+  }, [deviceMode, readOnly, pinPreviewActive, pinOverlayUsesSticky, syncPinOverlayToScroll]);
 
   useEffect(() => {
     if (readOnly) return;
@@ -658,13 +782,14 @@ export function SiteCreatorPreview({
         style={{
           width: pageWidth,
           height: pageHeight,
+          background: canvasBackground || undefined,
         }}
       >
         <DesignerPageCanvasView
           objects={objects}
           pageWidth={pageWidth}
           pageHeight={pageHeight}
-          background={pageBackground(page)}
+          background={canvasBackground ? "transparent" : pageBackground(page)}
           objectClipById={objectClipById}
         />
         {!readOnly && selection && selectionIndex && onSelectionAction ? (
@@ -721,6 +846,45 @@ export function SiteCreatorPreview({
     </div>
   );
 
+  const pinnedHeaderOverlay =
+    pinPreviewActive && pinnedObjects && pinDisplayHeight > 0 ? (
+      <div
+        ref={pinOverlayRef}
+        className={`site-creator-section-pin-overlay pointer-events-none z-[100000] overflow-visible ${
+          pinOverlayUsesSticky ? "sticky top-0" : "absolute left-0 top-0"
+        }`}
+        style={{
+          height: pinDisplayHeight,
+          width: contentDisplayWidth,
+          ...(pinOverlayUsesSticky ? { marginBottom: -pinDisplayHeight } : { willChange: "transform" }),
+        }}
+        data-testid="site-creator-section-pin-overlay"
+        data-pin-scroll-mode={pinOverlayUsesSticky ? "sticky" : "sync"}
+        data-pin-scroll-offset="0"
+        aria-hidden
+      >
+        {/* Fondo transparente: el scroll debe verse bajo los picos de máscaras irregulares. */}
+        <div
+          className="origin-top-left overflow-visible"
+          style={{
+            width: pageWidth,
+            height: pinPageHeight,
+            transform: `scale(${zoom})`,
+            background: "transparent",
+          }}
+          data-testid="site-creator-section-pin-surface"
+        >
+          <DesignerPageCanvasView
+            objects={pinnedObjects}
+            pageWidth={pageWidth}
+            pageHeight={pinPageHeight}
+            background="transparent"
+            objectClipById={pinnedObjectClipById}
+          />
+        </div>
+      </div>
+    ) : null;
+
   const spineLayer =
     showSpine && sectionSpine && onSpineSelectSection && onSpineAddSection ? (
       <div
@@ -762,6 +926,7 @@ export function SiteCreatorPreview({
             onSourceRangeBottomChange={(id, bottom) =>
               onSpineSourceRangeBottomChange?.(id, bottom)
             }
+            onPinToTopChange={(id, pin) => onSpinePinToTopChange?.(id, pin)}
             mode={sectionSpine.mode}
           />
         </div>
@@ -849,7 +1014,20 @@ export function SiteCreatorPreview({
               : undefined
           }
         >
-          <div className="relative">
+          <div
+            className="relative"
+            style={
+              readOnly && pinPreviewActive
+                ? {
+                    width: "100%",
+                    maxWidth: previewPageMaxWidth,
+                    marginLeft: previewPageMaxWidth ? "auto" : undefined,
+                    marginRight: previewPageMaxWidth ? "auto" : undefined,
+                  }
+                : undefined
+            }
+          >
+            {readOnly && pinPreviewActive ? pinnedHeaderOverlay : null}
             {spineLayer}
             {showInsetRail && pageInsets && onPageInsetsChange ? (
               <div
@@ -933,9 +1111,10 @@ export function SiteCreatorPreview({
               {deviceMode ? (
                 <div
                   ref={setDeviceScrollRef}
-                  className="site-creator-device-scroll h-full w-full overflow-x-hidden overflow-y-auto [scrollbar-width:thin]"
+                  className="site-creator-device-scroll relative h-full w-full overflow-x-hidden overflow-y-auto [scrollbar-width:thin]"
                   data-testid="site-creator-device-scroll"
                 >
+                  {pinnedHeaderOverlay}
                   <div
                     ref={stageRef}
                     className="site-creator-preview-page-host relative"

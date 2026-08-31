@@ -28,6 +28,8 @@ import { isResponsiveEditableBand } from "./site-creator-types";
 import type { SiteBlueprintLayoutGroupNode, SiteBlueprintV1 } from "./site-creator-types";
 
 const ROW_GAP = 16;
+const ROW_GAP_TOLERANCE = 16;
+const THIN_RULE_MAX_H = 12;
 
 export type GroupWidthLayoutResult = {
   page: DesignerPageState;
@@ -508,6 +510,37 @@ export function yOverlap(a: PageRect, b: PageRect): boolean {
   return a.y < b.y + b.height && b.y < a.y + a.height;
 }
 
+/** Línea / filete horizontal: no es un fondo de fila. */
+export function isThinRule(box: PageRect): boolean {
+  return box.height > 0 && box.height <= THIN_RULE_MAX_H && box.width >= box.height * 8;
+}
+
+function yOverlapAmount(a: PageRect, b: PageRect): number {
+  return Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+}
+
+/** Misma línea visual: centros en banda, solape útil o filete que cruza la fila. */
+export function sameVisualRow(a: PageRect, b: PageRect): boolean {
+  if (a.width < 1 || a.height < 1 || b.width < 1 || b.height < 1) return false;
+  const thinA = isThinRule(a);
+  const thinB = isThinRule(b);
+  if (thinA || thinB) {
+    const thin = thinA ? a : b;
+    const other = thinA ? b : a;
+    const cy = thin.y + thin.height / 2;
+    return cy >= other.y - ROW_GAP_TOLERANCE && cy <= other.y + other.height + ROW_GAP_TOLERANCE;
+  }
+  const overlap = yOverlapAmount(a, b);
+  const shorter = Math.min(a.height, b.height);
+  if (overlap >= Math.max(1, shorter * 0.2)) return true;
+  const cyA = a.y + a.height / 2;
+  const cyB = b.y + b.height / 2;
+  const band = Math.max(a.height, b.height) * 0.35;
+  if (Math.abs(cyA - cyB) <= band) return true;
+  const gap = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height));
+  return gap > 0 && gap <= ROW_GAP_TOLERANCE && Math.abs(cyA - cyB) <= Math.max(a.height, b.height) * 0.45;
+}
+
 function boxesOverlap(a: PageRect, b: PageRect): boolean {
   return yOverlap(a, b) && a.x < b.x + b.width && b.x < a.x + a.width;
 }
@@ -527,11 +560,29 @@ function isPageBackground(box: PageRect, parent: PageRect): boolean {
   return nearLeft && nearTop && box.width >= parent.width * 0.7 && box.height >= parent.height * 0.7;
 }
 
-/** Franja a sangre (fondo de fila/sección): no debe absorber cards vecinos. */
+/** Franja a sangre (fondo de fila/sección). Un filete fino no cuenta. */
 function isFullBleedBand(box: PageRect, parent: PageRect): boolean {
   if (!(parent.width > 0)) return false;
+  if (isThinRule(box)) return false;
   const nearLeft = box.x <= parent.x + parent.width * 0.08;
-  return nearLeft && box.width >= parent.width * 0.7;
+  const tallEnough = box.height >= Math.max(64, parent.height * 0.12);
+  return nearLeft && box.width >= parent.width * 0.7 && tallEnough;
+}
+
+function unitHasFillFrame(
+  ids: string[],
+  bounds: PageRect,
+  byId: Map<string, FreehandObject>,
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  return ids.some((id) => {
+    const type = index.byId[id]?.type ?? byId.get(id)?.type;
+    if (type === "groupContainer") return true;
+    if (type === "text" || type === "textOnPath") return false;
+    const obj = byId.get(id);
+    const src = index.byId[id]?.visualBounds;
+    return Boolean(obj && src && isVisualFrameLayer(obj, src, bounds));
+  });
 }
 
 function boxMostlyInside(box: PageRect, parent: PageRect): boolean {
@@ -612,7 +663,10 @@ function absorbPaintedOverlaps(args: {
     if (isPageBackground(box, args.parentRect) || isFullBleedBand(box, args.parentRect)) continue;
     const owner = bestGroupSource(box, competitors);
     if (!owner) continue;
-    if (!overlapIsUseful(box, overlapArea(owner.source, box))) continue;
+    const area = overlapArea(owner.source, box);
+    if (!overlapIsUseful(box, area)) continue;
+    // Pintado encima de la card, no un vecino de la misma fila que apenas se toca.
+    if (!centerInside(box, owner.source) && area < box.width * box.height * 0.45) continue;
     const target = args.prepared.find((item) => item.group.id === owner.nodeId);
     if (!target) continue;
     const extra = expandDescendants([worldId], args.index);
@@ -627,23 +681,75 @@ function absorbPaintedOverlaps(args: {
   }
 }
 
-function designerParentOfGroup(args: {
-  group: SiteBlueprintLayoutGroupNode;
+function placeLeftoverMates(args: {
+  byId: Map<string, FreehandObject>;
   index: SiteCreatorSelectionIndex;
-}): string | null {
-  const containerId = isDesignerGroupMirrorNode(args.group, args.index)
-    ? mirrorContainerLayerIdFromNode(args.group)
-    : null;
-  const raw = containerId ?? args.group.layerIds[0] ?? null;
-  if (!raw) return null;
-  const rootId = worldSpaceAncestorId(raw, args.index);
-  return args.index.byId[rootId]?.parentLayerId ?? null;
+  mates: Array<{ ids: string[]; origin: PageRect }>;
+  parent: PageRect;
+  cursor: number;
+}): number {
+  if (args.mates.length === 0) return args.cursor - ROW_GAP;
+  const live = [...args.mates]
+    .filter((item) => item.origin.width > 0 && item.origin.height > 0)
+    .sort((a, b) => a.origin.x - b.origin.x || a.origin.y - b.origin.y);
+  if (live.length === 0) return args.cursor - ROW_GAP;
+  const shouldFill = live.some((item) =>
+    unitHasFillFrame(item.ids, item.origin, args.byId, args.index),
+  );
+  if (!shouldFill) {
+    for (const item of live) {
+      const dy = args.cursor - item.origin.y;
+      shiftLayers(args.byId, item.ids, args.index, dy);
+    }
+    return Math.max(
+      ...live.map((item) => {
+        const after = currentUnion(args.byId, item.ids, args.index);
+        return after ? after.y + after.height : args.cursor + item.origin.height;
+      }),
+    );
+  }
+  if (live.length === 1) {
+    const only = live[0]!;
+    placeFullWidthGroup({
+      byId: args.byId,
+      index: args.index,
+      layerIds: only.ids,
+      origin: only.origin,
+      parent: args.parent,
+      cursor: args.cursor,
+    });
+    const next = currentUnion(args.byId, only.ids, args.index);
+    return next ? next.y + next.height : args.cursor + only.origin.height;
+  }
+  const union = unionPageRects(live.map((item) => item.origin));
+  if (!union) return args.cursor - ROW_GAP;
+  const scaleX = args.parent.width / Math.max(1, union.width);
+  let bottom = args.cursor;
+  for (const item of live) {
+    const slot: PageRect = {
+      x: args.parent.x + (item.origin.x - union.x) * scaleX,
+      y: args.parent.y,
+      width: Math.max(1, item.origin.width * scaleX),
+      height: args.parent.height,
+    };
+    placeFullWidthGroup({
+      byId: args.byId,
+      index: args.index,
+      layerIds: item.ids,
+      origin: item.origin,
+      parent: slot,
+      cursor: args.cursor,
+    });
+    const next = currentUnion(args.byId, item.ids, args.index);
+    if (next) bottom = Math.max(bottom, next.y + next.height);
+  }
+  return bottom;
 }
 
 /**
- * Compañeros de la misma fila visual: otros grupos, botones y capas sueltas
- * que solapan en Y en el mismo padre Designer, sin fondos a sangre.
- * Un bloque no agrupado (fondo + texto + hijos) se mueve entero.
+ * Compañeros de la misma fila visual: grupos, botones y capas sueltas
+ * que ocupan la misma banda Y dentro del contenedor (no la carpeta Designer).
+ * Un bloque no agrupado (fondo + texto + filetes) viaja entero.
  */
 export function collectVisualRowMates(args: {
   blueprint: SiteBlueprintV1;
@@ -654,7 +760,6 @@ export function collectVisualRowMates(args: {
   parentRect: PageRect;
   groupLayerIds: Set<string>;
 }): VisualRowMate[] {
-  const designerParentId = designerParentOfGroup({ group: args.group, index: args.index });
   const claimed = new Set(args.groupLayerIds);
   const mates: VisualRowMate[] = [];
 
@@ -673,22 +778,33 @@ export function collectVisualRowMates(args: {
     return unionPageRects(rects);
   };
 
+  const inParent = (box: PageRect): boolean =>
+    boxMostlyInside(box, args.parentRect) || centerInside(box, args.parentRect);
+
   const growVisualUnit = (seedIds: string[]): string[] => {
     const ids = new Set(expandDescendants(seedIds, args.index));
     let grew = true;
     while (grew) {
       grew = false;
-      const union = unionBoxes([...ids]);
+      const coreIds = [...ids].filter((id) => {
+        const box = displayBox(id);
+        return Boolean(box && !isThinRule(box));
+      });
+      const union = unionBoxes(coreIds.length ? coreIds : [...ids]);
       if (!union) break;
       for (const entry of args.index.entries) {
         if (!entry.visible) continue;
-        if (entry.parentLayerId !== designerParentId) continue;
         if (claimed.has(entry.layerId) || ids.has(entry.layerId)) continue;
         if (entry.ancestorIds.some((id) => claimed.has(id) || ids.has(id))) continue;
-        const box = displayBox(entry.layerId);
-        if (!box || !boxesOverlap(union, box)) continue;
+        const worldId = worldSpaceAncestorId(entry.layerId, args.index);
+        if (claimed.has(worldId) || ids.has(worldId)) continue;
+        if (!isWorldSpaceLayerId(worldId, args.index)) continue;
+        const box = displayBox(worldId);
+        if (!box || !inParent(box)) continue;
         if (isPageBackground(box, args.parentRect) || isFullBleedBand(box, args.parentRect)) continue;
-        for (const id of expandDescendants([entry.layerId], args.index)) {
+        const attach = isThinRule(box) ? sameVisualRow(union, box) : boxesOverlap(union, box);
+        if (!attach) continue;
+        for (const id of expandDescendants([worldId], args.index)) {
           if (!ids.has(id)) {
             ids.add(id);
             grew = true;
@@ -704,12 +820,10 @@ export function collectVisualRowMates(args: {
     let unitIds = growVisualUnit(ids);
     let bounds = unionBoxes(unitIds);
     if (!bounds) return;
-    if (
-      centerInside(bounds, args.origin) ||
-      overlapArea(args.origin, bounds) >= bounds.width * bounds.height * 0.45
-    ) {
-      return;
-    }
+    const paintedOn =
+      centerInside(bounds, args.origin) &&
+      overlapArea(args.origin, bounds) >= bounds.width * bounds.height * 0.55;
+    if (paintedOn) return;
     if (isPageBackground(bounds, args.parentRect) || isFullBleedBand(bounds, args.parentRect)) {
       const seed = ids.filter((id) => {
         if (claimed.has(id)) return false;
@@ -722,7 +836,8 @@ export function collectVisualRowMates(args: {
       bounds = unionBoxes(unitIds);
       if (!bounds || isPageBackground(bounds, args.parentRect)) return;
     }
-    if (!yOverlap(args.origin, bounds)) return;
+    if (!inParent(bounds)) return;
+    if (!sameVisualRow(args.origin, bounds)) return;
     unitIds.forEach((id) => claimed.add(id));
     mates.push({ ids: unitIds, bounds });
   };
@@ -736,23 +851,29 @@ export function collectVisualRowMates(args: {
 
   for (const entry of args.index.entries) {
     if (!entry.visible) continue;
-    if (entry.parentLayerId !== designerParentId) continue;
     if (claimed.has(entry.layerId)) continue;
     if (entry.ancestorIds.some((id) => claimed.has(id))) continue;
-    const box = displayBox(entry.layerId);
-    if (box && (isPageBackground(box, args.parentRect) || isFullBleedBand(box, args.parentRect))) continue;
+    const worldId = worldSpaceAncestorId(entry.layerId, args.index);
+    if (claimed.has(worldId)) continue;
+    const box = displayBox(worldId);
+    if (!box || !inParent(box)) continue;
+    if (isPageBackground(box, args.parentRect) || isFullBleedBand(box, args.parentRect)) continue;
 
     const owner = findLayerSemanticOwner(args.blueprint, entry.layerId, args.index);
+    if (owner && owner.id === args.group.parentId) {
+      consider([worldId]);
+      continue;
+    }
     if (owner && owner.id !== args.group.id && owner.parentId === args.group.parentId) {
       consider(coverageLayerIds(args.blueprint, owner.id, args.index));
       continue;
     }
     if (entry.type === "groupContainer" || entry.type === "clippingContainer" || entry.type === "booleanGroup") {
-      consider([entry.layerId]);
+      consider([worldId]);
       continue;
     }
     if (entry.containerKind) continue;
-    consider([entry.layerId]);
+    consider([worldId]);
   }
 
   // Recortes/fotos fuera de la carpeta de la card (página o carpeta a sangre):
@@ -767,10 +888,14 @@ export function collectVisualRowMates(args: {
     if (!box || isPageBackground(box, args.parentRect) || isFullBleedBand(box, args.parentRect)) {
       continue;
     }
+    if (!inParent(box) && !isThinRule(box)) continue;
     let best: VisualRowMate | null = null;
     let bestArea = 0;
     for (const mate of mates) {
-      const area = overlapArea(mate.bounds, box);
+      const area =
+        isThinRule(box) && sameVisualRow(mate.bounds, box)
+          ? mate.bounds.width
+          : overlapArea(mate.bounds, box);
       if (area > bestArea) {
         bestArea = area;
         best = mate;
@@ -778,8 +903,8 @@ export function collectVisualRowMates(args: {
     }
     const originOverlap = overlapArea(args.origin, box);
     if (!best || bestArea < 1) continue;
-    if (originOverlap > bestArea) continue;
-    if (bestArea < box.width * box.height * 0.12 && bestArea < 64) continue;
+    if (originOverlap > bestArea && !isThinRule(box)) continue;
+    if (!isThinRule(box) && bestArea < box.width * box.height * 0.12 && bestArea < 64) continue;
     const extra = expandDescendants([worldId], args.index);
     extra.forEach((id) => claimed.add(id));
     for (const id of extra) {
@@ -788,7 +913,7 @@ export function collectVisualRowMates(args: {
   }
 
   return mates
-    .filter((mate) => boxMostlyInside(mate.bounds, args.parentRect))
+    .filter((mate) => boxMostlyInside(mate.bounds, args.parentRect) || isThinRule(mate.bounds))
     .sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
 }
 
@@ -964,10 +1089,14 @@ export function applyLayoutGroupWidthModes(args: {
       origin: rowOrigin,
       parentRect: parent,
       groupLayerIds: rowClaimed,
-    }).filter((mate) => boxMostlyInside(mate.bounds, parent));
+    }).filter((mate) => boxMostlyInside(mate.bounds, parent) || isThinRule(mate.bounds));
+    const leftover = mates.map((mate) => ({
+      ids: mate.ids,
+      origin: currentUnion(byId, mate.ids, index) ?? mate.bounds,
+    }));
     const origBottom = Math.max(
       rowOrigin.y + rowOrigin.height,
-      ...mates.map((m) => m.bounds.y + m.bounds.height),
+      ...leftover.map((m) => m.origin.y + m.origin.height),
     );
 
     let cursor = rowOrigin.y;
@@ -1003,22 +1132,24 @@ export function applyLayoutGroupWidthModes(args: {
       placed.add(entry.group.id);
     }
 
-    const restTop = mates.length ? Math.min(...mates.map((m) => m.bounds.y)) : cursor;
-    const dy = cursor - restTop;
-    for (const mate of mates) {
-      shiftLayers(byId, mate.ids, index, dy);
-      mate.ids.forEach((id) => moved.add(id));
-    }
-    const matesBottom = mates.length
-      ? Math.max(
-          ...mates.map((m) => {
-            const after = currentUnion(byId, m.ids, index);
-            return after ? after.y + after.height : m.bounds.y + m.bounds.height + dy;
-          }),
-        )
+    for (const item of leftover) item.ids.forEach((id) => moved.add(id));
+    const matesBottom = leftover.length
+      ? placeLeftoverMates({
+          byId,
+          index,
+          mates: leftover,
+          parent,
+          cursor,
+        })
       : cursor - ROW_GAP;
     const newRowBottom = Math.max(cursor - ROW_GAP, matesBottom);
     const extra = newRowBottom - origBottom;
+    const occupied: PageRect = {
+      x: parent.x,
+      y: rowOrigin.y,
+      width: parent.width,
+      height: Math.max(1, newRowBottom - rowOrigin.y),
+    };
     if (extra > 0.5) {
       const parentNode = item.group.parentId ? args.blueprint.nodes[item.group.parentId] : null;
       const nestedParentId = parentNode?.kind === "layoutGroup" ? parentNode.id : null;
@@ -1029,15 +1160,20 @@ export function applyLayoutGroupWidthModes(args: {
       for (const [id, obj] of byId) {
         if (moved.has(id)) continue;
         if (!isWorldSpaceLayerId(id, index)) continue;
-        if (parentCoverage) {
-          if (parentCoverage.has(id)) {
-            if (obj.y + 0.5 >= origBottom) obj.y += extra;
-          } else if (obj.y + 0.5 >= parentBottom) {
-            obj.y += extra;
-          }
+        const box = paintedBox(obj, index);
+        if (isPageBackground(box, parent)) continue;
+        const inScope = parentCoverage
+          ? parentCoverage.has(id) || obj.y + 0.5 >= parentBottom
+          : true;
+        if (!inScope) continue;
+        if (obj.y + 0.5 >= origBottom) {
+          obj.y += extra;
           continue;
         }
-        if (obj.y + 0.5 >= origBottom) obj.y += extra;
+        if (boxesOverlap(box, occupied) && !isFullBleedBand(box, parent)) {
+          const dy = newRowBottom + ROW_GAP - box.y;
+          if (dy > 0.5) shiftLayers(byId, [id], index, dy);
+        }
       }
     }
   }
