@@ -1903,9 +1903,13 @@ function leftoverDirectChildren(
   const entry = index.byId[id];
   if (entry?.type !== "groupContainer") return [];
   const children = (entry.object as { children?: Array<{ id?: string }> } | undefined)?.children ?? [];
-  return children
-    .map((child) => child.id)
-    .filter((childId): childId is string => Boolean(childId) && Boolean(index.byId[childId]));
+  const ids: string[] = [];
+  for (const child of children) {
+    const childId = child.id;
+    if (!childId || !index.byId[childId]) continue;
+    ids.push(childId);
+  }
+  return ids;
 }
 
 function leftoverChildrenFormSeparateRows(

@@ -688,14 +688,18 @@ export function patchItemTune(args: {
   blueprint: SiteBlueprintV1;
   target: ResponsiveItemRef;
   band: ResponsiveVisibilityBand;
-  patch: (Partial<ResponsiveItemTuneV1> & { boxH?: number | null }) | null;
+  patch: (Omit<Partial<ResponsiveItemTuneV1>, "boxH"> & { boxH?: number | null }) | null;
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
   const target = canonicalizeItemRef(args.target);
   const current = resolveItemTune(args.blueprint, target, args.band);
-  let merged: ResponsiveItemTuneV1 | null =
-    args.patch == null ? null : { ...(current ?? {}), ...args.patch };
-  if (merged && args.patch && "boxH" in args.patch && args.patch.boxH == null) {
-    delete merged.boxH;
+  let merged: ResponsiveItemTuneV1 | null = null;
+  if (args.patch != null) {
+    const { boxH: patchBoxH, ...rest } = args.patch;
+    merged = { ...(current ?? {}), ...rest };
+    if ("boxH" in args.patch) {
+      if (patchBoxH == null) delete merged.boxH;
+      else merged.boxH = patchBoxH;
+    }
   }
   const cleaned = merged ? cleanItemTune(merged) : null;
   const same = JSON.stringify(current ?? null) === JSON.stringify(cleaned);

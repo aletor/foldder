@@ -15,6 +15,7 @@ import {
   type SiteCreatorUnitOutline,
 } from "./SiteCreatorSelectionSurface";
 import type { ItemTransformKind } from "./site-creator-text-frame";
+import type { GroupFitOpportunity } from "./site-creator-group-fit";
 import type { SectionHeightOpportunity } from "./site-creator-section-height";
 import {
   SiteCreatorObjectMicrobar,
