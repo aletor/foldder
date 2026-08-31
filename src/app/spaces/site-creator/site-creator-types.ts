@@ -260,7 +260,32 @@ export type ResponsiveItemTuneV1 = {
   alignY?: ResponsiveAlignY;
   widthMode?: ResponsiveWidthMode;
   order?: number;
+  /**
+   * Desplazamiento relativo al tamaño automático de esa vista.
+   * `0.1` = +10% del ancho (X) o del alto (Y) automáticos. No es un X/Y fijo.
+   */
+  shiftX?: number;
+  shiftY?: number;
+  /** Escala uniforme respecto al tamaño automático. `1` = sin cambio. No se usa en cajas de texto. */
+  scale?: number;
+  /**
+   * Ancho de la caja de texto respecto al automático de esa vista.
+   * `1.1` = +10%. No escala el cuerpo de letra.
+   */
+  boxW?: number;
+  /**
+   * Alto explícito de la caja de texto respecto al automático.
+   * Ausente = el alto abraza el texto tras el reflujo.
+   */
+  boxH?: number;
+  /**
+   * Cuerpo de letra respecto al automático de esa vista.
+   * `1.12` = 112%. Independiente de la caja.
+   */
+  fontScale?: number;
+  /** @deprecated Usar `shiftX` / `shiftY`. Píxeles absolutos del layout. */
   offset?: { x: number; y: number };
+  /** @deprecated Usar `scale`. Ancho/alto absolutos en px. */
   size?: { width?: number; height?: number };
 };
 

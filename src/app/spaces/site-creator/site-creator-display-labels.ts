@@ -288,6 +288,24 @@ export function resolveRootClickUnit(
 }
 
 /**
+ * En Ordenador / tablet / móvil el clic elige el elemento independiente
+ * (texto, foto, botón), no la sección. Original sigue usando `resolveRootClickUnit`.
+ */
+export function resolveDeviceItemClickUnit(
+  layerId: string,
+  blueprint: SiteBlueprintV1,
+  index: SiteCreatorSelectionIndex,
+): SiteCreatorSelectionUnit {
+  const { owner, resolvedLayerId } = semanticOwnerFromDisplayLayer(layerId, blueprint, index);
+  const button = nearestButtonAncestor(blueprint, owner);
+  if (button) {
+    return { kind: "blueprintNode", nodeId: button.id };
+  }
+  const moldId = parseMultiCardInstanceId(resolvedLayerId)?.moldLayerId ?? resolvedLayerId;
+  return { kind: "layer", layerId: moldId };
+}
+
+/**
  * Rollover: el botón va primero (por encima de sección y grupo).
  * Si no hay botón: sección; si no, grupo más externo.
  */

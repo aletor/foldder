@@ -19,11 +19,20 @@ import {
   resolveBackgroundPreserveTransform,
 } from "./site-creator-background-cover";
 import { isLayerExplicitBackground } from "./site-creator-background-assignment";
+import { getObjectFontSize } from "./site-creator-responsive-visual";
+import {
+  hugAreaTextHeight,
+  isAreaTextObject,
+  isTextObject,
+  layerOwnedByButton,
+} from "./site-creator-text-frame";
 import {
   contentBoxX,
   contentBoxY,
   coverageLayerIdsForItem,
   isLayerHiddenInBand,
+  normalizeItemBoxFactor,
+  normalizeItemFontScale,
   resolveContainerTune,
   resolveItemTune,
   resolveMediaTune,
@@ -331,6 +340,12 @@ function containingRegion(
   return best ?? regions[0] ?? null;
 }
 
+function minFontForEditableBand(band: ResponsiveEditableBand): number {
+  if (band === "mobile") return 15;
+  if (band === "tablet") return 14;
+  return 12;
+}
+
 function applyOneItem(args: {
   byId: Map<string, FreehandObject>;
   blueprint: SiteBlueprintV1;
@@ -378,6 +393,16 @@ function applyOneItem(args: {
   let scaleX = 1;
   let scaleY = 1;
 
+  const itemNode =
+    args.target.kind === "blueprintNode" ? args.blueprint.nodes[args.target.nodeId] : null;
+  const textObj =
+    layerIds.length === 1 ? args.byId.get(layerIds[0]!) ?? null : null;
+  const treatAsText =
+    isTextObject(textObj) &&
+    !(itemNode && isSiteButtonNode(itemNode)) &&
+    !(textObj && layerOwnedByButton(args.blueprint, textObj.id));
+  const treatAsAreaText = treatAsText && isAreaTextObject(textObj);
+
   if (tune.widthMode === "full") {
     scaleX = layout.width / Math.max(1, origin.width);
     box = { ...box, x: layout.x, width: layout.width };
@@ -386,13 +411,57 @@ function applyOneItem(args: {
     box = { ...box, x: contentLeft, width: contentWidth };
   }
 
-  if (tune.size?.width != null) {
-    scaleX = tune.size.width / Math.max(1, origin.width);
-    box = { ...box, width: tune.size.width };
-  }
-  if (tune.size?.height != null) {
-    scaleY = tune.size.height / Math.max(1, origin.height);
-    box = { ...box, height: tune.size.height };
+  const fontScale = treatAsText ? normalizeItemFontScale(tune.fontScale ?? 1) : 1;
+  const boxW = treatAsAreaText ? normalizeItemBoxFactor(tune.boxW ?? 1) : 1;
+  const boxH = treatAsAreaText && tune.boxH != null ? normalizeItemBoxFactor(tune.boxH) : null;
+
+  if (treatAsText) {
+    const widthChanged = treatAsAreaText && !tune.widthMode && Math.abs(boxW - 1) > 0.001;
+    const fontChanged = Math.abs(fontScale - 1) > 0.001;
+    const shouldResizeTextBox = treatAsAreaText && (widthChanged || fontChanged || boxH != null);
+    if (widthChanged) {
+      scaleX = boxW;
+      box = { ...box, width: Math.max(8, origin.width * boxW) };
+    }
+    if (textObj) {
+      if (fontChanged) {
+        (textObj as { fontSize?: number }).fontSize = Math.max(
+          minFontForEditableBand(args.band),
+          getObjectFontSize(textObj) * fontScale,
+        );
+      }
+      if (shouldResizeTextBox) {
+        const hug = hugAreaTextHeight(textObj, box.width);
+        const explicitH = boxH != null ? origin.height * boxH : 0;
+        const nextH = Math.max(hug, explicitH);
+        scaleY = nextH / Math.max(1, origin.height);
+        box = { ...box, height: nextH };
+      }
+    }
+  } else {
+    const relativeScale =
+      typeof tune.scale === "number" && Number.isFinite(tune.scale) && tune.scale > 0
+        ? tune.scale
+        : 1;
+    const useRelativeScale = Math.abs(relativeScale - 1) > 0.001;
+    if (useRelativeScale) {
+      scaleX *= relativeScale;
+      scaleY *= relativeScale;
+      box = {
+        ...box,
+        width: Math.max(1, origin.width * scaleX),
+        height: Math.max(1, origin.height * scaleY),
+      };
+    } else {
+      if (tune.size?.width != null) {
+        scaleX = tune.size.width / Math.max(1, origin.width);
+        box = { ...box, width: tune.size.width };
+      }
+      if (tune.size?.height != null) {
+        scaleY = tune.size.height / Math.max(1, origin.height);
+        box = { ...box, height: tune.size.height };
+      }
+    }
   }
 
   if (tune.alignX) {
@@ -421,7 +490,14 @@ function applyOneItem(args: {
     };
   }
 
-  if (tune.offset) {
+  const useRelativeShift = tune.shiftX != null || tune.shiftY != null;
+  if (useRelativeShift) {
+    box = {
+      ...box,
+      x: box.x + (tune.shiftX ?? 0) * origin.width,
+      y: box.y + (tune.shiftY ?? 0) * origin.height,
+    };
+  } else if (tune.offset) {
     box = { ...box, x: box.x + tune.offset.x, y: box.y + tune.offset.y };
   }
 
@@ -442,7 +518,8 @@ function applyOneItem(args: {
     Math.abs(box.x - origin.x) < 0.01 &&
     Math.abs(box.y - origin.y) < 0.01 &&
     Math.abs(scaleX - 1) < 0.001 &&
-    Math.abs(scaleY - 1) < 0.001
+    Math.abs(scaleY - 1) < 0.001 &&
+    Math.abs(fontScale - 1) < 0.001
   ) {
     return;
   }

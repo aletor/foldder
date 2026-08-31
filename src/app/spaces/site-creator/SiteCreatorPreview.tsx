@@ -14,7 +14,7 @@ import {
   type SiteCreatorClipImageEdit,
   type SiteCreatorUnitOutline,
 } from "./SiteCreatorSelectionSurface";
-import type { GroupFitOpportunity } from "./site-creator-group-fit";
+import type { ItemTransformKind } from "./site-creator-text-frame";
 import type { SectionHeightOpportunity } from "./site-creator-section-height";
 import {
   SiteCreatorObjectMicrobar,
@@ -150,7 +150,19 @@ export interface SiteCreatorPreviewProps {
   floatingPortalHost?: HTMLElement | null;
   transformEnabled?: boolean;
   transformBounds?: { x: number; y: number; width: number; height: number } | null;
+  transformKind?: ItemTransformKind;
+  textBoxLockWidth?: boolean;
+  transformCorrection?: {
+    shiftX: number;
+    shiftY: number;
+    scale: number;
+    boxW?: number;
+    boxH?: number | null;
+    fontScale?: number;
+  } | null;
   onTransformCommit?: (delta: { dx: number; dy: number; dw?: number; dh?: number }) => void;
+  fontScale?: number;
+  onFontScale?: (value: number) => void;
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
@@ -267,7 +279,12 @@ export function SiteCreatorPreview({
   floatingPortalHost = null,
   transformEnabled = false,
   transformBounds = null,
+  transformKind = "uniform",
+  textBoxLockWidth = false,
+  transformCorrection = null,
   onTransformCommit,
+  fontScale = 1,
+  onFontScale,
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
@@ -823,7 +840,12 @@ export function SiteCreatorPreview({
             onCanvasBackgroundDoubleClick={onCanvasBackgroundDoubleClick}
             transformEnabled={transformEnabled}
             transformBounds={transformBounds}
+            transformKind={transformKind}
+            textBoxLockWidth={textBoxLockWidth}
+            transformCorrection={transformCorrection}
             onTransformCommit={onTransformCommit}
+            fontScale={fontScale}
+            onFontScale={onFontScale}
             focalLayerId={focalLayerId}
             onFocalPoint={onFocalPoint}
             onCancelFocal={onCancelFocal}

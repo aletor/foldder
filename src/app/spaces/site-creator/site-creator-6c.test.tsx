@@ -13,12 +13,17 @@ import {
   fixtureHeroPanelButton,
   fixtureHorizontalCardsGroup,
   fixtureRealEightLayersGrouped,
+  makeLayer,
+  makePage,
 } from "./site-creator-responsive-fixtures";
 import { setResponsiveOverride } from "./site-creator-responsive-overrides";
-import { setSectionHeightMode } from "./site-blueprint-ops";
+import { setSectionHeightMode, createMultiCardFromSelection, createSectionFromSelection } from "./site-blueprint-ops";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import {
   bandHasCustomizations,
+  canonicalizeItemRef,
+  itemGeometryFromDelta,
+  itemTextBoxFromDelta,
   patchContainerTune,
   patchItemTune,
   patchMediaTune,
@@ -27,8 +32,10 @@ import {
   resolveItemTune,
   resolveMediaTune,
 } from "./site-creator-responsive-tunes";
-import { SITE_CREATOR_MOBILE_WIDTH } from "./site-creator-viewport";
+import { SITE_CREATOR_MOBILE_WIDTH, SITE_CREATOR_TABLET_WIDTH } from "./site-creator-viewport";
 import { SiteCreatorRefineControl } from "./SiteCreatorRefineControl";
+import { createEmptySiteBlueprintV1 } from "./site-creator-types";
+import { encodeMultiCardInstanceId, parseMultiCardInstanceId } from "./site-creator-multicard-ids";
 import { resolveBackgroundContainTransform } from "./site-creator-background-cover";
 
 describe("site-creator 6C contextual refine", () => {
@@ -865,5 +872,443 @@ describe("site-creator 6C visible layout effects", () => {
       aSecond.y - (aFirst.y + aFirst.height) + 20,
     );
     expect(b.layout.layoutHeight).toBeGreaterThanOrEqual(a.layout.layoutHeight);
+  });
+
+  it("converts a pixel drag into a percent of the automatic box", () => {
+    expect(
+      itemGeometryFromDelta({
+        tune: null,
+        delta: { dx: 20, dy: -8 },
+        displayBounds: { width: 200, height: 80 },
+      }),
+    ).toEqual({ shiftX: 0.1, shiftY: -0.1, scale: 1 });
+    expect(
+      itemGeometryFromDelta({
+        tune: null,
+        delta: { dx: 1, dy: 0 },
+        displayBounds: { width: 200, height: 80 },
+      }).shiftX,
+    ).toBeCloseTo(0.005, 4);
+    expect(
+      itemGeometryFromDelta({
+        tune: null,
+        delta: { dx: 0, dy: 10 },
+        displayBounds: { width: 200, height: 80 },
+      }).shiftY,
+    ).toBeCloseTo(0.125, 4);
+    expect(
+      itemGeometryFromDelta({
+        tune: { scale: 1.2 },
+        delta: { dx: 0, dy: 0, dw: 24, dh: 0 },
+        displayBounds: { width: 120, height: 40 },
+      }).scale,
+    ).toBeCloseTo(1.44, 2);
+  });
+
+  it("stores MultiCard instance drags on the mold layer", () => {
+    const instanceId = encodeMultiCardInstanceId({
+      nodeId: "mc1",
+      cardId: "card_2",
+      moldLayerId: "title",
+    });
+    expect(canonicalizeItemRef({ kind: "layer", layerId: instanceId })).toEqual({
+      kind: "layer",
+      layerId: "title",
+    });
+    const fx = fixtureHeroPanelButton();
+    const patched = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: instanceId },
+      band: "tablet",
+      patch: { shiftX: 0.2 },
+    }).blueprint;
+    expect(resolveItemTune(patched, { kind: "layer", layerId: "title" }, "tablet")?.shiftX).toBe(0.2);
+    expect(resolveItemTune(patched, { kind: "layer", layerId: instanceId }, "tablet")?.shiftX).toBe(0.2);
+  });
+
+  it("applies relative shift and scale from the automatic layout of that device", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const autoTablet = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const b0 = findDisplayObject(autoTablet.displayPage, "btn_shape")!;
+    const shifted = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "btn_shape" },
+      band: "tablet",
+      patch: { shiftX: 0.2, shiftY: -0.15 },
+    }).blueprint;
+    const afterShift = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: shifted,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const bShift = findDisplayObject(afterShift.displayPage, "btn_shape")!;
+    expect(bShift.x).toBeCloseTo(b0.x + b0.width * 0.2, 0);
+    expect(bShift.y).toBeCloseTo(b0.y - b0.height * 0.15, 0);
+    expect(bShift.width).toBeCloseTo(b0.width, 0);
+
+    const scaled = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "btn_shape" },
+      band: "tablet",
+      patch: { scale: 1.25 },
+    }).blueprint;
+    const afterScale = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: scaled,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const b1 = findDisplayObject(afterScale.displayPage, "btn_shape")!;
+    expect(b1.width).toBeCloseTo(b0.width * 1.25, 0);
+    expect(b1.height).toBeCloseTo(b0.height * 1.25, 0);
+    expect(b1.x).toBeCloseTo(b0.x, 0);
+
+    const autoMobile = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+    });
+    const mobileTuned = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: shifted,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+    });
+    const m0 = findDisplayObject(autoMobile.displayPage, "btn_shape")!;
+    const m1 = findDisplayObject(mobileTuned.displayPage, "btn_shape")!;
+    expect(m1.x).toBeCloseTo(m0.x, 0);
+    expect(m1.width).toBeCloseTo(m0.width, 0);
+
+    const original = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: shifted,
+      referenceIndex: index,
+      viewportWidth: 1920,
+    });
+    const src = fx.page.objects?.find((o) => o.id === "btn_shape");
+    const orig = findDisplayObject(original.displayPage, "btn_shape");
+    expect(orig?.x).toBe(src?.x);
+    expect(orig?.width).toBe(src?.width);
+  });
+
+  it("still applies legacy absolute offset when no relative shift exists", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const auto = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t0 = findDisplayObject(auto.displayPage, "title")!;
+    const legacy = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { offset: { x: 40, y: 12 } },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: legacy,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t1 = findDisplayObject(after.displayPage, "title")!;
+    expect(t1.x).toBeCloseTo(t0.x + 40, 0);
+    expect(t1.y).toBeCloseTo(t0.y + 12, 0);
+  });
+
+  it("applies a mold-layer shift to every MultiCard copy", () => {
+    const page = makePage(
+      [
+        makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 800, height: 400, fill: "#eee" }),
+        makeLayer({ id: "photo", type: "rect", x: 40, y: 80, width: 240, height: 160, fill: "#888" }),
+        makeLayer({ id: "title", type: "text", x: 40, y: 260, width: 200, height: 32, text: "Card" }),
+      ],
+      { w: 800, h: 400 },
+    );
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "photo", "title"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const created = createMultiCardFromSelection({
+      blueprint: hero.blueprint,
+      selectedLayerIds: ["photo", "title"],
+      index,
+      preferredParentId: hero.createdNodeId,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok || !created.createdNodeId) return;
+    const auto = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: created.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const title0 = findDisplayObject(auto.displayPage, "title")!;
+    const shifted = patchItemTune({
+      blueprint: created.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { shiftX: 0.2 },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: shifted,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const title1 = findDisplayObject(after.displayPage, "title")!;
+    expect(title1.x).toBeCloseTo(title0.x + title0.width * 0.2, 0);
+
+    const cloneTitles: Array<{ cardId: string; x: number; width: number }> = [];
+    const walk = (objects: Array<{ id?: string; x?: number; width?: number; children?: unknown[] }> | undefined) => {
+      for (const obj of objects ?? []) {
+        const parsed = obj.id ? parseMultiCardInstanceId(obj.id) : null;
+        if (parsed?.moldLayerId === "title") {
+          cloneTitles.push({ cardId: parsed.cardId, x: obj.x ?? 0, width: obj.width ?? 0 });
+        }
+        walk(obj.children as typeof objects);
+      }
+    };
+    walk(after.displayPage.objects);
+    expect(cloneTitles.length).toBeGreaterThan(0);
+    for (const clone of cloneTitles) {
+      const autoCloneId = encodeMultiCardInstanceId({
+        nodeId: created.createdNodeId,
+        cardId: clone.cardId,
+        moldLayerId: "title",
+      });
+      const beforeClone = findDisplayObject(auto.displayPage, autoCloneId);
+      expect(beforeClone).toBeTruthy();
+      if (!beforeClone) continue;
+      expect(
+        (clone.x - (beforeClone.x ?? 0)) / Math.max(1, beforeClone.width ?? 1),
+      ).toBeCloseTo(0.2, 1);
+    }
+  });
+
+  it("refine geometry chip edits relative X", () => {
+    const onItemShift = vi.fn();
+    render(
+      <SiteCreatorRefineControl
+        model={{
+          band: "tablet",
+          kind: "item",
+          itemTune: null,
+          containerTune: null,
+          mediaTune: null,
+          canReorder: false,
+          resetLabel: "Restablecer en Tablet",
+          showReset: false,
+        }}
+        handlers={{ onItemShift }}
+      />,
+    );
+    expect(screen.getByTestId("site-creator-refine-geometry").textContent).toContain("Posición");
+    fireEvent.click(screen.getByTestId("site-creator-refine-geometry"));
+    expect(screen.getByTestId("site-creator-refine-popover").textContent).toContain("Corrección en tablet");
+    fireEvent.pointerDown(screen.getAllByText("+")[0]!);
+    expect(onItemShift).toHaveBeenCalledWith("x", 0.01);
+  });
+
+  it("converts a text-box drag into relative width without uniform scale", () => {
+    expect(
+      itemTextBoxFromDelta({
+        tune: null,
+        delta: { dx: 0, dy: 0, dw: 40 },
+        displayBounds: { width: 200, height: 80 },
+      }),
+    ).toEqual({ shiftX: 0, shiftY: 0, boxW: 1.2, boxH: null, hugHeight: true });
+    expect(
+      itemTextBoxFromDelta({
+        tune: null,
+        delta: { dx: -20, dy: 0, dw: 20 },
+        displayBounds: { width: 200, height: 80 },
+      }),
+    ).toEqual({ shiftX: -0.1, shiftY: 0, boxW: 1.1, boxH: null, hugHeight: true });
+    expect(
+      itemTextBoxFromDelta({
+        tune: null,
+        delta: { dx: 0, dy: 0, dh: 16 },
+        displayBounds: { width: 200, height: 80 },
+      }).hugHeight,
+    ).toBe(false);
+  });
+
+  it("clears explicit text-box height so the frame hugs again", () => {
+    const fx = fixtureHeroPanelButton();
+    const withHeight = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { boxH: 1.4 },
+    }).blueprint;
+    expect(resolveItemTune(withHeight, { kind: "layer", layerId: "title" }, "tablet")?.boxH).toBe(1.4);
+    const hugged = patchItemTune({
+      blueprint: withHeight,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { boxH: null },
+    }).blueprint;
+    expect(resolveItemTune(hugged, { kind: "layer", layerId: "title" }, "tablet")?.boxH).toBeUndefined();
+  });
+
+  it("widens a text box without changing font size", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const auto = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t0 = findDisplayObject(auto.displayPage, "title")!;
+    const widened = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { boxW: 1.2 },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: widened,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t1 = findDisplayObject(after.displayPage, "title")!;
+    expect(t1.width).toBeCloseTo(t0.width * 1.2, 0);
+    expect((t1 as { fontSize?: number }).fontSize).toBe((t0 as { fontSize?: number }).fontSize);
+    expect(t1.width / Math.max(1, t1.height)).not.toBeCloseTo(t0.width / Math.max(1, t0.height), 2);
+
+    const autoMobile = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+    });
+    const mobileTuned = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: widened,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+    });
+    const m0 = findDisplayObject(autoMobile.displayPage, "title")!;
+    const m1 = findDisplayObject(mobileTuned.displayPage, "title")!;
+    expect(m1.width).toBeCloseTo(m0.width, 0);
+    expect((m1 as { fontSize?: number }).fontSize).toBe((m0 as { fontSize?: number }).fontSize);
+
+    const original = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: widened,
+      referenceIndex: index,
+      viewportWidth: 1920,
+    });
+    const src = fx.page.objects?.find((o) => o.id === "title");
+    const orig = findDisplayObject(original.displayPage, "title");
+    expect(orig?.x).toBe(src?.x);
+    expect(orig?.width).toBe(src?.width);
+    expect((orig as { fontSize?: number } | undefined)?.fontSize).toBe(
+      (src as { fontSize?: number } | undefined)?.fontSize,
+    );
+  });
+
+  it("scales text font independently of the box", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const auto = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t0 = findDisplayObject(auto.displayPage, "title")!;
+    const scaled = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { fontScale: 1.2 },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: scaled,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t1 = findDisplayObject(after.displayPage, "title")!;
+    expect((t1 as { fontSize?: number }).fontSize).toBeCloseTo(
+      ((t0 as { fontSize?: number }).fontSize ?? 16) * 1.2,
+      0,
+    );
+    expect(t1.width).toBeCloseTo(t0.width, 0);
+  });
+
+  it("does not apply uniform scale to a text box", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const auto = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t0 = findDisplayObject(auto.displayPage, "title")!;
+    const scaled = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { scale: 1.4 },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: scaled,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t1 = findDisplayObject(after.displayPage, "title")!;
+    expect(t1.width).toBeCloseTo(t0.width, 0);
+    expect(t1.height).toBeCloseTo(t0.height, 0);
+    expect((t1 as { fontSize?: number }).fontSize).toBe((t0 as { fontSize?: number }).fontSize);
+  });
+
+  it("refine geometry chip shows letter percent for text", () => {
+    const onItemFontScale = vi.fn();
+    render(
+      <SiteCreatorRefineControl
+        model={{
+          band: "tablet",
+          kind: "item",
+          itemTune: { fontScale: 1.12 },
+          containerTune: null,
+          mediaTune: null,
+          canReorder: false,
+          resetLabel: "Restablecer en Tablet",
+          showReset: true,
+          transformKind: "textBox",
+        }}
+        handlers={{ onItemFontScale }}
+      />,
+    );
+    expect(screen.getByTestId("site-creator-refine-geometry").textContent).toContain("letra 112%");
+    fireEvent.click(screen.getByTestId("site-creator-refine-geometry"));
+    expect(screen.getByTestId("site-creator-refine-popover").textContent).toContain("Letra");
+    fireEvent.pointerDown(screen.getAllByText("+")[2]!);
+    expect(onItemFontScale).toHaveBeenCalled();
   });
 });

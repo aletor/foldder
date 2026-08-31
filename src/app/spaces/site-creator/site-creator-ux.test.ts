@@ -25,6 +25,7 @@ import {
   layersToMarqueeSelectionUnits,
   MARQUEE_GROUP_BLOCK_MESSAGE,
   marqueeUnitsBlockGrouping,
+  resolveDeviceItemClickUnit,
   resolveHoverScopeUnit,
   resolveInspectClickUnit,
   resolveRootClickUnit,
@@ -259,6 +260,10 @@ describe("site creator UX selection units", () => {
       kind: "blueprintNode",
       nodeId: section.createdNodeId,
     });
+    expect(resolveDeviceItemClickUnit("title", section.blueprint, index)).toEqual({
+      kind: "layer",
+      layerId: "title",
+    });
     expect(
       resolveInspectClickUnit("title", section.createdNodeId, section.blueprint, index),
     ).toEqual({
@@ -307,6 +312,14 @@ describe("site creator UX selection units", () => {
     expect(resolveRootClickUnit("title", hero.blueprint, index)).toEqual({
       kind: "blueprintNode",
       nodeId: hero.createdNodeId,
+    });
+    expect(resolveDeviceItemClickUnit("title", hero.blueprint, index)).toEqual({
+      kind: "layer",
+      layerId: "title",
+    });
+    expect(resolveDeviceItemClickUnit("btn_text", hero.blueprint, index)).toEqual({
+      kind: "blueprintNode",
+      nodeId: btn.createdNodeId,
     });
     expect(
       resolveInspectClickUnit("btn_text", btn.createdNodeId, hero.blueprint, index),

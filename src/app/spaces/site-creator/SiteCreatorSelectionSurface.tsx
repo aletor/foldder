@@ -32,6 +32,14 @@ import {
 } from "./site-creator-coordinate-space";
 import { isSiteCreatorPreviewChromeBackgroundTarget } from "./site-creator-viewport";
 import {
+  formatItemCorrectionChip,
+  itemGeometryFromDelta,
+  itemTextBoxFromDelta,
+  ITEM_FONT_SCALE_MAX,
+  ITEM_FONT_SCALE_MIN,
+} from "./site-creator-responsive-tunes";
+import type { ItemTransformKind } from "./site-creator-text-frame";
+import {
   imageFrameGeometryForSiteCreator,
   imageFrameContentForSiteCreator,
 } from "./site-creator-image-frame";
@@ -42,6 +50,49 @@ import {
 } from "./site-creator-clipping-resize";
 
 const MARQUEE_THRESHOLD_PX = 4;
+
+type TransformHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se";
+
+function resizeDeltaFromHandle(
+  handle: TransformHandle,
+  dx: number,
+  dy: number,
+): { dw: number; dh: number } {
+  const dw =
+    handle === "se" || handle === "ne" || handle === "e"
+      ? dx
+      : handle === "nw" || handle === "sw" || handle === "w"
+        ? -dx
+        : 0;
+  const dh =
+    handle === "se" || handle === "sw" || handle === "s"
+      ? dy
+      : handle === "nw" || handle === "ne" || handle === "n"
+        ? -dy
+        : 0;
+  return { dw, dh };
+}
+
+function boxDeltaFromHandle(
+  handle: TransformHandle,
+  dx: number,
+  dy: number,
+): { dx: number; dy: number; dw: number; dh: number } {
+  const { dw, dh } = resizeDeltaFromHandle(handle, dx, dy);
+  const moveX = handle === "w" || handle === "nw" || handle === "sw" ? dx : 0;
+  const moveY = handle === "n" || handle === "nw" || handle === "ne" ? dy : 0;
+  return { dx: moveX, dy: moveY, dw, dh };
+}
+
+function isTypingKeyTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return target.isContentEditable;
+}
+
+const NUDGE_STEP_PX = 1;
+const NUDGE_STEP_LARGE_PX = 10;
 
 export type SiteCreatorClipImageEdit = {
   kind?: "clip" | "imageFrame";
@@ -227,7 +278,19 @@ export interface SiteCreatorSelectionSurfaceProps {
   onCanvasBackgroundDoubleClick?: () => void;
   transformEnabled?: boolean;
   transformBounds?: { x: number; y: number; width: number; height: number } | null;
+  transformKind?: ItemTransformKind;
+  textBoxLockWidth?: boolean;
+  transformCorrection?: {
+    shiftX: number;
+    shiftY: number;
+    scale: number;
+    boxW?: number;
+    boxH?: number | null;
+    fontScale?: number;
+  } | null;
   onTransformCommit?: (delta: { dx: number; dy: number; dw?: number; dh?: number }) => void;
+  fontScale?: number;
+  onFontScale?: (value: number) => void;
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
@@ -278,7 +341,12 @@ export function SiteCreatorSelectionSurface({
   onCanvasBackgroundDoubleClick,
   transformEnabled = false,
   transformBounds = null,
+  transformKind = "uniform",
+  textBoxLockWidth = false,
+  transformCorrection = null,
   onTransformCommit,
+  fontScale = 1,
+  onFontScale,
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
@@ -314,7 +382,13 @@ export function SiteCreatorSelectionSurface({
     pointerId: number;
     start: PagePoint;
     startBounds: { x: number; y: number; width: number; height: number };
-    handle: "se" | "e" | "s";
+    handle: TransformHandle;
+  } | null>(null);
+  const [transformLive, setTransformLive] = useState<{
+    dx: number;
+    dy: number;
+    dw: number;
+    dh: number;
   } | null>(null);
   const clipImageDragRef = useRef<ClipImageDrag | null>(null);
   const pointerSessionRef = useRef<{
@@ -376,6 +450,18 @@ export function SiteCreatorSelectionSurface({
       }
       const drag = transformDragRef.current;
       if (drag && event.pointerId === drag.pointerId) {
+        const point = toPage(event.clientX, event.clientY);
+        if (!point) return;
+        const dx = point.x - drag.start.x;
+        const dy = point.y - drag.start.y;
+        if (drag.kind === "move") {
+          setTransformLive({ dx, dy, dw: 0, dh: 0 });
+        } else if (transformKind === "textBox") {
+          setTransformLive(boxDeltaFromHandle(drag.handle, dx, dy));
+        } else {
+          const { dw, dh } = resizeDeltaFromHandle(drag.handle, dx, dy);
+          setTransformLive({ dx: 0, dy: 0, dw, dh });
+        }
         return;
       }
       const session = pointerSessionRef.current;
@@ -436,6 +522,7 @@ export function SiteCreatorSelectionSurface({
       scale,
       selection.isolationIds,
       toPage,
+      transformKind,
     ],
   );
 
@@ -473,6 +560,7 @@ export function SiteCreatorSelectionSurface({
       if (drag && event.pointerId === drag.pointerId) {
         const end = toPage(event.clientX, event.clientY);
         transformDragRef.current = null;
+        setTransformLive(null);
         if (!end || !onTransformCommit) return;
         const dx = end.x - drag.start.x;
         const dy = end.y - drag.start.y;
@@ -481,8 +569,13 @@ export function SiteCreatorSelectionSurface({
           onTransformCommit({ dx, dy });
           return;
         }
-        const dw = drag.handle.includes("e") ? dx : 0;
-        const dh = drag.handle.includes("s") ? dy : 0;
+        if (transformKind === "textBox") {
+          const box = boxDeltaFromHandle(drag.handle, dx, dy);
+          if (Math.hypot(box.dx, box.dy, box.dw, box.dh) < MARQUEE_THRESHOLD_PX) return;
+          onTransformCommit(box);
+          return;
+        }
+        const { dw, dh } = resizeDeltaFromHandle(drag.handle, dx, dy);
         if (Math.hypot(dw, dh) < MARQUEE_THRESHOLD_PX) return;
         onTransformCommit({ dx: 0, dy: 0, dw, dh });
         return;
@@ -533,6 +626,7 @@ export function SiteCreatorSelectionSurface({
       scale,
       selection.isolationIds,
       toPage,
+      transformKind,
     ],
   );
 
@@ -670,21 +764,27 @@ export function SiteCreatorSelectionSurface({
         transformEnabled &&
         transformBounds &&
         onTransformCommit &&
-        !additive &&
-        front &&
-        selection.selectedIds.includes(front.layerId)
+        !additive
       ) {
-        transformDragRef.current = {
-          kind: "move",
-          pointerId: event.pointerId,
-          start: point,
-          startBounds: transformBounds,
-          handle: "se",
-        };
-        if (typeof captureEl.setPointerCapture === "function") {
-          captureEl.setPointerCapture(event.pointerId);
+        const b = transformBounds;
+        const inside =
+          point.x >= b.x &&
+          point.x <= b.x + b.width &&
+          point.y >= b.y &&
+          point.y <= b.y + b.height;
+        if (inside) {
+          transformDragRef.current = {
+            kind: "move",
+            pointerId: event.pointerId,
+            start: point,
+            startBounds: transformBounds,
+            handle: "se",
+          };
+          if (typeof captureEl.setPointerCapture === "function") {
+            captureEl.setPointerCapture(event.pointerId);
+          }
+          return;
         }
-        return;
       }
 
       beginPointerSession(event, captureEl, front?.layerId ?? null, Boolean(opts?.chromeOnly));
@@ -859,20 +959,44 @@ export function SiteCreatorSelectionSurface({
         return;
       }
       if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        const tag = (event.target as HTMLElement | null)?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (isTypingKeyTarget(event.target)) return;
         dispatch({ type: "enterContainer" });
+        return;
+      }
+      if (
+        transformEnabled &&
+        transformBounds &&
+        onTransformCommit &&
+        !clipImageEdit &&
+        !focalLayerId &&
+        (event.key === "ArrowLeft" ||
+          event.key === "ArrowRight" ||
+          event.key === "ArrowUp" ||
+          event.key === "ArrowDown")
+      ) {
+        if (isTypingKeyTarget(event.target)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const step = event.shiftKey ? NUDGE_STEP_LARGE_PX : NUDGE_STEP_PX;
+        const dx =
+          event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+        const dy =
+          event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+        onTransformCommit({ dx, dy });
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [
     clipImageEdit,
     dispatch,
     focalLayerId,
     onCancelFocal,
     onExitClipImageEdit,
+    onTransformCommit,
     picker,
+    transformBounds,
+    transformEnabled,
   ]);
 
   useEffect(() => {
@@ -894,6 +1018,91 @@ export function SiteCreatorSelectionSurface({
   const clipImageMinZoom = clipImageEdit
     ? clipImageEditMinZoom(clipImageEdit, index)
     : 1;
+
+  const transformPreview = (() => {
+    if (!transformLive || !transformBounds) return null;
+    const tune = {
+      shiftX: transformCorrection?.shiftX ?? 0,
+      shiftY: transformCorrection?.shiftY ?? 0,
+      scale: transformCorrection?.scale ?? 1,
+      boxW: transformCorrection?.boxW,
+      boxH: transformCorrection?.boxH ?? undefined,
+      fontScale: transformCorrection?.fontScale,
+    };
+    if (transformKind === "textBox") {
+      const geometry = itemTextBoxFromDelta({
+        tune,
+        delta: transformLive,
+        displayBounds: transformBounds,
+      });
+      return {
+        bounds: {
+          x: transformBounds.x + transformLive.dx,
+          y: transformBounds.y + transformLive.dy,
+          width: Math.max(8, transformBounds.width + transformLive.dw),
+          height: Math.max(8, transformBounds.height + transformLive.dh),
+        },
+        label: formatItemCorrectionChip({
+          shiftX: geometry.shiftX,
+          shiftY: geometry.shiftY,
+          boxW: geometry.boxW,
+          boxH: geometry.boxH ?? undefined,
+          fontScale: tune.fontScale,
+        }),
+      };
+    }
+    const geometry = itemGeometryFromDelta({
+      tune,
+      delta: transformLive,
+      displayBounds: transformBounds,
+    });
+    const scaleFactor = geometry.scale / Math.max(0.001, tune.scale || 1);
+    return {
+      bounds: {
+        x: transformBounds.x + transformLive.dx,
+        y: transformBounds.y + transformLive.dy,
+        width: Math.max(8, transformBounds.width * scaleFactor),
+        height: Math.max(8, transformBounds.height * scaleFactor),
+      },
+      label: formatItemCorrectionChip(geometry),
+    };
+  })();
+
+  const transformHandleSpecs = (() => {
+    if (!transformBounds || transformKind === "textFontOnly") return [];
+    const b = transformBounds;
+    if (transformKind === "textBox") {
+      const specs: Array<{ handle: TransformHandle; left: number; top: number; cursor: string }> = [
+        { handle: "n", left: b.x + b.width / 2, top: b.y, cursor: "ns-resize" },
+        { handle: "s", left: b.x + b.width / 2, top: b.y + b.height, cursor: "ns-resize" },
+      ];
+      if (!textBoxLockWidth) {
+        specs.push(
+          { handle: "w", left: b.x, top: b.y + b.height / 2, cursor: "ew-resize" },
+          { handle: "e", left: b.x + b.width, top: b.y + b.height / 2, cursor: "ew-resize" },
+          { handle: "nw", left: b.x, top: b.y, cursor: "nwse-resize" },
+          { handle: "ne", left: b.x + b.width, top: b.y, cursor: "nesw-resize" },
+          { handle: "sw", left: b.x, top: b.y + b.height, cursor: "nesw-resize" },
+          { handle: "se", left: b.x + b.width, top: b.y + b.height, cursor: "nwse-resize" },
+        );
+      }
+      return specs;
+    }
+    return [
+      { handle: "nw" as const, left: b.x + 8, top: b.y + 8, cursor: "nwse-resize" },
+      { handle: "ne" as const, left: b.x + b.width - 8, top: b.y + 8, cursor: "nesw-resize" },
+      { handle: "sw" as const, left: b.x + 8, top: b.y + b.height - 8, cursor: "nesw-resize" },
+      { handle: "se" as const, left: b.x + b.width - 8, top: b.y + b.height - 8, cursor: "nwse-resize" },
+    ];
+  })();
+
+  const showFontSlider =
+    Boolean(onFontScale) &&
+    (transformKind === "textBox" || transformKind === "textFontOnly") &&
+    !transformLive;
+  const fontPct = Math.round(
+    Math.max(ITEM_FONT_SCALE_MIN, Math.min(ITEM_FONT_SCALE_MAX, fontScale)) * 100,
+  );
 
   return (
     <div
@@ -1057,37 +1266,91 @@ export function SiteCreatorSelectionSurface({
         </button>
       ) : null}
       {transformEnabled && transformBounds ? (
-        <div className="pointer-events-none absolute inset-0 z-[4]" data-testid="site-creator-transform">
-          {(["se", "e", "s"] as const).map((handle) => {
-            const b = transformBounds;
-            const left = handle === "s" ? b.x + b.width / 2 - 5 : b.x + b.width - 5;
-            const top = handle === "e" ? b.y + b.height / 2 - 5 : b.y + b.height - 5;
-            return (
+        <div className="pointer-events-none absolute inset-0 z-[6]" data-testid="site-creator-transform">
+          <div
+            className="absolute rounded-[1px]"
+            style={{
+              left: transformBounds.x,
+              top: transformBounds.y,
+              width: transformBounds.width,
+              height: transformBounds.height,
+              boxShadow: "inset 0 0 0 1.5px #A8FF32",
+            }}
+          />
+          {showFontSlider ? (
+            <div
+              data-testid="site-creator-font-scale"
+              data-site-creator-floating-ui="true"
+              className="pointer-events-auto absolute flex items-center gap-1.5 rounded border border-white/15 bg-[#101820]/92 px-1.5 py-0.5 shadow-lg"
+              style={{
+                left: transformBounds.x,
+                top: Math.max(0, transformBounds.y - 28),
+                width: Math.max(88, transformBounds.width),
+              }}
+            >
+              <input
+                type="range"
+                aria-label="Tamaño de letra"
+                min={Math.round(ITEM_FONT_SCALE_MIN * 100)}
+                max={Math.round(ITEM_FONT_SCALE_MAX * 100)}
+                value={fontPct}
+                className="h-1 min-w-0 flex-1 accent-[#A8FF32]"
+                onPointerDown={(event) => event.stopPropagation()}
+                onChange={(event) => onFontScale?.(Number(event.target.value) / 100)}
+              />
+              <span className="w-8 shrink-0 text-right text-[10px] font-semibold tabular-nums text-white/90">
+                {fontPct}%
+              </span>
+            </div>
+          ) : null}
+          {transformPreview ? (
+            <>
               <div
-                key={handle}
-                data-testid={`site-creator-transform-${handle}`}
-                className="pointer-events-auto absolute h-2.5 w-2.5 rounded-sm border border-[#A8FF32] bg-[#101820]"
-                style={{ left, top, cursor: handle === "se" ? "nwse-resize" : handle === "e" ? "ew-resize" : "ns-resize" }}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  const point = toPage(event.clientX, event.clientY);
-                  if (!point) return;
-                  transformDragRef.current = {
-                    kind: "resize",
-                    pointerId: event.pointerId,
-                    start: point,
-                    startBounds: b,
-                    handle,
-                  };
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                }}
-                onPointerUp={(event) => {
-                  finishMarquee(event as unknown as React.PointerEvent<SVGSVGElement>);
+                className="absolute rounded-sm border border-dashed border-[#A8FF32]/80"
+                style={{
+                  left: transformPreview.bounds.x,
+                  top: transformPreview.bounds.y,
+                  width: transformPreview.bounds.width,
+                  height: transformPreview.bounds.height,
                 }}
               />
-            );
-          })}
+              <div
+                data-testid="site-creator-transform-hud"
+                className="absolute rounded border border-white/15 bg-[#101820]/92 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white/90 shadow-lg"
+                style={{
+                  left: transformPreview.bounds.x,
+                  top: Math.max(0, transformPreview.bounds.y - 22),
+                }}
+              >
+                {transformPreview.label}
+              </div>
+            </>
+          ) : null}
+          {transformHandleSpecs.map(({ handle, left, top, cursor }) => (
+            <div
+              key={handle}
+              data-testid={`site-creator-transform-${handle}`}
+              className="pointer-events-auto absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-sm border-2 border-[#A8FF32] bg-[#101820] shadow-[0_1px_6px_rgba(0,0,0,0.45)]"
+              style={{ left, top, cursor }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const point = toPage(event.clientX, event.clientY);
+                if (!point) return;
+                transformDragRef.current = {
+                  kind: "resize",
+                  pointerId: event.pointerId,
+                  start: point,
+                  startBounds: transformBounds,
+                  handle,
+                };
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }}
+              onPointerUp={(event) => {
+                finishMarquee(event as unknown as React.PointerEvent<SVGSVGElement>);
+              }}
+            />
+          ))}
         </div>
       ) : null}
       {selection.isolationIds.length > 0 ? (

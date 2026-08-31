@@ -25,9 +25,14 @@ import type {
 import {
   alignXLabel,
   alignYLabel,
+  formatItemCorrectionChip,
+  formatSignedPercent,
+  ITEM_FONT_SCALE_MAX,
+  ITEM_FONT_SCALE_MIN,
   mediaFitLabel,
   widthModeLabel,
 } from "./site-creator-responsive-tunes";
+import type { ItemTransformKind } from "./site-creator-text-frame";
 import { resolveAdaptationPopoverPlacement, resolveFloatingEditorPlacement } from "./site-creator-floating-placement";
 import { floatingPressHandlers, isNodeInsideRefs } from "./site-creator-floating-press";
 import type { PageRect } from "./site-creator-coordinate-space";
@@ -46,6 +51,7 @@ export type RefineControlModel = {
   showReset: boolean;
   /** Unidades de contenido del contenedor (sin fondo). */
   containerContentCount?: number;
+  transformKind?: ItemTransformKind;
 };
 
 export type RefineControlHandlers = {
@@ -53,6 +59,9 @@ export type RefineControlHandlers = {
   onAlignY?: (align: ResponsiveAlignY) => void;
   onWidthMode?: (mode: ResponsiveWidthMode) => void;
   onHide?: (hidden: boolean) => void;
+  onItemShift?: (axis: "x" | "y", value: number | null) => void;
+  onItemScale?: (value: number | null) => void;
+  onItemFontScale?: (value: number | null) => void;
   onReorder?: (delta: -1 | 1) => void;
   onResetItem?: () => void;
   onResetContainer?: () => void;
@@ -93,7 +102,7 @@ export function SiteCreatorRefineControl({
   microbarClientRect,
   portalHost,
 }: SiteCreatorRefineControlProps) {
-  const [menu, setMenu] = useState<"more" | "width" | "space" | "fit" | null>(null);
+  const [menu, setMenu] = useState<"more" | "width" | "space" | "fit" | "geometry" | null>(null);
   const triggerRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [popoverPos, setPopoverPos] = useState<{ left: number; top: number } | null>(null);
@@ -190,8 +199,10 @@ export function SiteCreatorRefineControl({
   if (!model) return null;
 
   const host = portalHost ?? (typeof document !== "undefined" ? document.body : null);
-  const bandLabel = model.band === "mobile" ? "móvil" : "tablet";
-  const Band = model.band === "mobile" ? "Móvil" : "Tablet";
+  const bandLabel =
+    model.band === "mobile" ? "móvil" : model.band === "monitor" ? "ordenador" : "tablet";
+  const Band =
+    model.band === "mobile" ? "Móvil" : model.band === "monitor" ? "Ordenador" : "Tablet";
   const isContainer = model.kind === "container";
   const isMedia = model.kind === "media";
   const isItem = model.kind === "item" || isMedia;
@@ -265,6 +276,52 @@ export function SiteCreatorRefineControl({
               setMenu(null);
             }}
           />
+        </>
+      );
+    }
+    if (menu === "geometry") {
+      const shiftX = model.itemTune?.shiftX;
+      const shiftY = model.itemTune?.shiftY;
+      const scale = model.itemTune?.scale;
+      const fontScale = model.itemTune?.fontScale;
+      const textKind =
+        model.transformKind === "textBox" || model.transformKind === "textFontOnly";
+      return (
+        <>
+          <p className="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-wide" style={{ color: SC_VISUAL.chipMuted }}>
+            Corrección en {bandLabel}
+          </p>
+          <p className="mb-1.5 px-1 text-[10px] leading-snug" style={{ color: SC_VISUAL.chipMuted }}>
+            Porcentaje sobre el tamaño automático de esta vista, no una posición fija.
+          </p>
+          <PercentShiftRow
+            label="X"
+            value={shiftX}
+            onChange={(n) => handlers.onItemShift?.("x", n)}
+            onAuto={() => handlers.onItemShift?.("x", null)}
+          />
+          <PercentShiftRow
+            label="Y"
+            value={shiftY}
+            onChange={(n) => handlers.onItemShift?.("y", n)}
+            onAuto={() => handlers.onItemShift?.("y", null)}
+          />
+          {textKind ? (
+            <ScaleRow
+              label="Letra"
+              value={fontScale}
+              min={ITEM_FONT_SCALE_MIN}
+              max={ITEM_FONT_SCALE_MAX}
+              onChange={(n) => handlers.onItemFontScale?.(n)}
+              onAuto={() => handlers.onItemFontScale?.(null)}
+            />
+          ) : (
+            <ScaleRow
+              value={scale}
+              onChange={(n) => handlers.onItemScale?.(n)}
+              onAuto={() => handlers.onItemScale?.(null)}
+            />
+          )}
         </>
       );
     }
@@ -430,7 +487,7 @@ export function SiteCreatorRefineControl({
               <MenuOption
                 selected={false}
                 label="Restablecer elemento"
-                hint={`Quita alineación, anchura y visibilidad de este elemento en ${Band}.`}
+                hint={`Quita alineación, anchura, visibilidad, posición y escala de este elemento en ${Band}.`}
                 onClick={() => {
                   handlers.onResetItem?.();
                   setMenu(null);
@@ -561,6 +618,13 @@ export function SiteCreatorRefineControl({
           onClick={() => setMenu((m) => (m === "width" ? null : "width"))}
         />
       </div>
+      {isItem ? (
+        <ChipButton
+          testId="site-creator-refine-geometry"
+          label={formatItemCorrectionChip(model.itemTune)}
+          onClick={() => setMenu((m) => (m === "geometry" ? null : "geometry"))}
+        />
+      ) : null}
       {isContainer ? (
         <ChipButton
           testId="site-creator-refine-space"
@@ -696,6 +760,103 @@ function AutoButton({ onClick }: { onClick: () => void }) {
     >
       Auto
     </button>
+  );
+}
+
+function PercentShiftRow({
+  label,
+  value,
+  onChange,
+  onAuto,
+}: {
+  label: string;
+  value: number | undefined;
+  onChange: (n: number) => void;
+  onAuto: () => void;
+}) {
+  const customized = typeof value === "number" && value !== 0;
+  const fraction = customized ? value : 0;
+  const step = 0.01;
+  return (
+    <div className="mb-1 flex items-center gap-1 px-1">
+      <span className="min-w-0 flex-1 truncate text-[10px]" style={{ color: SC_VISUAL.chipMuted }}>
+        {label}
+      </span>
+      <button
+        type="button"
+        className="h-5 w-5 rounded text-[11px]"
+        style={{ background: "rgba(255,255,255,0.06)" }}
+        {...floatingPressHandlers(() => onChange(fraction - step))}
+      >
+        −
+      </button>
+      <span
+        className={`w-12 text-center text-[10px] tabular-nums ${customized ? "font-semibold text-white" : ""}`}
+        style={customized ? undefined : { color: SC_VISUAL.chipMuted }}
+      >
+        {customized ? formatSignedPercent(fraction) : "Auto"}
+      </span>
+      <button
+        type="button"
+        className="h-5 w-5 rounded text-[11px]"
+        style={{ background: "rgba(255,255,255,0.06)" }}
+        {...floatingPressHandlers(() => onChange(fraction + step))}
+      >
+        +
+      </button>
+      <AutoButton onClick={onAuto} />
+    </div>
+  );
+}
+
+function ScaleRow({
+  label = "Escala",
+  value,
+  onChange,
+  onAuto,
+  min = 0.15,
+  max = 4,
+}: {
+  label?: string;
+  value: number | undefined;
+  onChange: (n: number) => void;
+  onAuto: () => void;
+  min?: number;
+  max?: number;
+}) {
+  const customized = typeof value === "number" && Math.abs(value - 1) > 0.001;
+  const scale = customized ? value : 1;
+  const step = 0.05;
+  const shown = `${Math.round(scale * 100)}%`;
+  return (
+    <div className="mb-1 flex items-center gap-1 px-1">
+      <span className="min-w-0 flex-1 truncate text-[10px]" style={{ color: SC_VISUAL.chipMuted }}>
+        {label}
+      </span>
+      <button
+        type="button"
+        className="h-5 w-5 rounded text-[11px]"
+        style={{ background: "rgba(255,255,255,0.06)" }}
+        {...floatingPressHandlers(() => onChange(Math.max(min, scale - step)))}
+      >
+        −
+      </button>
+      <span
+        className={`w-12 text-center text-[10px] tabular-nums ${customized ? "font-semibold text-white" : ""}`}
+        style={customized ? undefined : { color: SC_VISUAL.chipMuted }}
+      >
+        {customized ? shown : "Auto"}
+      </span>
+      <button
+        type="button"
+        className="h-5 w-5 rounded text-[11px]"
+        style={{ background: "rgba(255,255,255,0.06)" }}
+        {...floatingPressHandlers(() => onChange(Math.min(max, scale + step)))}
+      >
+        +
+      </button>
+      <AutoButton onClick={onAuto} />
+    </div>
   );
 }
 

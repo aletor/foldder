@@ -88,6 +88,8 @@ import {
   resolveContainerTune,
   isHiddenItemTune,
   isLayerHiddenInBand,
+  itemGeometryFromDelta,
+  itemTextBoxFromDelta,
   resolveItemRef,
   resolveItemTune,
   resolveMediaTune,
@@ -103,6 +105,7 @@ import {
   restoreExplicitBackground,
 } from "./site-creator-background-assignment";
 import { imageFrameTuneForSiteCreator } from "./site-creator-image-frame";
+import { resolveItemTransformKind } from "./site-creator-text-frame";
 import {
   isDesignerPageBackgroundLayer,
   patchPageBackgroundCrop,
@@ -248,6 +251,7 @@ import {
   layersToMarqueeSelectionUnits,
   MARQUEE_GROUP_BLOCK_MESSAGE,
   marqueeUnitsBlockGrouping,
+  resolveDeviceItemClickUnit,
   resolveHoverScopeUnit,
   resolveInspectClickUnit,
   resolveRootClickUnit,
@@ -1633,6 +1637,11 @@ export function SiteCreatorStudio({
     (action: SiteCreatorSelectionAction) => {
       if (!selectionIndex) return;
 
+      const clickUnitForLayer = (layerId: string) =>
+        isResponsiveEditableBand(responsiveBand)
+          ? resolveDeviceItemClickUnit(layerId, blueprint, selectionIndex)
+          : resolveRootClickUnit(layerId, blueprint, selectionIndex);
+
       const patchShadow = (nextAction: SiteCreatorSelectionAction) => {
         setDesignerShadow((current) => {
           const base = reconcileSelectionToIndex(current, selectionIndex);
@@ -1963,7 +1972,7 @@ export function SiteCreatorStudio({
               }
               setInteractionPath([]);
             }
-            setUnits([resolveRootClickUnit(layerId, blueprint, selectionIndex)]);
+            setUnits([clickUnitForLayer(layerId)]);
             return;
           }
 
@@ -1979,7 +1988,7 @@ export function SiteCreatorStudio({
             }
             setInteractionPath([]);
           }
-          setUnits([resolveRootClickUnit(layerId, blueprint, selectionIndex)]);
+          setUnits([clickUnitForLayer(layerId)]);
           return;
         }
 
@@ -2007,6 +2016,7 @@ export function SiteCreatorStudio({
       displayUnits,
       interactionPath,
       openMultiCardMediaPicker,
+      responsiveBand,
       selectionIndex,
     ],
   );
@@ -2224,8 +2234,11 @@ export function SiteCreatorStudio({
         return resolveInspectClickUnit(hoverId, containerId, blueprint, selectionIndex);
       }
     }
+    if (isResponsiveEditableBand(responsiveBand)) {
+      return resolveDeviceItemClickUnit(hoverId, blueprint, selectionIndex);
+    }
     return resolveRootClickUnit(hoverId, blueprint, selectionIndex);
-  }, [blueprint, displayInspectNodeId, displayShadow.hoverId, displayUnits, selectionIndex]);
+  }, [blueprint, displayInspectNodeId, displayShadow.hoverId, displayUnits, responsiveBand, selectionIndex]);
 
   const unitOutlines = useMemo((): SiteCreatorUnitOutline[] => {
     if (!selectionIndex) return [];
@@ -2931,6 +2944,13 @@ export function SiteCreatorStudio({
       containerTarget,
       layerId,
       siblings,
+      transformKind: itemRef
+        ? resolveItemTransformKind({
+            blueprint,
+            target: itemRef,
+            index: selectionIndex,
+          })
+        : "uniform",
     };
   }, [
     blueprint,
@@ -3023,6 +3043,42 @@ export function SiteCreatorStudio({
             target: refineModel.itemRef,
             band: editableBand,
             patch: { hidden },
+          }),
+        );
+      },
+      onItemShift: (axis: "x" | "y", value: number | null) => {
+        if (!refineModel?.itemRef || !editableBand) return;
+        commitTune(
+          patchItemTune({
+            blueprint,
+            target: refineModel.itemRef,
+            band: editableBand,
+            patch:
+              axis === "x"
+                ? { shiftX: value ?? 0, offset: undefined, size: undefined }
+                : { shiftY: value ?? 0, offset: undefined, size: undefined },
+          }),
+        );
+      },
+      onItemScale: (value: number | null) => {
+        if (!refineModel?.itemRef || !editableBand) return;
+        commitTune(
+          patchItemTune({
+            blueprint,
+            target: refineModel.itemRef,
+            band: editableBand,
+            patch: { scale: value ?? 1, offset: undefined, size: undefined },
+          }),
+        );
+      },
+      onItemFontScale: (value: number | null) => {
+        if (!refineModel?.itemRef || !editableBand) return;
+        commitTune(
+          patchItemTune({
+            blueprint,
+            target: refineModel.itemRef,
+            band: editableBand,
+            patch: { fontScale: value ?? 1 },
           }),
         );
       },
@@ -3265,26 +3321,74 @@ export function SiteCreatorStudio({
 
   const onTransformCommit = useCallback(
     (delta: { dx: number; dy: number; dw?: number; dh?: number }) => {
-      if (!editableBand || !refineModel?.itemRef) return;
+      if (!editableBand || !refineModel?.itemRef || !selectionIndex) return;
       const current = resolveItemTune(blueprint, refineModel.itemRef, editableBand);
       const bounds = unitOutlines[0]?.bounds;
+      if (!bounds) return;
+      const kind = resolveItemTransformKind({
+        blueprint,
+        target: refineModel.itemRef,
+        index: selectionIndex,
+      });
+      if (kind === "textBox") {
+        const box = itemTextBoxFromDelta({
+          tune: current,
+          delta,
+          displayBounds: bounds,
+        });
+        const patch: {
+          shiftX?: number;
+          shiftY?: number;
+          boxW?: number;
+          boxH?: number | null;
+          scale?: undefined;
+          offset?: undefined;
+          size?: undefined;
+        } = { offset: undefined, size: undefined, scale: undefined };
+        if (delta.dx || delta.dy) {
+          patch.shiftX = box.shiftX;
+          patch.shiftY = box.shiftY;
+        }
+        if (delta.dw) patch.boxW = box.boxW;
+        if (delta.dh) patch.boxH = box.hugHeight ? null : box.boxH;
+        if (
+          patch.shiftX == null &&
+          patch.shiftY == null &&
+          patch.boxW == null &&
+          !delta.dh
+        ) {
+          return;
+        }
+        commitTune(
+          patchItemTune({
+            blueprint,
+            target: refineModel.itemRef,
+            band: editableBand,
+            patch,
+          }),
+        );
+        return;
+      }
+      const geometry = itemGeometryFromDelta({
+        tune: current,
+        delta,
+        displayBounds: bounds,
+      });
       const patch: {
-        offset?: { x: number; y: number };
-        size?: { width?: number; height?: number };
-      } = {};
+        shiftX?: number;
+        shiftY?: number;
+        scale?: number;
+        offset?: undefined;
+        size?: undefined;
+      } = { offset: undefined, size: undefined };
       if (delta.dx || delta.dy) {
-        patch.offset = {
-          x: (current?.offset?.x ?? 0) + delta.dx,
-          y: (current?.offset?.y ?? 0) + delta.dy,
-        };
+        patch.shiftX = geometry.shiftX;
+        patch.shiftY = geometry.shiftY;
       }
-      if ((delta.dw || delta.dh) && bounds) {
-        patch.size = {
-          width: Math.max(8, bounds.width + (delta.dw ?? 0)),
-          height: Math.max(8, bounds.height + (delta.dh ?? 0)),
-        };
+      if (kind !== "textFontOnly" && (delta.dw || delta.dh) && bounds) {
+        patch.scale = geometry.scale;
       }
-      if (!patch.offset && !patch.size) return;
+      if (patch.shiftX == null && patch.shiftY == null && patch.scale == null) return;
       commitTune(
         patchItemTune({
           blueprint,
@@ -3294,7 +3398,22 @@ export function SiteCreatorStudio({
         }),
       );
     },
-    [blueprint, commitTune, editableBand, refineModel, unitOutlines],
+    [blueprint, commitTune, editableBand, refineModel, selectionIndex, unitOutlines],
+  );
+
+  const onFontScale = useCallback(
+    (value: number) => {
+      if (!editableBand || !refineModel?.itemRef) return;
+      commitTune(
+        patchItemTune({
+          blueprint,
+          target: refineModel.itemRef,
+          band: editableBand,
+          patch: { fontScale: value },
+        }),
+      );
+    },
+    [blueprint, commitTune, editableBand, refineModel],
   );
 
   const microbarModel = useMemo((): SiteCreatorMicrobarModel | null => {
@@ -4317,14 +4436,44 @@ export function SiteCreatorStudio({
               transformEnabled={
                 !pagePreviewMode &&
                 !clipImageEdit &&
-                Boolean(editableBand && refineModel?.kind === "item")
+                Boolean(editableBand && refineModel?.itemRef)
               }
               transformBounds={
-                !pagePreviewMode && editableBand && refineModel?.kind === "item"
+                !pagePreviewMode && editableBand && refineModel?.itemRef
                   ? unitOutlines[0]?.bounds ?? null
                   : null
               }
+              transformCorrection={
+                !pagePreviewMode && editableBand && refineModel?.itemRef
+                  ? {
+                      shiftX: refineModel.itemTune?.shiftX ?? 0,
+                      shiftY: refineModel.itemTune?.shiftY ?? 0,
+                      scale: refineModel.itemTune?.scale ?? 1,
+                      boxW: refineModel.itemTune?.boxW,
+                      boxH: refineModel.itemTune?.boxH,
+                      fontScale: refineModel.itemTune?.fontScale ?? 1,
+                    }
+                  : null
+              }
               onTransformCommit={pagePreviewMode ? undefined : onTransformCommit}
+              transformKind={
+                !pagePreviewMode && refineModel?.itemRef
+                  ? refineModel.transformKind
+                  : "uniform"
+              }
+              textBoxLockWidth={
+                refineModel?.itemTune?.widthMode === "full" ||
+                refineModel?.itemTune?.widthMode === "container"
+              }
+              fontScale={refineModel?.itemTune?.fontScale ?? 1}
+              onFontScale={
+                pagePreviewMode
+                  ? undefined
+                  : refineModel?.transformKind === "textBox" ||
+                      refineModel?.transformKind === "textFontOnly"
+                    ? onFontScale
+                    : undefined
+              }
               focalLayerId={pagePreviewMode ? null : focalLayerId}
               onFocalPoint={(focal) => {
                 if (!editableBand || !focalLayerId) return;

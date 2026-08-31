@@ -36,12 +36,168 @@ import {
 } from "./site-creator-types";
 import type { ResponsiveVisualCluster } from "./site-creator-responsive-visual";
 import { sameResponsiveTarget, targetKey } from "./site-creator-responsive-overrides";
+import { moldLayerIdFromDisplay } from "./site-creator-multicard-ids";
+import type { PageRect } from "./site-creator-coordinate-space";
 
 export function sameItemRef(a: ResponsiveItemRef, b: ResponsiveItemRef): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "blueprintNode" && b.kind === "blueprintNode") return a.nodeId === b.nodeId;
-  if (a.kind === "layer" && b.kind === "layer") return a.layerId === b.layerId;
+  if (a.kind === "layer" && b.kind === "layer") {
+    return moldLayerIdFromDisplay(a.layerId) === moldLayerIdFromDisplay(b.layerId);
+  }
   return false;
+}
+
+/** Las copias MultiCard no se persisten: el ajuste vive en el molde. */
+export function canonicalizeItemRef(target: ResponsiveItemRef): ResponsiveItemRef {
+  if (target.kind !== "layer") return target;
+  const moldId = moldLayerIdFromDisplay(target.layerId);
+  return moldId === target.layerId ? target : { kind: "layer", layerId: moldId };
+}
+
+export const ITEM_SHIFT_LIMIT = 4;
+export const ITEM_SCALE_MIN = 0.15;
+export const ITEM_SCALE_MAX = 6;
+export const ITEM_BOX_MIN = 0.2;
+export const ITEM_BOX_MAX = 4;
+export const ITEM_FONT_SCALE_MIN = 0.7;
+export const ITEM_FONT_SCALE_MAX = 1.6;
+
+export function normalizeItemShift(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const clamped = Math.max(-ITEM_SHIFT_LIMIT, Math.min(ITEM_SHIFT_LIMIT, value));
+  const rounded = Math.round(clamped * 10000) / 10000;
+  return Object.is(rounded, -0) || rounded === 0 ? 0 : rounded;
+}
+
+export function normalizeItemScale(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const clamped = Math.max(ITEM_SCALE_MIN, Math.min(ITEM_SCALE_MAX, value));
+  const rounded = Math.round(clamped * 1000) / 1000;
+  return rounded === 1 ? 1 : rounded;
+}
+
+export function normalizeItemBoxFactor(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const clamped = Math.max(ITEM_BOX_MIN, Math.min(ITEM_BOX_MAX, value));
+  const rounded = Math.round(clamped * 1000) / 1000;
+  return rounded === 1 ? 1 : rounded;
+}
+
+export function normalizeItemFontScale(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const clamped = Math.max(ITEM_FONT_SCALE_MIN, Math.min(ITEM_FONT_SCALE_MAX, value));
+  const rounded = Math.round(clamped * 1000) / 1000;
+  return rounded === 1 ? 1 : rounded;
+}
+
+export function itemAutoSizeFromDisplay(args: {
+  displayWidth: number;
+  displayHeight: number;
+  scale: number;
+}): { width: number; height: number } {
+  const s = args.scale > 0.001 ? args.scale : 1;
+  return {
+    width: Math.max(1, args.displayWidth / s),
+    height: Math.max(1, args.displayHeight / s),
+  };
+}
+
+export function itemGeometryFromDelta(args: {
+  tune: ResponsiveItemTuneV1 | null | undefined;
+  delta: { dx: number; dy: number; dw?: number; dh?: number };
+  displayBounds: Pick<PageRect, "width" | "height">;
+}): { shiftX: number; shiftY: number; scale: number } {
+  const currentScale = normalizeItemScale(args.tune?.scale ?? 1);
+  const auto = itemAutoSizeFromDisplay({
+    displayWidth: args.displayBounds.width,
+    displayHeight: args.displayBounds.height,
+    scale: currentScale,
+  });
+  let shiftX = args.tune?.shiftX ?? 0;
+  let shiftY = args.tune?.shiftY ?? 0;
+  let scale = currentScale;
+  if (args.delta.dx || args.delta.dy) {
+    shiftX = normalizeItemShift(shiftX + args.delta.dx / auto.width);
+    shiftY = normalizeItemShift(shiftY + args.delta.dy / auto.height);
+  }
+  const dw = args.delta.dw ?? 0;
+  const dh = args.delta.dh ?? 0;
+  if (dw || dh) {
+    const factorW = (args.displayBounds.width + dw) / Math.max(1, args.displayBounds.width);
+    const factorH = (args.displayBounds.height + dh) / Math.max(1, args.displayBounds.height);
+    const factor = Math.abs(dw) >= Math.abs(dh) ? factorW : factorH;
+    scale = normalizeItemScale(currentScale * factor);
+  }
+  return { shiftX, shiftY, scale };
+}
+
+export function itemTextBoxFromDelta(args: {
+  tune: ResponsiveItemTuneV1 | null | undefined;
+  delta: { dx: number; dy: number; dw?: number; dh?: number };
+  displayBounds: Pick<PageRect, "width" | "height">;
+}): {
+  shiftX: number;
+  shiftY: number;
+  boxW: number;
+  boxH: number | null;
+  hugHeight: boolean;
+} {
+  const currentBoxW = normalizeItemBoxFactor(args.tune?.boxW ?? 1);
+  const currentBoxH = args.tune?.boxH != null ? normalizeItemBoxFactor(args.tune.boxH) : 1;
+  const autoW = Math.max(1, args.displayBounds.width / Math.max(0.001, currentBoxW));
+  const autoH = Math.max(1, args.displayBounds.height / Math.max(0.001, currentBoxH));
+  let shiftX = args.tune?.shiftX ?? 0;
+  let shiftY = args.tune?.shiftY ?? 0;
+  if (args.delta.dx || args.delta.dy) {
+    shiftX = normalizeItemShift(shiftX + args.delta.dx / autoW);
+    shiftY = normalizeItemShift(shiftY + args.delta.dy / autoH);
+  }
+  const dw = args.delta.dw ?? 0;
+  const dh = args.delta.dh ?? 0;
+  let boxW = currentBoxW;
+  let boxH: number | null = args.tune?.boxH != null ? currentBoxH : null;
+  let hugHeight = args.tune?.boxH == null;
+  if (dw) {
+    boxW = normalizeItemBoxFactor((args.displayBounds.width + dw) / autoW);
+  }
+  if (dh) {
+    hugHeight = false;
+    boxH = normalizeItemBoxFactor((args.displayBounds.height + dh) / autoH);
+  }
+  return { shiftX, shiftY, boxW, boxH, hugHeight };
+}
+
+export function formatSignedPercent(fraction: number): string {
+  const pct = Math.round(fraction * 1000) / 10;
+  const shown = Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
+  if (pct > 0) return `+${shown}%`;
+  if (pct < 0) return `${shown}%`;
+  return "0%";
+}
+
+export function formatItemScaleLabel(scale: number): string {
+  const rounded = Math.round(scale * 100) / 100;
+  const text = Number.isInteger(rounded)
+    ? String(rounded)
+    : rounded.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `×${text}`;
+}
+
+export function formatItemCorrectionChip(tune: ResponsiveItemTuneV1 | null | undefined): string {
+  const parts: string[] = [];
+  if (tune?.shiftX) parts.push(`X ${formatSignedPercent(tune.shiftX)}`);
+  if (tune?.shiftY) parts.push(`Y ${formatSignedPercent(tune.shiftY)}`);
+  if (tune?.scale != null && Math.abs(tune.scale - 1) > 0.001) {
+    parts.push(formatItemScaleLabel(tune.scale));
+  }
+  if (tune?.boxW != null && Math.abs(tune.boxW - 1) > 0.001) {
+    parts.push(`caja ${Math.round(tune.boxW * 100)}%`);
+  }
+  if (tune?.fontScale != null && Math.abs(tune.fontScale - 1) > 0.001) {
+    parts.push(`letra ${Math.round(tune.fontScale * 100)}%`);
+  }
+  return parts.length ? parts.join(" · ") : "Posición";
 }
 
 function sectionIdForTarget(
@@ -108,17 +264,17 @@ export function resolveItemRef(
     if (node.kind === "multicard") return null;
     return { kind: "blueprintNode", nodeId: node.id };
   }
-  return { kind: "layer", layerId: unit.layerId };
+  return canonicalizeItemRef({ kind: "layer", layerId: unit.layerId });
 }
 
 export function itemRefForCluster(cluster: ResponsiveVisualCluster): ResponsiveItemRef | null {
   if (cluster.kind === "solo") {
     if (cluster.unit.nodeId) return { kind: "blueprintNode", nodeId: cluster.unit.nodeId };
     const layerId = cluster.unit.layerIds[0];
-    return layerId ? { kind: "layer", layerId } : null;
+    return layerId ? canonicalizeItemRef({ kind: "layer", layerId }) : null;
   }
   const layerId = cluster.allLayerIds[0];
-  return layerId ? { kind: "layer", layerId } : null;
+  return layerId ? canonicalizeItemRef({ kind: "layer", layerId }) : null;
 }
 
 export function coverageLayerIdsForItem(
@@ -126,20 +282,22 @@ export function coverageLayerIdsForItem(
   target: ResponsiveItemRef,
   index: SiteCreatorSelectionIndex | null,
 ): string[] {
-  if (target.kind === "blueprintNode") {
-    return collectSemanticCoverageLayerIds(blueprint, target.nodeId);
+  const resolved = canonicalizeItemRef(target);
+  if (resolved.kind === "blueprintNode") {
+    return collectSemanticCoverageLayerIds(blueprint, resolved.nodeId);
   }
-  if (!index) return [target.layerId];
-  const entry = index.byId[target.layerId];
-  if (!entry) return [target.layerId];
+  const layerId = resolved.layerId;
+  if (!index) return [layerId];
+  const entry = index.byId[layerId];
+  if (!entry) return [layerId];
   if (entry.containerKind === "groupContainer") {
-    const ids = [target.layerId];
+    const ids = [layerId];
     for (const child of index.entries) {
-      if (child.ancestorIds.includes(target.layerId)) ids.push(child.layerId);
+      if (child.ancestorIds.includes(layerId)) ids.push(child.layerId);
     }
     return ids;
   }
-  return [target.layerId];
+  return [layerId];
 }
 
 function isEmptyItemTune(tune: ResponsiveItemTuneV1 | undefined): boolean {
@@ -149,6 +307,12 @@ function isEmptyItemTune(tune: ResponsiveItemTuneV1 | undefined): boolean {
   if (tune.alignY) return false;
   if (tune.widthMode && tune.widthMode !== "content") return false;
   if (typeof tune.order === "number") return false;
+  if (tune.shiftX) return false;
+  if (tune.shiftY) return false;
+  if (tune.scale != null && Math.abs(tune.scale - 1) > 0.001) return false;
+  if (tune.boxW != null && Math.abs(tune.boxW - 1) > 0.001) return false;
+  if (tune.boxH != null && Math.abs(tune.boxH - 1) > 0.001) return false;
+  if (tune.fontScale != null && Math.abs(tune.fontScale - 1) > 0.001) return false;
   if (tune.offset && (tune.offset.x !== 0 || tune.offset.y !== 0)) return false;
   if (tune.size && (tune.size.width != null || tune.size.height != null)) return false;
   return true;
@@ -197,6 +361,30 @@ function cleanItemTune(tune: ResponsiveItemTuneV1): ResponsiveItemTuneV1 | null 
   }
   if (typeof tune.order === "number" && Number.isFinite(tune.order)) {
     next.order = Math.round(tune.order);
+  }
+  if (typeof tune.shiftX === "number") {
+    const x = normalizeItemShift(tune.shiftX);
+    if (x !== 0) next.shiftX = x;
+  }
+  if (typeof tune.shiftY === "number") {
+    const y = normalizeItemShift(tune.shiftY);
+    if (y !== 0) next.shiftY = y;
+  }
+  if (typeof tune.scale === "number") {
+    const scale = normalizeItemScale(tune.scale);
+    if (scale !== 1) next.scale = scale;
+  }
+  if (typeof tune.boxW === "number") {
+    const boxW = normalizeItemBoxFactor(tune.boxW);
+    if (boxW !== 1) next.boxW = boxW;
+  }
+  if (typeof tune.boxH === "number") {
+    const boxH = normalizeItemBoxFactor(tune.boxH);
+    if (boxH !== 1) next.boxH = boxH;
+  }
+  if (typeof tune.fontScale === "number") {
+    const fontScale = normalizeItemFontScale(tune.fontScale);
+    if (fontScale !== 1) next.fontScale = fontScale;
   }
   if (tune.offset) {
     const x = Number.isFinite(tune.offset.x) ? tune.offset.x : 0;
@@ -440,7 +628,8 @@ export function resolveItemTune(
   target: ResponsiveItemRef,
   band: ResponsiveVisibilityBand,
 ): ResponsiveItemTuneV1 | null {
-  const rule = blueprint.responsive?.items?.find((r) => sameItemRef(r.target, target));
+  const canonical = canonicalizeItemRef(target);
+  const rule = blueprint.responsive?.items?.find((r) => sameItemRef(r.target, canonical));
   const tune = rule?.byBand[band];
   return tune && !isEmptyItemTune(tune) ? tune : null;
 }
@@ -499,22 +688,26 @@ export function patchItemTune(args: {
   blueprint: SiteBlueprintV1;
   target: ResponsiveItemRef;
   band: ResponsiveVisibilityBand;
-  patch: Partial<ResponsiveItemTuneV1> | null;
+  patch: (Partial<ResponsiveItemTuneV1> & { boxH?: number | null }) | null;
 }): { blueprint: SiteBlueprintV1; changed: boolean } {
-  const current = resolveItemTune(args.blueprint, args.target, args.band);
-  const merged: ResponsiveItemTuneV1 | null =
+  const target = canonicalizeItemRef(args.target);
+  const current = resolveItemTune(args.blueprint, target, args.band);
+  let merged: ResponsiveItemTuneV1 | null =
     args.patch == null ? null : { ...(current ?? {}), ...args.patch };
+  if (merged && args.patch && "boxH" in args.patch && args.patch.boxH == null) {
+    delete merged.boxH;
+  }
   const cleaned = merged ? cleanItemTune(merged) : null;
   const same = JSON.stringify(current ?? null) === JSON.stringify(cleaned);
   if (same) return { blueprint: args.blueprint, changed: false };
 
   const next = cloneBlueprint(args.blueprint);
   const items = [...(next.responsive?.items ?? [])];
-  const idx = items.findIndex((r) => sameItemRef(r.target, args.target));
+  const idx = items.findIndex((r) => sameItemRef(r.target, target));
   const rule: ResponsiveItemRuleV1 =
     idx >= 0
       ? { target: items[idx]!.target, byBand: { ...items[idx]!.byBand } }
-      : { target: args.target, byBand: {} };
+      : { target, byBand: {} };
   if (cleaned) rule.byBand[args.band] = cleaned;
   else delete rule.byBand[args.band];
   if (idx >= 0) items[idx] = rule;
@@ -828,9 +1021,9 @@ export function unitHasCustomization(args: {
     return false;
   }
   if (resolveItemTune(blueprint, { kind: "layer", layerId: unit.layerId }, band)) return true;
-  if (resolveMediaTune(blueprint, unit.layerId, band)) return true;
+  if (resolveMediaTune(blueprint, moldLayerIdFromDisplay(unit.layerId), band)) return true;
   if (blueprint.responsive?.backgrounds?.some(
-    (rule) => rule.sourceLayerId === unit.layerId && rule.byBand[band],
+    (rule) => rule.sourceLayerId === moldLayerIdFromDisplay(unit.layerId) && rule.byBand[band],
   )) {
     return true;
   }
