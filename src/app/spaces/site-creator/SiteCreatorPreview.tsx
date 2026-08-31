@@ -161,7 +161,16 @@ export interface SiteCreatorPreviewProps {
     boxH?: number | null;
     fontScale?: number;
   } | null;
-  onTransformCommit?: (delta: { dx: number; dy: number; dw?: number; dh?: number }) => void;
+  onTransformCommit?: (
+    delta: { dx: number; dy: number; dw?: number; dh?: number },
+    meta: { startBounds: { x: number; y: number; width: number; height: number } },
+  ) => void;
+  onTransformLive?: (
+    draft: {
+      delta: { dx: number; dy: number; dw: number; dh: number };
+      startBounds: { x: number; y: number; width: number; height: number };
+    } | null,
+  ) => void;
   fontScale?: number;
   onFontScale?: (value: number) => void;
   focalLayerId?: string | null;
@@ -284,6 +293,7 @@ export function SiteCreatorPreview({
   textBoxLockWidth = false,
   transformCorrection = null,
   onTransformCommit,
+  onTransformLive,
   fontScale = 1,
   onFontScale,
   focalLayerId = null,
@@ -505,8 +515,15 @@ export function SiteCreatorPreview({
 
   useLayoutEffect(() => {
     if (!pinPreviewActive || pinOverlayUsesSticky) return;
-    syncPinOverlayToScroll(deviceScrollRef.current?.scrollTop ?? 0);
-  }, [pinPreviewActive, pinOverlayUsesSticky, pinDisplayHeight, syncPinOverlayToScroll]);
+    // Tras cada scroll/re-render React puede pisar style.transform; reaplicar en layout.
+    syncPinOverlayToScroll(deviceScrollRef.current?.scrollTop ?? deviceScrollTop);
+  }, [
+    pinPreviewActive,
+    pinOverlayUsesSticky,
+    pinDisplayHeight,
+    syncPinOverlayToScroll,
+    deviceScrollTop,
+  ]);
 
   useEffect(() => {
     const bump = () => setScrollTick((n) => n + 1);
@@ -845,6 +862,7 @@ export function SiteCreatorPreview({
             textBoxLockWidth={textBoxLockWidth}
             transformCorrection={transformCorrection}
             onTransformCommit={onTransformCommit}
+            onTransformLive={onTransformLive}
             fontScale={fontScale}
             onFontScale={onFontScale}
             focalLayerId={focalLayerId}
@@ -890,11 +908,21 @@ export function SiteCreatorPreview({
         style={{
           height: pinDisplayHeight,
           width: contentDisplayWidth,
-          ...(pinOverlayUsesSticky ? { marginBottom: -pinDisplayHeight } : { willChange: "transform" }),
+          ...(pinOverlayUsesSticky
+            ? { marginBottom: -pinDisplayHeight }
+            : {
+                willChange: "transform",
+                // Estilo React (no solo DOM): setDeviceScrollTop re-renderiza y
+                // si transform solo vivía en el nodo, React lo borraba al scroll.
+                transform:
+                  deviceScrollTop > 0.5
+                    ? `translate3d(0, ${deviceScrollTop}px, 0)`
+                    : undefined,
+              }),
         }}
         data-testid="site-creator-section-pin-overlay"
         data-pin-scroll-mode={pinOverlayUsesSticky ? "sticky" : "sync"}
-        data-pin-scroll-offset="0"
+        data-pin-scroll-offset={String(Math.round(deviceScrollTop))}
         aria-hidden
       >
         {/* Fondo transparente: el scroll debe verse bajo los picos de máscaras irregulares. */}

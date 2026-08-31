@@ -457,6 +457,137 @@ describe("section height mode", () => {
     expect(body.y).toBe(1100);
   });
 
+  it("moves Designer line path geometry when the section height grows", () => {
+    const rule = {
+      id: "rule",
+      name: "Line",
+      type: "path" as const,
+      x: 240,
+      y: 200,
+      width: 600,
+      height: 2,
+      rotation: 0,
+      opacity: 1,
+      visible: true,
+      locked: false,
+      fill: { type: "solid" as const, color: "none" },
+      stroke: "#111111",
+      strokeWidth: 2,
+      closed: false,
+      isLineTool: true,
+      points: [
+        {
+          anchor: { x: 240, y: 201 },
+          handleIn: { x: 240, y: 201 },
+          handleOut: { x: 240, y: 201 },
+          vertexMode: "corner" as const,
+        },
+        {
+          anchor: { x: 840, y: 201 },
+          handleIn: { x: 840, y: 201 },
+          handleOut: { x: 840, y: 201 },
+          vertexMode: "corner" as const,
+        },
+      ],
+    } as FreehandObject;
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      makeLayer({ id: "title", type: "text", x: 240, y: 100, width: 600, height: 60, text: "Title" }),
+      rule,
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "title", "rule"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const fitted = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: fitted.blueprint,
+      index,
+      viewportHeight: 1080,
+    }).page;
+    const moved = findDisplayObject(laidOut, "rule") as FreehandObject & {
+      points?: Array<{ anchor: { x: number; y: number } }>;
+    };
+    expect(moved?.y).toBe(500);
+    expect(moved?.points?.[0]?.anchor.y).toBeCloseTo(501, 5);
+    expect(moved?.points?.[1]?.anchor.y).toBeCloseTo(501, 5);
+  });
+
+  it("stretches a tall vertical rule with the section height", () => {
+    const rule = {
+      id: "vline",
+      name: "VLine",
+      type: "path" as const,
+      x: 40,
+      y: 0,
+      width: 2,
+      height: 400,
+      rotation: 0,
+      opacity: 1,
+      visible: true,
+      locked: false,
+      fill: { type: "solid" as const, color: "none" },
+      stroke: "#111111",
+      strokeWidth: 2,
+      closed: false,
+      isLineTool: true,
+      points: [
+        {
+          anchor: { x: 41, y: 0 },
+          handleIn: { x: 41, y: 0 },
+          handleOut: { x: 41, y: 0 },
+          vertexMode: "corner" as const,
+        },
+        {
+          anchor: { x: 41, y: 400 },
+          handleIn: { x: 41, y: 400 },
+          handleOut: { x: 41, y: 400 },
+          vertexMode: "corner" as const,
+        },
+      ],
+    } as FreehandObject;
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 400, fill: "#111" }),
+      rule,
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const hero = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["bg", "vline"],
+      index,
+      committedPage: page,
+      sectionType: "hero",
+    });
+    expect(hero.ok).toBe(true);
+    if (!hero.ok || !hero.createdNodeId) return;
+    const fitted = setSectionHeightMode(hero.blueprint, hero.createdNodeId, "custom", "wide", 1000);
+    expect(fitted.ok).toBe(true);
+    if (!fitted.ok) return;
+
+    const laidOut = applySectionViewportHeights({
+      page,
+      blueprint: fitted.blueprint,
+      index,
+      viewportHeight: 1080,
+    }).page;
+    const stretched = findDisplayObject(laidOut, "vline") as FreehandObject & {
+      points?: Array<{ anchor: { x: number; y: number } }>;
+    };
+    expect(stretched?.height).toBeCloseTo(1000, 5);
+    expect(stretched?.points?.[0]?.anchor.y).toBeCloseTo(0, 5);
+    expect(stretched?.points?.[1]?.anchor.y).toBeCloseTo(1000, 5);
+  });
+
   it("stretches path geometry used as a section background", () => {
     const path = rectangularPath();
     const title = makeLayer({

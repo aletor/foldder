@@ -50,6 +50,7 @@ import {
   collectVisibleLayerIdsFromPage,
   preservePageWithUniformMatrix,
   scalePathPointsUniform,
+  shiftFreehandObjectY,
   transformPathObjectRelative,
   uniformScaleMatrix,
   type ResolvedResponsiveScene,
@@ -87,7 +88,7 @@ import {
   type SectionVisualAnalysis,
 } from "./site-creator-responsive-visual";
 import { applyLayoutGroupWidthModes } from "./site-creator-group-width-layout";
-import { isStrokeLikeBox } from "./site-creator-stroke-path";
+import { isLineLikePath, isStrokeLikeBox } from "./site-creator-stroke-path";
 import { applyMultiCardLayout } from "./site-creator-multicard-layout";
 import type { MultiCardInstanceRef } from "./site-creator-multicard-ids";
 import type { MultiCardContainerLayout } from "./site-creator-multicard-layout";
@@ -99,6 +100,7 @@ import {
   scaleOriginalPxToBand,
   scaledDesignedSectionGap,
   sectionHeightModeForBand,
+  stretchTallSectionStrokeRules,
 } from "./site-creator-section-height";
 import {
   reframeClippingImage,
@@ -2288,11 +2290,14 @@ function shiftSectionContentY(args: {
   sectionId: string;
   backgroundLayerIds: string[];
   deltaY: number;
+  /** Alto de diseño: filetes verticales altos se dejan para stretchTallSectionStrokeRules. */
+  designedHeight?: number;
 }): void {
   if (!(Math.abs(args.deltaY) > 0.01)) return;
   const backgroundRoots = new Set(
     args.backgroundLayerIds.map((id) => worldSpaceAncestorId(id, args.index)),
   );
+  const designed = args.designedHeight ?? 0;
   const shifted = new Set<string>();
   for (const id of collectSemanticCoverageLayerIds(args.blueprint, args.sectionId)) {
     const worldId = worldSpaceAncestorId(id, args.index);
@@ -2300,7 +2305,16 @@ function shiftSectionContentY(args: {
     if (!isWorldSpaceLayerId(worldId, args.index)) continue;
     const obj = args.byId.get(worldId);
     if (!obj || typeof obj.y !== "number") continue;
-    obj.y += args.deltaY;
+    if (
+      designed > 0 &&
+      isLineLikePath(obj) &&
+      isStrokeLikeBox(obj) &&
+      typeof obj.height === "number" &&
+      obj.height >= designed * 0.75
+    ) {
+      continue;
+    }
+    shiftFreehandObjectY(obj, args.deltaY);
     shifted.add(worldId);
   }
 }
@@ -3248,6 +3262,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       const extra = Math.max(0, targetH - region.layoutRect.height);
       if (extra > 0.5) {
         const fillHeightMode = sectionHeightModeForBand(args.blueprint, section, band);
+        const designedH = Math.max(1, analysis.containerBounds.height);
         shiftSectionContentY({
           byId,
           blueprint: args.blueprint,
@@ -3255,6 +3270,18 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
           sectionId: section.id,
           backgroundLayerIds: region.backgroundLayerIds,
           deltaY: extra / 2,
+          designedHeight: designedH,
+        });
+        stretchTallSectionStrokeRules({
+          byId,
+          blueprint: args.blueprint,
+          index,
+          sectionId: section.id,
+          designedHeight: designedH,
+          extra,
+          skipLayerIds: new Set(
+            region.backgroundLayerIds.map((id) => worldSpaceAncestorId(id, index)),
+          ),
         });
         region.layoutRect = { ...region.layoutRect, height: region.layoutRect.height + extra };
         region.clipRect = { ...region.clipRect, height: region.clipRect.height + extra };

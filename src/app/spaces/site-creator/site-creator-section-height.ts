@@ -25,9 +25,50 @@ import type {
 } from "./site-creator-types";
 import { isResponsiveEditableBand, isSiteSectionNode } from "./site-creator-types";
 import { resizeSectionCoverClip } from "./site-creator-clipping-resize";
-import { transformPathObjectRelative } from "./site-creator-responsive-matrix";
+import { shiftFreehandObjectY, transformPathObjectRelative } from "./site-creator-responsive-matrix";
+import { isLineLikePath, isStrokeLikeBox } from "./site-creator-stroke-path";
 
 const FIT_EPSILON = 8;
+
+/**
+ * Filetes verticales a casi toda la altura de la sección: crecen con el alto
+ * (como un fondo estrecho), en lugar de quedarse cortos al centrar el bloque.
+ */
+export function stretchTallSectionStrokeRules(args: {
+  byId: Map<string, FreehandObject>;
+  blueprint: SiteBlueprintV1;
+  index: SiteCreatorSelectionIndex;
+  sectionId: string;
+  designedHeight: number;
+  extra: number;
+  skipLayerIds?: Set<string>;
+}): void {
+  if (!(args.extra > 0.5) || args.designedHeight < 1) return;
+  const skip = args.skipLayerIds ?? new Set<string>();
+  const touched = new Set<string>();
+  for (const id of collectSemanticCoverageLayerIds(args.blueprint, args.sectionId)) {
+    const worldId = worldSpaceAncestorId(id, args.index);
+    if (skip.has(worldId) || touched.has(worldId)) continue;
+    if (!isWorldSpaceLayerId(worldId, args.index)) continue;
+    const obj = args.byId.get(worldId);
+    if (!obj || !isLineLikePath(obj) || !isStrokeLikeBox(obj)) continue;
+    if (typeof obj.height !== "number" || obj.height < args.designedHeight * 0.75) continue;
+    touched.add(worldId);
+    const origin = {
+      x: obj.x,
+      y: obj.y,
+      width: Math.max(1, obj.width),
+      height: Math.max(1, obj.height),
+    };
+    transformPathObjectRelative(obj as PathObject, origin, {
+      x: obj.x,
+      y: obj.y,
+      scaleX: 1,
+      scaleY: (obj.height + args.extra) / Math.max(1, obj.height),
+    });
+    obj.height = Math.max(1, obj.height + args.extra);
+  }
+}
 
 export type SectionHeightRange = {
   id: string;
@@ -370,7 +411,7 @@ export function applySectionViewportHeights(args: {
         if (worldId !== id) continue;
         if (typeof obj.y !== "number") continue;
         if (obj.y + 0.5 >= designedBottom) {
-          obj.y += extra;
+          shiftFreehandObjectY(obj, extra);
         } else if (
           sectionWorldIds.has(id) &&
           typeof obj.height === "number" &&
@@ -406,10 +447,26 @@ export function applySectionViewportHeights(args: {
             }
             obj.height = Math.max(1, obj.height + extra);
           }
+        } else if (
+          sectionWorldIds.has(id) &&
+          isLineLikePath(obj) &&
+          isStrokeLikeBox(obj) &&
+          typeof obj.height === "number" &&
+          obj.height >= designed * 0.75
+        ) {
+          // Estirado en stretchTallSectionStrokeRules (después del bucle).
         } else if (sectionWorldIds.has(id)) {
-          obj.y += extra / 2;
+          shiftFreehandObjectY(obj, extra / 2);
         }
       }
+      stretchTallSectionStrokeRules({
+        byId,
+        blueprint: args.blueprint,
+        index: args.index,
+        sectionId: section.id,
+        designedHeight: designed,
+        extra,
+      });
     }
     acc += extra;
   }

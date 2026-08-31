@@ -261,8 +261,9 @@ export type ResponsiveItemTuneV1 = {
   widthMode?: ResponsiveWidthMode;
   order?: number;
   /**
-   * Desplazamiento relativo al tamaño automático de esa vista.
-   * `0.1` = +10% del ancho (X) o del alto (Y) automáticos. No es un X/Y fijo.
+   * Desplazamiento relativo al tamaño visual de la caja en esa vista
+   * (tras ancho completo / escala / boxW, antes del propio shift).
+   * `0.1` = +10% del ancho (X) o del alto (Y) de esa caja. No es un X/Y fijo.
    */
   shiftX?: number;
   shiftY?: number;

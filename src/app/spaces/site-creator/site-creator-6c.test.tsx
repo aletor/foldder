@@ -905,6 +905,84 @@ describe("site-creator 6C visible layout effects", () => {
     ).toBeCloseTo(1.44, 2);
   });
 
+  it("round-trips a drag on a scaled item so release matches the ghost box", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const scaled = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "btn_shape" },
+      band: "tablet",
+      patch: { scale: 1.5 },
+    }).blueprint;
+    const before = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: scaled,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const b0 = findDisplayObject(before.displayPage, "btn_shape")!;
+    const dx = 30;
+    const geometry = itemGeometryFromDelta({
+      tune: { scale: 1.5 },
+      delta: { dx, dy: 0 },
+      displayBounds: { width: b0.width, height: b0.height },
+    });
+    const moved = patchItemTune({
+      blueprint: scaled,
+      target: { kind: "layer", layerId: "btn_shape" },
+      band: "tablet",
+      patch: { shiftX: geometry.shiftX, shiftY: geometry.shiftY },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: moved,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const b1 = findDisplayObject(after.displayPage, "btn_shape")!;
+    expect(b1.x).toBeCloseTo(b0.x + dx, 0);
+    expect(b1.width).toBeCloseTo(b0.width, 0);
+  });
+
+  it("round-trips a drag when widthMode stretches the box", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const full = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { widthMode: "container" },
+    }).blueprint;
+    const before = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: full,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t0 = findDisplayObject(before.displayPage, "title")!;
+    const dy = 24;
+    const geometry = itemGeometryFromDelta({
+      tune: { widthMode: "container" },
+      delta: { dx: 0, dy },
+      displayBounds: { width: t0.width, height: t0.height },
+    });
+    const moved = patchItemTune({
+      blueprint: full,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { shiftX: geometry.shiftX, shiftY: geometry.shiftY },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: moved,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t1 = findDisplayObject(after.displayPage, "title")!;
+    expect(t1.y).toBeCloseTo(t0.y + dy, 0);
+    expect(t1.width).toBeCloseTo(t0.width, 0);
+  });
+
   it("stores MultiCard instance drags on the mold layer", () => {
     const instanceId = encodeMultiCardInstanceId({
       nodeId: "mc1",

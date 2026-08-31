@@ -138,6 +138,29 @@ export function transformPathObjectRelative(
   }
 }
 
+/**
+ * Desplaza un objeto en Y. En `path` también mueve anclas/handles: si solo
+ * cambia `obj.y`, las líneas del Designer no se ven moverse.
+ */
+export function shiftFreehandObjectY(obj: FreehandObject, deltaY: number): void {
+  if (!Number.isFinite(deltaY) || Math.abs(deltaY) < 0.01) return;
+  if (obj.type === "path") {
+    const origin = {
+      x: obj.x,
+      y: obj.y,
+      width: Math.max(1, obj.width),
+      height: Math.max(1, obj.height),
+    };
+    transformPathObjectRelative(obj as PathObject, origin, {
+      x: obj.x,
+      y: obj.y + deltaY,
+      scaleX: 1,
+      scaleY: 1,
+    });
+  }
+  if (typeof obj.y === "number") obj.y += deltaY;
+}
+
 function scaleRectCornerFields(rect: RectObject, scale: number): void {
   const legacyRadius = (rect as { cornerRadius?: unknown }).cornerRadius;
   if (typeof legacyRadius === "number") {

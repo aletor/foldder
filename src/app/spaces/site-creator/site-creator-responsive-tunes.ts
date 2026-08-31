@@ -109,23 +109,21 @@ export function itemGeometryFromDelta(args: {
   displayBounds: Pick<PageRect, "width" | "height">;
 }): { shiftX: number; shiftY: number; scale: number } {
   const currentScale = normalizeItemScale(args.tune?.scale ?? 1);
-  const auto = itemAutoSizeFromDisplay({
-    displayWidth: args.displayBounds.width,
-    displayHeight: args.displayBounds.height,
-    scale: currentScale,
-  });
+  const displayW = Math.max(1, args.displayBounds.width);
+  const displayH = Math.max(1, args.displayBounds.height);
   let shiftX = args.tune?.shiftX ?? 0;
   let shiftY = args.tune?.shiftY ?? 0;
   let scale = currentScale;
   if (args.delta.dx || args.delta.dy) {
-    shiftX = normalizeItemShift(shiftX + args.delta.dx / auto.width);
-    shiftY = normalizeItemShift(shiftY + args.delta.dy / auto.height);
+    // Misma base que apply: % del tamaño visual actual.
+    shiftX = normalizeItemShift(shiftX + args.delta.dx / displayW);
+    shiftY = normalizeItemShift(shiftY + args.delta.dy / displayH);
   }
   const dw = args.delta.dw ?? 0;
   const dh = args.delta.dh ?? 0;
   if (dw || dh) {
-    const factorW = (args.displayBounds.width + dw) / Math.max(1, args.displayBounds.width);
-    const factorH = (args.displayBounds.height + dh) / Math.max(1, args.displayBounds.height);
+    const factorW = (displayW + dw) / displayW;
+    const factorH = (displayH + dh) / displayH;
     const factor = Math.abs(dw) >= Math.abs(dh) ? factorW : factorH;
     scale = normalizeItemScale(currentScale * factor);
   }
@@ -145,13 +143,15 @@ export function itemTextBoxFromDelta(args: {
 } {
   const currentBoxW = normalizeItemBoxFactor(args.tune?.boxW ?? 1);
   const currentBoxH = args.tune?.boxH != null ? normalizeItemBoxFactor(args.tune.boxH) : 1;
-  const autoW = Math.max(1, args.displayBounds.width / Math.max(0.001, currentBoxW));
-  const autoH = Math.max(1, args.displayBounds.height / Math.max(0.001, currentBoxH));
+  const displayW = Math.max(1, args.displayBounds.width);
+  const displayH = Math.max(1, args.displayBounds.height);
+  const autoW = Math.max(1, displayW / Math.max(0.001, currentBoxW));
+  const autoH = Math.max(1, displayH / Math.max(0.001, currentBoxH));
   let shiftX = args.tune?.shiftX ?? 0;
   let shiftY = args.tune?.shiftY ?? 0;
   if (args.delta.dx || args.delta.dy) {
-    shiftX = normalizeItemShift(shiftX + args.delta.dx / autoW);
-    shiftY = normalizeItemShift(shiftY + args.delta.dy / autoH);
+    shiftX = normalizeItemShift(shiftX + args.delta.dx / displayW);
+    shiftY = normalizeItemShift(shiftY + args.delta.dy / displayH);
   }
   const dw = args.delta.dw ?? 0;
   const dh = args.delta.dh ?? 0;
@@ -159,13 +159,66 @@ export function itemTextBoxFromDelta(args: {
   let boxH: number | null = args.tune?.boxH != null ? currentBoxH : null;
   let hugHeight = args.tune?.boxH == null;
   if (dw) {
-    boxW = normalizeItemBoxFactor((args.displayBounds.width + dw) / autoW);
+    boxW = normalizeItemBoxFactor((displayW + dw) / autoW);
   }
   if (dh) {
     hugHeight = false;
-    boxH = normalizeItemBoxFactor((args.displayBounds.height + dh) / autoH);
+    boxH = normalizeItemBoxFactor((displayH + dh) / autoH);
   }
   return { shiftX, shiftY, boxW, boxH, hugHeight };
+}
+
+/** Parche de tune a partir de un gesto de arrastre / redimensionado. */
+export function itemTunePatchFromTransformDelta(args: {
+  tune: ResponsiveItemTuneV1 | null | undefined;
+  delta: { dx: number; dy: number; dw?: number; dh?: number };
+  displayBounds: Pick<PageRect, "width" | "height">;
+  kind: "uniform" | "textBox" | "textFontOnly";
+}): (Omit<Partial<ResponsiveItemTuneV1>, "boxH"> & { boxH?: number | null }) | null {
+  const { tune, delta, displayBounds, kind } = args;
+  if (kind === "textBox") {
+    const box = itemTextBoxFromDelta({ tune, delta, displayBounds });
+    const patch: Omit<Partial<ResponsiveItemTuneV1>, "boxH"> & {
+      boxH?: number | null;
+      scale?: undefined;
+      offset?: undefined;
+      size?: undefined;
+    } = { offset: undefined, size: undefined, scale: undefined };
+    if (delta.dx || delta.dy) {
+      patch.shiftX = box.shiftX;
+      patch.shiftY = box.shiftY;
+    }
+    if (delta.dw) patch.boxW = box.boxW;
+    if (delta.dh) patch.boxH = box.hugHeight ? null : box.boxH;
+    if (patch.shiftX == null && patch.shiftY == null && patch.boxW == null && !delta.dh) {
+      return null;
+    }
+    return patch;
+  }
+  if (kind === "textFontOnly") {
+    if (!(delta.dx || delta.dy)) return null;
+    const geometry = itemGeometryFromDelta({ tune, delta, displayBounds });
+    return {
+      shiftX: geometry.shiftX,
+      shiftY: geometry.shiftY,
+      offset: undefined,
+      size: undefined,
+    };
+  }
+  const geometry = itemGeometryFromDelta({ tune, delta, displayBounds });
+  const patch: Partial<ResponsiveItemTuneV1> & {
+    offset?: undefined;
+    size?: undefined;
+  } = { offset: undefined, size: undefined };
+  if (delta.dx || delta.dy) {
+    patch.shiftX = geometry.shiftX;
+    patch.shiftY = geometry.shiftY;
+  }
+  if (delta.dw || delta.dh) {
+    patch.scale = geometry.scale;
+  }
+  if (patch.shiftX == null && patch.shiftY == null && patch.scale == null) return null;
+  return patch;
 }
 
 export function formatSignedPercent(fraction: number): string {

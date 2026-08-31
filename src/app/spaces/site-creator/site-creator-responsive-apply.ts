@@ -418,7 +418,8 @@ function applyOneItem(args: {
   if (treatAsText) {
     const widthChanged = treatAsAreaText && !tune.widthMode && Math.abs(boxW - 1) > 0.001;
     const fontChanged = Math.abs(fontScale - 1) > 0.001;
-    const shouldResizeTextBox = treatAsAreaText && (widthChanged || fontChanged || boxH != null);
+    const shouldResizeTextBox =
+      treatAsAreaText && (widthChanged || fontChanged || boxH != null);
     if (widthChanged) {
       scaleX = boxW;
       box = { ...box, width: Math.max(8, origin.width * boxW) };
@@ -492,10 +493,14 @@ function applyOneItem(args: {
 
   const useRelativeShift = tune.shiftX != null || tune.shiftY != null;
   if (useRelativeShift) {
+    // Misma base que el arrastre: tamaño visual actual (post escala / widthMode / box),
+    // no el origin pre-corrección. Así la caja fantasma y el soltar coinciden.
+    const shiftBasisW = Math.max(1, box.width);
+    const shiftBasisH = Math.max(1, box.height);
     box = {
       ...box,
-      x: box.x + (tune.shiftX ?? 0) * origin.width,
-      y: box.y + (tune.shiftY ?? 0) * origin.height,
+      x: box.x + (tune.shiftX ?? 0) * shiftBasisW,
+      y: box.y + (tune.shiftY ?? 0) * shiftBasisH,
     };
   } else if (tune.offset) {
     box = { ...box, x: box.x + tune.offset.x, y: box.y + tune.offset.y };

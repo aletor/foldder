@@ -288,7 +288,17 @@ export interface SiteCreatorSelectionSurfaceProps {
     boxH?: number | null;
     fontScale?: number;
   } | null;
-  onTransformCommit?: (delta: { dx: number; dy: number; dw?: number; dh?: number }) => void;
+  onTransformCommit?: (
+    delta: { dx: number; dy: number; dw?: number; dh?: number },
+    meta: { startBounds: { x: number; y: number; width: number; height: number } },
+  ) => void;
+  /** Borrador en vivo mientras se arrastra (mismo math que al soltar). */
+  onTransformLive?: (
+    draft: {
+      delta: { dx: number; dy: number; dw: number; dh: number };
+      startBounds: { x: number; y: number; width: number; height: number };
+    } | null,
+  ) => void;
   fontScale?: number;
   onFontScale?: (value: number) => void;
   focalLayerId?: string | null;
@@ -345,6 +355,7 @@ export function SiteCreatorSelectionSurface({
   textBoxLockWidth = false,
   transformCorrection = null,
   onTransformCommit,
+  onTransformLive,
   fontScale = 1,
   onFontScale,
   focalLayerId = null,
@@ -389,6 +400,7 @@ export function SiteCreatorSelectionSurface({
     dy: number;
     dw: number;
     dh: number;
+    startBounds: { x: number; y: number; width: number; height: number };
   } | null>(null);
   const clipImageDragRef = useRef<ClipImageDrag | null>(null);
   const pointerSessionRef = useRef<{
@@ -454,14 +466,26 @@ export function SiteCreatorSelectionSurface({
         if (!point) return;
         const dx = point.x - drag.start.x;
         const dy = point.y - drag.start.y;
+        let next: {
+          dx: number;
+          dy: number;
+          dw: number;
+          dh: number;
+          startBounds: { x: number; y: number; width: number; height: number };
+        };
         if (drag.kind === "move") {
-          setTransformLive({ dx, dy, dw: 0, dh: 0 });
+          next = { dx, dy, dw: 0, dh: 0, startBounds: drag.startBounds };
         } else if (transformKind === "textBox") {
-          setTransformLive(boxDeltaFromHandle(drag.handle, dx, dy));
+          next = { ...boxDeltaFromHandle(drag.handle, dx, dy), startBounds: drag.startBounds };
         } else {
           const { dw, dh } = resizeDeltaFromHandle(drag.handle, dx, dy);
-          setTransformLive({ dx: 0, dy: 0, dw, dh });
+          next = { dx: 0, dy: 0, dw, dh, startBounds: drag.startBounds };
         }
+        setTransformLive(next);
+        onTransformLive?.({
+          delta: { dx: next.dx, dy: next.dy, dw: next.dw, dh: next.dh },
+          startBounds: next.startBounds,
+        });
         return;
       }
       const session = pointerSessionRef.current;
@@ -517,6 +541,7 @@ export function SiteCreatorSelectionSurface({
       frontHitOptions,
       index,
       onClipImageTuneChange,
+      onTransformLive,
       pageHeight,
       pageWidth,
       scale,
@@ -561,23 +586,25 @@ export function SiteCreatorSelectionSurface({
         const end = toPage(event.clientX, event.clientY);
         transformDragRef.current = null;
         setTransformLive(null);
+        onTransformLive?.(null);
         if (!end || !onTransformCommit) return;
         const dx = end.x - drag.start.x;
         const dy = end.y - drag.start.y;
+        const meta = { startBounds: drag.startBounds };
         if (drag.kind === "move") {
           if (Math.hypot(dx, dy) < MARQUEE_THRESHOLD_PX) return;
-          onTransformCommit({ dx, dy });
+          onTransformCommit({ dx, dy }, meta);
           return;
         }
         if (transformKind === "textBox") {
           const box = boxDeltaFromHandle(drag.handle, dx, dy);
           if (Math.hypot(box.dx, box.dy, box.dw, box.dh) < MARQUEE_THRESHOLD_PX) return;
-          onTransformCommit(box);
+          onTransformCommit(box, meta);
           return;
         }
         const { dw, dh } = resizeDeltaFromHandle(drag.handle, dx, dy);
         if (Math.hypot(dw, dh) < MARQUEE_THRESHOLD_PX) return;
-        onTransformCommit({ dx: 0, dy: 0, dw, dh });
+        onTransformCommit({ dx: 0, dy: 0, dw, dh }, meta);
         return;
       }
       if (!marqueeStart && !pointerSessionRef.current) return;
@@ -623,6 +650,7 @@ export function SiteCreatorSelectionSurface({
       marqueeStart,
       onClipImageTuneChange,
       onTransformCommit,
+      onTransformLive,
       scale,
       selection.isolationIds,
       toPage,
@@ -940,6 +968,27 @@ export function SiteCreatorSelectionSurface({
     handlePointerMove,
   ]);
 
+  // Los handles de resize capturan el puntero fuera del SVG: sin esto no hay
+  // pointermove hasta soltar y el texto/caja no se actualizan en vivo.
+  useEffect(() => {
+    const onMove = (event: PointerEvent) => {
+      if (!transformDragRef.current) return;
+      handlePointerMove(event);
+    };
+    const onUp = (event: PointerEvent) => {
+      if (!transformDragRef.current) return;
+      finishPointer(event);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [finishPointer, handlePointerMove]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -982,7 +1031,7 @@ export function SiteCreatorSelectionSurface({
           event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
         const dy =
           event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        onTransformCommit({ dx, dy });
+        onTransformCommit({ dx, dy }, { startBounds: transformBounds });
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -1020,7 +1069,8 @@ export function SiteCreatorSelectionSurface({
     : 1;
 
   const transformPreview = (() => {
-    if (!transformLive || !transformBounds) return null;
+    if (!transformLive || !transformLive.startBounds) return null;
+    const basis = transformLive.startBounds;
     const tune = {
       shiftX: transformCorrection?.shiftX ?? 0,
       shiftY: transformCorrection?.shiftY ?? 0,
@@ -1029,19 +1079,44 @@ export function SiteCreatorSelectionSurface({
       boxH: transformCorrection?.boxH ?? undefined,
       fontScale: transformCorrection?.fontScale,
     };
+    const predicted =
+      transformKind === "textBox"
+        ? {
+            x: basis.x + transformLive.dx,
+            y: basis.y + transformLive.dy,
+            width: Math.max(8, basis.width + transformLive.dw),
+            height: Math.max(8, basis.height + transformLive.dh),
+          }
+        : (() => {
+            const geometry = itemGeometryFromDelta({
+              tune,
+              delta: transformLive,
+              displayBounds: basis,
+            });
+            const scaleFactor = geometry.scale / Math.max(0.001, tune.scale || 1);
+            return {
+              x: basis.x + transformLive.dx,
+              y: basis.y + transformLive.dy,
+              width: Math.max(8, basis.width * scaleFactor),
+              height: Math.max(8, basis.height * scaleFactor),
+            };
+          })();
+    // Si el borrador en vivo ya movió el display (p. ej. reflujo de texto), seguir ese resultado.
+    const liveApplied =
+      Boolean(transformBounds) &&
+      (transformBounds!.x !== basis.x ||
+        transformBounds!.y !== basis.y ||
+        transformBounds!.width !== basis.width ||
+        transformBounds!.height !== basis.height);
+    const bounds = liveApplied && transformBounds ? transformBounds : predicted;
     if (transformKind === "textBox") {
       const geometry = itemTextBoxFromDelta({
         tune,
         delta: transformLive,
-        displayBounds: transformBounds,
+        displayBounds: basis,
       });
       return {
-        bounds: {
-          x: transformBounds.x + transformLive.dx,
-          y: transformBounds.y + transformLive.dy,
-          width: Math.max(8, transformBounds.width + transformLive.dw),
-          height: Math.max(8, transformBounds.height + transformLive.dh),
-        },
+        bounds,
         label: formatItemCorrectionChip({
           shiftX: geometry.shiftX,
           shiftY: geometry.shiftY,
@@ -1054,23 +1129,17 @@ export function SiteCreatorSelectionSurface({
     const geometry = itemGeometryFromDelta({
       tune,
       delta: transformLive,
-      displayBounds: transformBounds,
+      displayBounds: basis,
     });
-    const scaleFactor = geometry.scale / Math.max(0.001, tune.scale || 1);
     return {
-      bounds: {
-        x: transformBounds.x + transformLive.dx,
-        y: transformBounds.y + transformLive.dy,
-        width: Math.max(8, transformBounds.width * scaleFactor),
-        height: Math.max(8, transformBounds.height * scaleFactor),
-      },
+      bounds,
       label: formatItemCorrectionChip(geometry),
     };
   })();
 
   const transformHandleSpecs = (() => {
-    if (!transformBounds || transformKind === "textFontOnly") return [];
-    const b = transformBounds;
+    const b = transformPreview?.bounds ?? transformBounds;
+    if (!b || transformKind === "textFontOnly") return [];
     if (transformKind === "textBox") {
       const specs: Array<{ handle: TransformHandle; left: number; top: number; cursor: string }> = [
         { handle: "n", left: b.x + b.width / 2, top: b.y, cursor: "ns-resize" },
@@ -1103,6 +1172,7 @@ export function SiteCreatorSelectionSurface({
   const fontPct = Math.round(
     Math.max(ITEM_FONT_SCALE_MIN, Math.min(ITEM_FONT_SCALE_MAX, fontScale)) * 100,
   );
+  const transformChromeBounds = transformPreview?.bounds ?? transformBounds;
 
   return (
     <div
@@ -1265,15 +1335,15 @@ export function SiteCreatorSelectionSurface({
           Editar encuadre
         </button>
       ) : null}
-      {transformEnabled && transformBounds ? (
+      {transformEnabled && transformChromeBounds ? (
         <div className="pointer-events-none absolute inset-0 z-[6]" data-testid="site-creator-transform">
           <div
             className="absolute rounded-[1px]"
             style={{
-              left: transformBounds.x,
-              top: transformBounds.y,
-              width: transformBounds.width,
-              height: transformBounds.height,
+              left: transformChromeBounds.x,
+              top: transformChromeBounds.y,
+              width: transformChromeBounds.width,
+              height: transformChromeBounds.height,
               boxShadow: "inset 0 0 0 1.5px #A8FF32",
             }}
           />
@@ -1283,14 +1353,15 @@ export function SiteCreatorSelectionSurface({
               data-site-creator-floating-ui="true"
               className="pointer-events-auto absolute flex items-center gap-1.5 rounded-full border border-white/12 bg-[#101820]/75 px-2 py-1 shadow-md"
               style={{
-                left: transformBounds.x,
-                top: Math.max(0, transformBounds.y - 28),
-                width: Math.min(148, Math.max(110, transformBounds.width * 0.45)),
+                left: transformChromeBounds.x,
+                top: Math.max(0, transformChromeBounds.y - 28),
+                width: Math.min(168, Math.max(128, transformChromeBounds.width * 0.55)),
               }}
             >
+              <span className="shrink-0 text-[9px] tabular-nums text-white/45">50</span>
               <input
                 type="range"
-                aria-label="Tamaño de letra"
+                aria-label="Tamaño de letra (50% a 200%)"
                 min={Math.round(ITEM_FONT_SCALE_MIN * 100)}
                 max={Math.round(ITEM_FONT_SCALE_MAX * 100)}
                 value={fontPct}
@@ -1298,7 +1369,8 @@ export function SiteCreatorSelectionSurface({
                 onPointerDown={(event) => event.stopPropagation()}
                 onChange={(event) => onFontScale?.(Number(event.target.value) / 100)}
               />
-              <span className="w-8 shrink-0 text-right text-[10px] font-semibold tabular-nums text-white/85">
+              <span className="shrink-0 text-[9px] tabular-nums text-white/45">200</span>
+              <span className="w-9 shrink-0 text-right text-[10px] font-semibold tabular-nums text-white/85">
                 {fontPct}%
               </span>
             </div>
@@ -1336,7 +1408,7 @@ export function SiteCreatorSelectionSurface({
                 event.preventDefault();
                 event.stopPropagation();
                 const point = toPage(event.clientX, event.clientY);
-                if (!point) return;
+                if (!point || !transformBounds) return;
                 transformDragRef.current = {
                   kind: "resize",
                   pointerId: event.pointerId,

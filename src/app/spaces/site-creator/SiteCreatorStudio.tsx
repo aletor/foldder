@@ -88,8 +88,7 @@ import {
   resolveContainerTune,
   isHiddenItemTune,
   isLayerHiddenInBand,
-  itemGeometryFromDelta,
-  itemTextBoxFromDelta,
+  itemTunePatchFromTransformDelta,
   resolveItemRef,
   resolveItemTune,
   resolveMediaTune,
@@ -105,7 +104,7 @@ import {
   restoreExplicitBackground,
 } from "./site-creator-background-assignment";
 import { imageFrameTuneForSiteCreator } from "./site-creator-image-frame";
-import { resolveItemTransformKind } from "./site-creator-text-frame";
+import { resolveItemTransformKind, type ItemTransformKind } from "./site-creator-text-frame";
 import {
   isDesignerPageBackgroundLayer,
   patchPageBackgroundCrop,
@@ -573,6 +572,15 @@ export function SiteCreatorStudio({
     focal: { x: number; y: number };
     zoom: number;
   } | null>(null);
+  const [transformLiveDraft, setTransformLiveDraft] = useState<{
+    delta: { dx: number; dy: number; dw: number; dh: number };
+    startBounds: { x: number; y: number; width: number; height: number };
+    target: ResponsiveItemRef;
+    band: ResponsiveEditableBand;
+    kind: ItemTransformKind;
+  } | null>(null);
+  const transformLiveRafRef = useRef<number | null>(null);
+  const transformLivePendingRef = useRef<typeof transformLiveDraft>(null);
   const [availablePreviewSize, setAvailablePreviewSize] = useState<{
     width: number;
     height: number;
@@ -731,51 +739,75 @@ export function SiteCreatorStudio({
     : effectiveViewportWidth;
   const mediaBand: ResponsiveMediaBand = responsiveBand;
   const displayBlueprint = useMemo(() => {
-    if (
-      !clipImageDraft ||
-      clipImageDraft.band !== mediaBand
-    ) {
-      return blueprint;
+    let next = blueprint;
+    if (clipImageDraft && clipImageDraft.band === mediaBand) {
+      if (
+        clipImageEditTarget &&
+        page &&
+        isDesignerPageBackgroundLayer(page, clipImageEditTarget.clipId, blueprint)
+      ) {
+        next = patchPageBackgroundCrop({
+          blueprint: next,
+          sourceLayerId: clipImageEditTarget.clipId,
+          focal: clipImageDraft.focal,
+          zoom: clipImageDraft.zoom,
+        }).blueprint;
+      } else {
+        const explicit =
+          clipImageEditTarget?.band === mediaBand
+            ? resolveExplicitBackground(
+                next,
+                clipImageEditTarget.clipId,
+                mediaBand,
+              )
+            : null;
+        if (explicit && clipImageEditTarget) {
+          next = patchExplicitBackgroundCrop({
+            blueprint: next,
+            sourceLayerId: clipImageEditTarget.clipId,
+            band: mediaBand,
+            focal: clipImageDraft.focal,
+            zoom: clipImageDraft.zoom,
+          }).blueprint;
+        } else {
+          next = patchMediaTune({
+            blueprint: next,
+            layerId: clipImageDraft.imageId,
+            band: clipImageDraft.band,
+            patch: {
+              focal: clipImageDraft.focal,
+              zoom: clipImageDraft.zoom,
+            },
+          }).blueprint;
+        }
+      }
     }
-    if (
-      clipImageEditTarget &&
-      page &&
-      isDesignerPageBackgroundLayer(page, clipImageEditTarget.clipId, blueprint)
-    ) {
-      return patchPageBackgroundCrop({
-        blueprint,
-        sourceLayerId: clipImageEditTarget.clipId,
-        focal: clipImageDraft.focal,
-        zoom: clipImageDraft.zoom,
-      }).blueprint;
+    if (transformLiveDraft) {
+      const current = resolveItemTune(next, transformLiveDraft.target, transformLiveDraft.band);
+      const patch = itemTunePatchFromTransformDelta({
+        tune: current,
+        delta: transformLiveDraft.delta,
+        displayBounds: transformLiveDraft.startBounds,
+        kind: transformLiveDraft.kind,
+      });
+      if (patch) {
+        next = patchItemTune({
+          blueprint: next,
+          target: transformLiveDraft.target,
+          band: transformLiveDraft.band,
+          patch,
+        }).blueprint;
+      }
     }
-    const explicit =
-      clipImageEditTarget?.band === mediaBand
-        ? resolveExplicitBackground(
-            blueprint,
-            clipImageEditTarget.clipId,
-            mediaBand,
-          )
-        : null;
-    if (explicit && clipImageEditTarget) {
-      return patchExplicitBackgroundCrop({
-        blueprint,
-        sourceLayerId: clipImageEditTarget.clipId,
-        band: mediaBand,
-        focal: clipImageDraft.focal,
-        zoom: clipImageDraft.zoom,
-      }).blueprint;
-    }
-    return patchMediaTune({
-      blueprint,
-      layerId: clipImageDraft.imageId,
-      band: clipImageDraft.band,
-      patch: {
-        focal: clipImageDraft.focal,
-        zoom: clipImageDraft.zoom,
-      },
-    }).blueprint;
-  }, [blueprint, clipImageDraft, clipImageEditTarget, mediaBand, page]);
+    return next;
+  }, [
+    blueprint,
+    clipImageDraft,
+    clipImageEditTarget,
+    mediaBand,
+    page,
+    transformLiveDraft,
+  ]);
   const clipImageEdit = useMemo((): SiteCreatorClipImageEdit | null => {
     if (!clipImageEditTarget || clipImageEditTarget.band !== mediaBand) return null;
     const draft =
@@ -3323,75 +3355,30 @@ export function SiteCreatorStudio({
   );
 
   const onTransformCommit = useCallback(
-    (delta: { dx: number; dy: number; dw?: number; dh?: number }) => {
+    (
+      delta: { dx: number; dy: number; dw?: number; dh?: number },
+      meta: { startBounds: { x: number; y: number; width: number; height: number } },
+    ) => {
+      if (transformLiveRafRef.current != null) {
+        cancelAnimationFrame(transformLiveRafRef.current);
+        transformLiveRafRef.current = null;
+      }
+      transformLivePendingRef.current = null;
+      setTransformLiveDraft(null);
       if (!editableBand || !refineModel?.itemRef || !selectionIndex) return;
       const current = resolveItemTune(blueprint, refineModel.itemRef, editableBand);
-      const bounds = unitOutlines[0]?.bounds;
-      if (!bounds) return;
       const kind = resolveItemTransformKind({
         blueprint,
         target: refineModel.itemRef,
         index: selectionIndex,
       });
-      if (kind === "textBox") {
-        const box = itemTextBoxFromDelta({
-          tune: current,
-          delta,
-          displayBounds: bounds,
-        });
-        const patch: {
-          shiftX?: number;
-          shiftY?: number;
-          boxW?: number;
-          boxH?: number | null;
-          scale?: undefined;
-          offset?: undefined;
-          size?: undefined;
-        } = { offset: undefined, size: undefined, scale: undefined };
-        if (delta.dx || delta.dy) {
-          patch.shiftX = box.shiftX;
-          patch.shiftY = box.shiftY;
-        }
-        if (delta.dw) patch.boxW = box.boxW;
-        if (delta.dh) patch.boxH = box.hugHeight ? null : box.boxH;
-        if (
-          patch.shiftX == null &&
-          patch.shiftY == null &&
-          patch.boxW == null &&
-          !delta.dh
-        ) {
-          return;
-        }
-        commitTune(
-          patchItemTune({
-            blueprint,
-            target: refineModel.itemRef,
-            band: editableBand,
-            patch,
-          }),
-        );
-        return;
-      }
-      const geometry = itemGeometryFromDelta({
+      const patch = itemTunePatchFromTransformDelta({
         tune: current,
         delta,
-        displayBounds: bounds,
+        displayBounds: meta.startBounds,
+        kind,
       });
-      const patch: {
-        shiftX?: number;
-        shiftY?: number;
-        scale?: number;
-        offset?: undefined;
-        size?: undefined;
-      } = { offset: undefined, size: undefined };
-      if (delta.dx || delta.dy) {
-        patch.shiftX = geometry.shiftX;
-        patch.shiftY = geometry.shiftY;
-      }
-      if (kind !== "textFontOnly" && (delta.dw || delta.dh) && bounds) {
-        patch.scale = geometry.scale;
-      }
-      if (patch.shiftX == null && patch.shiftY == null && patch.scale == null) return;
+      if (!patch) return;
       commitTune(
         patchItemTune({
           blueprint,
@@ -3401,8 +3388,53 @@ export function SiteCreatorStudio({
         }),
       );
     },
-    [blueprint, commitTune, editableBand, refineModel, selectionIndex, unitOutlines],
+    [blueprint, commitTune, editableBand, refineModel, selectionIndex],
   );
+
+  const onTransformLive = useCallback(
+    (
+      draft: {
+        delta: { dx: number; dy: number; dw: number; dh: number };
+        startBounds: { x: number; y: number; width: number; height: number };
+      } | null,
+    ) => {
+      if (!draft) {
+        if (transformLiveRafRef.current != null) {
+          cancelAnimationFrame(transformLiveRafRef.current);
+          transformLiveRafRef.current = null;
+        }
+        transformLivePendingRef.current = null;
+        setTransformLiveDraft(null);
+        return;
+      }
+      if (!editableBand || !refineModel?.itemRef) return;
+      transformLivePendingRef.current = {
+        delta: draft.delta,
+        startBounds: draft.startBounds,
+        target: refineModel.itemRef,
+        band: editableBand,
+        kind: refineModel.transformKind,
+      };
+      if (transformLiveRafRef.current != null) return;
+      transformLiveRafRef.current = requestAnimationFrame(() => {
+        transformLiveRafRef.current = null;
+        const pending = transformLivePendingRef.current;
+        if (pending) setTransformLiveDraft(pending);
+      });
+    },
+    [editableBand, refineModel],
+  );
+
+  const transformLiveItemKey =
+    refineModel?.itemRef == null
+      ? null
+      : refineModel.itemRef.kind === "layer"
+        ? `layer:${refineModel.itemRef.layerId}`
+        : `node:${refineModel.itemRef.nodeId}`;
+
+  useEffect(() => {
+    setTransformLiveDraft(null);
+  }, [editableBand, transformLiveItemKey]);
 
   const onFontScale = useCallback(
     (value: number) => {
@@ -4450,6 +4482,7 @@ export function SiteCreatorStudio({
                   : null
               }
               onTransformCommit={pagePreviewMode ? undefined : onTransformCommit}
+              onTransformLive={pagePreviewMode ? undefined : onTransformLive}
               transformKind={
                 !pagePreviewMode && refineModel?.itemRef
                   ? refineModel.transformKind
