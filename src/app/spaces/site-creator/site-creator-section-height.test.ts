@@ -1013,6 +1013,87 @@ describe("section height mode", () => {
     expect(resolved.layout.layoutHeight).toBeLessThan((body!.y ?? 0) + (body!.height ?? 0) + 24);
   });
 
+  it("packs leftover modules below a section instead of keeping original Y gaps", () => {
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 1080, fill: "#eee" }),
+      makeLayer({ id: "a", type: "rect", x: 0, y: 0, width: 1920, height: 180, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 80, y: 720, width: 800, height: 140, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const first = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["a"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok || !first.createdNodeId) return;
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: first.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const top = findDisplayObject(resolved.displayPage, "a")!;
+    const next = findDisplayObject(resolved.displayPage, "b")!;
+    const bg = findDisplayObject(resolved.displayPage, "bg")!;
+    const topBottom = top.y + top.height;
+    expect(next.y).toBeGreaterThanOrEqual(topBottom - 2);
+    expect(next.y).toBeLessThan(topBottom + 24);
+    expect(resolved.layout.layoutHeight).toBeLessThan(topBottom + next.height + 40);
+    expect(bg.height).toBeLessThanOrEqual(resolved.layout.layoutHeight + 1);
+    expect(resolved.debug?.fallbackReasons).toContain("unorganized-packed-after-sections");
+  });
+
+  it("does not keep a leftover page fill as empty height after every module is a section", () => {
+    const page = makePage([
+      makeLayer({ id: "bg", type: "rect", x: 0, y: 0, width: 1920, height: 1080, fill: "#eee" }),
+      makeLayer({ id: "a", type: "rect", x: 0, y: 0, width: 1920, height: 160, fill: "#111" }),
+      makeLayer({ id: "b", type: "rect", x: 0, y: 700, width: 1920, height: 160, fill: "#222" }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const first = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["a"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok || !first.createdNodeId) return;
+    const second = createSectionFromSelection({
+      blueprint: first.blueprint,
+      selectedLayerIds: ["b"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(second.ok).toBe(true);
+    if (!second.ok || !second.createdNodeId) return;
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: second.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+      band: "tablet",
+    });
+    const firstRegion = resolved.resolvedLayout?.regions.find(
+      (region) => region.sectionId === first.createdNodeId,
+    );
+    const secondRegion = resolved.resolvedLayout?.regions.find(
+      (region) => region.sectionId === second.createdNodeId,
+    );
+    expect(firstRegion && secondRegion).toBeTruthy();
+    if (!firstRegion || !secondRegion) return;
+    expect(secondRegion.layoutRect.y).toBeCloseTo(
+      firstRegion.layoutRect.y + firstRegion.layoutRect.height,
+      0,
+    );
+    expect(resolved.layout.layoutHeight).toBeLessThan(520);
+  });
+
   it("emits 100dvh only inside the tablet band when height is tablet-only", () => {
     const { page, blueprint, heroId } = twoSections();
     const fitted = setSectionHeightMode(blueprint, heroId, "viewport", "tablet");

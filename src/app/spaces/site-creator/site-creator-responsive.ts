@@ -1863,6 +1863,218 @@ function layoutUniformMatrixPreserve(args: {
   return args.targetY + originH * scale;
 }
 
+const LEFTOVER_PAGE_FILL_WIDTH = 0.8;
+const LEFTOVER_PAGE_FILL_HEIGHT = 0.5;
+
+function leftoverPageFillIds(
+  layerIds: string[],
+  index: SiteCreatorSelectionIndex,
+  sourceWidth: number,
+  sourceHeight: number,
+): string[] {
+  const fills: string[] = [];
+  for (const id of layerIds) {
+    const entry = index.byId[id];
+    if (!entry?.visible) continue;
+    const type = entry.type;
+    if (
+      type !== "rect" &&
+      type !== "ellipse" &&
+      type !== "path" &&
+      type !== "image" &&
+      type !== "clippingContainer"
+    ) {
+      continue;
+    }
+    const bounds = sourceWorldVisualBounds(id, index);
+    if (!bounds) continue;
+    if (bounds.width / Math.max(1, sourceWidth) < LEFTOVER_PAGE_FILL_WIDTH) continue;
+    if (bounds.height / Math.max(1, sourceHeight) < LEFTOVER_PAGE_FILL_HEIGHT) continue;
+    fills.push(id);
+  }
+  return fills;
+}
+
+function leftoverDirectChildren(
+  id: string,
+  index: SiteCreatorSelectionIndex,
+): string[] {
+  const entry = index.byId[id];
+  if (entry?.type !== "groupContainer") return [];
+  const children = (entry.object as { children?: Array<{ id?: string }> } | undefined)?.children ?? [];
+  return children
+    .map((child) => child.id)
+    .filter((childId): childId is string => Boolean(childId) && Boolean(index.byId[childId]));
+}
+
+function leftoverChildrenFormSeparateRows(
+  childIds: string[],
+  index: SiteCreatorSelectionIndex,
+): boolean {
+  const rects = childIds
+    .map((id) => sourceWorldVisualBounds(id, index))
+    .filter((rect): rect is PageRect => Boolean(rect))
+    .sort((a, b) => a.y - b.y);
+  if (rects.length < 2) return false;
+  for (let i = 1; i < rects.length; i += 1) {
+    const prev = rects[i - 1]!;
+    const next = rects[i]!;
+    const gap = next.y - (prev.y + prev.height);
+    const overlap = Math.min(prev.y + prev.height, next.y + next.height) - Math.max(prev.y, next.y);
+    if (gap > 24 && overlap < Math.min(prev.height, next.height) * 0.3) return true;
+  }
+  return false;
+}
+
+function explodeLeftoverRoots(
+  layerIds: string[],
+  index: SiteCreatorSelectionIndex,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const visit = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    const kids = leftoverDirectChildren(id, index);
+    if (kids.length >= 2 && leftoverChildrenFormSeparateRows(kids, index)) {
+      for (const kid of kids) visit(kid);
+      return;
+    }
+    out.push(id);
+  };
+  for (const id of layerIds) visit(id);
+  return out;
+}
+
+function groupLeftoverClustersIntoRows(
+  clusters: ResponsiveVisualCluster[],
+): ResponsiveVisualCluster[][] {
+  const ordered = [...clusters].sort((a, b) => {
+    const dy = a.bounds.y - b.bounds.y;
+    if (Math.abs(dy) > 0.5) return dy;
+    return a.bounds.x - b.bounds.x;
+  });
+  const rows: ResponsiveVisualCluster[][] = [];
+  for (const cluster of ordered) {
+    const last = rows[rows.length - 1];
+    if (!last) {
+      rows.push([cluster]);
+      continue;
+    }
+    const lastUnion = unionPageRects(last.map((item) => item.bounds));
+    if (!lastUnion) {
+      rows.push([cluster]);
+      continue;
+    }
+    const rowMid = lastUnion.y + lastUnion.height / 2;
+    const clusterMid = cluster.bounds.y + cluster.bounds.height / 2;
+    const band = Math.max(lastUnion.height, cluster.bounds.height) * 0.45;
+    if (Math.abs(clusterMid - rowMid) <= band) last.push(cluster);
+    else rows.push([cluster]);
+  }
+  return rows;
+}
+
+/**
+ * Tras crear secciones, lo no seccionado no debe copiar el Y original del artboard
+ * (fondos a página completa + huecos entre módulos). Empaca filas visuales
+ * justo debajo de la última sección.
+ */
+function layoutUnorganizedPackedAfterSections(args: {
+  byId: Map<string, FreehandObject>;
+  layerIds: string[];
+  index: SiteCreatorSelectionIndex;
+  sourceWidth: number;
+  sourceHeight: number;
+  viewportWidth: number;
+  targetY: number;
+  band: ResponsiveBand;
+}): number {
+  const exploded = explodeLeftoverRoots(args.layerIds, args.index);
+  const pageFills = leftoverPageFillIds(
+    exploded,
+    args.index,
+    args.sourceWidth,
+    args.sourceHeight,
+  );
+  const fillSet = new Set(pageFills);
+  const moduleIds = exploded.filter((id) => !fillSet.has(id));
+  const scale = args.viewportWidth / Math.max(1, args.sourceWidth);
+  let y = args.targetY;
+
+  if (moduleIds.length > 0) {
+    const units = buildUnorganizedPresentationUnits({
+      layerIds: moduleIds,
+      index: args.index,
+    });
+    let { clusters } = buildResponsiveVisualClusters({
+      units,
+      index: args.index,
+    });
+    if (clusters.length === 0) {
+      const bounds = boundsOfIds(moduleIds, args.index);
+      if (bounds) {
+        clusters = [
+          {
+            kind: "preserve",
+            id: "unorganized-packed",
+            reason: "unorganized-packed-fallback",
+            units,
+            bounds,
+            allLayerIds: moduleIds,
+          },
+        ];
+      }
+    }
+    const rows = groupLeftoverClustersIntoRows(clusters);
+    for (const row of rows) {
+      const origin = unionPageRects(row.map((item) => item.bounds));
+      if (!origin) continue;
+      const ids: string[] = [];
+      const seen = new Set<string>();
+      for (const cluster of row) {
+        for (const id of cluster.allLayerIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          ids.push(id);
+        }
+      }
+      layoutPreserveComposition({
+        byId: args.byId,
+        layerIds: ids,
+        origin,
+        index: args.index,
+        band: args.band,
+        targetX: origin.x * scale,
+        targetY: y,
+        scale,
+        enforceMinFont: false,
+      });
+      y += origin.height * scale;
+    }
+  }
+
+  if (pageFills.length > 0) {
+    const coverHeight = Math.max(1, y, args.targetY);
+    placeBackgroundLayers({
+      byId: args.byId,
+      backgroundLayerIds: pageFills,
+      layoutRect: { x: 0, y: 0, width: args.viewportWidth, height: coverHeight },
+      sourceRegion: {
+        x: 0,
+        y: 0,
+        width: args.sourceWidth,
+        height: args.sourceHeight,
+      },
+      sourcePageWidth: args.sourceWidth,
+      index: args.index,
+      band: args.band,
+    });
+  }
+
+  return Math.max(y, args.targetY);
+}
+
 /** @deprecated Hotfix: sustituido por layoutUniformMatrixPreserve (matriz única). */
 function layoutUnorganizedPreserve(args: {
   byId: Map<string, FreehandObject>;
@@ -3094,17 +3306,31 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     .map((e) => e.layerId);
 
   if (unorganized.length > 0) {
-    fallbackReasons.push("unorganized-uniform-matrix");
-    yCursor = layoutUniformMatrixPreserve({
-      byId,
-      layerIds: unorganized,
-      index,
-      sourceWidth: reference.width,
-      sourceHeight: reference.height,
-      viewportWidth,
-      targetY: yCursor,
-      band,
-    });
+    if (regions.length > 0) {
+      fallbackReasons.push("unorganized-packed-after-sections");
+      yCursor = layoutUnorganizedPackedAfterSections({
+        byId,
+        layerIds: unorganized,
+        index,
+        sourceWidth: reference.width,
+        sourceHeight: reference.height,
+        viewportWidth,
+        targetY: yCursor,
+        band,
+      });
+    } else {
+      fallbackReasons.push("unorganized-uniform-matrix");
+      yCursor = layoutUniformMatrixPreserve({
+        byId,
+        layerIds: unorganized,
+        index,
+        sourceWidth: reference.width,
+        sourceHeight: reference.height,
+        viewportWidth,
+        targetY: yCursor,
+        band,
+      });
+    }
   }
 
   const layoutHeight = Math.max(1, yCursor);
