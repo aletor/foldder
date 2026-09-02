@@ -573,6 +573,36 @@ export function SiteCreatorPreview({
     return () => canvas.removeEventListener("wheel", onWheel);
   }, [deviceMode, readOnly]);
 
+  /** Edición: flechas = nudge/selección, no scroll. Preview (readOnly) sí usa flechas para scroll. */
+  useEffect(() => {
+    if (readOnly) return;
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      return (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable ||
+        Boolean(target.closest('[contenteditable="true"], input, textarea, select'))
+      );
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (
+        event.key !== "ArrowUp" &&
+        event.key !== "ArrowDown" &&
+        event.key !== "ArrowLeft" &&
+        event.key !== "ArrowRight"
+      ) {
+        return;
+      }
+      if (isTypingTarget(event.target) || isTypingTarget(document.activeElement)) return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [readOnly]);
+
   const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
   const multiCardNavRef = useRef(multiCardNav);
   multiCardNavRef.current = multiCardNav;

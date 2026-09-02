@@ -9,7 +9,7 @@ import {
   type SiteBlueprintV1,
 } from "./site-creator-types";
 
-export type ItemTransformKind = "uniform" | "textBox" | "textFontOnly";
+export type ItemTransformKind = "uniform" | "textBox" | "textFontOnly" | "moveOnly";
 
 export function isTextObject(obj: FreehandObject | null | undefined): obj is FreehandObject & {
   type: "text" | "textOnPath";
@@ -44,6 +44,7 @@ export function resolveItemTransformKind(args: {
   if (args.target.kind === "blueprintNode") {
     const node = args.blueprint.nodes[args.target.nodeId];
     if (node && isSiteButtonNode(node)) return "uniform";
+    if (node && node.kind === "layoutGroup") return "uniform";
   }
   const layerIds = coverageLayerIdsForItem(args.blueprint, args.target, args.index);
   if (layerIds.length !== 1) return "uniform";

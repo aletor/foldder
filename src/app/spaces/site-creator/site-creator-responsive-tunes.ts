@@ -313,11 +313,29 @@ export function resolveItemRef(
     const node = blueprint.nodes[unit.nodeId];
     if (!node) return null;
     if (isSiteSectionNode(node)) return null;
-    if (node.kind === "layoutGroup") return null;
     if (node.kind === "multicard") return null;
+    // layoutGroup y botones: reposicionables en tablet/móvil vía item tune.
     return { kind: "blueprintNode", nodeId: node.id };
   }
   return canonicalizeItemRef({ kind: "layer", layerId: unit.layerId });
+}
+
+/** Unidades seleccionadas que admiten reposicionado (no secciones). */
+export function listTransformableItemTargets(args: {
+  units: SiteCreatorSelectionUnit[];
+  blueprint: SiteBlueprintV1;
+}): ResponsiveItemRef[] {
+  const out: ResponsiveItemRef[] = [];
+  const seen = new Set<string>();
+  for (const unit of args.units) {
+    const ref = resolveItemRef(unit, args.blueprint);
+    if (!ref) continue;
+    const key = itemRefKey(ref);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
+  }
+  return out;
 }
 
 export function itemRefForCluster(cluster: ResponsiveVisualCluster): ResponsiveItemRef | null {

@@ -24,11 +24,13 @@ import {
   canonicalizeItemRef,
   itemGeometryFromDelta,
   itemTextBoxFromDelta,
+  listTransformableItemTargets,
   patchContainerTune,
   patchItemTune,
   patchMediaTune,
   resetResponsiveBand,
   resolveContainerTune,
+  resolveItemRef,
   resolveItemTune,
   resolveMediaTune,
 } from "./site-creator-responsive-tunes";
@@ -37,7 +39,6 @@ import { SiteCreatorRefineControl } from "./SiteCreatorRefineControl";
 import { createEmptySiteBlueprintV1 } from "./site-creator-types";
 import { encodeMultiCardInstanceId, parseMultiCardInstanceId } from "./site-creator-multicard-ids";
 import { resolveBackgroundContainTransform } from "./site-creator-background-cover";
-
 describe("site-creator 6C contextual refine", () => {
   it("keeps Original identical to Designer when tablet/mobile tunes exist", () => {
     const fx = fixtureHeroPanelButton();
@@ -1388,5 +1389,61 @@ describe("site-creator 6C visible layout effects", () => {
     expect(screen.getByTestId("site-creator-refine-popover").textContent).toContain("Letra");
     fireEvent.pointerDown(screen.getAllByText("+")[2]!);
     expect(onItemFontScale).toHaveBeenCalled();
+  });
+
+  it("resolveItemRef permite layoutGroup (no secciones) y listTransformableItemTargets excluye secciones", () => {
+    const fx = fixtureHorizontalCardsGroup();
+    expect(
+      resolveItemRef({ kind: "blueprintNode", nodeId: fx.groupId }, fx.blueprint),
+    ).toEqual({ kind: "blueprintNode", nodeId: fx.groupId });
+    expect(
+      resolveItemRef({ kind: "blueprintNode", nodeId: fx.sectionId }, fx.blueprint),
+    ).toBeNull();
+    expect(
+      listTransformableItemTargets({
+        units: [
+          { kind: "blueprintNode", nodeId: fx.sectionId },
+          { kind: "blueprintNode", nodeId: fx.groupId },
+          { kind: "layer", layerId: "card_a" },
+        ],
+        blueprint: fx.blueprint,
+      }),
+    ).toEqual([
+      { kind: "blueprintNode", nodeId: fx.groupId },
+      { kind: "layer", layerId: "card_a" },
+    ]);
+  });
+
+  it("reposiciona un layoutGroup entero con shiftX/shiftY en móvil", () => {
+    const fx = fixtureHorizontalCardsGroup();
+    const index = buildSiteSelectionIndex(fx.page);
+    const auto = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const a0 = findDisplayObject(auto.displayPage, "card_a")!;
+    const b0 = findDisplayObject(auto.displayPage, "card_b")!;
+    const shifted = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "blueprintNode", nodeId: fx.groupId },
+      band: "mobile",
+      patch: { shiftX: 0.1, shiftY: 0.05 },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: shifted,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const a1 = findDisplayObject(after.displayPage, "card_a")!;
+    const b1 = findDisplayObject(after.displayPage, "card_b")!;
+    expect(a1.x).toBeGreaterThan(a0.x);
+    expect(a1.y).toBeGreaterThan(a0.y);
+    expect(b1.x - a1.x).toBeCloseTo(b0.x - a0.x, 0);
+    expect(b1.y - a1.y).toBeCloseTo(b0.y - a0.y, 0);
   });
 });

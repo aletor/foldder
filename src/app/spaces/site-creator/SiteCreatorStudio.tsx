@@ -90,6 +90,8 @@ import {
   isHiddenItemTune,
   isLayerHiddenInBand,
   itemTunePatchFromTransformDelta,
+  itemRefKey,
+  listTransformableItemTargets,
   resolveItemRef,
   resolveItemTune,
   resolveMediaTune,
@@ -97,6 +99,7 @@ import {
   unitCustomizationTooltip,
 } from "./site-creator-responsive-tunes";
 import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
+import { unionPageRects } from "./site-creator-coordinate-space";
 import {
   assignExplicitBackground,
   inferExplicitBackgroundCandidate,
@@ -570,10 +573,12 @@ export function SiteCreatorStudio({
   } | null>(null);
   const [transformLiveDraft, setTransformLiveDraft] = useState<{
     delta: { dx: number; dy: number; dw: number; dh: number };
-    startBounds: { x: number; y: number; width: number; height: number };
-    target: ResponsiveItemRef;
     band: ResponsiveEditableBand;
-    kind: ItemTransformKind;
+    items: Array<{
+      target: ResponsiveItemRef;
+      startBounds: { x: number; y: number; width: number; height: number };
+      kind: ItemTransformKind;
+    }>;
   } | null>(null);
   const transformLiveRafRef = useRef<number | null>(null);
   const transformLivePendingRef = useRef<typeof transformLiveDraft>(null);
@@ -779,20 +784,22 @@ export function SiteCreatorStudio({
       }
     }
     if (transformLiveDraft) {
-      const current = resolveItemTune(next, transformLiveDraft.target, transformLiveDraft.band);
-      const patch = itemTunePatchFromTransformDelta({
-        tune: current,
-        delta: transformLiveDraft.delta,
-        displayBounds: transformLiveDraft.startBounds,
-        kind: transformLiveDraft.kind,
-      });
-      if (patch) {
-        next = patchItemTune({
-          blueprint: next,
-          target: transformLiveDraft.target,
-          band: transformLiveDraft.band,
-          patch,
-        }).blueprint;
+      for (const item of transformLiveDraft.items) {
+        const current = resolveItemTune(next, item.target, transformLiveDraft.band);
+        const patch = itemTunePatchFromTransformDelta({
+          tune: current,
+          delta: transformLiveDraft.delta,
+          displayBounds: item.startBounds,
+          kind: item.kind === "moveOnly" ? "uniform" : item.kind,
+        });
+        if (patch) {
+          next = patchItemTune({
+            blueprint: next,
+            target: item.target,
+            band: transformLiveDraft.band,
+            patch,
+          }).blueprint;
+        }
       }
     }
     return next;
@@ -2909,6 +2916,56 @@ export function SiteCreatorStudio({
     selectionIndex,
   ]);
 
+  /** Reposicionado en dispositivos: 1+ ítems/grupos (nunca secciones). */
+  const transformSelection = useMemo(() => {
+    if (!editableBand || !selectionIndex || !persistGate.allowed) return null;
+    const refs = listTransformableItemTargets({ units: displayUnits, blueprint });
+    if (refs.length === 0) return null;
+    const refKeys = new Set(refs.map(itemRefKey));
+    const boundsList: Array<{ x: number; y: number; width: number; height: number }> = [];
+    for (const unit of displayUnits) {
+      const ref = resolveItemRef(unit, blueprint);
+      if (!ref || !refKeys.has(itemRefKey(ref))) continue;
+      const bounds =
+        presentationBoundsForUnit(unit, presentationTree, selectionIndex) ??
+        boundsForUnit(unit, blueprint, selectionIndex);
+      if (bounds) boundsList.push(bounds);
+    }
+    const bounds = unionPageRects(boundsList);
+    if (!bounds) return null;
+    const singleRef = refs.length === 1 ? refs[0]! : null;
+    const kind: ItemTransformKind =
+      refs.length > 1
+        ? "moveOnly"
+        : resolveItemTransformKind({
+            blueprint,
+            target: singleRef,
+            index: selectionIndex,
+          });
+    const itemTune = singleRef ? resolveItemTune(blueprint, singleRef, editableBand) : null;
+    return {
+      refs,
+      bounds,
+      kind,
+      correction: {
+        shiftX: itemTune?.shiftX ?? 0,
+        shiftY: itemTune?.shiftY ?? 0,
+        scale: itemTune?.scale ?? 1,
+        boxW: itemTune?.boxW,
+        boxH: itemTune?.boxH,
+        fontScale: itemTune?.fontScale ?? 1,
+      },
+      fontScale: itemTune?.fontScale ?? 1,
+    };
+  }, [
+    blueprint,
+    displayUnits,
+    editableBand,
+    persistGate.allowed,
+    presentationTree,
+    selectionIndex,
+  ]);
+
   const refineHandlers = useMemo(
     () => ({
       onAlignX: (align: "start" | "center" | "end") => {
@@ -3278,30 +3335,65 @@ export function SiteCreatorStudio({
       }
       transformLivePendingRef.current = null;
       setTransformLiveDraft(null);
-      if (!editableBand || !refineModel?.itemRef || !selectionIndex) return;
-      const current = resolveItemTune(blueprint, refineModel.itemRef, editableBand);
-      const kind = resolveItemTransformKind({
-        blueprint,
-        target: refineModel.itemRef,
-        index: selectionIndex,
-      });
-      const patch = itemTunePatchFromTransformDelta({
-        tune: current,
-        delta,
-        displayBounds: meta.startBounds,
-        kind,
-      });
-      if (!patch) return;
-      commitTune(
-        patchItemTune({
-          blueprint,
-          target: refineModel.itemRef,
+      if (!editableBand || !selectionIndex || !persistGate.allowed) return;
+      const refs = listTransformableItemTargets({ units: displayUnits, blueprint });
+      if (refs.length === 0) return;
+      const isMulti = refs.length > 1;
+      // Multi: solo reposicionar (mismo dx/dy en px por caja). Resize solo con un objetivo.
+      if (isMulti && (delta.dw || delta.dh)) return;
+      const refKeys = new Set(refs.map(itemRefKey));
+      let next = blueprint;
+      let changed = false;
+      for (const unit of displayUnits) {
+        const ref = resolveItemRef(unit, blueprint);
+        if (!ref || !refKeys.has(itemRefKey(ref))) continue;
+        const bounds =
+          presentationBoundsForUnit(unit, presentationTree, selectionIndex) ??
+          boundsForUnit(unit, blueprint, selectionIndex);
+        if (!bounds) continue;
+        // Al soltar, meta.startBounds es la unión; cada ítem usa su caja propia.
+        const displayBounds = isMulti ? bounds : meta.startBounds;
+        const resolvedKind = isMulti
+          ? ("moveOnly" as const)
+          : resolveItemTransformKind({
+              blueprint: next,
+              target: ref,
+              index: selectionIndex,
+            });
+        const patchKind =
+          resolvedKind === "textBox"
+            ? ("textBox" as const)
+            : resolvedKind === "textFontOnly"
+              ? ("textFontOnly" as const)
+              : ("uniform" as const);
+        const current = resolveItemTune(next, ref, editableBand);
+        const patch = itemTunePatchFromTransformDelta({
+          tune: current,
+          delta,
+          displayBounds,
+          kind: patchKind,
+        });
+        if (!patch) continue;
+        const result = patchItemTune({
+          blueprint: next,
+          target: ref,
           band: editableBand,
           patch,
-        }),
-      );
+        });
+        next = result.blueprint;
+        changed = changed || result.changed;
+      }
+      if (changed) commitTune({ blueprint: next, changed: true });
     },
-    [blueprint, commitTune, editableBand, refineModel, selectionIndex],
+    [
+      blueprint,
+      commitTune,
+      displayUnits,
+      editableBand,
+      persistGate.allowed,
+      presentationTree,
+      selectionIndex,
+    ],
   );
 
   const onTransformLive = useCallback(
@@ -3320,13 +3412,37 @@ export function SiteCreatorStudio({
         setTransformLiveDraft(null);
         return;
       }
-      if (!editableBand || !refineModel?.itemRef) return;
+      if (!editableBand || !selectionIndex || !persistGate.allowed) return;
+      const refs = listTransformableItemTargets({ units: displayUnits, blueprint });
+      if (refs.length === 0) return;
+      const isMulti = refs.length > 1;
+      if (isMulti && (draft.delta.dw || draft.delta.dh)) return;
+      const refKeys = new Set(refs.map(itemRefKey));
+      const items: NonNullable<typeof transformLiveDraft>["items"] = [];
+      for (const unit of displayUnits) {
+        const ref = resolveItemRef(unit, blueprint);
+        if (!ref || !refKeys.has(itemRefKey(ref))) continue;
+        const bounds =
+          presentationBoundsForUnit(unit, presentationTree, selectionIndex) ??
+          boundsForUnit(unit, blueprint, selectionIndex);
+        if (!bounds) continue;
+        items.push({
+          target: ref,
+          startBounds: isMulti ? bounds : draft.startBounds,
+          kind: isMulti
+            ? "moveOnly"
+            : resolveItemTransformKind({
+                blueprint,
+                target: ref,
+                index: selectionIndex,
+              }),
+        });
+      }
+      if (items.length === 0) return;
       transformLivePendingRef.current = {
         delta: draft.delta,
-        startBounds: draft.startBounds,
-        target: refineModel.itemRef,
         band: editableBand,
-        kind: refineModel.transformKind,
+        items,
       };
       if (transformLiveRafRef.current != null) return;
       transformLiveRafRef.current = requestAnimationFrame(() => {
@@ -3335,7 +3451,14 @@ export function SiteCreatorStudio({
         if (pending) setTransformLiveDraft(pending);
       });
     },
-    [editableBand, refineModel],
+    [
+      blueprint,
+      displayUnits,
+      editableBand,
+      persistGate.allowed,
+      presentationTree,
+      selectionIndex,
+    ],
   );
 
   const transformLiveItemKey =
@@ -4371,44 +4494,29 @@ export function SiteCreatorStudio({
               }
               floatingPortalHost={pagePreviewMode ? null : floatingHostEl}
               transformEnabled={
-                !pagePreviewMode &&
-                !clipImageEdit &&
-                Boolean(editableBand && refineModel?.itemRef)
+                !pagePreviewMode && !clipImageEdit && Boolean(transformSelection)
               }
               transformBounds={
-                !pagePreviewMode && editableBand && refineModel?.itemRef
-                  ? unitOutlines[0]?.bounds ?? null
-                  : null
+                !pagePreviewMode && transformSelection ? transformSelection.bounds : null
               }
               transformCorrection={
-                !pagePreviewMode && editableBand && refineModel?.itemRef
-                  ? {
-                      shiftX: refineModel.itemTune?.shiftX ?? 0,
-                      shiftY: refineModel.itemTune?.shiftY ?? 0,
-                      scale: refineModel.itemTune?.scale ?? 1,
-                      boxW: refineModel.itemTune?.boxW,
-                      boxH: refineModel.itemTune?.boxH,
-                      fontScale: refineModel.itemTune?.fontScale ?? 1,
-                    }
-                  : null
+                !pagePreviewMode && transformSelection ? transformSelection.correction : null
               }
               onTransformCommit={pagePreviewMode ? undefined : onTransformCommit}
               onTransformLive={pagePreviewMode ? undefined : onTransformLive}
               transformKind={
-                !pagePreviewMode && refineModel?.itemRef
-                  ? refineModel.transformKind
-                  : "uniform"
+                !pagePreviewMode && transformSelection ? transformSelection.kind : "uniform"
               }
               textBoxLockWidth={
                 refineModel?.itemTune?.widthMode === "full" ||
                 refineModel?.itemTune?.widthMode === "container"
               }
-              fontScale={refineModel?.itemTune?.fontScale ?? 1}
+              fontScale={transformSelection?.fontScale ?? refineModel?.itemTune?.fontScale ?? 1}
               onFontScale={
                 pagePreviewMode
                   ? undefined
-                  : refineModel?.transformKind === "textBox" ||
-                      refineModel?.transformKind === "textFontOnly"
+                  : transformSelection?.kind === "textBox" ||
+                      transformSelection?.kind === "textFontOnly"
                     ? onFontScale
                     : undefined
               }

@@ -941,6 +941,34 @@ describe("bindSectionScroller", () => {
     dispose();
   });
 
+  it("Preview: flechas del teclado hacen hop de sección cuando bindKeyboard está activo", () => {
+    const scroller = document.createElement("div");
+    mockScrollerOverflow(scroller, 1800, 800);
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top ?? 0);
+    });
+    Object.defineProperty(scroller, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    const dispose = bindSectionScroller({
+      scroller,
+      bindKeyboard: true,
+      stations: () => [
+        { id: "hero", y: 0 },
+        { id: "products", y: 900 },
+      ],
+      hops: [{ fromId: "hero", toId: "products", kind: "smooth" }],
+    });
+
+    const key = new KeyboardEvent("keydown", { key: "ArrowDown", cancelable: true, bubbles: true });
+    window.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 900, behavior: "smooth" });
+
+    dispose();
+  });
+
   it("does not intercept wheel when the page already fits the device", () => {
     const scroller = document.createElement("div");
     mockScrollerOverflow(scroller, 1080, 1080);

@@ -119,7 +119,8 @@ export function bindSectionScroller(args: {
   scroller: HTMLElement | Window;
   hops: SectionScrollHop[];
   stations: () => ScrollStation[];
-  /** En edición, la rueda basta; las flechas no deben pelear con el lienzo. */
+  /** En edición, la rueda basta; las flechas no deben pelear con el lienzo.
+   * Preview (readOnly) activa bindKeyboard para scroll por flechas. */
   bindKeyboard?: boolean;
   /** True si un MultiCard (u otro scroller interno) consume este gesto. */
   shouldIgnoreWheel?: (event: WheelEvent) => boolean;

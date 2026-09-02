@@ -1007,25 +1007,29 @@ export function SiteCreatorSelectionSurface({
         return;
       }
       if (
-        transformEnabled &&
-        transformBounds &&
-        onTransformCommit &&
-        !clipImageEdit &&
-        !focalLayerId &&
-        (event.key === "ArrowLeft" ||
-          event.key === "ArrowRight" ||
-          event.key === "ArrowUp" ||
-          event.key === "ArrowDown")
+        event.key === "ArrowLeft" ||
+        event.key === "ArrowRight" ||
+        event.key === "ArrowUp" ||
+        event.key === "ArrowDown"
       ) {
         if (isTypingKeyTarget(event.target)) return;
+        // Edición: las flechas no hacen scroll de página (solo Preview).
         event.preventDefault();
-        event.stopPropagation();
-        const step = event.shiftKey ? NUDGE_STEP_LARGE_PX : NUDGE_STEP_PX;
-        const dx =
-          event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
-        const dy =
-          event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
-        onTransformCommit({ dx, dy }, { startBounds: transformBounds });
+        if (
+          transformEnabled &&
+          transformBounds &&
+          onTransformCommit &&
+          !clipImageEdit &&
+          !focalLayerId
+        ) {
+          event.stopPropagation();
+          const step = event.shiftKey ? NUDGE_STEP_LARGE_PX : NUDGE_STEP_PX;
+          const dx =
+            event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
+          const dy =
+            event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
+          onTransformCommit({ dx, dy }, { startBounds: transformBounds });
+        }
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -1133,7 +1137,7 @@ export function SiteCreatorSelectionSurface({
 
   const transformHandleSpecs = (() => {
     const b = transformPreview?.bounds ?? transformBounds;
-    if (!b || transformKind === "textFontOnly") return [];
+    if (!b || transformKind === "textFontOnly" || transformKind === "moveOnly") return [];
     if (transformKind === "textBox") {
       const specs: Array<{ handle: TransformHandle; left: number; top: number; cursor: string }> = [
         { handle: "n", left: b.x + b.width / 2, top: b.y, cursor: "ns-resize" },
