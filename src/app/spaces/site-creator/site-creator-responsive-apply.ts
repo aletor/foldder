@@ -12,14 +12,17 @@ import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import { classifyContainerBackground } from "./site-creator-responsive-visual";
 import { resolveEffectiveResponsiveMode } from "./site-creator-responsive-overrides";
-import { transformPathObjectRelative } from "./site-creator-responsive-matrix";
+import { scaleStyleFields, transformPathObjectRelative } from "./site-creator-responsive-matrix";
 import {
   resolveBackgroundContainTransform,
   resolveBackgroundCoverTransform,
   resolveBackgroundPreserveTransform,
 } from "./site-creator-background-cover";
 import { isLayerExplicitBackground } from "./site-creator-background-assignment";
-import { getObjectFontSize } from "./site-creator-responsive-visual";
+import {
+  reflowAreaTextHeightsInTree,
+  scaleTextTypographyFields,
+} from "./site-creator-responsive-typography";
 import {
   hugAreaTextHeight,
   isAreaTextObject,
@@ -193,6 +196,11 @@ function currentBounds(
 }
 
 function scaleSubtreeLocal(obj: FreehandObject, scale: number): void {
+  if (obj.type === "text" || obj.type === "textOnPath") {
+    scaleTextTypographyFields(obj, scale);
+  } else {
+    scaleStyleFields(obj, scale);
+  }
   if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
     for (const ch of (obj as { children?: FreehandObject[] }).children ?? []) {
       ch.x *= scale;
@@ -259,6 +267,11 @@ function placeLayersFromSource(
       obj.type === "clippingContainer"
     ) {
       scaleSubtreeLocal(obj, uniform);
+    } else if (obj.type === "text" || obj.type === "textOnPath") {
+      scaleTextTypographyFields(obj, uniform);
+      reflowAreaTextHeightsInTree(obj);
+    } else {
+      scaleStyleFields(obj, uniform);
     }
   }
   void set;
@@ -297,6 +310,11 @@ function transformDisplayLayers(
       obj.type === "clippingContainer"
     ) {
       scaleSubtreeLocal(obj, uniform);
+    } else if (obj.type === "text" || obj.type === "textOnPath") {
+      scaleTextTypographyFields(obj, uniform);
+      reflowAreaTextHeightsInTree(obj);
+    } else {
+      scaleStyleFields(obj, uniform);
     }
   }
   void set;
@@ -426,9 +444,10 @@ function applyOneItem(args: {
     }
     if (textObj) {
       if (fontChanged) {
-        (textObj as { fontSize?: number }).fontSize = Math.max(
+        scaleTextTypographyFields(
+          textObj,
+          fontScale,
           minFontForEditableBand(args.band),
-          getObjectFontSize(textObj) * fontScale,
         );
       }
       if (shouldResizeTextBox) {

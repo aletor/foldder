@@ -51,10 +51,16 @@ import {
   preservePageWithUniformMatrix,
   scalePathPointsUniform,
   shiftFreehandObjectY,
+  scaleStyleFields,
   transformPathObjectRelative,
   uniformScaleMatrix,
   type ResolvedResponsiveScene,
 } from "./site-creator-responsive-matrix";
+import {
+  reflowAreaTextHeightsInPage,
+  reflowAreaTextHeightsInTree,
+  scaleTextTypographyFields,
+} from "./site-creator-responsive-typography";
 import {
   classifyLayoutGroupKind,
   classifyPageResponsiveKind,
@@ -358,12 +364,6 @@ function boundsOfIds(
   return sourceWorldBoundsOfIds(ids, index);
 }
 
-function setTextFontSize(obj: FreehandObject, fontSize: number): void {
-  if (obj.type === "text" || obj.type === "textOnPath") {
-    (obj as { fontSize?: number }).fontSize = fontSize;
-  }
-}
-
 function scaleSubtreeLocal(obj: FreehandObject, scale: number, minFont: number): void {
   if (obj.type === "path") {
     scalePathPointsUniform((obj as PathObject).points, scale);
@@ -373,7 +373,11 @@ function scaleSubtreeLocal(obj: FreehandObject, scale: number, minFont: number):
     return;
   }
   if (obj.type === "text" || obj.type === "textOnPath") {
-    setTextFontSize(obj, Math.max(minFont, getObjectFontSize(obj) * scale));
+    scaleTextTypographyFields(obj, scale, minFont);
+    reflowAreaTextHeightsInTree(obj);
+  } else {
+    // Radios de máscaras/rects y trazos: sin esto el cornerRadius desktop se vuelve píldora en móvil.
+    scaleStyleFields(obj, scale);
   }
   if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
     for (const ch of (obj as { children?: FreehandObject[] }).children ?? []) {
@@ -468,7 +472,14 @@ function transformWorldSpaceGroupTree(
       if (ch.type === "path") {
         transformPathObjectRelative(ch as PathObject, origin, target);
       } else if (ch.type === "text" || ch.type === "textOnPath") {
-        setTextFontSize(ch, Math.max(target.minFont, getObjectFontSize(ch) * uniform));
+        scaleTextTypographyFields(ch, uniform, target.minFont);
+        reflowAreaTextHeightsInTree(ch);
+      } else if (
+        ch.type !== "groupContainer" &&
+        ch.type !== "booleanGroup" &&
+        ch.type !== "clippingContainer"
+      ) {
+        scaleStyleFields(ch, uniform);
       }
     }
     if (ch.type === "groupContainer" || ch.type === "booleanGroup") {
@@ -539,7 +550,10 @@ function transformLayersRelative(
     } else if (obj.type === "booleanGroup" || obj.type === "clippingContainer") {
       scaleSubtreeLocal(obj, uniform, target.minFont);
     } else if (obj.type === "text" || obj.type === "textOnPath") {
-      setTextFontSize(obj, Math.max(target.minFont, getObjectFontSize(obj) * uniform));
+      scaleTextTypographyFields(obj, uniform, target.minFont);
+      reflowAreaTextHeightsInTree(obj);
+    } else {
+      scaleStyleFields(obj, uniform);
     }
   }
 
@@ -2292,6 +2306,8 @@ function shiftSectionContentY(args: {
   deltaY: number;
   /** Alto de diseño: filetes verticales altos se dejan para stretchTallSectionStrokeRules. */
   designedHeight?: number;
+  /** true al restaurar margen superior reclamado: fondo y contenido se mueven juntos. */
+  includeBackgrounds?: boolean;
 }): void {
   if (!(Math.abs(args.deltaY) > 0.01)) return;
   const backgroundRoots = new Set(
@@ -2301,7 +2317,8 @@ function shiftSectionContentY(args: {
   const shifted = new Set<string>();
   for (const id of collectSemanticCoverageLayerIds(args.blueprint, args.sectionId)) {
     const worldId = worldSpaceAncestorId(id, args.index);
-    if (backgroundRoots.has(worldId) || shifted.has(worldId)) continue;
+    if (!args.includeBackgrounds && backgroundRoots.has(worldId)) continue;
+    if (shifted.has(worldId)) continue;
     if (!isWorldSpaceLayerId(worldId, args.index)) continue;
     const obj = args.byId.get(worldId);
     if (!obj || typeof obj.y !== "number") continue;
@@ -2754,6 +2771,9 @@ function withLayoutGroupWidthModes(
     index,
     band: result.band,
   });
+  if (isResponsiveEditableBand(result.band)) {
+    reflowAreaTextHeightsInPage(page);
+  }
   if (page === result.displayPage && layoutHeight === result.layout.layoutHeight) {
     return applyPageInsetsToResolved(
       withMultiCardInstances(result, blueprint, multiCardScrollIndexByNodeId, dataset),
@@ -2806,6 +2826,7 @@ function applyPageInsetsToResolved(
   const toInner = Math.max(1, layoutWidth - target.left - target.right);
   const scaleX = toInner / fromInner;
   applyPageInsetsToObjects(result.displayPage.objects ?? [], current.left, target.left, scaleX);
+  reflowAreaTextHeightsInPage(result.displayPage);
 
   let resolvedLayout = result.resolvedLayout;
   if (resolvedLayout) {
@@ -3221,6 +3242,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         sectionId: section.id,
         backgroundLayerIds: region.backgroundLayerIds,
         deltaY: extraTop,
+        includeBackgrounds: true,
       });
       region.layoutRect = {
         ...region.layoutRect,

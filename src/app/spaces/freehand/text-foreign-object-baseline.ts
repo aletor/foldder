@@ -17,13 +17,25 @@ export function textForeignObjectPad(textMode: "point" | "area"): number {
   return textMode === "area" ? 4 : 0;
 }
 
+/** Padding del foreignObject en px; escala con fontSize en previews estrechos (móvil). */
+export function textLayoutPadPx(fontSize: number): number {
+  const size = Number.isFinite(fontSize) && fontSize > 0 ? fontSize : 16;
+  return Math.max(1, Math.min(4, size * 0.25));
+}
+
+/** Padding del foreignObject en px; escala con fontSize en previews estrechos (móvil). */
+export function textForeignObjectPadPx(textMode: "point" | "area", fontSize: number): number {
+  if (textMode !== "area") return 0;
+  return textLayoutPadPx(fontSize);
+}
+
 export function textForeignObjectLineHeightPx(t: Pick<TextForeignObjectBaselineInput, "fontSize" | "lineHeight">): number {
   return t.fontSize * t.lineHeight;
 }
 
 /** Aproximación em-cuadrado cuando no hay métricas de canvas (p. ej. SSR / jsdom). */
 export function textForeignObjectApproxFirstBaselineOffset(t: TextForeignObjectBaselineInput): number {
-  const pad = textForeignObjectPad(t.textMode);
+  const pad = textForeignObjectPadPx(t.textMode, t.fontSize);
   const lhPx = textForeignObjectLineHeightPx(t);
   const contentHeight = t.fontSize;
   const halfLeading = Math.max(0, (lhPx - contentHeight) / 2);
@@ -33,7 +45,7 @@ export function textForeignObjectApproxFirstBaselineOffset(t: TextForeignObjectB
 
 /** Offset desde `y` del objeto hasta la baseline de la primera línea (como en el foreignObject). */
 export function textForeignObjectFirstBaselineOffset(t: TextForeignObjectBaselineInput): number {
-  const pad = textForeignObjectPad(t.textMode);
+  const pad = textForeignObjectPadPx(t.textMode, t.fontSize);
   const lhPx = textForeignObjectLineHeightPx(t);
   const approx = textForeignObjectApproxFirstBaselineOffset(t);
 

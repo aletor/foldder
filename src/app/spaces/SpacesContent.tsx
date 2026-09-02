@@ -3706,10 +3706,10 @@ export function SpacesContent() {
         headers: devBypassHeaders,
         cache: 'no-store',
       });
-      const data = await readResponseJson<unknown[]>(res, 'GET /api/spaces?meta=1');
+      const data = await readJsonWithHttpError<SavedProjectMeta[]>(res, 'GET /api/spaces?meta=1');
       if (Array.isArray(data)) {
-        setSavedProjects(data as SavedProjectMeta[]);
-        return data as SavedProjectMeta[];
+        setSavedProjects(data);
+        return data;
       }
       setSavedProjects([]);
       setProjectsListError("Respuesta inválida al cargar el listado de proyectos.");

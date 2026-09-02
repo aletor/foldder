@@ -36,6 +36,11 @@ export function richSpansToInlineHtml(
       if (st.fontStyle === "italic") inner = wrapTag("i", inner);
       if (st.fontWeight && (String(st.fontWeight) === "bold" || Number(st.fontWeight) >= 600)) inner = wrapTag("b", inner);
       const inlineStyles: string[] = [];
+      if (typeof st.fontSize === "number") inlineStyles.push(`font-size:${st.fontSize}px`);
+      if (typeof st.fontFamily === "string" && st.fontFamily) {
+        inlineStyles.push(`font-family:${escapeXmlAttr(st.fontFamily)}`);
+      }
+      if (typeof st.letterSpacing === "number") inlineStyles.push(`letter-spacing:${st.letterSpacing}px`);
       if (st.color) {
         inlineStyles.push(`color:${escapeXmlAttr(st.color)}`);
         inlineStyles.push(`-webkit-text-fill-color:${escapeXmlAttr(st.color)}`);

@@ -455,6 +455,18 @@ export async function GET(req: Request) {
         { status: 500 },
       );
     }
+    const message = errorMessage(error);
+    if (message.includes("[json-persistence] invalid JSON")) {
+      console.error("[spaces][GET] local store corrupt:", error);
+      return jsonNoStore(
+        {
+          error: "El almacén local de proyectos está dañado. Restaura data/spaces-db.json desde S3 o un backup.",
+          code: "PROJECT_STORE_CORRUPT",
+          retryable: false,
+        },
+        { status: 500 },
+      );
+    }
     console.error("[spaces][GET] failed:", error);
     return jsonNoStore({ error: "Failed to read projects" }, { status: 500 });
   }

@@ -19,10 +19,14 @@ import {
   isWorldSpaceLayerId,
   worldSpaceAncestorId,
 } from "./site-creator-layer-world-bounds";
-import { transformPathObjectRelative } from "./site-creator-responsive-matrix";
+import { scaleStyleFields, transformPathObjectRelative } from "./site-creator-responsive-matrix";
 import type { ResponsiveBandLike } from "./site-creator-responsive-overrides";
 import { resolveContainerTune } from "./site-creator-responsive-tunes";
 import { getObjectFontSize } from "./site-creator-responsive-visual";
+import {
+  reflowAreaTextHeightsInTree,
+  scaleTextTypographyFields,
+} from "./site-creator-responsive-typography";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import { isResponsiveEditableBand } from "./site-creator-types";
 import type { SiteBlueprintLayoutGroupNode, SiteBlueprintV1 } from "./site-creator-types";
@@ -186,14 +190,16 @@ function isVisualFrameLayer(
 }
 
 function scaleSubtreeLocal(obj: FreehandObject, scaleX: number, scaleY: number): void {
+  const uniform = Math.min(scaleX, scaleY);
   const apply = (ch: FreehandObject) => {
     ch.x *= scaleX;
     ch.y *= scaleY;
     ch.width = Math.max(1, ch.width * scaleX);
     ch.height = Math.max(1, ch.height * scaleY);
-    const font = getObjectFontSize(ch);
-    if (font > 0 && (ch.type === "text" || ch.type === "textOnPath")) {
-      (ch as { fontSize?: number }).fontSize = Math.max(8, font * Math.min(scaleX, scaleY));
+    if (ch.type === "text" || ch.type === "textOnPath") {
+      scaleTextTypographyFields(ch, uniform, 8);
+    } else {
+      scaleStyleFields(ch, uniform);
     }
     scaleSubtreeLocal(ch, scaleX, scaleY);
   };
@@ -312,9 +318,13 @@ function placeWorldObject(
     return;
   }
   if (!t.scaleFonts) return;
-  const font = getObjectFontSize(obj);
-  if (font > 0 && (obj.type === "text" || obj.type === "textOnPath")) {
-    (obj as { fontSize?: number }).fontSize = Math.max(8, font * Math.min(t.scaleX, t.scaleY));
+  const uniform = Math.min(t.scaleX, t.scaleY);
+  if (obj.type === "text" || obj.type === "textOnPath") {
+    if (getObjectFontSize(obj) > 0) scaleTextTypographyFields(obj, uniform, 8);
+  } else if (obj.type === "clippingContainer" || obj.type === "booleanGroup") {
+    scaleSubtreeLocal(obj, t.scaleX, t.scaleY);
+  } else {
+    scaleStyleFields(obj, uniform);
   }
 }
 
@@ -338,6 +348,10 @@ function placeLayerTree(args: {
     };
     placeWorldObject(obj, src, args.target, args.byId, args.index, transformSet);
   }
+  for (const id of args.layerIds) {
+    const obj = args.byId.get(id);
+    if (obj) reflowAreaTextHeightsInTree(obj);
+  }
 }
 
 /**
@@ -360,6 +374,9 @@ function placeFullWidthGroup(args: {
     return Boolean(obj && src && isVisualFrameLayer(obj, src, source));
   });
   const uniform = args.origin.height / Math.max(1, source.height);
+  const scaleX = hasVisualFrame ? uniform : args.parent.width / Math.max(1, args.origin.width);
+  const scaleY = hasVisualFrame ? uniform : 1;
+  const fontScale = Math.min(scaleX, scaleY);
   placeLayerTree({
     byId: args.byId,
     index: args.index,
@@ -369,11 +386,11 @@ function placeFullWidthGroup(args: {
       parentX: args.parent.x,
       parentWidth: args.parent.width,
       cursor: args.cursor,
-      scaleX: hasVisualFrame ? uniform : args.parent.width / Math.max(1, args.origin.width),
-      scaleY: hasVisualFrame ? uniform : 1,
+      scaleX,
+      scaleY,
       stretchFrame: hasVisualFrame,
       fitFromEnd: false,
-      scaleFonts: false,
+      scaleFonts: Math.abs(fontScale - 1) > 0.001,
     },
   });
 }

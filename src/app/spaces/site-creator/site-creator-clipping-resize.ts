@@ -2,28 +2,33 @@ import type {
   ClippingContainerObject,
   FreehandObject,
   PathObject,
+  RectObject,
 } from "../FreehandStudio";
 import type { PageRect } from "./site-creator-coordinate-space";
 import type { NormalizedFocalPoint } from "./site-creator-background-cover";
 import { clampNumber } from "./site-creator-responsive-math";
 import {
   scalePathPointsUniform,
+  scaleRectCornerFields,
+  scaleStyleFields,
   transformPathObjectRelative,
 } from "./site-creator-responsive-matrix";
+import { scaleTextTypographyFields } from "./site-creator-responsive-typography";
 
 function scaleStroke(obj: FreehandObject, scale: number): void {
   if (typeof obj.strokeWidth === "number") obj.strokeWidth *= scale;
 }
 
 function scaleNestedGeometry(obj: FreehandObject, scale: number): void {
-  scaleStroke(obj, scale);
   if (obj.type === "path") {
+    scaleStroke(obj, scale);
     scalePathPointsUniform((obj as PathObject).points, scale);
     return;
   }
   if (obj.type === "text" || obj.type === "textOnPath") {
-    const text = obj as FreehandObject & { fontSize?: number };
-    if (typeof text.fontSize === "number") text.fontSize *= scale;
+    scaleTextTypographyFields(obj, scale);
+  } else {
+    scaleStyleFields(obj, scale);
   }
   if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
     for (const child of obj.children) transformLocalObjectUniform(child, scale, 0, 0);
@@ -79,13 +84,19 @@ export function resizeSectionCoverClip(
   }
 
   const mask = obj.mask;
+  const cornerScale = Math.min(scaleX, scaleY);
   if (mask.type === "path") {
     transformPathObjectRelative(
       mask as PathObject,
       { x: 0, y: 0, width: oldWidth, height: oldHeight },
       { x: 0, y: 0, scaleX, scaleY },
     );
-    scaleStroke(mask, Math.min(scaleX, scaleY));
+    scaleStroke(mask, cornerScale);
+  } else if (mask.type === "rect") {
+    scaleRectCornerFields(mask as RectObject, cornerScale);
+    scaleStroke(mask, cornerScale);
+  } else {
+    scaleStroke(mask, cornerScale);
   }
   mask.x *= scaleX;
   mask.y *= scaleY;

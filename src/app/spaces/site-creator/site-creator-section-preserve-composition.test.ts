@@ -502,6 +502,47 @@ describe("section preserve composition", () => {
     }
   });
 
+  it("keeps background and foreground at the same page Y after claiming top margin", () => {
+    const committedPage: DesignerPageState = {
+      id: "pg",
+      format: "web169",
+      customWidth: 1920,
+      customHeight: 1080,
+      objects: [
+        layer({ id: "card", type: "rect", x: 80, y: 360, width: 1760, height: 520, fill: "#ffffff" }),
+        layer({ id: "label", type: "rect", x: 120, y: 400, width: 120, height: 32, fill: "#111111" }),
+        layer({ id: "body", type: "rect", x: 120, y: 480, width: 900, height: 280, fill: "#222222" }),
+      ],
+    };
+    const index = buildSiteSelectionIndex(committedPage);
+    const created = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["card", "label", "body"],
+      index,
+      committedPage,
+      sectionType: "generic",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const blueprint = applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId!);
+    const viewportWidth = 390;
+    const scale = pageScale(viewportWidth);
+    const resolved = resolveSiteCreatorResponsiveDisplay({
+      page: committedPage,
+      blueprint,
+      referenceIndex: index,
+      viewportWidth,
+      band: "mobile",
+    });
+
+    const card = findObject(resolved.displayPage, "card")!;
+    const label = findObject(resolved.displayPage, "label")!;
+    expect(card.y, "card top").toBeCloseTo(360 * scale, 1);
+    expect(label.y, "label top").toBeCloseTo(400 * scale, 1);
+    expect(label.y - card.y, "label inset in card").toBeCloseTo(40 * scale, 1);
+  });
+
   it("keeps stretched bottom padding on monitor without moving content up", () => {
     const committedPage: DesignerPageState = {
       id: "pg",

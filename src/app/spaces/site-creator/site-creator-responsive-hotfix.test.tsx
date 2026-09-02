@@ -62,14 +62,25 @@ describe("6B hotfix matrix preserve", () => {
       for (const id of fx.layerIds) {
         const src = index.byId[id]!.visualBounds;
         const resolved = findDisplayObject(result.displayPage, id)!;
+        const resolvedBox = {
+          x: resolved.x,
+          y: resolved.y,
+          width: resolved.width,
+          height: resolved.height,
+        };
+        const entry = index.byId[id]!;
+        if (entry.type === "text" || entry.type === "textOnPath") {
+          expectAabbProportional({
+            source: src,
+            resolved: { ...resolvedBox, height: src.height * scale },
+            scale,
+          });
+          expect(resolvedBox.height).toBeGreaterThanOrEqual(src.height * scale - 0.5);
+          continue;
+        }
         expectAabbProportional({
           source: src,
-          resolved: {
-            x: resolved.x,
-            y: resolved.y,
-            width: resolved.width,
-            height: resolved.height,
-          },
+          resolved: resolvedBox,
           scale,
         });
       }

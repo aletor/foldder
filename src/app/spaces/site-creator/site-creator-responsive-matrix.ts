@@ -5,7 +5,10 @@ import type { BezierPoint, FreehandObject, PathObject, RectObject } from "../Fre
 import type { DesignerPageState } from "../designer/DesignerNode";
 import type { PageRect } from "./site-creator-coordinate-space";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
-import { getObjectFontSize } from "./site-creator-responsive-visual";
+import {
+  reflowAreaTextHeightsInTree,
+  scaleTextTypographyFields,
+} from "./site-creator-responsive-typography";
 
 type Point2 = { x: number; y: number };
 
@@ -161,7 +164,9 @@ export function shiftFreehandObjectY(obj: FreehandObject, deltaY: number): void 
   if (typeof obj.y === "number") obj.y += deltaY;
 }
 
-function scaleRectCornerFields(rect: RectObject, scale: number): void {
+/** Escala cornerRadius / rx de un rect (máscaras de imagen incluidas). */
+export function scaleRectCornerFields(rect: RectObject, scale: number): void {
+  if (!Number.isFinite(scale) || scale <= 0) return;
   const legacyRadius = (rect as { cornerRadius?: unknown }).cornerRadius;
   if (typeof legacyRadius === "number") {
     (rect as unknown as { cornerRadius: number }).cornerRadius = legacyRadius * scale;
@@ -177,7 +182,9 @@ function scaleRectCornerFields(rect: RectObject, scale: number): void {
   if (typeof rect.rx === "number") rect.rx *= scale;
 }
 
-function scaleStyleFields(obj: FreehandObject, scale: number): void {
+/** Métricas en px que deben acompañar a width/height al escalar (radios, trazos, tipografía). */
+export function scaleStyleFields(obj: FreehandObject, scale: number): void {
+  if (!Number.isFinite(scale) || scale <= 0) return;
   if (obj.type === "rect") {
     scaleRectCornerFields(obj as RectObject, scale);
   }
@@ -188,8 +195,7 @@ function scaleStyleFields(obj: FreehandObject, scale: number): void {
     (obj as { strokeDashoffset: number }).strokeDashoffset *= scale;
   }
   if (obj.type === "text" || obj.type === "textOnPath") {
-    const current = getObjectFontSize(obj);
-    (obj as { fontSize?: number }).fontSize = Math.max(1, current * scale);
+    scaleTextTypographyFields(obj, scale);
   }
 }
 
@@ -211,6 +217,9 @@ export function applyUniformScaleToObjectTree(
   obj.width = Math.max(1, obj.width * scale);
   obj.height = Math.max(1, obj.height * scale);
   scaleStyleFields(obj, scale);
+  if (obj.type === "text" && (obj as { textMode?: string }).textMode === "area") {
+    reflowAreaTextHeightsInTree(obj);
+  }
 
   if (obj.type === "groupContainer" || obj.type === "booleanGroup") {
     for (const ch of (obj as { children?: FreehandObject[] }).children ?? []) {

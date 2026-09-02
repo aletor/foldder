@@ -423,7 +423,11 @@ import {
   textToGlyphPathPayloads,
   type VectorPdfExportOptions,
 } from "./freehand/text-outline";
-import { textForeignObjectLineBaselineY } from "./freehand/text-foreign-object-baseline";
+import {
+  textForeignObjectLineBaselineY,
+  textForeignObjectPadPx,
+  textLayoutPadPx,
+} from "./freehand/text-foreign-object-baseline";
 import {
   DEFAULT_DOCUMENT_FONT_FAMILY,
   DEFAULT_DOCUMENT_FONT_WEIGHT,
@@ -1766,7 +1770,7 @@ function measurePointTextLayoutDims(t: TextObject): { w: number; h: number } {
   }
   const fst = t.fontStyle && t.fontStyle !== "normal" ? `${t.fontStyle} ` : "";
   ctx.font = `${fst}${t.fontWeight} ${t.fontSize}px ${t.fontFamily}`;
-  const letterSpacing = t.letterSpacing ?? 0;
+  const letterSpacing = (t.letterSpacing ?? 0) + (t.charSpacing ?? 0);
   const raw = textContentForLayoutMeasure(t);
   const lines = raw.length === 0 ? ["\u00a0"] : raw.split("\n");
   const lh = t.fontSize * t.lineHeight;
@@ -1775,8 +1779,8 @@ function measurePointTextLayoutDims(t: TextObject): { w: number; h: number } {
     const lineW = measureExportLineWidth(line || " ", ctx, letterSpacing);
     maxW = Math.max(maxW, lineW);
   }
-  const padX = 4;
-  const padY = 4;
+  const padX = textLayoutPadPx(t.fontSize);
+  const padY = padX;
   const w = Math.max(Math.ceil(maxW + padX * 2), 32);
   const h = Math.max(Math.ceil(lines.length * lh + padY * 2), t.fontSize * t.lineHeight + 4);
   return { w, h };
@@ -7126,7 +7130,7 @@ export function renderObj(
       const t = obj as TextObject;
       const { w: foW, h: foH } = textLayoutDims(t);
       const ta = t.textAlign === "justify" ? "justify" : t.textAlign;
-      const pad = t.textMode === "area" ? 4 : 0;
+      const pad = t.textMode === "area" ? textForeignObjectPadPx("area", t.fontSize) : 0;
       const padL = pad + (t.paragraphIndent ?? 0);
       const fillCss = textFillCssProperties(fill);
       const hasStroke = t.strokeWidth > 0 && t.stroke && t.stroke !== "none";
@@ -7146,7 +7150,8 @@ export function renderObj(
         fontWeight: t.fontWeight,
         fontStyle: t.fontStyle ?? "normal",
         lineHeight: t.lineHeight,
-        letterSpacing: t.letterSpacing,
+        letterSpacing:
+          (t.letterSpacing ?? 0) + ((t as { charSpacing?: number }).charSpacing ?? 0),
         fontKerning: t.fontKerning === "none" ? "none" : "auto",
         fontFeatureSettings: t.fontFeatureSettings ?? '"kern" 1, "liga" 1, "calt" 1',
         fontVariantLigatures: t.fontVariantLigatures ?? "common-ligatures",
@@ -7171,6 +7176,9 @@ export function renderObj(
           const ss: React.CSSProperties = {};
           if (st.fontWeight) ss.fontWeight = st.fontWeight;
           if (st.fontStyle) ss.fontStyle = st.fontStyle;
+          if (typeof st.fontSize === "number") ss.fontSize = st.fontSize;
+          if (typeof st.fontFamily === "string" && st.fontFamily) ss.fontFamily = st.fontFamily;
+          if (typeof st.letterSpacing === "number") ss.letterSpacing = st.letterSpacing;
           if (st.textUnderline || st.textStrikethrough) {
             ss.textDecoration = [st.textUnderline && "underline", st.textStrikethrough && "line-through"].filter(Boolean).join(" ");
           }
@@ -7809,7 +7817,7 @@ function textObjectToNativeSvgMarkup(t: TextObject): string {
   const gid = gradientDefId(t.id);
   const fillAttr = escapeXmlAttr(fillPaintValue(fill, gid));
   const raw = t.text || "\u00a0";
-  const pad = t.textMode === "area" ? 4 : 0;
+  const pad = t.textMode === "area" ? textForeignObjectPadPx("area", t.fontSize) : 0;
   const indent = t.paragraphIndent ?? 0;
   const boxW = textLayoutDims(t).w;
 
@@ -7895,7 +7903,7 @@ function textFillStyleAttrFromAppearance(fill: FillAppearance): string {
 
 function textForeignObjectStaticInnerXml(t: TextObject, fillAp: FillAppearance): string {
   const raw = escapeXmlAttr(t.text || " ").replace(/\n/g, "&#10;");
-  const pad = t.textMode === "area" ? 4 : 0;
+  const pad = t.textMode === "area" ? textForeignObjectPadPx("area", t.fontSize) : 0;
   const padL = pad + (t.paragraphIndent ?? 0);
   const ta = t.textAlign === "justify" ? "justify" : t.textAlign;
   const fst = t.fontStyle && t.fontStyle !== "normal" ? `font-style:${t.fontStyle};` : "";
@@ -7903,7 +7911,7 @@ function textForeignObjectStaticInnerXml(t: TextObject, fillAp: FillAppearance):
   const deco = [t.textUnderline && "underline", t.textStrikethrough && "line-through"].filter(Boolean).join(" ");
   const tdeco = deco ? `text-decoration:${deco};` : "";
   const overflow = textClipsOverflow(t) ? "overflow:hidden;" : "";
-  const base = `margin:0;padding:${pad}px;padding-left:${padL}px;width:100%;height:100%;box-sizing:border-box;${overflow}font-family:${escapeXmlAttr(t.fontFamily)};font-size:${t.fontSize}px;font-weight:${t.fontWeight};${fst}line-height:${t.lineHeight};letter-spacing:${t.letterSpacing}px;font-kerning:${t.fontKerning === "none" ? "none" : "auto"};${fcaps}${tdeco}text-align:${ta};white-space:${t.textMode === "point" ? "pre" : "pre-wrap"};word-break:${t.textMode === "area" ? "break-word" : "normal"};opacity:${t.opacity};user-select:none`;
+  const base = `margin:0;padding:${pad}px;padding-left:${padL}px;width:100%;height:100%;box-sizing:border-box;${overflow}font-family:${escapeXmlAttr(t.fontFamily)};font-size:${t.fontSize}px;font-weight:${t.fontWeight};${fst}line-height:${t.lineHeight};letter-spacing:${(t.letterSpacing ?? 0) + ((t as { charSpacing?: number }).charSpacing ?? 0)}px;font-kerning:${t.fontKerning === "none" ? "none" : "auto"};${fcaps}${tdeco}text-align:${ta};white-space:${t.textMode === "point" ? "pre" : "pre-wrap"};word-break:${t.textMode === "area" ? "break-word" : "normal"};opacity:${t.opacity};user-select:none`;
   const fillStr = textFillStyleAttrFromAppearance(fillAp);
   const hasStroke = t.strokeWidth > 0 && t.stroke && t.stroke !== "none";
   const strokePos = t.strokePosition ?? "over";
@@ -27151,7 +27159,8 @@ export function FreehandStudioCanvas({
             fill.type === "solid"
               ? (fill.color === "none" ? "rgba(255,255,255,0.95)" : fill.color)
               : (fill.stops[0]?.color ?? "rgba(255,255,255,0.95)");
-          const padSide = (to.textMode === "area" ? 4 : 0) + (to.paragraphIndent ?? 0);
+          const areaPad = to.textMode === "area" ? textLayoutPadPx(to.fontSize) : 0;
+          const padSide = areaPad + (to.paragraphIndent ?? 0);
           const z = viewport.zoom;
           const editorStyle: React.CSSProperties = {
             left,
@@ -27173,9 +27182,9 @@ export function FreehandStudioCanvas({
               [to.textUnderline && "underline", to.textStrikethrough && "line-through"]
                 .filter(Boolean)
                 .join(" ") || undefined,
-            paddingTop: (to.textMode === "area" ? 4 : 0) * z,
-            paddingRight: (to.textMode === "area" ? 4 : 0) * z,
-            paddingBottom: (to.textMode === "area" ? 4 : 0) * z,
+            paddingTop: areaPad * z,
+            paddingRight: areaPad * z,
+            paddingBottom: areaPad * z,
             paddingLeft: padSide * z,
             boxSizing: "border-box",
             color: caretColor,

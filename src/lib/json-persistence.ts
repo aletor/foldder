@@ -53,8 +53,15 @@ async function writeLocalJson<T>(
   options?: { bestEffort?: boolean },
 ): Promise<void> {
   try {
-    await fs.mkdir(path.dirname(config.localPath), { recursive: true });
-    await fs.writeFile(config.localPath, JSON.stringify(value, null, 2), "utf8");
+    const dir = path.dirname(config.localPath);
+    await fs.mkdir(dir, { recursive: true });
+    const payload = JSON.stringify(value, null, 2);
+    const tmpPath = path.join(
+      dir,
+      `${path.basename(config.localPath)}.${process.pid}.${Date.now()}.tmp`,
+    );
+    await fs.writeFile(tmpPath, payload, "utf8");
+    await fs.rename(tmpPath, config.localPath);
   } catch (error) {
     if (options?.bestEffort) return;
     throw error;

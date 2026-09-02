@@ -14,6 +14,11 @@ import {
 } from "./site-creator-image-frame";
 import { clampNumber } from "./site-creator-responsive-math";
 import { transformPathObjectRelative } from "./site-creator-responsive-matrix";
+import {
+  reflowAreaTextHeightsInTree,
+  scaleTextTypographyFields,
+} from "./site-creator-responsive-typography";
+import { scaleStyleFields } from "./site-creator-responsive-matrix";
 import type {
   ResponsiveEditableBand,
   SiteBlueprintV1,
@@ -402,6 +407,16 @@ function remapObjectX(
   }
   object.x = nextX;
   object.width = nextWidth;
+
+  if (
+    (object.type === "text" || object.type === "textOnPath") &&
+    Math.abs(scaleX - 1) > 1e-6
+  ) {
+    scaleTextTypographyFields(object, scaleX);
+    reflowAreaTextHeightsInTree(object);
+  } else if (object.type === "rect" && Math.abs(scaleX - 1) > 1e-6) {
+    scaleStyleFields(object, scaleX);
+  }
 
   if (object.type === "groupContainer" || object.type === "booleanGroup") {
     for (const child of (object as { children?: FreehandObject[] }).children ?? []) {

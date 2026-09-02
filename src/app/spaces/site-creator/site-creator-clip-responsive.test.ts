@@ -11,11 +11,20 @@ import { makeLayer, makePage } from "./site-creator-responsive-fixtures";
 import { SITE_CREATOR_MOBILE_WIDTH, SITE_CREATOR_TABLET_WIDTH } from "./site-creator-viewport";
 import { patchMediaTune } from "./site-creator-responsive-tunes";
 
-function clipWithPhoto(): FreehandObject {
+function clipWithPhoto(radius = 0): FreehandObject {
   return {
     ...makeLayer({ id: "clip", type: "rect", x: 200, y: 80, width: 800, height: 500 }),
     type: "clippingContainer",
-    mask: makeLayer({ id: "mask", type: "rect", x: 0, y: 0, width: 800, height: 500 }),
+    mask: {
+      ...makeLayer({ id: "mask", type: "rect", x: 0, y: 0, width: 800, height: 500 }),
+      rx: radius,
+      cornerRadius: {
+        topLeft: radius,
+        topRight: radius,
+        bottomRight: radius,
+        bottomLeft: radius,
+      },
+    },
     content: [
       makeLayer({
         id: "photo",
@@ -36,6 +45,75 @@ function photoOf(page: DesignerPageState) {
     | undefined;
   return clip?.content?.find((c) => c.id === "photo") ?? findDisplayObject(page, "photo");
 }
+
+function roundedRect(id: string, radius = 48): FreehandObject {
+  const layer = makeLayer({
+    id,
+    type: "rect",
+    x: 100,
+    y: 80,
+    width: 400,
+    height: 300,
+    fill: "#222222",
+  });
+  return {
+    ...layer,
+    rx: radius,
+    cornerRadius: {
+      topLeft: radius,
+      topRight: radius,
+      bottomRight: radius,
+      bottomLeft: radius,
+    },
+  } as FreehandObject;
+}
+
+describe("plain rects resize with the page", () => {
+  beforeEach(() => {
+    resetSiteBlueprintIdSeqForTests();
+  });
+
+  it("scales cornerRadius on plain rects on mobile (no pill blow-up)", () => {
+    const radius = 48;
+    const page = makePage([roundedRect("card", radius)]);
+    const index = buildSiteSelectionIndex(page);
+    const created = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["card"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const blueprint = applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId!);
+    const scale = SITE_CREATOR_MOBILE_WIDTH / 1920;
+    const mobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const card = findDisplayObject(mobile.displayPage, "card") as
+      | (FreehandObject & {
+          rx?: number;
+          cornerRadius?: {
+            topLeft?: number;
+            topRight?: number;
+            bottomRight?: number;
+            bottomLeft?: number;
+          };
+          height: number;
+        })
+      | undefined;
+    expect(card).toBeTruthy();
+    if (!card) return;
+    expect(card.rx).toBeCloseTo(radius * scale, 2);
+    expect(card.cornerRadius?.topLeft).toBeCloseTo(radius * scale, 2);
+    expect(card.cornerRadius?.topLeft ?? 0).toBeLessThan(card.height / 2 - 1);
+  });
+});
 
 describe("clip images resize with the page", () => {
   beforeEach(() => {
@@ -356,5 +434,43 @@ describe("clip images resize with the page", () => {
     expect(photo.x + photo.width).toBeGreaterThanOrEqual(clip.mask.x + clip.mask.width - 0.5);
     expect(photo.y).toBeLessThanOrEqual(clip.mask.y + 0.5);
     expect(photo.y + photo.height).toBeGreaterThanOrEqual(clip.mask.y + clip.mask.height - 0.5);
+  });
+
+  it("scales mask cornerRadius with the clip on mobile (no pill blow-up)", () => {
+    const radius = 48;
+    const page = makePage([clipWithPhoto(radius)]);
+    const index = buildSiteSelectionIndex(page);
+    const created = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["clip"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const blueprint = applyNewSectionResponsiveDefaults(created.blueprint, created.createdNodeId!);
+    const scale = SITE_CREATOR_MOBILE_WIDTH / 1920;
+    const mobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const clip = findDisplayObject(mobile.displayPage, "clip") as
+      | (FreehandObject & {
+          mask?: FreehandObject & {
+            rx?: number;
+            cornerRadius?: { topLeft?: number; topRight?: number; bottomRight?: number; bottomLeft?: number };
+          };
+          height: number;
+        })
+      | undefined;
+    expect(clip?.mask).toBeTruthy();
+    if (!clip?.mask) return;
+    expect(clip.mask.rx).toBeCloseTo(radius * scale, 2);
+    expect(clip.mask.cornerRadius?.topLeft).toBeCloseTo(radius * scale, 2);
+    expect(clip.mask.cornerRadius?.topLeft ?? 0).toBeLessThan(clip.height / 2 - 1);
   });
 });

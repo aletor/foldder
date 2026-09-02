@@ -15,6 +15,7 @@ import {
   worldSpaceAncestorId,
 } from "./site-creator-layer-world-bounds";
 import { scalePathObjectUniform } from "./site-creator-responsive-matrix";
+import { scaleTextTypographyFields } from "./site-creator-responsive-typography";
 import { analyzeSectionVisualPresentation } from "./site-creator-responsive-visual";
 import { resolveContainerTune } from "./site-creator-responsive-tunes";
 import { scaleOriginalPxToBand } from "./site-creator-section-height";
@@ -589,8 +590,7 @@ function scaleWorldRoot(obj: FreehandObject, scale: number, originX = obj.x, ori
   obj.height = Math.max(1, obj.height * scale);
   const walk = (node: FreehandObject, scaleLocal: boolean) => {
     if (node.type === "text" || node.type === "textOnPath") {
-      const font = (node as { fontSize?: number }).fontSize;
-      if (typeof font === "number") (node as { fontSize: number }).fontSize = Math.max(8, font * scale);
+      scaleTextTypographyFields(node, scale, 8);
     }
     if (node.type === "path") {
       if (scaleLocal) {

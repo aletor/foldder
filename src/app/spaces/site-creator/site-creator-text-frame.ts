@@ -1,5 +1,6 @@
 import type { FreehandObject } from "../FreehandStudio";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
+import { textForeignObjectPadPx } from "../freehand/text-foreign-object-baseline";
 import { coverageLayerIdsForItem } from "./site-creator-responsive-tunes";
 import { getObjectFontSize } from "./site-creator-responsive-visual";
 import {
@@ -67,6 +68,19 @@ function wrapPlainTextToWidth(text: string, innerWidth: number, fontSize: number
   return Math.max(1, lines);
 }
 
+function textContentForReflow(obj: FreehandObject): string {
+  const spans = (obj as { _designerRichSpans?: Array<{ text: string }> })._designerRichSpans;
+  if (spans?.length) return spans.map((s) => s.text).join("");
+  return typeof (obj as { text?: string }).text === "string" ? (obj as { text: string }).text : "";
+}
+
+function trackingPxForReflow(obj: FreehandObject): number {
+  return (
+    ((obj as { letterSpacing?: number }).letterSpacing ?? 0) +
+    ((obj as { charSpacing?: number }).charSpacing ?? 0)
+  );
+}
+
 function wrapWithCanvas(text: string, innerWidth: number, obj: FreehandObject): number | null {
   if (typeof document === "undefined") return null;
   if (typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent)) return null;
@@ -80,7 +94,7 @@ function wrapWithCanvas(text: string, innerWidth: number, obj: FreehandObject): 
     const style = (obj as { fontStyle?: string }).fontStyle;
     const fst = style && style !== "normal" ? `${style} ` : "";
     ctx.font = `${fst}${weight} ${fontSize}px ${family}`;
-    const letterSpacing = (obj as { letterSpacing?: number }).letterSpacing ?? 0;
+    const letterSpacing = trackingPxForReflow(obj);
     const measure = (s: string) =>
       ctx.measureText(s).width + Math.max(0, s.length - 1) * letterSpacing;
     const raw = text.length === 0 ? " " : text;
@@ -109,10 +123,10 @@ function wrapWithCanvas(text: string, innerWidth: number, obj: FreehandObject): 
 export function hugAreaTextHeight(obj: FreehandObject, width: number): number {
   const fontSize = getObjectFontSize(obj);
   const lineHeight = (obj as { lineHeight?: number }).lineHeight ?? 1.2;
-  const pad = 4;
+  const pad = textForeignObjectPadPx("area", fontSize);
   const indent = (obj as { paragraphIndent?: number }).paragraphIndent ?? 0;
   const inner = Math.max(1, width - pad * 2 - indent);
-  const text = typeof (obj as { text?: string }).text === "string" ? (obj as { text: string }).text : "";
+  const text = textContentForReflow(obj);
   const lines = wrapWithCanvas(text, inner, obj) ?? wrapPlainTextToWidth(text, inner, fontSize);
   const lh = fontSize * lineHeight;
   return Math.max(lh + pad * 2, Math.ceil(lines * lh + pad * 2));

@@ -187,7 +187,8 @@ function previewObject(o: FreehandObject, renderImages: boolean): ReactNode {
             fontWeight: t.fontWeight,
             fontStyle: t.fontStyle ?? "normal",
             lineHeight: t.lineHeight,
-            letterSpacing: t.letterSpacing,
+            letterSpacing:
+              (t.letterSpacing ?? 0) + ((t as { charSpacing?: number }).charSpacing ?? 0),
             textAlign: t.textAlign === "justify" ? "justify" : t.textAlign,
             whiteSpace: t.textMode === "point" ? "pre" : "pre-wrap",
             wordBreak: t.textMode === "area" ? "break-word" : "normal",
