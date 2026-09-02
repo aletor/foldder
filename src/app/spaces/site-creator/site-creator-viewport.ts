@@ -407,3 +407,34 @@ export function forwardWorkAreaWheelToScroller(
     applyWorkAreaWheelDelta(scroller, { deltaX: delta.deltaX, deltaY: delta.deltaY });
   }
 }
+
+/** Lleva un rectángulo en unidades de página al área visible del scroller de trabajo. */
+export function scrollWorkAreaToPageRect(args: {
+  scroller: HTMLElement;
+  stage: HTMLElement;
+  pageRect: { y: number; height: number };
+  pageHeight: number;
+  paddingPx?: number;
+}): void {
+  const { scroller, stage, pageRect } = args;
+  if (scroller.scrollHeight <= scroller.clientHeight + 1) return;
+  const pageH = Math.max(1, args.pageHeight);
+  const pad = args.paddingPx ?? 24;
+  const stageBox = stage.getBoundingClientRect();
+  const scrollerBox = scroller.getBoundingClientRect();
+  const topOnStage = (pageRect.y / pageH) * stageBox.height;
+  const bottomOnStage = ((pageRect.y + Math.max(0, pageRect.height)) / pageH) * stageBox.height;
+  const topInScroller = scroller.scrollTop + (stageBox.top + topOnStage - scrollerBox.top);
+  const bottomInScroller =
+    scroller.scrollTop + (stageBox.top + bottomOnStage - scrollerBox.top);
+  const viewTop = scroller.scrollTop;
+  const viewBottom = viewTop + scroller.clientHeight;
+  if (topInScroller >= viewTop + pad && bottomInScroller <= viewBottom - pad) return;
+  if (topInScroller < viewTop + pad) {
+    scroller.scrollTop = Math.max(0, topInScroller - pad);
+    return;
+  }
+  if (bottomInScroller > viewBottom - pad) {
+    scroller.scrollTop = Math.max(0, bottomInScroller - scroller.clientHeight + pad);
+  }
+}

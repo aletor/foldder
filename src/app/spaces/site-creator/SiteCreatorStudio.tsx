@@ -602,6 +602,10 @@ export function SiteCreatorStudio({
   );
   const [expandedTreeIds, setExpandedTreeIds] = useState<Record<string, boolean>>({});
   const [outlineHoverKey, setOutlineHoverKey] = useState<string | null>(null);
+  const [revealPageRect, setRevealPageRect] = useState<{
+    requestId: number;
+    rect: { x: number; y: number; width: number; height: number };
+  } | null>(null);
 
   const [structureError, setStructureError] = useState<string | null>(null);
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false);
@@ -3901,6 +3905,26 @@ export function SiteCreatorStudio({
     [commitTune, resolveOutlineVisibility],
   );
 
+  const showAllOutlineVisibility = useCallback(() => {
+    const band = responsiveBand;
+    let next = blueprintRef.current;
+    let changed = false;
+    for (const rule of next.responsive?.items ?? []) {
+      if (rule.byBand[band]?.hidden !== true) continue;
+      const result = patchItemTune({
+        blueprint: next,
+        target: rule.target,
+        band,
+        patch: { hidden: false },
+      });
+      if (result.changed) {
+        next = result.blueprint;
+        changed = true;
+      }
+    }
+    if (changed) commitTune({ blueprint: next, changed: true });
+  }, [commitTune, responsiveBand]);
+
   useEffect(() => {
     const isTypingTarget = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLElement)) return false;
@@ -4309,6 +4333,15 @@ export function SiteCreatorStudio({
               setUnits([unit]);
             }
             setStructureError(null);
+            if (selectionIndex) {
+              const bounds = boundsForUnit(unit, blueprint, selectionIndex);
+              if (bounds) {
+                setRevealPageRect({
+                  requestId: Date.now(),
+                  rect: bounds,
+                });
+              }
+            }
           }}
           onHoverUnit={(unit, key) => {
             setOutlineHoverKey(key);
@@ -4367,6 +4400,7 @@ export function SiteCreatorStudio({
           activeVisibilityBand={responsiveBand}
           resolveVisibility={resolveOutlineVisibility}
           onToggleVisibility={toggleOutlineVisibility}
+          onShowAllVisibility={showAllOutlineVisibility}
           selectionIndex={selectionIndex}
           canvasLockForUnit={(unit) => {
             const own = isUnitOwnCanvasLocked(blueprint, unit);
@@ -4444,6 +4478,7 @@ export function SiteCreatorStudio({
               onSpinePinToTopChange={handleSpinePinToTopChange}
               pageInsets={pageInsetsModel}
               onPageInsetsChange={pagePreviewMode ? undefined : handlePageInsetsChange}
+              revealPageRect={pagePreviewMode ? null : revealPageRect}
               microbar={pagePreviewMode || clipImageEdit ? null : microbarModel}
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}

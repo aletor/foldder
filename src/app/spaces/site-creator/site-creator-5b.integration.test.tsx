@@ -416,7 +416,9 @@ describe("5B integration — Crear botón / Agrupar / Hero con Button", () => {
     expect(screen.getByTestId("site-creator-action-keepTogether")).toHaveTextContent("Agrupar");
 
     await user.click(screen.getByTestId("site-creator-action-createButton"));
-    expect(screen.getAllByText("Botón “BOTOM”").length).toBeGreaterThanOrEqual(1);
+    const outline = screen.getByTestId("site-creator-outline-panel");
+    expect(within(outline).getAllByText("BOTOM").length).toBeGreaterThanOrEqual(1);
+    expect(within(outline).queryByText("Botón “BOTOM”")).toBeNull();
 
     const bp = JSON.parse(screen.getByTestId("blueprint-json").textContent!) as SiteBlueprintV1;
     const btn = Object.values(bp.nodes).find(isSiteButtonNode);
@@ -439,9 +441,16 @@ describe("5B integration — Crear botón / Agrupar / Hero con Button", () => {
     await user.keyboard("{/Control}");
     await user.click(screen.getByTestId("site-creator-action-keepTogether"));
 
-    expect(screen.getAllByText(/Grupo · 2 elementos/).length).toBeGreaterThanOrEqual(1);
+    const bpAfterGroup = JSON.parse(
+      screen.getByTestId("blueprint-json").textContent!,
+    ) as SiteBlueprintV1;
+    const group = Object.values(bpAfterGroup.nodes).find((n) => n.kind === "layoutGroup");
+    expect(group).toBeTruthy();
+    const outline = screen.getByTestId("site-creator-outline-panel");
+    expect(within(outline).getByTestId(`outline-row-node:${group!.id}`)).toBeTruthy();
+    expect(within(outline).queryByText(/Grupo · 2 elementos/)).toBeNull();
     await user.click(screen.getByTestId("site-creator-action-separateGroup"));
-    expect(screen.getAllByText(/Contenido sin organizar/).length).toBeGreaterThanOrEqual(1);
+    expect(within(outline).getAllByText(/Contenido sin organizar/).length).toBeGreaterThanOrEqual(1);
     const bp = JSON.parse(screen.getByTestId("blueprint-json").textContent!) as SiteBlueprintV1;
     expect(Object.keys(bp.nodes)).toHaveLength(0);
   });
@@ -472,7 +481,9 @@ describe("5B integration — Crear botón / Agrupar / Hero con Button", () => {
     expect(hero.childIds).toContain(btn.id);
     expect(isSiteButtonNode(bp.nodes[btn.id]!)).toBe(true);
     expect(screen.getAllByText(/Hero/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Botón “BOTOM”").length).toBeGreaterThanOrEqual(1);
+    const outline = screen.getByTestId("site-creator-outline-panel");
+    expect(within(outline).getAllByText("BOTOM").length).toBeGreaterThanOrEqual(1);
+    expect(within(outline).queryByText("Botón “BOTOM”")).toBeNull();
   });
 });
 

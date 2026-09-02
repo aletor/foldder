@@ -73,6 +73,7 @@ import {
   isSiteCreatorPreviewChromeBackgroundTarget,
   measureSiteCreatorPreviewAvailableSize,
   resolveSiteCreatorDeviceChromeKind,
+  scrollWorkAreaToPageRect,
   shouldRedirectCanvasWheelToWorkArea,
   SITE_CREATOR_MIN_VIEWPORT_WIDTH,
   siteCreatorDeviceChrome,
@@ -223,6 +224,8 @@ export interface SiteCreatorPreviewProps {
     designInsets?: SitePageInsetBandV1 | null;
   } | null;
   onPageInsetsChange?: (next: SitePageInsetBandV1) => void;
+  /** Pedido de scroll del área de trabajo para hacer visible un rectángulo de página. */
+  revealPageRect?: { requestId: number; rect: PageRect } | null;
 }
 
 function ResizeHandle({
@@ -320,6 +323,7 @@ export function SiteCreatorPreview({
   canvasHitPassthroughImages = true,
   pageInsets = null,
   onPageInsetsChange,
+  revealPageRect = null,
 }: SiteCreatorPreviewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const deviceScrollRef = useRef<HTMLDivElement | null>(null);
@@ -602,6 +606,19 @@ export function SiteCreatorPreview({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [readOnly]);
+
+  useLayoutEffect(() => {
+    if (!revealPageRect) return;
+    const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+    const stage = stageRef.current;
+    if (!scroller || !stage) return;
+    scrollWorkAreaToPageRect({
+      scroller,
+      stage,
+      pageRect: revealPageRect.rect,
+      pageHeight,
+    });
+  }, [deviceMode, pageHeight, revealPageRect]);
 
   const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
   const multiCardNavRef = useRef(multiCardNav);

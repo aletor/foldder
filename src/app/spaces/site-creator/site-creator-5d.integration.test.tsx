@@ -593,6 +593,7 @@ describe("5D outline tree", () => {
         onToggleVisibility={(node, band) => {
           visibilityToggles.push(`${node.id}:${band}`);
         }}
+        onShowAllVisibility={() => {}}
       />,
     );
     expect(screen.getByTestId("site-creator-outline-panel").getAttribute("data-state")).toBe(
@@ -602,27 +603,27 @@ describe("5D outline tree", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mostrar panel Página" }));
     expect(screen.getByText("Página")).toBeTruthy();
     expect(screen.getByText(/Hero/)).toBeTruthy();
-    expect(screen.getByText(/Botón/)).toBeTruthy();
+    expect(screen.getAllByText(/BOTOM/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Contenido sin organizar/)).toBeTruthy();
     expect(screen.queryByText(/Grupo recortado/)).toBeNull();
     expect(screen.queryByText(/Clip 1/)).toBeNull();
+    expect(screen.queryByText(/^Texto /)).toBeNull();
+    expect(screen.queryByText(/Rectángulo/)).toBeNull();
+    expect(screen.queryByText(/^Máscara/)).toBeNull();
+    expect(screen.queryByText(/Botón/)).toBeNull();
     const heroNode = tree.roots.find(
       (node) => node.kind === "semantic" && node.nodeId === hero.createdNodeId,
     );
     expect(heroNode).toBeTruthy();
     if (!heroNode) return;
     expect(screen.queryByTestId(`outline-visibility-${heroNode.id}-wide`)).toBeNull();
-    expect(screen.getByTestId(`outline-visibility-${heroNode.id}-monitor`)).toBeTruthy();
-    const tabletVisibility = screen.getByTestId(
-      `outline-visibility-${heroNode.id}-tablet`,
-    );
-    const mobileVisibility = screen.getByTestId(
-      `outline-visibility-${heroNode.id}-mobile`,
-    );
-    expect(tabletVisibility.getAttribute("aria-disabled")).toBe("false");
-    expect(mobileVisibility.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(tabletVisibility);
+    expect(screen.queryByTestId(`outline-visibility-${heroNode.id}-monitor`)).toBeNull();
+    expect(screen.queryByTestId(`outline-visibility-${heroNode.id}-mobile`)).toBeNull();
+    const visibility = screen.getByTestId(`outline-visibility-${heroNode.id}`);
+    expect(visibility.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(visibility);
     expect(visibilityToggles).toEqual([`${heroNode.id}:tablet`]);
+    expect(screen.getByTestId("outline-show-all")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ocultar panel Página" }));
     expect(screen.getByTestId("site-creator-outline-panel").getAttribute("data-state")).toBe(
       "closed",

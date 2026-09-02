@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useId, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Lock, Monitor, Smartphone, Tablet, Unlock } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, Unlock } from "lucide-react";
 import type {
   SiteCreatorPresentationNode,
   SiteCreatorPresentationTree,
@@ -9,7 +9,7 @@ import type {
 import type { SiteCreatorSelectionUnit } from "./site-creator-display-labels";
 import { imageFrameHasPhoto, isDesignerImageFrame, sameSelectionUnit } from "./site-creator-display-labels";
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
-import type { ResponsiveEditableBand, ResponsiveVisibilityBand } from "./site-creator-types";
+import type { ResponsiveVisibilityBand } from "./site-creator-types";
 
 type OutlineVisibilityState = {
   hidden: boolean;
@@ -17,16 +17,6 @@ type OutlineVisibilityState = {
 };
 
 type OutlineRole = "section" | "group" | "multicard" | "button" | "unorganized" | "layer";
-
-const VISIBILITY_BANDS: Array<{
-  band: ResponsiveEditableBand;
-  label: string;
-  Icon: typeof Monitor;
-}> = [
-  { band: "monitor", label: "Monitor", Icon: Monitor },
-  { band: "tablet", label: "Tablet", Icon: Tablet },
-  { band: "mobile", label: "Móvil", Icon: Smartphone },
-];
 
 function outlineRole(node: SiteCreatorPresentationNode): OutlineRole {
   if (node.kind === "unorganized") return "unorganized";
@@ -44,24 +34,66 @@ function stripElementCount(label: string): string {
   return label.replace(/\s·\s\d+\s+elementos?$/i, "").trim();
 }
 
+function visibilityBandLabel(band: ResponsiveVisibilityBand): string {
+  if (band === "tablet") return "Tablet";
+  if (band === "mobile") return "Móvil";
+  if (band === "monitor") return "Monitor";
+  return "Original";
+}
+
+/** Título de fila sin prefijos de tipo (el glifo ya tipifica). */
+function minimalOutlineLabel(raw: string): { title: string; aside: string | null } {
+  let stripped = stripElementCount(raw);
+  let aside: string | null = null;
+  const times = stripped.match(/^(.*)\s·\s(×\d+)$/);
+  if (times) {
+    stripped = times[1]!.trim();
+    aside = times[2]!;
+  }
+
+  const quotedTexto = stripped.match(/^Texto\s+[“"](.+)[”"]$/);
+  if (quotedTexto) return { title: quotedTexto[1]!, aside };
+
+  const quotedBoton = stripped.match(/^Bot[oó]n\s+[“"](.+)[”"]$/i);
+  if (quotedBoton) return { title: quotedBoton[1]!, aside };
+  if (/^Bot[oó]n sin texto$/i.test(stripped)) return { title: "Sin texto", aside };
+
+  const mask = stripped.match(/^M[aá]scara(?:\s·\s(.+))?$/i);
+  if (mask) return { title: (mask[1] ?? "").trim(), aside };
+
+  if (/^(Grupo|Grupo de capas|Rectángulo|Elipse|Trazado|Imagen|Composición|Elemento)$/i.test(stripped)) {
+    return { title: "", aside };
+  }
+
+  if (/^Grupo\s·\s\d+\s+capas$/i.test(raw.trim())) {
+    return { title: "", aside };
+  }
+
+  return { title: stripped, aside };
+}
+
 function outlineTitle(
   node: SiteCreatorPresentationNode,
   open: boolean,
   closedCount: number | null,
 ): { title: string; aside: string | null } {
-  if (!open && closedCount != null && node.kind !== "unorganized") {
-    return { title: node.label, aside: null };
-  }
   if (node.kind === "unorganized" && open) {
     return { title: "Contenido sin organizar", aside: null };
   }
-  const stripped = stripElementCount(node.label);
-  const times = stripped.match(/^(.*)\s·\s(×\d+)$/);
-  if (times) return { title: times[1]!, aside: times[2]! };
-  return { title: stripped, aside: null };
+  const minimal = minimalOutlineLabel(node.label);
+  if (!open && closedCount != null && node.kind !== "unorganized") {
+    return {
+      title: minimal.title,
+      aside: String(closedCount),
+    };
+  }
+  if (node.kind === "unorganized" && !open && closedCount != null) {
+    return { title: "Contenido sin organizar", aside: String(closedCount) };
+  }
+  return minimal;
 }
 
-function OutlineDeviceVisibility({
+function OutlineActiveVisibility({
   node,
   activeBand,
   resolveVisibility,
@@ -79,49 +111,35 @@ function OutlineDeviceVisibility({
   ) => void;
 }) {
   if (!node.unit) return null;
+  const state = resolveVisibility(node, activeBand);
+  const hidden = state?.hidden === true;
+  const inherited = state?.inherited === true;
+  const enabled = !inherited && Boolean(onToggleVisibility);
+  const bandLabel = visibilityBandLabel(activeBand);
+  const action = hidden ? "Mostrar" : "Ocultar";
+  const title = inherited
+    ? `Oculto por una agrupación superior (${bandLabel})`
+    : `${action} en ${bandLabel}`;
+  const Icon = hidden ? EyeOff : Eye;
   return (
-    <span className="ml-1 hidden shrink-0 items-center gap-1 group-hover/row:inline-flex group-focus-within/row:inline-flex">
-      {VISIBILITY_BANDS.map(({ band, label, Icon }) => {
-        const state = resolveVisibility(node, band);
-        const active = band === activeBand;
-        const hidden = state?.hidden === true;
-        const inherited = state?.inherited === true;
-        const enabled = active && !inherited && Boolean(onToggleVisibility);
-        const action = hidden ? "Mostrar" : "Ocultar";
-        const title = inherited
-          ? `${label}: oculto por una agrupación superior`
-          : active
-            ? `${action} en ${label}`
-            : `${label}: ${hidden ? "oculto" : "visible"}`;
-        return (
-          <span
-            key={band}
-            role="button"
-            aria-label={title}
-            aria-pressed={!hidden}
-            aria-disabled={!enabled}
-            data-testid={`outline-visibility-${node.id}-${band}`}
-            title={title}
-            className={`relative inline-flex h-4 w-4 items-center justify-center ${
-              hidden ? "text-white/20" : active ? "text-white/55" : "text-white/22"
-            } ${enabled ? "cursor-pointer hover:text-white/80" : "cursor-default"}`}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!enabled) return;
-              onToggleVisibility?.(node, band);
-            }}
-          >
-            <Icon className="h-2.5 w-2.5" strokeWidth={1.25} aria-hidden />
-            {hidden ? (
-              <span
-                className="pointer-events-none absolute h-px w-2.5 rotate-45 bg-current"
-                aria-hidden
-              />
-            ) : null}
-          </span>
-        );
-      })}
+    <span
+      role="button"
+      aria-label={title}
+      aria-pressed={!hidden}
+      aria-disabled={!enabled}
+      data-testid={`outline-visibility-${node.id}`}
+      title={title}
+      className={`ml-1 relative hidden h-4 w-4 shrink-0 items-center justify-center group-hover/row:inline-flex group-focus-within/row:inline-flex ${
+        hidden ? "text-white/25" : "text-white/50"
+      } ${enabled ? "cursor-pointer hover:text-white/80" : "cursor-default"}`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (!enabled) return;
+        onToggleVisibility?.(node, activeBand);
+      }}
+    >
+      <Icon className="h-2.5 w-2.5" strokeWidth={1.5} aria-hidden />
     </span>
   );
 }
@@ -412,11 +430,8 @@ function OutlineTreeRow({
         {hasChildren ? (
           <span
             role="presentation"
-            className="inline-flex h-3 w-3 shrink-0 items-center justify-center text-white/25"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggle(node.id);
-            }}
+            className="pointer-events-none inline-flex h-3 w-3 shrink-0 items-center justify-center text-white/25"
+            aria-hidden
           >
             {open ? (
               <ChevronDown className="h-2.5 w-2.5" strokeWidth={1.25} />
@@ -455,7 +470,7 @@ function OutlineTreeRow({
           />
         ) : null}
         {resolveVisibility ? (
-          <OutlineDeviceVisibility
+          <OutlineActiveVisibility
             node={node}
             activeBand={activeVisibilityBand}
             resolveVisibility={resolveVisibility}
@@ -564,6 +579,7 @@ export interface SiteCreatorOutlinePanelProps {
     node: SiteCreatorPresentationNode,
     band: ResponsiveVisibilityBand,
   ) => void;
+  onShowAllVisibility?: () => void;
   selectionIndex?: SiteCreatorSelectionIndex | null;
   /** Cerrado por defecto en Studio; útil abierto en vistas embebidas. */
   defaultOpen?: boolean;
@@ -611,6 +627,7 @@ export function SiteCreatorOutlinePanel({
   activeVisibilityBand = "wide",
   resolveVisibility,
   onToggleVisibility,
+  onShowAllVisibility,
   selectionIndex,
   defaultOpen = false,
 }: SiteCreatorOutlinePanelProps) {
@@ -659,6 +676,16 @@ export function SiteCreatorOutlinePanel({
 
       {panelOpen ? (
         <>
+          {onShowAllVisibility ? (
+            <button
+              type="button"
+              data-testid="outline-show-all"
+              onClick={onShowAllVisibility}
+              className="mt-3 self-start text-[10px] font-light tracking-[0.04em] text-white/35 transition-colors hover:text-white/70"
+            >
+              Mostrar todo
+            </button>
+          ) : null}
           <div id={treeId} className="mt-5 min-h-0 flex-1 overflow-auto">
             {tree.roots.length === 0 ? (
               <p className="text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/30">
