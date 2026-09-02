@@ -28,10 +28,8 @@ export type SiteCreatorMicrobarModel = {
   multiCardSlot?: React.ReactNode;
 };
 
-/** Ancho de grupo se cambia con las flechas del lienzo, no desde este menú. */
+/** Acciones estructurales ocultas en el microbar (quedan solo en otros menús si aplica). */
 const MICROBAR_HIDDEN_ACTION_IDS = new Set<SiteCreatorPrimaryAction["id"]>([
-  "groupWidthFull",
-  "groupWidthContent",
   "removeFromContainer",
 ]);
 

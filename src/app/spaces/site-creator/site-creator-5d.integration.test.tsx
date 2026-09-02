@@ -439,15 +439,13 @@ describe("5D microbar + actions", () => {
     ).toEqual(["createMultiCard"]);
   });
 
-  it("hides group width actions and keeps structural ones", () => {
+  it("keeps structural group actions without width-fit entries", () => {
     expect(
       visibleMicrobarActions([
-        { id: "groupWidthFull", label: "Ancho completo", primary: true },
         { id: "separateGroup", label: "Desagrupar" },
         { id: "createMultiCard", label: "Multiplicar" },
       ]).map((action) => action.id),
     ).toEqual(["separateGroup", "createMultiCard"]);
-    expect(visibleMicrobarActions([{ id: "groupWidthContent", label: "Ancho natural" }])).toEqual([]);
   });
 
   it("shortens a long breadcrumb to the last two segments", () => {
@@ -470,7 +468,6 @@ describe("5D microbar + actions", () => {
           bounds: { x: 40, y: 140, width: 100, height: 36 },
           segments: [{ unit: { kind: "blueprintNode", nodeId: "g1" }, label: "Grupo", current: true }],
           actions: [
-            { id: "groupWidthFull", label: "Ancho completo", primary: true },
             { id: "separateGroup", label: "Desagrupar" },
           ],
         }}

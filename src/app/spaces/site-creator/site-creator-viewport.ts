@@ -25,6 +25,16 @@ export type SiteCreatorViewportBand = "original" | "monitor" | "tablet" | "mobil
 export type SiteCreatorDeviceBand = Exclude<SiteCreatorViewportBand, "original">;
 export type SiteCreatorDeviceChromeKind = SiteCreatorDeviceBand;
 
+/** Banda de layout responsive desde la banda de viewport del Studio. */
+export function fitLayoutBandFromViewport(
+  band: SiteCreatorViewportBand,
+): "wide" | "monitor" | "tablet" | "mobile" {
+  if (band === "monitor") return "monitor";
+  if (band === "tablet") return "tablet";
+  if (band === "mobile") return "mobile";
+  return "wide";
+}
+
 export type SiteCreatorDeviceFrame = {
   width: number;
   height: number;

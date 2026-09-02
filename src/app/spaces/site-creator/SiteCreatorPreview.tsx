@@ -15,7 +15,6 @@ import {
   type SiteCreatorUnitOutline,
 } from "./SiteCreatorSelectionSurface";
 import type { ItemTransformKind } from "./site-creator-text-frame";
-import type { GroupFitOpportunity } from "./site-creator-group-fit";
 import type { SectionHeightOpportunity } from "./site-creator-section-height";
 import {
   SiteCreatorObjectMicrobar,
@@ -192,8 +191,6 @@ export interface SiteCreatorPreviewProps {
   readOnly?: boolean;
   /** Tope CSS de la página en Preview Ordenador. Ausente = llenar el ancho. */
   previewPageMaxWidth?: number;
-  groupFit?: { opportunity: GroupFitOpportunity; displayBounds: PageRect } | null;
-  onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
   sectionHeight?: { opportunity: SectionHeightOpportunity; displayBounds: PageRect } | null;
   onSectionHeight?: (mode: "content" | "viewport") => void;
   /** Alto de página de diseño (una pantalla), no el lienzo ya expandido. */
@@ -306,8 +303,6 @@ export function SiteCreatorPreview({
   onExitClipImageEdit,
   readOnly = false,
   previewPageMaxWidth,
-  groupFit = null,
-  onGroupFit,
   sectionHeight = null,
   onSectionHeight,
   pageScreenHeight,
@@ -873,8 +868,6 @@ export function SiteCreatorPreview({
             onClipImageTuneChange={onClipImageTuneChange}
             onResetClipImageEdit={onResetClipImageEdit}
             onExitClipImageEdit={onExitClipImageEdit}
-            groupFit={groupFit}
-            onGroupFit={onGroupFit}
             sectionHeight={sectionHeight}
             onSectionHeight={onSectionHeight}
             floatingPortalHost={floatingPortalHost}

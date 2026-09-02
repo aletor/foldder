@@ -49,6 +49,7 @@ import {
   resolveSiteCreatorDeviceChromeKind,
   siteCreatorDeviceChrome,
   SITE_CREATOR_DEFAULT_MONITOR_MAX_WIDTH,
+  fitLayoutBandFromViewport,
   type SiteCreatorDeviceConfig,
   type SiteCreatorViewportBand,
 } from "./site-creator-viewport";
@@ -224,11 +225,6 @@ import {
   stretchSectionSourceRangeBottom,
   setSectionPinToTop,
 } from "./site-blueprint-ops";
-import {
-  applyGroupFitToContainer,
-  describeGroupFitOpportunity,
-  fitLayoutBandFromViewport,
-} from "./site-creator-group-fit";
 import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaults";
 import { isUnitCanvasLocked, isUnitOwnCanvasLocked, setUnitCanvasLock } from "./site-creator-canvas-locks";
 import type { SectionSpineStation } from "./SiteCreatorSectionSpine";
@@ -2181,30 +2177,6 @@ export function SiteCreatorStudio({
           if (result.changed) commitBlueprint(result.blueprint);
           return;
         }
-        case "groupWidthFull":
-        case "groupWidthContent": {
-          const unit = displayUnits[0];
-          if (!unit || !selectionIndex || !committedPage) return;
-          let groupId: string | null = null;
-          if (unit.kind === "blueprintNode" && blueprint.nodes[unit.nodeId]?.kind === "layoutGroup") {
-            groupId = unit.nodeId;
-          } else if (unit.kind === "layer") {
-            const owner = findLayerSemanticOwner(blueprint, unit.layerId, selectionIndex);
-            if (owner?.kind === "layoutGroup") groupId = owner.id;
-          }
-          if (!groupId) return;
-          const result = applyGroupFitToContainer({
-            blueprint,
-            groupId,
-            mode: id === "groupWidthFull" ? "full" : "content",
-            origin: "start",
-            index: selectionIndex,
-            page: committedPage,
-            band: fitLayoutBandFromViewport(viewportBand),
-          });
-          if (result.ok) commitBlueprint(result.blueprint);
-          return;
-        }
         case "editContent":
         case "exitInspect":
           return;
@@ -2327,65 +2299,6 @@ export function SiteCreatorStudio({
           : containerDisplayLabel(blueprint.nodes[unit.nodeId]!, snapshot, selectionIndex),
     };
   }, [blueprint, displayShadow.hoverId, displayUnits, hoverUnit, presentationTree, selectionIndex, snapshot]);
-
-  const groupFitModel = useMemo(() => {
-    if (pagePreviewMode || viewportBand === "original" || !selectionIndex || !committedPage) return null;
-    if (displayUnits.length !== 1 || displayUnits[0]?.kind !== "blueprintNode") return null;
-    const selected = blueprint.nodes[displayUnits[0].nodeId];
-    if (selected?.kind !== "layoutGroup") return null;
-    const opportunity = describeGroupFitOpportunity({
-      blueprint,
-      groupId: selected.id,
-      index: selectionIndex,
-      page: committedPage,
-      band: fitLayoutBandFromViewport(viewportBand),
-      viewportWidth: effectiveViewportWidth,
-    });
-    if (
-      !opportunity ||
-      (!opportunity.showSideLeft &&
-        !opportunity.showSideRight &&
-        !opportunity.showScaleLeft &&
-        !opportunity.showScaleRight &&
-        !opportunity.showRestoreLeft &&
-        !opportunity.showRestoreRight)
-    ) {
-      return null;
-    }
-    const displayBounds =
-      presentationBoundsForUnit(
-        { kind: "blueprintNode", nodeId: selected.id },
-        presentationTree,
-        selectionIndex,
-      ) ?? opportunity.bounds;
-    return { opportunity, displayBounds };
-  }, [
-    blueprint,
-    committedPage,
-    displayUnits,
-    effectiveViewportWidth,
-    pagePreviewMode,
-    presentationTree,
-    selectionIndex,
-    viewportBand,
-  ]);
-
-  const handleGroupFit = useCallback(
-    (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => {
-      if (!groupFitModel || !selectionIndex || !committedPage) return;
-      const result = applyGroupFitToContainer({
-        blueprint,
-        groupId: groupFitModel.opportunity.groupId,
-        mode: action.mode,
-        origin: action.origin,
-        index: referenceIndex ?? selectionIndex,
-        page: committedPage,
-        band: fitLayoutBandFromViewport(viewportBand),
-      });
-      if (result.ok) commitBlueprint(result.blueprint);
-    },
-    [blueprint, commitBlueprint, committedPage, groupFitModel, referenceIndex, selectionIndex, viewportBand],
-  );
 
   const spineHeightBand: SectionHeightBand = liveHeightBand;
   const blueprintRef = useRef(blueprint);
@@ -4387,8 +4300,6 @@ export function SiteCreatorStudio({
               contextOutlines={pagePreviewMode ? undefined : contextOutlines}
               sectionOutlines={pagePreviewMode ? undefined : sectionOutlines}
               ghostOutlines={pagePreviewMode ? undefined : ghostOutlines}
-              groupFit={pagePreviewMode || clipImageEdit ? null : groupFitModel}
-              onGroupFit={pagePreviewMode ? undefined : handleGroupFit}
               sectionHeight={null}
               onSectionHeight={undefined}
               pageScreenHeight={liveViewportHeight}

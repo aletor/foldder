@@ -12,6 +12,11 @@ import { isSiteButtonNode, isSiteSectionNode } from "./site-creator-types";
 import { collectSemanticCoverageLayerIds } from "./site-blueprint-ownership";
 import { classifyContainerBackground } from "./site-creator-responsive-visual";
 import { resolveEffectiveResponsiveMode } from "./site-creator-responsive-overrides";
+import {
+  preservedStackGaps,
+  stackColumnX,
+  stackLayoutScale,
+} from "./site-creator-stack-layout";
 import { scaleStyleFields, transformPathObjectRelative } from "./site-creator-responsive-matrix";
 import {
   resolveBackgroundContainTransform,
@@ -755,12 +760,20 @@ function reflowGroupUnits(args: {
   const innerTop = Math.min(...units.map((u) => u.display.y));
   const gap = typeof tune.gap === "number" ? tune.gap : defaultBandGap(band);
   const shouldStack = args.stacked || typeof tune.gap === "number";
+  const stackOrigin = unionPageRects(units.map((u) => u.source));
+  const layoutScale = stackLayoutScale(stackOrigin, innerWidth);
+  const stackGaps = preservedStackGaps(
+    units.map((u) => ({ bounds: u.source })),
+    layoutScale,
+    gap,
+  );
 
   let contentBottom = innerTop + pad;
   if (shouldStack) {
     let y = innerTop + pad;
-    for (const unit of units) {
-      const scale = Math.min(1, innerWidth / Math.max(1, unit.source.width));
+    for (let i = 0; i < units.length; i++) {
+      const unit = units[i]!;
+      const scale = layoutScale;
       const w = unit.source.width * scale;
       const h = unit.source.height * scale;
       const x = tune.contentAlignX
@@ -770,16 +783,17 @@ function reflowGroupUnits(args: {
             contentWidth: innerWidth,
             boxWidth: w,
           })
-        : innerLeft + (innerWidth - w) / 2;
+        : stackColumnX(unit.source, stackOrigin, layoutScale, innerLeft, innerWidth, w);
       placeLayersFromSource(args.byId, unit.layerIds, args.index, unit.source, {
         x,
         y,
         scaleX: scale,
         scaleY: scale,
       });
-      y += h + gap;
+      y += h;
+      if (i < units.length - 1) y += stackGaps[i] ?? gap;
     }
-    contentBottom = y - (units.length ? gap : 0) + pad;
+    contentBottom = y + pad;
   } else {
     const origin = unionPageRects(units.map((u) => u.source));
     if (!origin) return region.layoutRect.y + region.layoutRect.height;

@@ -3,7 +3,6 @@ import { isSiteButtonNode, isSiteMultiCardNode, isSiteSectionNode } from "./site
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { PersistentStructureGate } from "./site-blueprint-history";
 import { findLayerSemanticOwner } from "./site-blueprint-ownership";
-import { resolveLayoutGroupFitForBand } from "./site-creator-group-width-layout";
 import type { ResponsiveBandLike } from "./site-creator-responsive-overrides";
 import {
   deriveBlueprintNodeDisplayLabel,
@@ -33,8 +32,6 @@ export type SiteCreatorPrimaryAction = {
     | "addToContainer"
     | "removeFromContainer"
     | "chooseAddTarget"
-    | "groupWidthFull"
-    | "groupWidthContent"
     | "useAsBackground"
     | "restoreBackground";
   label: string;
@@ -162,10 +159,6 @@ function isAncestor(blueprint: SiteBlueprintV1, ancestorId: string, nodeId: stri
   return false;
 }
 
-function isStructureWorkshopBand(band?: ResponsiveBandLike): boolean {
-  return band == null || band === "wide";
-}
-
 export function resolveContextualModel(args: ResolveContextualArgs): SiteCreatorContextualModel {
   const { units, inspectNodeId, blueprint, index, snapshot, persistGate } = args;
 
@@ -208,14 +201,6 @@ export function resolveContextualModel(args: ResolveContextualArgs): SiteCreator
     }
     if (node.kind === "layoutGroup") {
       const actions: SiteCreatorPrimaryAction[] = [];
-      if (!isStructureWorkshopBand(args.band)) {
-        const fitted = resolveLayoutGroupFitForBand(blueprint, node, args.band) != null;
-        actions.push({
-          id: fitted ? "groupWidthContent" : "groupWidthFull",
-          label: fitted ? "Ancho natural" : "Ancho completo",
-          primary: true,
-        });
-      }
       actions.push({ id: "separateGroup", label: "Desagrupar" });
       if (persistGate.allowed) {
         actions.push({ id: "createMultiCard", label: "Multiplicar" });

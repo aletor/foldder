@@ -14,9 +14,7 @@ import {
 import { SiteCreatorLayerPicker } from "./SiteCreatorLayerPicker";
 import { SiteCreatorSelectionOverlay } from "./SiteCreatorSelectionOverlay";
 import { SiteCreatorIsolationBreadcrumb } from "./SiteCreatorSelectionToolbar";
-import { SiteCreatorGroupFitHandles } from "./SiteCreatorGroupFitHandles";
 import { SiteCreatorSectionHeightHandles } from "./SiteCreatorSectionHeightHandles";
-import type { GroupFitOpportunity } from "./site-creator-group-fit";
 import type { SectionHeightOpportunity } from "./site-creator-section-height";
 import type {
   SiteCreatorSelectionAction,
@@ -316,8 +314,6 @@ export interface SiteCreatorSelectionSurfaceProps {
   ) => void;
   onResetClipImageEdit?: () => void;
   onExitClipImageEdit?: () => void;
-  groupFit?: { opportunity: GroupFitOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
-  onGroupFit?: (action: { mode: "full" | "scale" | "content"; origin: "start" | "end" }) => void;
   sectionHeight?: { opportunity: SectionHeightOpportunity; displayBounds: { x: number; y: number; width: number; height: number } } | null;
   onSectionHeight?: (mode: "content" | "viewport") => void;
   floatingPortalHost?: HTMLElement | null;
@@ -366,8 +362,6 @@ export function SiteCreatorSelectionSurface({
   onClipImageTuneChange,
   onResetClipImageEdit,
   onExitClipImageEdit,
-  groupFit = null,
-  onGroupFit,
   sectionHeight = null,
   onSectionHeight,
   floatingPortalHost = null,
@@ -1232,13 +1226,6 @@ export function SiteCreatorSelectionSurface({
             strokeDasharray={`${4 / Math.max(0.25, scale)} ${3 / Math.max(0.25, scale)}`}
           />
         </svg>
-      ) : null}
-      {groupFit && onGroupFit ? (
-        <SiteCreatorGroupFitHandles
-          opportunity={groupFit.opportunity}
-          displayBounds={groupFit.displayBounds}
-          onFit={onGroupFit}
-        />
       ) : null}
       {sectionHeight && onSectionHeight ? (
         <SiteCreatorSectionHeightHandles

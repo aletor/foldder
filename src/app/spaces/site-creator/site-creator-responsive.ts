@@ -46,6 +46,13 @@ import {
 } from "./site-creator-background-cover";
 import { clampNumber } from "./site-creator-responsive-math";
 import {
+  measureStackColumn,
+  preservedStackGaps,
+  stackColumnX,
+  stackLayoutScale,
+  type StackInsets,
+} from "./site-creator-stack-layout";
+import {
   buildResolvedSceneFromIndex,
   collectVisibleLayerIdsFromPage,
   preservePageWithUniformMatrix,
@@ -623,7 +630,10 @@ function backgroundTargetRect(args: {
   layoutRect: PageRect;
   sourceRect: PageRect;
   sourcePageWidth: number;
+  /** Apilar: el fondo llena el marco de la sección (no conserva márgenes desktop sueltos). */
+  stretchToLayout?: boolean;
 }): PageRect {
+  if (args.stretchToLayout) return { ...args.layoutRect };
   const pageW = Math.max(1, args.sourcePageWidth);
   const leftFrac = Math.max(0, args.sourceRect.x) / pageW;
   const rightFrac = Math.max(0, pageW - args.sourceRect.x - args.sourceRect.width) / pageW;
@@ -665,6 +675,8 @@ function placeBackgroundLayers(args: {
   index: SiteCreatorSelectionIndex;
   blueprint?: SiteBlueprintV1;
   band?: ResponsiveBand;
+  /** Apilar: fondos a ancho de sección, alineados con el contenido apilado. */
+  stretchToLayout?: boolean;
 }): Record<string, NormalizedFocalPoint> {
   const focals: Record<string, NormalizedFocalPoint> = {};
   const editable = args.band && isResponsiveEditableBand(args.band) ? args.band : null;
@@ -678,6 +690,7 @@ function placeBackgroundLayers(args: {
       layoutRect: args.layoutRect,
       sourceRect,
       sourcePageWidth: args.sourcePageWidth,
+      stretchToLayout: args.stretchToLayout,
     });
 
     if (obj.type === "image") {
@@ -867,37 +880,31 @@ function directStackUnitsForLayoutGroup(args: {
   return units;
 }
 
-function measureStackUnits(
-  units: Array<{ bounds: PageRect }>,
-  contentWidth: number,
-  gap: number,
-): { width: number; height: number; scales: number[] } {
-  const scales = units.map((u) => Math.min(1, contentWidth / Math.max(1, u.bounds.width)));
-  let height = 0;
-  for (let i = 0; i < units.length; i++) {
-    height += units[i]!.bounds.height * scales[i]! + (i > 0 ? gap : 0);
-  }
-  return { width: contentWidth, height, scales };
-}
-
 function layoutStackUnitsAt(args: {
   byId: Map<string, FreehandObject>;
   units: Array<{ layerIds: string[]; bounds: PageRect }>;
   scales: number[];
+  gaps: number[];
+  origin: PageRect | null;
   index: SiteCreatorSelectionIndex;
   band: ResponsiveBand;
   target: PageRect;
-  gap: number;
+  fallbackGap: number;
+  insets?: { left: number; right: number; top: number; bottom: number };
   enforceMinFont?: boolean;
 }): PageRect {
-  let y = args.target.y;
-  let maxR = args.target.x;
+  const insets = args.insets ?? { left: 0, right: 0, top: 0, bottom: 0 };
+  const innerX = args.target.x + insets.left;
+  const innerW = Math.max(1, args.target.width - insets.left - insets.right);
+  let y = args.target.y + insets.top;
+  const origin = args.origin ?? unionPageRects(args.units.map((u) => u.bounds));
+  const layoutScale = args.scales[0] ?? stackLayoutScale(origin, innerW);
   for (let i = 0; i < args.units.length; i++) {
     const u = args.units[i]!;
-    const scale = args.scales[i]!;
+    const scale = args.scales[i] ?? layoutScale;
     const w = u.bounds.width * scale;
     const h = u.bounds.height * scale;
-    const x = args.target.x + (args.target.width - Math.min(w, args.target.width)) / 2;
+    const x = stackColumnX(u.bounds, origin, layoutScale, innerX, innerW, w);
     layoutPreserveComposition({
       byId: args.byId,
       layerIds: u.layerIds,
@@ -909,14 +916,15 @@ function layoutStackUnitsAt(args: {
       scale,
       enforceMinFont: args.enforceMinFont,
     });
-    maxR = Math.max(maxR, x + w);
-    y += h + args.gap;
+    y += h;
+    if (i < args.units.length - 1) y += args.gaps[i] ?? args.fallbackGap;
   }
+  y += insets.bottom;
   return {
     x: args.target.x,
     y: args.target.y,
     width: args.target.width,
-    height: Math.max(0, y - args.target.y - (args.units.length ? args.gap : 0)),
+    height: Math.max(0, y - args.target.y),
   };
 }
 
@@ -1298,6 +1306,35 @@ function layoutSectionPreserveMode(args: {
   };
 }
 
+function stackSectionContentFrame(args: {
+  containerBounds: PageRect;
+  sourceWidth: number;
+  viewportWidth: number;
+  metrics: SectionLayoutMetrics;
+}): { contentLeft: number; contentWidth: number } {
+  const pageScale = args.viewportWidth / Math.max(1, args.sourceWidth);
+  // Footprint horizontal de la sección en Original: Apilar no debe ensanchar más que Composition.
+  const designedLeft = Math.max(0, args.containerBounds.x) * pageScale;
+  const designedWidth = Math.max(80, args.containerBounds.width * pageScale);
+  let contentWidth = Math.min(args.metrics.contentWidth, designedWidth);
+  let contentLeft = designedLeft;
+  const metricsRight = args.metrics.contentLeft + args.metrics.contentWidth;
+  if (contentLeft < args.metrics.contentLeft) {
+    contentWidth = Math.max(80, contentWidth - (args.metrics.contentLeft - contentLeft));
+    contentLeft = args.metrics.contentLeft;
+  }
+  if (contentLeft + contentWidth > metricsRight + 0.5) {
+    contentWidth = Math.max(80, metricsRight - contentLeft);
+  }
+  if (contentWidth < 80) {
+    return {
+      contentLeft: args.metrics.contentLeft,
+      contentWidth: args.metrics.contentWidth,
+    };
+  }
+  return { contentLeft, contentWidth };
+}
+
 function layoutSectionStackMode(args: {
   byId: Map<string, FreehandObject>;
   analysis: SectionVisualAnalysis;
@@ -1321,9 +1358,23 @@ function layoutSectionStackMode(args: {
   });
   const inset = metrics.inset;
   const gap = metrics.gap;
-  let contentWidth = metrics.contentWidth;
-  let contentLeft = metrics.contentLeft;
+  const designedFrame = stackSectionContentFrame({
+    containerBounds: analysis.containerBounds,
+    sourceWidth: args.sourceWidth,
+    viewportWidth,
+    metrics,
+  });
+  let contentWidth = designedFrame.contentWidth;
+  let contentLeft = designedFrame.contentLeft;
   const sectionTop = args.yCursor;
+
+  const backgroundSource =
+    analysis.background.backgroundLayerIds[0] != null
+      ? sourceWorldVisualBounds(analysis.background.backgroundLayerIds[0], index) ??
+        index.byId[analysis.background.backgroundLayerIds[0]!]?.visualBounds ??
+        null
+      : null;
+  const stackParentBounds = backgroundSource ?? analysis.containerBounds;
 
   // Unidades = clusters (surfaces intactas); forzar reflow interno si no cabe.
   type Measured = {
@@ -1334,17 +1385,32 @@ function layoutSectionStackMode(args: {
     mode: "preserve" | "reflow";
     nestedStack?: Array<{ layerIds: string[]; bounds: PageRect }>;
     nestedScales?: number[];
+    nestedGaps?: number[];
+    nestedOrigin?: PageRect | null;
+    nestedInsets?: StackInsets;
     enforceMinFont?: boolean;
   };
-  let measured: Measured[] = [...analysis.clusters]
-    .sort((a, b) => {
-      const dy = a.bounds.y - b.bounds.y;
-      if (Math.abs(dy) > 0.5) return dy;
-      const dx = a.bounds.x - b.bounds.x;
-      if (Math.abs(dx) > 0.5) return dx;
-      return 0;
-    })
-    .map((cluster) => {
+
+  const sortedClusters = [...analysis.clusters].sort((a, b) => {
+    const dy = a.bounds.y - b.bounds.y;
+    if (Math.abs(dy) > 0.5) return dy;
+    const dx = a.bounds.x - b.bounds.x;
+    if (Math.abs(dx) > 0.5) return dx;
+    return 0;
+  });
+
+  // Padding del fondo/contenedor → hueco interior donde viven las tarjetas.
+  const contentUnion = unionPageRects(sortedClusters.map((c) => c.bounds));
+  const columnFrame = measureStackColumn({
+    units: contentUnion ? [{ bounds: contentUnion }] : [],
+    contentWidth,
+    fallbackGap: gap,
+    parentBounds: stackParentBounds,
+  });
+  const stackInnerWidth = columnFrame.inner.width;
+  const stackInsets = columnFrame.insets;
+
+  let measured: Measured[] = sortedClusters.map((cluster) => {
       const nested = nestedOverrideForCluster(cluster, args.blueprint, band, index);
       if (
         nested?.mode === "stack" &&
@@ -1357,7 +1423,13 @@ function layoutSectionStackMode(args: {
           groupId: cluster.unit.nodeId,
           index,
         });
-        const m = measureStackUnits(units, contentWidth, gap);
+        const m = measureStackColumn({
+          units,
+          contentWidth: stackInnerWidth,
+          fallbackGap: gap,
+          // El padding del fondo ya lo aplica el marco de sección; aquí solo gutters entre hijos.
+          parentBounds: null,
+        });
         return {
           cluster,
           width: m.width,
@@ -1366,6 +1438,9 @@ function layoutSectionStackMode(args: {
           mode: "reflow" as const,
           nestedStack: units,
           nestedScales: m.scales,
+          nestedGaps: m.gaps,
+          nestedOrigin: m.origin,
+          nestedInsets: undefined,
         };
       }
       if (cluster.kind === "surface") {
@@ -1373,7 +1448,7 @@ function layoutSectionStackMode(args: {
           cluster,
           index,
           band,
-          contentWidth,
+          contentWidth: stackInnerWidth,
           gap,
         });
         return {
@@ -1386,7 +1461,7 @@ function layoutSectionStackMode(args: {
       }
       if (cluster.kind === "preserve" || nested?.mode === "preserve") {
         const origin = cluster.kind === "solo" ? cluster.unit.bounds : cluster.bounds;
-        const scale = Math.min(1, contentWidth / Math.max(1, origin.width));
+        const scale = Math.min(1, stackInnerWidth / Math.max(1, origin.width));
         return {
           cluster,
           width: origin.width * scale,
@@ -1396,12 +1471,12 @@ function layoutSectionStackMode(args: {
           enforceMinFont: nested?.mode === "preserve" ? false : undefined,
         };
       }
-      let scale = Math.min(1, contentWidth / Math.max(1, cluster.unit.bounds.width));
+      let scale = Math.min(1, stackInnerWidth / Math.max(1, cluster.unit.bounds.width));
       if (cluster.unit.kind === "button") {
         const need = MIN_TOUCH / Math.max(1, cluster.unit.bounds.height);
         scale = Math.min(
           1,
-          Math.max(scale, Math.min(need, contentWidth / Math.max(1, cluster.unit.bounds.width))),
+          Math.max(scale, Math.min(need, stackInnerWidth / Math.max(1, cluster.unit.bounds.width))),
         );
       }
       return {
@@ -1439,11 +1514,22 @@ function layoutSectionStackMode(args: {
     });
   }
 
-  let stackH = inset;
-  for (const item of measured) {
-    stackH += item.height + gap;
+  const stackClusterBounds = measured.map((item) => item.cluster.bounds);
+  const stackOrigin = unionPageRects(stackClusterBounds);
+  const stackScale = stackLayoutScale(stackOrigin, stackInnerWidth);
+  const stackGaps = preservedStackGaps(
+    stackClusterBounds.map((bounds) => ({ bounds })),
+    stackScale,
+    gap,
+  );
+
+  // Márgenes del diseño (fondo → contenido) + gaps entre unidades.
+  let stackH = Math.max(inset, stackInsets.top);
+  for (let i = 0; i < measured.length; i++) {
+    stackH += measured[i]!.height;
+    if (i < measured.length - 1) stackH += stackGaps[i]!;
   }
-  stackH += inset - (measured.length ? gap : 0);
+  stackH += Math.max(inset, stackInsets.bottom);
 
   const sectionHeight = resolveSectionHeight(metrics, stackH);
   const layoutRect: PageRect = {
@@ -1456,12 +1542,18 @@ function layoutSectionStackMode(args: {
   const backgroundFocals = placeBackgroundLayers({
     byId: args.byId,
     backgroundLayerIds: analysis.background.backgroundLayerIds,
-    layoutRect,
+    layoutRect: {
+      x: contentLeft,
+      y: layoutRect.y,
+      width: contentWidth,
+      height: layoutRect.height,
+    },
     sourceRegion: analysis.containerBounds,
     sourcePageWidth: args.sourceWidth,
     index,
     blueprint: args.blueprint,
     band,
+    stretchToLayout: true,
   });
 
   const extraY = Math.max(0, sectionHeight - stackH);
@@ -1469,20 +1561,22 @@ function layoutSectionStackMode(args: {
   const yShift =
     yAlign === "end" ? extraY : yAlign === "center" ? extraY / 2 : 0;
 
+  const innerLeft = contentLeft + stackInsets.left;
   const ephemeralClusters: ResolvedResponsiveRegion["ephemeralClusters"] = [];
-  let y = sectionTop + inset + yShift;
-  for (const item of measured) {
-    const boxW = Math.min(item.width, contentWidth);
+  let y = sectionTop + Math.max(inset, stackInsets.top) + yShift;
+  for (let stackIndex = 0; stackIndex < measured.length; stackIndex++) {
+    const item = measured[stackIndex]!;
+    const boxW = Math.min(item.width, stackInnerWidth);
     const placedBox: PageRect = {
       x:
         metrics.contentAlignX != null
           ? contentBoxX({
               align: metrics.contentAlignX,
-              contentLeft,
-              contentWidth,
+              contentLeft: innerLeft,
+              contentWidth: stackInnerWidth,
               boxWidth: boxW,
             })
-          : contentLeft + (contentWidth - boxW) / 2,
+          : innerLeft + (stackInnerWidth - boxW) / 2,
       y,
       width: boxW,
       height: item.height,
@@ -1492,10 +1586,12 @@ function layoutSectionStackMode(args: {
         byId: args.byId,
         units: item.nestedStack,
         scales: item.nestedScales,
+        gaps: item.nestedGaps ?? [],
+        origin: item.nestedOrigin ?? null,
         index,
         band,
         target: placedBox,
-        gap,
+        fallbackGap: gap,
         enforceMinFont: false,
       });
       ephemeralClusters.push({
@@ -1504,7 +1600,7 @@ function layoutSectionStackMode(args: {
         layerIds: [...item.cluster.allLayerIds],
         placedRect: placed,
       });
-      y = placed.y + placed.height + gap;
+      y = placed.y + placed.height + (stackGaps[stackIndex] ?? 0);
       continue;
     }
     if (item.cluster.kind === "surface") {
@@ -1525,7 +1621,7 @@ function layoutSectionStackMode(args: {
         layerIds: [...item.cluster.allLayerIds],
         placedRect: placed,
       });
-      y = placed.y + placed.height + gap;
+      y = placed.y + placed.height + (stackGaps[stackIndex] ?? 0);
       continue;
     }
     if (item.cluster.kind === "preserve" || item.enforceMinFont === false) {
@@ -1551,7 +1647,7 @@ function layoutSectionStackMode(args: {
         reason: item.cluster.kind === "preserve" ? item.cluster.reason : undefined,
         placedRect: placed,
       });
-      y = placed.y + placed.height + gap;
+      y = placed.y + placed.height + (stackGaps[stackIndex] ?? 0);
       continue;
     }
     const placed = layoutSoloUnitAt({
@@ -1568,7 +1664,7 @@ function layoutSectionStackMode(args: {
       layerIds: [...item.cluster.allLayerIds],
       placedRect: placed,
     });
-    y = placed.y + placed.height + gap;
+    y = placed.y + placed.height + (stackGaps[stackIndex] ?? 0);
   }
 
   return {
@@ -1618,6 +1714,8 @@ function layoutSectionAutoMode(args: {
     anchor: { x: number; y: number };
     nestedStack?: Array<{ layerIds: string[]; bounds: PageRect }>;
     nestedScales?: number[];
+    nestedGaps?: number[];
+    nestedOrigin?: PageRect | null;
     enforceMinFont?: boolean;
   };
   const measured: Measured[] = [];
@@ -1636,7 +1734,7 @@ function layoutSectionAutoMode(args: {
         groupId: cluster.unit.nodeId,
         index,
       });
-      const m = measureStackUnits(units, contentWidth, gap);
+      const m = measureStackColumn({ units, contentWidth, fallbackGap: gap });
       measured.push({
         cluster,
         width: m.width,
@@ -1646,6 +1744,8 @@ function layoutSectionAutoMode(args: {
         anchor,
         nestedStack: units,
         nestedScales: m.scales,
+        nestedGaps: m.gaps,
+        nestedOrigin: m.origin,
       });
       continue;
     }
@@ -1758,10 +1858,12 @@ function layoutSectionAutoMode(args: {
         byId: args.byId,
         units: item.nestedStack,
         scales: item.nestedScales,
+        gaps: item.nestedGaps ?? [],
+        origin: item.nestedOrigin ?? null,
         index,
         band,
-        target: { ...placedBox, width: contentWidth, x: inset },
-        gap,
+        target: placedBox,
+        fallbackGap: gap,
         enforceMinFont: false,
       });
       ephemeralClusters.push({
@@ -2825,6 +2927,9 @@ function applyPageInsetsToResolved(
   const fromInner = Math.max(1, layoutWidth - current.left - current.right);
   const toInner = Math.max(1, layoutWidth - target.left - target.right);
   const scaleX = toInner / fromInner;
+  // Comprimir solo desde layouts a sangre. Si el contenido ya tiene márgenes
+  // (p. ej. tras Apilar), no volver a estrechar toda la página.
+  if (scaleX < 0.999 && pageInsetsAreActive(current)) return result;
   applyPageInsetsToObjects(result.displayPage.objects ?? [], current.left, target.left, scaleX);
   reflowAreaTextHeightsInPage(result.displayPage);
 
@@ -3218,7 +3323,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         band,
         index,
       }).mode;
-      if (sectionMode !== "preserve") {
+      if (sectionMode !== "preserve" && sectionMode !== "stack") {
         applyResponsiveContainerTunes({
           byId,
           blueprint: args.blueprint,

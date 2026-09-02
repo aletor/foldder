@@ -764,8 +764,8 @@ describe("site creator UX contextual actions", () => {
       persistGate: gateOk,
       band: "tablet",
     });
-    expect(tablet.primaryActions.map((a) => a.id)).toEqual(["groupWidthFull", "separateGroup", "createMultiCard"]);
-    expect(tablet.primaryActions.find((a) => a.id === "groupWidthFull")?.label).toBe("Ancho completo");
+    expect(tablet.primaryActions.map((a) => a.id)).toEqual(["separateGroup", "createMultiCard"]);
+    expect(tablet.primaryActions.find((a) => a.id === "separateGroup")?.label).toBe("Desagrupar");
   });
 
   it("recognizes a nested group and its layers as already inside a section", () => {
