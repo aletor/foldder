@@ -962,6 +962,8 @@ export interface TextObject extends FreehandObjectBase {
   fontWeight: number;
   lineHeight: number;
   letterSpacing: number;
+  /** Tracking extra (px); se suma a letterSpacing en medida y export. */
+  charSpacing?: number;
   /** Tracking (CSS em); pair kerning via OpenType features. */
   fontKerning?: "auto" | "none";
   fontFeatureSettings?: string;

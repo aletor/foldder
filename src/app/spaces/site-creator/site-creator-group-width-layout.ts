@@ -321,8 +321,6 @@ function placeWorldObject(
   const uniform = Math.min(t.scaleX, t.scaleY);
   if (obj.type === "text" || obj.type === "textOnPath") {
     if (getObjectFontSize(obj) > 0) scaleTextTypographyFields(obj, uniform, 8);
-  } else if (obj.type === "clippingContainer" || obj.type === "booleanGroup") {
-    scaleSubtreeLocal(obj, t.scaleX, t.scaleY);
   } else {
     scaleStyleFields(obj, uniform);
   }
