@@ -78,12 +78,14 @@ import {
 import { resolveEffectiveResponsiveMode } from "./site-creator-responsive-overrides";
 import type { EffectiveResponsiveMode } from "./site-creator-responsive-overrides";
 import {
+  applyHiddenObjectAppearance,
   contentBoxX,
   contentBoxY,
   coverageLayerIdsForItem,
   itemRefForCluster,
   resolveContainerTune,
   resolveMediaTune,
+  type HiddenItemsRenderMode,
 } from "./site-creator-responsive-tunes";
 import {
   applyResponsiveContainerTunes,
@@ -2888,9 +2890,11 @@ function applyDeviceVisibility(args: {
   blueprint: SiteBlueprintV1;
   index: SiteCreatorSelectionIndex;
   band: ResponsiveBand;
+  hiddenItems?: HiddenItemsRenderMode;
 }): void {
   const byId = new Map<string, FreehandObject>();
   walkObjects(args.page.objects ?? [], byId);
+  const mode = args.hiddenItems ?? "omit";
   for (const rule of args.blueprint.responsive?.items ?? []) {
     if (rule.byBand[args.band]?.hidden !== true) continue;
     for (const layerId of coverageLayerIdsForItem(
@@ -2900,9 +2904,7 @@ function applyDeviceVisibility(args: {
     )) {
       const object = byId.get(layerId);
       if (!object) continue;
-      object.opacity = 0;
-      object.width = 1;
-      object.height = 1;
+      applyHiddenObjectAppearance(object, mode);
     }
   }
 }
@@ -2920,6 +2922,7 @@ function withLayoutGroupWidthModes(
   multiCardScrollIndexByNodeId?: Record<string, number>,
   dataset?: Dataset | null,
   sourcePage?: DesignerPageState,
+  hiddenItems?: HiddenItemsRenderMode,
 ): SiteCreatorResponsiveResolveResult {
   const laidOut = applyLayoutGroupWidthModes({
     page: result.displayPage,
@@ -2977,6 +2980,7 @@ function withLayoutGroupWidthModes(
     blueprint,
     index,
     band: result.band,
+    hiddenItems,
   });
   if (isResponsiveEditableBand(result.band)) {
     reflowAreaTextHeightsInPage(page);
@@ -3221,6 +3225,11 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
   multiCardScrollIndexByNodeId?: Record<string, number>;
   /** Dataset vivo enchufado al Site Creator (relleno de MultiCard). */
   dataset?: Dataset | null;
+  /**
+   * `ghost`: opacidad baja en el área de trabajo.
+   * `omit` (defecto): desaparece en preview y publicación.
+   */
+  hiddenItems?: HiddenItemsRenderMode;
 }): SiteCreatorResponsiveResolveResult {
   const reference = getPageDimensions(args.page);
   const viewportWidth = clampViewportWidth(args.viewportWidth, reference.width);
@@ -3229,6 +3238,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     viewportHeight: args.viewportHeight ?? reference.height,
     expandViewportSections: args.expandViewportSections !== false,
   };
+  const hiddenItems = args.hiddenItems ?? "omit";
 
   if (band === "wide") {
     const displayPage = deepCloneDesignerPageState(args.page);
@@ -3262,6 +3272,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.multiCardScrollIndexByNodeId,
       args.dataset,
       args.page,
+      hiddenItems,
     );
   }
 
@@ -3309,6 +3320,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         band,
         regions: [syntheticRegion],
         viewportWidth,
+        hiddenItems,
       });
       applyResponsiveMediaTunes({
         byId,
@@ -3363,6 +3375,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
       args.multiCardScrollIndexByNodeId,
       args.dataset,
       args.page,
+      hiddenItems,
     );
   }
 
@@ -3577,6 +3590,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
         clipRect: r.clipRect,
       })),
       viewportWidth,
+      hiddenItems,
     });
     const backgroundLayerIds = new Set<string>();
     for (const region of regions) {
@@ -3676,6 +3690,7 @@ export function resolveSiteCreatorResponsiveDisplay(args: {
     args.multiCardScrollIndexByNodeId,
     args.dataset,
     args.page,
+    hiddenItems,
   );
 }
 

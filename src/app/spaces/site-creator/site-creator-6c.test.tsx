@@ -98,6 +98,40 @@ describe("site-creator 6C contextual refine", () => {
     expect(findDisplayObject(tablet.displayPage, "title")?.opacity).not.toBe(0);
   });
 
+  it("ghosts hidden items in the work area and omits them for preview/publish", () => {
+    const fx = fixtureHeroPanelButton();
+    const hiddenWide = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "blueprintNode", nodeId: fx.heroId },
+      band: "wide",
+      patch: { hidden: true },
+    }).blueprint;
+    const index = buildSiteSelectionIndex(fx.page);
+    const src = fx.page.objects?.find((o) => o.id === "title");
+    const ghost = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: hiddenWide,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+      hiddenItems: "ghost",
+    });
+    const ghostTitle = findDisplayObject(ghost.displayPage, "title");
+    expect(ghostTitle?.opacity).toBe(0.08);
+    expect(ghostTitle?.width).toBe(src?.width);
+    expect(ghostTitle?.height).toBe(src?.height);
+    const omitted = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: hiddenWide,
+      referenceIndex: index,
+      viewportWidth: 1920,
+      band: "wide",
+      hiddenItems: "omit",
+    });
+    expect(findDisplayObject(omitted.displayPage, "title")?.opacity).toBe(0);
+    expect(findDisplayObject(omitted.displayPage, "title")?.width).toBe(1);
+  });
+
   it("tablet item tune does not change mobile", () => {
     const fx = fixtureHeroPanelButton();
     const tablet = patchItemTune({
@@ -906,6 +940,50 @@ describe("site-creator 6C visible layout effects", () => {
     ).toBeCloseTo(1.44, 2);
   });
 
+  it("keeps the opposite corner fixed on a uniform NW resize", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const before = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const b0 = findDisplayObject(before.displayPage, "btn_shape")!;
+    const right0 = b0.x + b0.width;
+    const bottom0 = b0.y + b0.height;
+    // Escala uniforme por el eje dominante (ancho): dy compensatorio = -dh.
+    const factor = (b0.width + 30) / b0.width;
+    const dw = b0.width * factor - b0.width;
+    const dh = b0.height * factor - b0.height;
+    const delta = { dx: -dw, dy: -dh, dw, dh };
+    const geometry = itemGeometryFromDelta({
+      tune: null,
+      delta,
+      displayBounds: { x: b0.x, y: b0.y, width: b0.width, height: b0.height },
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const patched = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "btn_shape" },
+      band: "tablet",
+      patch: {
+        shiftX: geometry.shiftX,
+        shiftY: geometry.shiftY,
+        scale: geometry.scale,
+      },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: patched,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const b1 = findDisplayObject(after.displayPage, "btn_shape")!;
+    expect(b1.x + b1.width).toBeCloseTo(right0, 0);
+    expect(b1.y + b1.height).toBeCloseTo(bottom0, 0);
+  });
+
   it("round-trips a drag on a scaled item so release matches the ghost box", () => {
     const fx = fixtureHeroPanelButton();
     const index = buildSiteSelectionIndex(fx.page);
@@ -1215,13 +1293,26 @@ describe("site-creator 6C visible layout effects", () => {
         displayBounds: { width: 200, height: 80 },
       }),
     ).toEqual({ shiftX: 0, shiftY: 0, boxW: 1.2, boxH: null, hugHeight: true });
+    // Borde oeste: shift se re-encodea contra el ancho nuevo para fijar el borde este.
+    expect(
+      itemTextBoxFromDelta({
+        tune: null,
+        delta: { dx: -20, dy: 0, dw: 20 },
+        displayBounds: { width: 200, height: 80 },
+      }).shiftX,
+    ).toBeCloseTo(-20 / 220, 4);
     expect(
       itemTextBoxFromDelta({
         tune: null,
         delta: { dx: -20, dy: 0, dw: 20 },
         displayBounds: { width: 200, height: 80 },
       }),
-    ).toEqual({ shiftX: -0.1, shiftY: 0, boxW: 1.1, boxH: null, hugHeight: true });
+    ).toMatchObject({
+      shiftY: 0,
+      boxW: 1.1,
+      boxH: null,
+      hugHeight: true,
+    });
     expect(
       itemTextBoxFromDelta({
         tune: null,
@@ -1229,6 +1320,41 @@ describe("site-creator 6C visible layout effects", () => {
         displayBounds: { width: 200, height: 80 },
       }).hugHeight,
     ).toBe(false);
+  });
+
+  it("keeps the opposite edge fixed after a west text-box resize apply", () => {
+    const fx = fixtureHeroPanelButton();
+    const index = buildSiteSelectionIndex(fx.page);
+    const before = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: fx.blueprint,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t0 = findDisplayObject(before.displayPage, "title")!;
+    const right0 = t0.x + t0.width;
+    const delta = { dx: -40, dy: 0, dw: 40 };
+    const box = itemTextBoxFromDelta({
+      tune: null,
+      delta,
+      displayBounds: { x: t0.x, y: t0.y, width: t0.width, height: t0.height },
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const patched = patchItemTune({
+      blueprint: fx.blueprint,
+      target: { kind: "layer", layerId: "title" },
+      band: "tablet",
+      patch: { shiftX: box.shiftX, boxW: box.boxW },
+    }).blueprint;
+    const after = resolveSiteCreatorResponsiveDisplay({
+      page: fx.page,
+      blueprint: patched,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_TABLET_WIDTH,
+    });
+    const t1 = findDisplayObject(after.displayPage, "title")!;
+    expect(t1.width).toBeCloseTo(t0.width + 40, 0);
+    expect(t1.x + t1.width).toBeCloseTo(right0, 0);
   });
 
   it("clears explicit text-box height so the frame hugs again", () => {

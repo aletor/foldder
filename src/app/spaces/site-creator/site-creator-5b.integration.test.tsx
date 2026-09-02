@@ -282,6 +282,7 @@ function StructureHarness({ initialPage }: { initialPage: DesignerPageState }) {
         visualLayerCount={index.entries.length}
         reviewCount={0}
         defaultOpen
+        revealMode="manual"
       />
       <button type="button" data-testid="undo" onClick={undo}>
         Undo

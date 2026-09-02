@@ -622,6 +622,37 @@ describe("SiteCreatorPreview", () => {
     expect(onCanvasBackgroundDoubleClick).toHaveBeenCalledTimes(1);
   });
 
+  it("applies a focus camera on the selected page rect and exits on wheel", () => {
+    const snapshotPage: DesignerPageState = {
+      id: "snap_pg",
+      format: "web169",
+      customWidth: 400,
+      customHeight: 300,
+      objects: [],
+    };
+    const onCanvasFocusZoomExit = vi.fn();
+
+    render(
+      <SiteCreatorPreview
+        page={snapshotPage}
+        viewportWidth={400}
+        referenceWidth={400}
+        previewZoom={0.5}
+        focusPageRect={{ x: 40, y: 40, width: 80, height: 60 }}
+        onCanvasFocusZoomExit={onCanvasFocusZoomExit}
+      />,
+    );
+
+    const camera = screen.getByTestId("site-creator-focus-camera");
+    expect(camera.getAttribute("data-canvas-focus")).toBe("1");
+    expect(camera.style.transform).toContain("scale(");
+
+    const scroll = document.querySelector(".site-creator-preview-scroll");
+    expect(scroll).toBeTruthy();
+    fireEvent.wheel(scroll!, { deltaY: 24 });
+    expect(onCanvasFocusZoomExit).toHaveBeenCalledTimes(1);
+  });
+
   it("marquee from dark preview chrome selects intersecting layers", () => {
     const snapshotPage: DesignerPageState = {
       id: "snap_pg",

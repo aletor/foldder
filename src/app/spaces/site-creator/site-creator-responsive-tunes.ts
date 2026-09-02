@@ -62,6 +62,22 @@ export const ITEM_BOX_MIN = 0.2;
 export const ITEM_BOX_MAX = 4;
 export const ITEM_FONT_SCALE_MIN = 0.5;
 export const ITEM_FONT_SCALE_MAX = 2;
+/** Opacidad en el área de trabajo cuando un objeto está oculto para preview/publicación. */
+export const SITE_CREATOR_WORKSPACE_HIDDEN_OPACITY = 0.08;
+export type HiddenItemsRenderMode = "ghost" | "omit";
+
+export function applyHiddenObjectAppearance(
+  object: { opacity?: number; width?: number; height?: number },
+  mode: HiddenItemsRenderMode,
+): void {
+  if (mode === "ghost") {
+    object.opacity = SITE_CREATOR_WORKSPACE_HIDDEN_OPACITY;
+    return;
+  }
+  object.opacity = 0;
+  object.width = 1;
+  object.height = 1;
+}
 
 export function normalizeItemShift(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -106,7 +122,8 @@ export function itemAutoSizeFromDisplay(args: {
 export function itemGeometryFromDelta(args: {
   tune: ResponsiveItemTuneV1 | null | undefined;
   delta: { dx: number; dy: number; dw?: number; dh?: number };
-  displayBounds: Pick<PageRect, "width" | "height">;
+  displayBounds: Pick<PageRect, "width" | "height"> & Partial<Pick<PageRect, "x" | "y">>;
+  viewportWidth?: number;
 }): { shiftX: number; shiftY: number; scale: number } {
   const currentScale = normalizeItemScale(args.tune?.scale ?? 1);
   const displayW = Math.max(1, args.displayBounds.width);
@@ -114,11 +131,6 @@ export function itemGeometryFromDelta(args: {
   let shiftX = args.tune?.shiftX ?? 0;
   let shiftY = args.tune?.shiftY ?? 0;
   let scale = currentScale;
-  if (args.delta.dx || args.delta.dy) {
-    // Misma base que apply: % del tamaño visual actual.
-    shiftX = normalizeItemShift(shiftX + args.delta.dx / displayW);
-    shiftY = normalizeItemShift(shiftY + args.delta.dy / displayH);
-  }
   const dw = args.delta.dw ?? 0;
   const dh = args.delta.dh ?? 0;
   if (dw || dh) {
@@ -127,13 +139,32 @@ export function itemGeometryFromDelta(args: {
     const factor = Math.abs(dw) >= Math.abs(dh) ? factorW : factorH;
     scale = normalizeItemScale(currentScale * factor);
   }
+  // Apply usa shift × tamaño visual post-escala: re-encodear contra el tamaño nuevo.
+  const newW = Math.max(1, displayW * (scale / currentScale));
+  const newH = Math.max(1, displayH * (scale / currentScale));
+  if (args.delta.dx || args.delta.dy || dw || dh) {
+    shiftX = normalizeItemShift((shiftX * displayW + args.delta.dx) / newW);
+    shiftY = normalizeItemShift((shiftY * displayH + args.delta.dy) / newH);
+  }
+  if (
+    typeof args.viewportWidth === "number" &&
+    Number.isFinite(args.viewportWidth) &&
+    typeof args.displayBounds.x === "number"
+  ) {
+    const originX = args.displayBounds.x - (args.tune?.shiftX ?? 0) * displayW;
+    const desiredX = originX + shiftX * newW;
+    const maxX = Math.max(0, args.viewportWidth - newW);
+    const clampedX = Math.max(0, Math.min(desiredX, maxX));
+    shiftX = normalizeItemShift((clampedX - originX) / newW);
+  }
   return { shiftX, shiftY, scale };
 }
 
 export function itemTextBoxFromDelta(args: {
   tune: ResponsiveItemTuneV1 | null | undefined;
   delta: { dx: number; dy: number; dw?: number; dh?: number };
-  displayBounds: Pick<PageRect, "width" | "height">;
+  displayBounds: Pick<PageRect, "width" | "height"> & Partial<Pick<PageRect, "x" | "y">>;
+  viewportWidth?: number;
 }): {
   shiftX: number;
   shiftY: number;
@@ -149,10 +180,6 @@ export function itemTextBoxFromDelta(args: {
   const autoH = Math.max(1, displayH / Math.max(0.001, currentBoxH));
   let shiftX = args.tune?.shiftX ?? 0;
   let shiftY = args.tune?.shiftY ?? 0;
-  if (args.delta.dx || args.delta.dy) {
-    shiftX = normalizeItemShift(shiftX + args.delta.dx / displayW);
-    shiftY = normalizeItemShift(shiftY + args.delta.dy / displayH);
-  }
   const dw = args.delta.dw ?? 0;
   const dh = args.delta.dh ?? 0;
   let boxW = currentBoxW;
@@ -165,6 +192,24 @@ export function itemTextBoxFromDelta(args: {
     hugHeight = false;
     boxH = normalizeItemBoxFactor((displayH + dh) / autoH);
   }
+  const newW = Math.max(1, dw ? displayW + dw : displayW);
+  const newH = Math.max(1, dh ? displayH + dh : displayH);
+  // shift% se aplica sobre el tamaño nuevo: (oldShift*oldSize + dx) / newSize.
+  if (args.delta.dx || args.delta.dy || dw || dh) {
+    shiftX = normalizeItemShift((shiftX * displayW + args.delta.dx) / newW);
+    shiftY = normalizeItemShift((shiftY * displayH + args.delta.dy) / newH);
+  }
+  if (
+    typeof args.viewportWidth === "number" &&
+    Number.isFinite(args.viewportWidth) &&
+    typeof args.displayBounds.x === "number"
+  ) {
+    const originX = args.displayBounds.x - (args.tune?.shiftX ?? 0) * displayW;
+    const desiredX = originX + shiftX * newW;
+    const maxX = Math.max(0, args.viewportWidth - newW);
+    const clampedX = Math.max(0, Math.min(desiredX, maxX));
+    shiftX = normalizeItemShift((clampedX - originX) / newW);
+  }
   return { shiftX, shiftY, boxW, boxH, hugHeight };
 }
 
@@ -172,19 +217,20 @@ export function itemTextBoxFromDelta(args: {
 export function itemTunePatchFromTransformDelta(args: {
   tune: ResponsiveItemTuneV1 | null | undefined;
   delta: { dx: number; dy: number; dw?: number; dh?: number };
-  displayBounds: Pick<PageRect, "width" | "height">;
+  displayBounds: Pick<PageRect, "width" | "height"> & Partial<Pick<PageRect, "x" | "y">>;
   kind: "uniform" | "textBox" | "textFontOnly";
+  viewportWidth?: number;
 }): (Omit<Partial<ResponsiveItemTuneV1>, "boxH"> & { boxH?: number | null }) | null {
-  const { tune, delta, displayBounds, kind } = args;
+  const { tune, delta, displayBounds, kind, viewportWidth } = args;
   if (kind === "textBox") {
-    const box = itemTextBoxFromDelta({ tune, delta, displayBounds });
+    const box = itemTextBoxFromDelta({ tune, delta, displayBounds, viewportWidth });
     const patch: Omit<Partial<ResponsiveItemTuneV1>, "boxH"> & {
       boxH?: number | null;
       scale?: undefined;
       offset?: undefined;
       size?: undefined;
     } = { offset: undefined, size: undefined, scale: undefined };
-    if (delta.dx || delta.dy) {
+    if (delta.dx || delta.dy || delta.dw || delta.dh) {
       patch.shiftX = box.shiftX;
       patch.shiftY = box.shiftY;
     }
@@ -197,7 +243,7 @@ export function itemTunePatchFromTransformDelta(args: {
   }
   if (kind === "textFontOnly") {
     if (!(delta.dx || delta.dy)) return null;
-    const geometry = itemGeometryFromDelta({ tune, delta, displayBounds });
+    const geometry = itemGeometryFromDelta({ tune, delta, displayBounds, viewportWidth });
     return {
       shiftX: geometry.shiftX,
       shiftY: geometry.shiftY,
@@ -205,12 +251,12 @@ export function itemTunePatchFromTransformDelta(args: {
       size: undefined,
     };
   }
-  const geometry = itemGeometryFromDelta({ tune, delta, displayBounds });
+  const geometry = itemGeometryFromDelta({ tune, delta, displayBounds, viewportWidth });
   const patch: Partial<ResponsiveItemTuneV1> & {
     offset?: undefined;
     size?: undefined;
   } = { offset: undefined, size: undefined };
-  if (delta.dx || delta.dy) {
+  if (delta.dx || delta.dy || delta.dw || delta.dh) {
     patch.shiftX = geometry.shiftX;
     patch.shiftY = geometry.shiftY;
   }

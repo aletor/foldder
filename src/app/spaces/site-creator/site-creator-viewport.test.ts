@@ -13,6 +13,8 @@ import {
   clampViewportWidth,
   computeFillWidthPreviewZoom,
   computeFitPreviewZoom,
+  computeCanvasFocusCamera,
+  isRapidSecondClick,
   measureSiteCreatorPreviewAvailableSize,
   defaultDeviceConfig,
   detectViewportPreset,
@@ -345,5 +347,51 @@ describe("site-creator-viewport", () => {
       color: "#3a414c",
       rim: "0 0 0 1px rgba(255,255,255,0.22)",
     });
+  });
+});
+
+describe("canvas object focus camera", () => {
+  it("scales a small object to fill the available view", () => {
+    const camera = computeCanvasFocusCamera({
+      pageRect: { x: 100, y: 200, width: 200, height: 100 },
+      pageWidth: 1000,
+      pageHeight: 1000,
+      contentDisplayWidth: 1000,
+      contentDisplayHeight: 1000,
+      contentOffsetX: 0,
+      contentOffsetY: 0,
+      wrapperWidth: 1000,
+      wrapperHeight: 1000,
+      availableWidth: 800,
+      availableHeight: 600,
+      paddingPx: 0,
+    });
+    expect(camera.scale).toBe(4);
+    expect(camera.transform).toContain("scale(4)");
+    expect(camera.transform).toContain("translate(-200px, -250px)");
+  });
+
+  it("does not zoom out when the object already fills the view", () => {
+    const camera = computeCanvasFocusCamera({
+      pageRect: { x: 0, y: 0, width: 1000, height: 1000 },
+      pageWidth: 1000,
+      pageHeight: 1000,
+      contentDisplayWidth: 400,
+      contentDisplayHeight: 400,
+      contentOffsetX: 0,
+      contentOffsetY: 0,
+      wrapperWidth: 400,
+      wrapperHeight: 400,
+      availableWidth: 400,
+      availableHeight: 400,
+      paddingPx: 0,
+    });
+    expect(camera.scale).toBe(1);
+  });
+
+  it("treats a delayed second click as independent, not a double click", () => {
+    expect(isRapidSecondClick(0, 180)).toBe(true);
+    expect(isRapidSecondClick(0, 501)).toBe(false);
+    expect(isRapidSecondClick(null, 20)).toBe(false);
   });
 });

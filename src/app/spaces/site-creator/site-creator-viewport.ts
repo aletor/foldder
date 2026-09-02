@@ -195,6 +195,59 @@ export const SITE_CREATOR_FIT_ZOOM_MAX = 2;
 export const SITE_CREATOR_PREVIEW_ZOOM_MIN = 0.05;
 export const SITE_CREATOR_PREVIEW_ZOOM_MAX = 4;
 export const SITE_CREATOR_PREVIEW_ZOOM_WHEEL_FACTOR = 1.08;
+/** Ventana de doble clic nativo: no exige un gesto ultrarrápido ni dos clics separados. */
+export const SITE_CREATOR_DOUBLE_CLICK_MS = 500;
+/** Padding alrededor del objeto al hacer zoom de enfoque. */
+export const SITE_CREATOR_OBJECT_FOCUS_PADDING_PX = 56;
+export const SITE_CREATOR_OBJECT_FOCUS_SCALE_MAX = 8;
+/** Rueda mínima (px) para salir del zoom de enfoque. */
+export const SITE_CREATOR_FOCUS_ZOOM_WHEEL_PX = 2;
+
+export function isRapidSecondClick(
+  previousAtMs: number | null | undefined,
+  nextAtMs: number,
+  windowMs = SITE_CREATOR_DOUBLE_CLICK_MS,
+): boolean {
+  if (previousAtMs == null) return false;
+  const dt = nextAtMs - previousAtMs;
+  return dt >= 0 && dt <= windowMs;
+}
+
+export function computeCanvasFocusCamera(args: {
+  pageRect: { x: number; y: number; width: number; height: number };
+  pageWidth: number;
+  pageHeight: number;
+  contentDisplayWidth: number;
+  contentDisplayHeight: number;
+  contentOffsetX: number;
+  contentOffsetY: number;
+  wrapperWidth: number;
+  wrapperHeight: number;
+  availableWidth: number;
+  availableHeight: number;
+  scrollTop?: number;
+  paddingPx?: number;
+  maxScale?: number;
+}): { scale: number; transform: string } {
+  const pageW = Math.max(1, args.pageWidth);
+  const pageH = Math.max(1, args.pageHeight);
+  const objW = Math.max(1, (args.pageRect.width / pageW) * args.contentDisplayWidth);
+  const objH = Math.max(1, (args.pageRect.height / pageH) * args.contentDisplayHeight);
+  const objCx =
+    args.contentOffsetX +
+    ((args.pageRect.x + args.pageRect.width / 2) / pageW) * args.contentDisplayWidth;
+  const objCy =
+    args.contentOffsetY +
+    ((args.pageRect.y + args.pageRect.height / 2) / pageH) * args.contentDisplayHeight -
+    Math.max(0, args.scrollTop ?? 0);
+  const pad = args.paddingPx ?? SITE_CREATOR_OBJECT_FOCUS_PADDING_PX;
+  const maxScale = args.maxScale ?? SITE_CREATOR_OBJECT_FOCUS_SCALE_MAX;
+  const fitW = Math.max(1, args.availableWidth - pad * 2);
+  const fitH = Math.max(1, args.availableHeight - pad * 2);
+  const scale = Math.min(maxScale, Math.max(1, Math.min(fitW / objW, fitH / objH)));
+  const transform = `translate(${args.wrapperWidth / 2}px, ${args.wrapperHeight / 2}px) scale(${scale}) translate(${-objCx}px, ${-objCy}px)`;
+  return { scale, transform };
+}
 
 export function clampPreviewZoom(zoom: number): number {
   const n = Number.isFinite(zoom) ? zoom : 1;

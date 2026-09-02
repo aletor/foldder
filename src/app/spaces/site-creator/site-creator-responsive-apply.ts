@@ -35,6 +35,7 @@ import {
   layerOwnedByButton,
 } from "./site-creator-text-frame";
 import {
+  applyHiddenObjectAppearance,
   contentBoxX,
   contentBoxY,
   coverageLayerIdsForItem,
@@ -45,6 +46,7 @@ import {
   resolveItemTune,
   resolveMediaTune,
   sameItemRef,
+  type HiddenItemsRenderMode,
 } from "./site-creator-responsive-tunes";
 
 function isLayerExcludedFromFlow(args: {
@@ -329,15 +331,16 @@ function hideLayers(
   byId: Map<string, FreehandObject>,
   layerIds: string[],
   park: PageRect,
+  mode: HiddenItemsRenderMode,
 ): void {
   for (const id of layerIds) {
     const obj = byId.get(id);
     if (!obj) continue;
-    obj.opacity = 0;
-    obj.x = park.x;
-    obj.y = park.y;
-    obj.width = 1;
-    obj.height = 1;
+    applyHiddenObjectAppearance(obj, mode);
+    if (mode === "omit") {
+      obj.x = park.x;
+      obj.y = park.y;
+    }
   }
 }
 
@@ -377,6 +380,7 @@ function applyOneItem(args: {
   band: ResponsiveEditableBand;
   regions: ResolvedRegionBox[];
   viewportWidth: number;
+  hiddenItems: HiddenItemsRenderMode;
 }): void {
   const tune = resolveItemTune(args.blueprint, args.target, args.band);
   if (!tune) return;
@@ -385,7 +389,7 @@ function applyOneItem(args: {
 
   if (tune.hidden) {
     const park = args.regions[0]?.clipRect ?? { x: 0, y: 0, width: 1, height: 1 };
-    hideLayers(args.byId, layerIds, park);
+    hideLayers(args.byId, layerIds, park, args.hiddenItems);
     return;
   }
 
@@ -610,8 +614,10 @@ export function applyResponsiveItemTunes(args: {
   band: ResponsiveEditableBand;
   regions: ResolvedRegionBox[];
   viewportWidth: number;
+  hiddenItems?: HiddenItemsRenderMode;
 }): void {
   const items = args.blueprint.responsive?.items ?? [];
+  const hiddenItems = args.hiddenItems ?? "omit";
   for (const rule of items) {
     if (!rule.byBand[args.band]) continue;
     applyOneItem({
@@ -622,6 +628,7 @@ export function applyResponsiveItemTunes(args: {
       band: args.band,
       regions: args.regions,
       viewportWidth: args.viewportWidth,
+      hiddenItems,
     });
   }
 }

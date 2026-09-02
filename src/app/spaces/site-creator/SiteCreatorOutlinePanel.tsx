@@ -11,6 +11,12 @@ import { imageFrameHasPhoto, isDesignerImageFrame, sameSelectionUnit } from "./s
 import type { SiteCreatorSelectionIndex } from "./site-creator-selection-types";
 import type { ResponsiveVisibilityBand } from "./site-creator-types";
 
+/** Ancho de la franja izquierda que despliega el árbol al pasar el ratón. */
+export const SITE_CREATOR_OUTLINE_HOVER_HIT_PX = 200;
+/** Retraso antes de plegar al salir del panel (ms). */
+export const SITE_CREATOR_OUTLINE_COLLAPSE_DELAY_MS = 350;
+export const SITE_CREATOR_OUTLINE_WIDTH_PX = 268;
+
 type OutlineVisibilityState = {
   hidden: boolean;
   inherited?: boolean;
@@ -161,7 +167,7 @@ function solidFillCss(fill: unknown): string | null {
 function Mark({ className, children }: { className?: string; children?: React.ReactNode }) {
   return (
     <span
-      className={`relative inline-flex h-2.5 w-2.5 shrink-0 items-center justify-center text-current ${className ?? ""}`}
+      className={`relative inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center text-current ${className ?? ""}`}
       aria-hidden
     >
       {children}
@@ -180,38 +186,38 @@ function OutlineGlyph({
   if (role === "section") {
     return (
       <Mark>
-        <span className="block h-px w-2.5 bg-current opacity-60" />
+        <span className="block h-[2px] w-3.5 rounded-full bg-current opacity-70" />
       </Mark>
     );
   }
   if (role === "unorganized") {
     return (
-      <Mark className="flex-col gap-px">
-        <span className="block h-px w-2 bg-current opacity-45" />
-        <span className="block h-px w-2 bg-current opacity-45" />
-        <span className="block h-px w-2 bg-current opacity-45" />
+      <Mark className="flex-col gap-[2px]">
+        <span className="block h-[2px] w-3 bg-current opacity-55" />
+        <span className="block h-[2px] w-3 bg-current opacity-55" />
+        <span className="block h-[2px] w-3 bg-current opacity-55" />
       </Mark>
     );
   }
   if (role === "button") {
     return (
       <Mark>
-        <span className="block h-1.5 w-2.5 rounded-[1px] border border-current opacity-55" />
+        <span className="block h-2.5 w-3.5 rounded-[2px] border border-current opacity-70" />
       </Mark>
     );
   }
   if (role === "multicard") {
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-current opacity-45" />
-        <span className="absolute h-1 w-1 bg-current opacity-35" />
+        <span className="block h-3 w-3 border border-current opacity-55" />
+        <span className="absolute h-1.5 w-1.5 bg-current opacity-45" />
       </Mark>
     );
   }
   if (role === "group") {
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-current opacity-40" />
+        <span className="block h-3 w-3 border border-current opacity-55" />
       </Mark>
     );
   }
@@ -219,7 +225,7 @@ function OutlineGlyph({
   if (node.kind !== "layer") {
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-current opacity-40" />
+        <span className="block h-3 w-3 border border-current opacity-50" />
       </Mark>
     );
   }
@@ -239,37 +245,37 @@ function OutlineGlyph({
         );
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-current opacity-40" />
-        {hasImage ? <span className="absolute h-px w-1.5 bg-current opacity-50" /> : null}
+        <span className="block h-3 w-3 border border-current opacity-55" />
+        {hasImage ? <span className="absolute h-[2px] w-2 bg-current opacity-60" /> : null}
       </Mark>
     );
   }
   if (isImage) {
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-current opacity-40" />
-        <span className="absolute h-px w-1.5 bg-current opacity-50" />
+        <span className="block h-3 w-3 border border-current opacity-55" />
+        <span className="absolute h-[2px] w-2 bg-current opacity-60" />
       </Mark>
     );
   }
   if (type === "text" || type === "textOnPath") {
     return (
       <Mark>
-        <span className="text-[8px] font-light leading-none opacity-50">t</span>
+        <span className="text-[11px] font-medium leading-none opacity-65">T</span>
       </Mark>
     );
   }
   if (type === "groupContainer" || type === "booleanGroup") {
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-current opacity-40" />
+        <span className="block h-3 w-3 border border-current opacity-55" />
       </Mark>
     );
   }
   if (type === "path") {
     return (
       <Mark>
-        <span className="block h-px w-2.5 origin-center rotate-[-28deg] bg-current opacity-50" />
+        <span className="block h-[2px] w-3.5 origin-center rotate-[-28deg] bg-current opacity-60" />
       </Mark>
     );
   }
@@ -277,7 +283,7 @@ function OutlineGlyph({
     return (
       <Mark>
         <span
-          className="block h-2 w-2 rounded-full border border-white/20"
+          className="block h-3 w-3 rounded-full border border-white/25"
           style={fill ? { background: fill } : undefined}
         />
       </Mark>
@@ -286,13 +292,13 @@ function OutlineGlyph({
   if (fill) {
     return (
       <Mark>
-        <span className="block h-2 w-2 border border-white/10" style={{ background: fill }} />
+        <span className="block h-3 w-3 border border-white/15" style={{ background: fill }} />
       </Mark>
     );
   }
   return (
     <Mark>
-      <span className="block h-2 w-2 border border-current opacity-35" />
+      <span className="block h-3 w-3 border border-current opacity-45" />
     </Mark>
   );
 }
@@ -429,22 +435,28 @@ function OutlineTreeRow({
         ) : null}
         {hasChildren ? (
           <span
-            role="presentation"
-            className="pointer-events-none inline-flex h-3 w-3 shrink-0 items-center justify-center text-white/25"
-            aria-hidden
+            role="button"
+            aria-label={open ? "Contraer" : "Expandir"}
+            aria-expanded={open}
+            className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-white/55 hover:bg-white/10 hover:text-white/85"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle(node.id);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
           >
             {open ? (
-              <ChevronDown className="h-2.5 w-2.5" strokeWidth={1.25} />
+              <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
             ) : (
-              <ChevronRight className="h-2.5 w-2.5" strokeWidth={1.25} />
+              <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
             )}
           </span>
         ) : (
-          <span className="inline-block h-3 w-3 shrink-0" />
+          <span className="inline-block h-4 w-4 shrink-0" />
         )}
         <OutlineGlyph node={node} selectionIndex={selectionIndex} />
         <span
-          className={`min-w-0 flex-1 truncate ${overrideInfo?.hidden ? "opacity-40" : ""}`}
+          className={`min-w-0 flex-1 truncate text-[11px] ${overrideInfo?.hidden ? "opacity-40" : ""}`}
         >
           {title}
           {aside ? <span className="ml-1.5 text-white/28">{aside}</span> : null}
@@ -583,6 +595,10 @@ export interface SiteCreatorOutlinePanelProps {
   selectionIndex?: SiteCreatorSelectionIndex | null;
   /** Cerrado por defecto en Studio; útil abierto en vistas embebidas. */
   defaultOpen?: boolean;
+  /** hover: overlay sobre el lienzo; manual: sidebar con botón (tests / embebidos). */
+  revealMode?: "hover" | "manual";
+  hoverHitWidthPx?: number;
+  collapseDelayMs?: number;
 }
 
 function ancestorSemanticIds(
@@ -630,11 +646,44 @@ export function SiteCreatorOutlinePanel({
   onShowAllVisibility,
   selectionIndex,
   defaultOpen = false,
+  revealMode = "hover",
+  hoverHitWidthPx = SITE_CREATOR_OUTLINE_HOVER_HIT_PX,
+  collapseDelayMs = SITE_CREATOR_OUTLINE_COLLAPSE_DELAY_MS,
 }: SiteCreatorOutlinePanelProps) {
   const [dragSource, setDragSource] = useState<SiteCreatorPresentationNode | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(defaultOpen);
+  const [manualOpen, setManualOpen] = useState(defaultOpen);
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragActiveRef = useRef(false);
+  dragActiveRef.current = dragSource != null;
   const treeId = useId();
+  const isHoverMode = revealMode === "hover";
+  const panelOpen = isHoverMode ? hoverOpen : manualOpen;
+
+  const cancelCollapse = () => {
+    if (collapseTimerRef.current != null) {
+      clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+    }
+  };
+
+  const scheduleCollapse = () => {
+    if (!isHoverMode || dragActiveRef.current) return;
+    cancelCollapse();
+    collapseTimerRef.current = setTimeout(() => {
+      setHoverOpen(false);
+      collapseTimerRef.current = null;
+    }, collapseDelayMs);
+  };
+
+  const revealPanel = () => {
+    cancelCollapse();
+    if (isHoverMode) setHoverOpen(true);
+    else setManualOpen(true);
+  };
+
+  useEffect(() => () => cancelCollapse(), []);
 
   const toggle = (id: string) => {
     onExpandedIdsChange({
@@ -642,6 +691,116 @@ export function SiteCreatorOutlinePanel({
       [id]: !(expandedIds[id] === true || (expandedIds[id] === undefined && id === "unorganized")),
     });
   };
+
+  const treeBody = (
+    <>
+      {onShowAllVisibility ? (
+        <button
+          type="button"
+          data-testid="outline-show-all"
+          onClick={onShowAllVisibility}
+          className="mt-1 self-start text-[10px] font-light tracking-[0.04em] text-white/35 transition-colors hover:text-white/70"
+        >
+          Mostrar todo
+        </button>
+      ) : null}
+      <div id={treeId} className="mt-4 min-h-0 flex-1 overflow-auto">
+        {tree.roots.length === 0 ? (
+          <p className="text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/30">
+            Selecciona elementos en el diseño. Usa Ctrl/Cmd para añadir varios.
+          </p>
+        ) : (
+          tree.roots.map((node) => (
+            <OutlineTreeRow
+              key={node.id}
+              node={node}
+              depth={0}
+              selectedUnits={selectedUnits}
+              hoveredKey={hoveredKey}
+              expanded={expandedIds}
+              onToggle={toggle}
+              onSelect={(unit, additive, n) => {
+                const path = ancestorSemanticIds(tree, n);
+                onSelectUnit(unit, additive, path);
+              }}
+              onHover={(key, unit) => onHoverUnit(unit, key)}
+              onDragStart={(n) => {
+                cancelCollapse();
+                setDragSource(n);
+              }}
+              onDropOn={(target) => {
+                if (dragSource && target.kind === "semantic") {
+                  onReparentToSemantic?.(target.nodeId, dragSource);
+                }
+                setDragSource(null);
+                setDragOverId(null);
+              }}
+              onDragOverTarget={setDragOverId}
+              dragOverId={dragOverId}
+              resolveOverride={resolveOverride}
+              canvasLockForUnit={canvasLockForUnit}
+              onToggleCanvasLock={onToggleCanvasLock}
+              activeVisibilityBand={activeVisibilityBand}
+              resolveVisibility={resolveVisibility}
+              onToggleVisibility={onToggleVisibility}
+              selectionIndex={selectionIndex}
+            />
+          ))
+        )}
+      </div>
+
+      <div className="mt-6 pt-4">
+        <p className="text-[10px] font-light tracking-[0.08em] text-white/28">
+          {visualLayerCount} capas
+        </p>
+        {reviewCount > 0 ? (
+          <p className="mt-3 text-[10px] font-light tracking-[0.08em] text-amber-300/70">
+            Por revisar · {reviewCount}
+          </p>
+        ) : null}
+        {emptyHint ? (
+          <p className="mt-4 text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/28">
+            {emptyHint}
+          </p>
+        ) : null}
+      </div>
+    </>
+  );
+
+  if (isHoverMode) {
+    return (
+      <div
+        className="site-creator-outline-hover-host pointer-events-none absolute inset-y-0 left-0 z-30"
+        data-testid="site-creator-outline-hover-host"
+      >
+        {!panelOpen ? (
+          <div
+            className="pointer-events-auto h-full"
+            style={{ width: hoverHitWidthPx }}
+            onPointerEnter={revealPanel}
+            data-testid="site-creator-outline-hit-zone"
+            aria-hidden
+          />
+        ) : null}
+        <aside
+          className={`site-creator-outline pointer-events-auto absolute left-0 top-0 flex h-full flex-col px-4 py-5 transition-transform duration-200 ease-out ${
+            panelOpen ? "translate-x-0" : "pointer-events-none -translate-x-full"
+          }`}
+          style={{ width: SITE_CREATOR_OUTLINE_WIDTH_PX }}
+          data-testid="site-creator-outline-panel"
+          data-state={panelOpen ? "open" : "closed"}
+          aria-hidden={!panelOpen}
+          onPointerEnter={revealPanel}
+          onPointerLeave={scheduleCollapse}
+        >
+          <p className="shrink-0 text-[10px] font-light uppercase tracking-[0.22em] text-white/35">
+            Página
+          </p>
+          {treeBody}
+        </aside>
+      </div>
+    );
+  }
 
   return (
     <aside
@@ -657,7 +816,7 @@ export function SiteCreatorOutlinePanel({
         aria-controls={treeId}
         aria-label={panelOpen ? "Ocultar panel Página" : "Mostrar panel Página"}
         title={panelOpen ? "Ocultar Página" : "Mostrar Página"}
-        onClick={() => setPanelOpen((open) => !open)}
+        onClick={() => setManualOpen((open) => !open)}
         className={`flex h-8 shrink-0 items-center text-white/35 transition-colors hover:text-white/70 ${
           panelOpen ? "w-full gap-3" : "w-8 justify-center"
         }`}
@@ -674,77 +833,7 @@ export function SiteCreatorOutlinePanel({
         )}
       </button>
 
-      {panelOpen ? (
-        <>
-          {onShowAllVisibility ? (
-            <button
-              type="button"
-              data-testid="outline-show-all"
-              onClick={onShowAllVisibility}
-              className="mt-3 self-start text-[10px] font-light tracking-[0.04em] text-white/35 transition-colors hover:text-white/70"
-            >
-              Mostrar todo
-            </button>
-          ) : null}
-          <div id={treeId} className="mt-5 min-h-0 flex-1 overflow-auto">
-            {tree.roots.length === 0 ? (
-              <p className="text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/30">
-                Selecciona elementos en el diseño. Usa Ctrl/Cmd para añadir varios.
-              </p>
-            ) : (
-              tree.roots.map((node) => (
-                <OutlineTreeRow
-                  key={node.id}
-                  node={node}
-                  depth={0}
-                  selectedUnits={selectedUnits}
-                  hoveredKey={hoveredKey}
-                  expanded={expandedIds}
-                  onToggle={toggle}
-                  onSelect={(unit, additive, n) => {
-                    const path = ancestorSemanticIds(tree, n);
-                    onSelectUnit(unit, additive, path);
-                  }}
-                  onHover={(key, unit) => onHoverUnit(unit, key)}
-                  onDragStart={(n) => setDragSource(n)}
-                  onDropOn={(target) => {
-                    if (dragSource && target.kind === "semantic") {
-                      onReparentToSemantic?.(target.nodeId, dragSource);
-                    }
-                    setDragSource(null);
-                    setDragOverId(null);
-                  }}
-                  onDragOverTarget={setDragOverId}
-                  dragOverId={dragOverId}
-                  resolveOverride={resolveOverride}
-                  canvasLockForUnit={canvasLockForUnit}
-                  onToggleCanvasLock={onToggleCanvasLock}
-                  activeVisibilityBand={activeVisibilityBand}
-                  resolveVisibility={resolveVisibility}
-                  onToggleVisibility={onToggleVisibility}
-                  selectionIndex={selectionIndex}
-                />
-              ))
-            )}
-          </div>
-
-          <div className="mt-6 border-t border-white/[0.06] pt-5">
-            <p className="text-[10px] font-light tracking-[0.08em] text-white/28">
-              {visualLayerCount} capas
-            </p>
-            {reviewCount > 0 ? (
-              <p className="mt-3 text-[10px] font-light tracking-[0.08em] text-amber-300/70">
-                Por revisar · {reviewCount}
-              </p>
-            ) : null}
-            {emptyHint ? (
-              <p className="mt-4 text-[10px] font-light leading-relaxed tracking-[0.02em] text-white/28">
-                {emptyHint}
-              </p>
-            ) : null}
-          </div>
-        </>
-      ) : null}
+      {panelOpen ? treeBody : null}
     </aside>
   );
 }

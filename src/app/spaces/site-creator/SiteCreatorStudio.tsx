@@ -416,6 +416,29 @@ function boundsForUnit(
   return obj ? strokePathOutlineBounds(obj, geometric) : geometric;
 }
 
+function unitIsWithinFocusUnit(
+  unit: SiteCreatorSelectionUnit,
+  focus: SiteCreatorSelectionUnit,
+  blueprint: SiteBlueprintV1,
+): boolean {
+  if (sameSelectionUnit(unit, focus)) return true;
+  if (focus.kind !== "blueprintNode") return false;
+  if (unit.kind === "layer") {
+    const coverage = collectSemanticCoverageLayerIds(blueprint, focus.nodeId);
+    return (
+      coverage.includes(unit.layerId) || coverage.includes(moldLayerIdFromDisplay(unit.layerId))
+    );
+  }
+  let walk: string | null = unit.nodeId;
+  const seen = new Set<string>();
+  while (walk && !seen.has(walk)) {
+    seen.add(walk);
+    if (walk === focus.nodeId) return true;
+    walk = blueprint.nodes[walk]?.parentId ?? null;
+  }
+  return false;
+}
+
 function parentChoiceLabel(
   parentId: string | null,
   blueprint: SiteBlueprintV1,
@@ -536,6 +559,10 @@ export function SiteCreatorStudio({
   }, []);
 
   const [previewZoom, setPreviewZoom] = useState(1);
+  const [canvasFocus, setCanvasFocus] = useState<{
+    unit: SiteCreatorSelectionUnit;
+    rect: { x: number; y: number; width: number; height: number };
+  } | null>(null);
   const [floatingHostEl, setFloatingHostEl] = useState<HTMLElement | null>(null);
   const setFloatingHostRef = useCallback((el: HTMLElement | null) => {
     setFloatingHostEl((prev) => (prev === el ? prev : el));
@@ -795,6 +822,7 @@ export function SiteCreatorStudio({
           delta: transformLiveDraft.delta,
           displayBounds: item.startBounds,
           kind: item.kind === "moveOnly" ? "uniform" : item.kind,
+          viewportWidth: effectiveViewportWidth,
         });
         if (patch) {
           next = patchItemTune({
@@ -811,6 +839,7 @@ export function SiteCreatorStudio({
     blueprint,
     clipImageDraft,
     clipImageEditTarget,
+    effectiveViewportWidth,
     mediaBand,
     page,
     transformLiveDraft,
@@ -892,6 +921,7 @@ export function SiteCreatorStudio({
       band: responsiveBand,
       multiCardScrollIndexByNodeId,
       dataset,
+      hiddenItems: pagePreviewMode ? "omit" : "ghost",
     });
   }, [
     dataset,
@@ -900,6 +930,7 @@ export function SiteCreatorStudio({
     liveViewportHeight,
     multiCardScrollIndexByNodeId,
     page,
+    pagePreviewMode,
     referenceIndex,
     responsiveBand,
   ]);
@@ -1140,6 +1171,7 @@ export function SiteCreatorStudio({
     setPendingParentChoice(null);
     setSelectionFromMarquee(false);
     setMarqueeGroupBlockOpen(false);
+    setCanvasFocus(null);
   }, []);
 
   const exitPagePreview = useCallback(() => {
@@ -1160,6 +1192,7 @@ export function SiteCreatorStudio({
   const applyViewportBand = useCallback(
     (band: SiteCreatorViewportBand) => {
       setViewportBand(band);
+      setCanvasFocus(null);
       if (band === "original") setOriginalViewportWidth(referenceWidth);
     },
     [referenceWidth],
@@ -1703,6 +1736,27 @@ export function SiteCreatorStudio({
         case "click": {
           setSelectionFromMarquee(false);
           setMarqueeGroupBlockOpen(false);
+          if (canvasFocus) {
+            if (!action.layerId) {
+              setCanvasFocus(null);
+            } else {
+              const rootUnit = clickUnitForLayer(action.layerId);
+              const inspectUnit = displayInspectNodeId
+                ? resolveInspectClickUnit(
+                    action.layerId,
+                    displayInspectNodeId,
+                    blueprint,
+                    selectionIndex,
+                  )
+                : rootUnit;
+              if (
+                !unitIsWithinFocusUnit(rootUnit, canvasFocus.unit, blueprint) &&
+                !unitIsWithinFocusUnit(inspectUnit, canvasFocus.unit, blueprint)
+              ) {
+                setCanvasFocus(null);
+              }
+            }
+          }
           if (armedDatasetChip) {
             if (!action.layerId) {
               setArmedDatasetChip(null);
@@ -1873,6 +1927,7 @@ export function SiteCreatorStudio({
         }
 
         case "marquee": {
+          setCanvasFocus(null);
           const loose = layersToMarqueeSelectionUnits(
             action.layerIds,
             blueprint,
@@ -1906,7 +1961,7 @@ export function SiteCreatorStudio({
               ? findOwningMultiCardDisplay(blueprint, action.layerId, selectionIndex)
               : null;
           const isText = hit?.type === "text" || hit?.type === "textOnPath";
-          if (owning && isText) {
+          if (owning && isText && displayInspectNodeId === owning.nodeId) {
             const displayText =
               typeof (hit?.object as { text?: string } | undefined)?.text === "string"
                 ? (hit!.object as { text?: string }).text ?? ""
@@ -1924,36 +1979,26 @@ export function SiteCreatorStudio({
             setUnits([{ kind: "blueprintNode", nodeId: owning.nodeId }]);
             return;
           }
-          if (owning && isImageLikeObject(hit?.object)) {
+          if (
+            owning &&
+            isImageLikeObject(hit?.object) &&
+            displayInspectNodeId === owning.nodeId
+          ) {
             openMultiCardMediaPicker(owning);
             return;
           }
-          const unit = resolveRootClickUnit(action.layerId, blueprint, selectionIndex);
-          if (unit.kind === "blueprintNode") {
-            const node = blueprint.nodes[unit.nodeId];
-            if (
-              node &&
-              (isSiteButtonNode(node) ||
-                node.kind === "layoutGroup" ||
-                isSiteMultiCardNode(node) ||
-                isSiteSectionNode(node))
-            ) {
-              // Doble clic: seleccionar contenedor (hijos ya accesibles al estar seleccionado)
-              setUnits([unit]);
-              setInteractionPath((prev) => {
-                const path: string[] = [];
-                let walk: string | null = node.parentId;
-                while (walk) {
-                  path.unshift(walk);
-                  walk = blueprint.nodes[walk]?.parentId ?? null;
-                }
-                return path;
-              });
-              return;
-            }
+          const zoomUnits = displayUnits.length > 0 ? displayUnits : [clickUnitForLayer(action.layerId)];
+          const zoomUnit = zoomUnits[0]!;
+          if (displayUnits.length === 0) {
+            setUnits(zoomUnits);
           }
-          setUnits([unit]);
-          setInteractionPath([]);
+          const rects = zoomUnits
+            .map((unit) => boundsForUnit(unit, blueprint, selectionIndex))
+            .filter((b): b is NonNullable<typeof b> => Boolean(b && b.width > 0 && b.height > 0));
+          const rect = unionPageRects(rects);
+          if (rect && rect.width >= 1 && rect.height >= 1) {
+            setCanvasFocus({ unit: zoomUnit, rect });
+          }
           return;
         }
 
@@ -2050,7 +2095,9 @@ export function SiteCreatorStudio({
       }
     },
     [
+      armedDatasetChip,
       blueprint,
+      canvasFocus,
       clearUnitsAndInspect,
       deepenToChild,
       displayInspectNodeId,
@@ -3376,6 +3423,7 @@ export function SiteCreatorStudio({
           delta,
           displayBounds,
           kind: patchKind,
+          viewportWidth: effectiveViewportWidth,
         });
         if (!patch) continue;
         const result = patchItemTune({
@@ -3394,6 +3442,7 @@ export function SiteCreatorStudio({
       commitTune,
       displayUnits,
       editableBand,
+      effectiveViewportWidth,
       persistGate.allowed,
       presentationTree,
       selectionIndex,
@@ -3490,6 +3539,42 @@ export function SiteCreatorStudio({
     },
     [blueprint, commitTune, editableBand, refineModel],
   );
+
+  const selectedVisibility = useMemo(() => {
+    if (pagePreviewMode || displayUnits.length !== 1) return null;
+    const unit = displayUnits[0]!;
+    const target = visibilityRefForUnit(unit);
+    const direct = isHiddenItemTune(blueprint, target, responsiveBand);
+    if (direct) return { hidden: true, inherited: false };
+    if (unit.kind === "layer") {
+      const inherited = isLayerHiddenInBand({
+        blueprint,
+        layerId: unit.layerId,
+        band: responsiveBand,
+      });
+      return { hidden: inherited, inherited };
+    }
+    const coverage = collectSemanticCoverageLayerIds(blueprint, unit.nodeId);
+    const inherited =
+      coverage.length > 0 &&
+      coverage.every((layerId) =>
+        isLayerHiddenInBand({ blueprint, layerId, band: responsiveBand }),
+      );
+    return { hidden: inherited, inherited };
+  }, [blueprint, displayUnits, pagePreviewMode, responsiveBand]);
+
+  const toggleSelectedVisibility = useCallback(() => {
+    if (!selectedVisibility || selectedVisibility.inherited || displayUnits.length !== 1) return;
+    const unit = displayUnits[0]!;
+    commitTune(
+      patchItemTune({
+        blueprint: blueprintRef.current,
+        target: visibilityRefForUnit(unit),
+        band: responsiveBand,
+        patch: { hidden: !selectedVisibility.hidden },
+      }),
+    );
+  }, [commitTune, displayUnits, responsiveBand, selectedVisibility]);
 
   const microbarModel = useMemo((): SiteCreatorMicrobarModel | null => {
     if (!selectionIndex) return null;
@@ -4312,120 +4397,119 @@ export function SiteCreatorStudio({
       />
 
       <div className="site-creator-studio__body flex min-h-0 flex-1">
-        {pagePreviewMode ? null : (
-        <SiteCreatorOutlinePanel
-          tree={presentationTree}
-          selectedUnits={displayUnits}
-          hoveredKey={outlineHoverKey}
-          expandedIds={expandedTreeIds}
-          onExpandedIdsChange={setExpandedTreeIds}
-          onSelectUnit={(unit, additive, pathNodeIds) => {
-            if (!unit) {
-              clearUnitsAndInspect();
-              return;
-            }
-            setSelectionFromMarquee(false);
-            setMarqueeGroupBlockOpen(false);
-            if (additive) {
-              setUnits((current) => toggleSelectionUnit(current, unit, blueprint));
-            } else {
-              setInteractionPath(pathNodeIds);
-              setUnits([unit]);
-            }
-            setStructureError(null);
-            if (selectionIndex) {
-              const bounds = boundsForUnit(unit, blueprint, selectionIndex);
-              if (bounds) {
-                setRevealPageRect({
-                  requestId: Date.now(),
-                  rect: bounds,
-                });
-              }
-            }
-          }}
-          onHoverUnit={(unit, key) => {
-            setOutlineHoverKey(key);
-            if (!unit || !selectionIndex) {
-              setDesignerShadow((s) => ({ ...s, hoverId: null }));
-              return;
-            }
-            if (unit.kind === "layer") {
-              setDesignerShadow((s) => ({ ...s, hoverId: unit.layerId }));
-              return;
-            }
-            const coverage = collectSemanticCoverageLayerIds(blueprint, unit.nodeId);
-            setDesignerShadow((s) => ({ ...s, hoverId: coverage[0] ?? null }));
-          }}
-          onReparentToSemantic={(targetNodeId, source) => {
-            if (!committedIndex || !source.unit) return;
-            const target = blueprint.nodes[targetNodeId];
-            if (!target || isSiteButtonNode(target)) {
-              setStructureError("No se puede soltar aquí.");
-              return;
-            }
-            if (
-              source.kind === "semantic" &&
-              (source.nodeId === targetNodeId ||
-                (function isCycle() {
-                  let w: string | null = targetNodeId;
-                  while (w) {
-                    if (w === source.nodeId) return true;
-                    w = blueprint.nodes[w]?.parentId ?? null;
-                  }
-                  return false;
-                })())
-            ) {
-              setStructureError("No se puede mover un contenedor dentro de sí mismo.");
-              return;
-            }
-            const result = reparentUnitsToContainer({
-              blueprint,
-              units: [source.unit],
-              targetContainerId: targetNodeId,
-              index: committedIndex,
-            });
-            if (!result.ok) {
-              setStructureError(result.message);
-              return;
-            }
-            commitBlueprint(result.blueprint);
-            setInteractionPath([targetNodeId]);
-            setSelectionFromMarquee(false);
-            setMarqueeGroupBlockOpen(false);
-            setUnits([source.unit]);
-          }}
-          visualLayerCount={visualLayerCount}
-          reviewCount={reviewCount}
-          resolveOverride={resolveOutlineOverride}
-          activeVisibilityBand={responsiveBand}
-          resolveVisibility={resolveOutlineVisibility}
-          onToggleVisibility={toggleOutlineVisibility}
-          onShowAllVisibility={showAllOutlineVisibility}
-          selectionIndex={selectionIndex}
-          canvasLockForUnit={(unit) => {
-            const own = isUnitOwnCanvasLocked(blueprint, unit);
-            const locked = selectionIndex
-              ? isUnitCanvasLocked(blueprint, unit, selectionIndex)
-              : own;
-            return { locked, inherited: locked && !own };
-          }}
-          onToggleCanvasLock={(unit) => {
-            const own = isUnitOwnCanvasLocked(blueprint, unit);
-            const inherited = Boolean(
-              selectionIndex && isUnitCanvasLocked(blueprint, unit, selectionIndex) && !own,
-            );
-            if (inherited) return;
-            commitBlueprint(setUnitCanvasLock(blueprint, unit, !own));
-          }}
-          emptyHint={!showPreview ? emptyStateMessage(originState) : null}
-        />
-        )}
-
         <main
-          className={`site-creator-studio__canvas flex min-h-0 min-w-0 flex-1 flex-col ${
+          className={`site-creator-studio__canvas relative flex min-h-0 min-w-0 flex-1 flex-col ${
             pagePreviewMode ? "bg-[#f4f4f5]" : "bg-[#171b22]"
           }`}
         >
+          {pagePreviewMode ? null : (
+            <SiteCreatorOutlinePanel
+              tree={presentationTree}
+              selectedUnits={displayUnits}
+              hoveredKey={outlineHoverKey}
+              expandedIds={expandedTreeIds}
+              onExpandedIdsChange={setExpandedTreeIds}
+              onSelectUnit={(unit, additive, pathNodeIds) => {
+                if (!unit) {
+                  clearUnitsAndInspect();
+                  return;
+                }
+                setSelectionFromMarquee(false);
+                setMarqueeGroupBlockOpen(false);
+                if (additive) {
+                  setUnits((current) => toggleSelectionUnit(current, unit, blueprint));
+                } else {
+                  setInteractionPath(pathNodeIds);
+                  setUnits([unit]);
+                }
+                setStructureError(null);
+                if (selectionIndex) {
+                  const bounds = boundsForUnit(unit, blueprint, selectionIndex);
+                  if (bounds) {
+                    setRevealPageRect({
+                      requestId: Date.now(),
+                      rect: bounds,
+                    });
+                  }
+                }
+              }}
+              onHoverUnit={(unit, key) => {
+                setOutlineHoverKey(key);
+                if (!unit || !selectionIndex) {
+                  setDesignerShadow((s) => ({ ...s, hoverId: null }));
+                  return;
+                }
+                if (unit.kind === "layer") {
+                  setDesignerShadow((s) => ({ ...s, hoverId: unit.layerId }));
+                  return;
+                }
+                const coverage = collectSemanticCoverageLayerIds(blueprint, unit.nodeId);
+                setDesignerShadow((s) => ({ ...s, hoverId: coverage[0] ?? null }));
+              }}
+              onReparentToSemantic={(targetNodeId, source) => {
+                if (!committedIndex || !source.unit) return;
+                const target = blueprint.nodes[targetNodeId];
+                if (!target || isSiteButtonNode(target)) {
+                  setStructureError("No se puede soltar aquí.");
+                  return;
+                }
+                if (
+                  source.kind === "semantic" &&
+                  (source.nodeId === targetNodeId ||
+                    (function isCycle() {
+                      let w: string | null = targetNodeId;
+                      while (w) {
+                        if (w === source.nodeId) return true;
+                        w = blueprint.nodes[w]?.parentId ?? null;
+                      }
+                      return false;
+                    })())
+                ) {
+                  setStructureError("No se puede mover un contenedor dentro de sí mismo.");
+                  return;
+                }
+                const result = reparentUnitsToContainer({
+                  blueprint,
+                  units: [source.unit],
+                  targetContainerId: targetNodeId,
+                  index: committedIndex,
+                });
+                if (!result.ok) {
+                  setStructureError(result.message);
+                  return;
+                }
+                commitBlueprint(result.blueprint);
+                setInteractionPath([targetNodeId]);
+                setSelectionFromMarquee(false);
+                setMarqueeGroupBlockOpen(false);
+                setUnits([source.unit]);
+              }}
+              visualLayerCount={visualLayerCount}
+              reviewCount={reviewCount}
+              resolveOverride={resolveOutlineOverride}
+              activeVisibilityBand={responsiveBand}
+              resolveVisibility={resolveOutlineVisibility}
+              onToggleVisibility={toggleOutlineVisibility}
+              onShowAllVisibility={showAllOutlineVisibility}
+              selectionIndex={selectionIndex}
+              canvasLockForUnit={(unit) => {
+                const own = isUnitOwnCanvasLocked(blueprint, unit);
+                const locked = selectionIndex
+                  ? isUnitCanvasLocked(blueprint, unit, selectionIndex)
+                  : own;
+                return { locked, inherited: locked && !own };
+              }}
+              onToggleCanvasLock={(unit) => {
+                const own = isUnitOwnCanvasLocked(blueprint, unit);
+                const inherited = Boolean(
+                  selectionIndex && isUnitCanvasLocked(blueprint, unit, selectionIndex) && !own,
+                );
+                if (inherited) return;
+                commitBlueprint(setUnitCanvasLock(blueprint, unit, !own));
+              }}
+              emptyHint={!showPreview ? emptyStateMessage(originState) : null}
+            />
+          )}
           {showPreview && displayPage ? (
             <SiteCreatorPreview
               page={displayPage}
@@ -4483,6 +4567,9 @@ export function SiteCreatorStudio({
               onMicrobarNavigate={pagePreviewMode ? undefined : onMicrobarNavigate}
               onMicrobarAction={pagePreviewMode ? undefined : handleMicrobarAction}
               onCanvasInteraction={() => undefined}
+              onCanvasBackgroundDoubleClick={() => setCanvasFocus(null)}
+              focusPageRect={pagePreviewMode ? null : canvasFocus?.rect ?? null}
+              onCanvasFocusZoomExit={() => setCanvasFocus(null)}
               objectClipById={objectClipById}
               multiCardNav={responsive?.multiCard?.containers ?? []}
               onMultiCardScrollIndex={commitMultiCardScrollIndex}
@@ -4554,6 +4641,12 @@ export function SiteCreatorStudio({
                       transformSelection?.kind === "textFontOnly"
                     ? onFontScale
                     : undefined
+              }
+              itemHidden={selectedVisibility?.hidden === true}
+              onToggleItemHidden={
+                pagePreviewMode || !selectedVisibility || selectedVisibility.inherited
+                  ? undefined
+                  : toggleSelectedVisibility
               }
               focalLayerId={pagePreviewMode ? null : focalLayerId}
               onFocalPoint={(focal) => {

@@ -586,6 +586,7 @@ describe("5D outline tree", () => {
         onHoverUnit={() => {}}
         visualLayerCount={1}
         reviewCount={0}
+        revealMode="manual"
         activeVisibilityBand="tablet"
         resolveVisibility={(_node, band) => ({
           hidden: band === "mobile",

@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Eye, EyeOff } from "lucide-react";
 import type { ClippingContainerObject, FreehandObject } from "../FreehandStudio";
 import {
   canEnterContainer,
@@ -28,7 +30,9 @@ import {
   normalizePageRect,
   type PagePoint,
 } from "./site-creator-coordinate-space";
-import { isSiteCreatorPreviewChromeBackgroundTarget } from "./site-creator-viewport";
+import { isSiteCreatorPreviewChromeBackgroundTarget, isRapidSecondClick } from "./site-creator-viewport";
+import { resolveRootClickUnit } from "./site-creator-display-labels";
+import { isSemanticContainerNode } from "./site-creator-hierarchy";
 import {
   formatItemCorrectionChip,
   itemGeometryFromDelta,
@@ -79,6 +83,28 @@ function boxDeltaFromHandle(
   const { dw, dh } = resizeDeltaFromHandle(handle, dx, dy);
   const moveX = handle === "w" || handle === "nw" || handle === "sw" ? dx : 0;
   const moveY = handle === "n" || handle === "nw" || handle === "ne" ? dy : 0;
+  return { dx: moveX, dy: moveY, dw, dh };
+}
+
+/** Escala uniforme anclada a la esquina/borde opuesto al asa. */
+function uniformDeltaFromHandle(
+  handle: TransformHandle,
+  dx: number,
+  dy: number,
+  bounds: { width: number; height: number },
+): { dx: number; dy: number; dw: number; dh: number } {
+  const raw = resizeDeltaFromHandle(handle, dx, dy);
+  const w = Math.max(1, bounds.width);
+  const h = Math.max(1, bounds.height);
+  const factorW = (w + raw.dw) / w;
+  const factorH = (h + raw.dh) / h;
+  const factor =
+    Math.abs(raw.dw) >= Math.abs(raw.dh) ? factorW : factorH;
+  const safe = Number.isFinite(factor) && factor > 0.05 ? factor : 1;
+  const dw = w * safe - w;
+  const dh = h * safe - h;
+  const moveX = handle === "w" || handle === "nw" || handle === "sw" ? -dw : 0;
+  const moveY = handle === "n" || handle === "nw" || handle === "ne" ? -dh : 0;
   return { dx: moveX, dy: moveY, dw, dh };
 }
 
@@ -299,6 +325,8 @@ export interface SiteCreatorSelectionSurfaceProps {
   ) => void;
   fontScale?: number;
   onFontScale?: (value: number) => void;
+  itemHidden?: boolean;
+  onToggleItemHidden?: () => void;
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
@@ -354,6 +382,8 @@ export function SiteCreatorSelectionSurface({
   onTransformLive,
   fontScale = 1,
   onFontScale,
+  itemHidden = false,
+  onToggleItemHidden,
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
@@ -377,6 +407,7 @@ export function SiteCreatorSelectionSurface({
   const lastHoverRef = useRef<string | null>(selection.hoverId);
   const [marqueeStart, setMarqueeStart] = useState<PagePoint | null>(null);
   const [marqueeNow, setMarqueeNow] = useState<PagePoint | null>(null);
+  const [floatingUiTick, setFloatingUiTick] = useState(0);
   const [picker, setPicker] = useState<{
     x: number;
     y: number;
@@ -405,6 +436,15 @@ export function SiteCreatorSelectionSurface({
     fromChrome: boolean;
   } | null>(null);
   const chromePointerRef = useRef(false);
+  const lastSelectClickRef = useRef<{ at: number; layerId: string | null } | null>(null);
+
+  const shouldIgnoreAsDoubleClick = (layerId: string | null) => {
+    const now = performance.now();
+    const prev = lastSelectClickRef.current;
+    lastSelectClickRef.current = { at: now, layerId };
+    if (layerId == null) return false;
+    return Boolean(prev && prev.layerId === layerId && isRapidSecondClick(prev.at, now));
+  };
 
   const marqueeRect =
     marqueeStart && marqueeNow
@@ -472,8 +512,10 @@ export function SiteCreatorSelectionSurface({
         } else if (transformKind === "textBox") {
           next = { ...boxDeltaFromHandle(drag.handle, dx, dy), startBounds: drag.startBounds };
         } else {
-          const { dw, dh } = resizeDeltaFromHandle(drag.handle, dx, dy);
-          next = { dx: 0, dy: 0, dw, dh, startBounds: drag.startBounds };
+          next = {
+            ...uniformDeltaFromHandle(drag.handle, dx, dy, drag.startBounds),
+            startBounds: drag.startBounds,
+          };
         }
         setTransformLive(next);
         onTransformLive?.({
@@ -586,7 +628,18 @@ export function SiteCreatorSelectionSurface({
         const dy = end.y - drag.start.y;
         const meta = { startBounds: drag.startBounds };
         if (drag.kind === "move") {
-          if (Math.hypot(dx, dy) < MARQUEE_THRESHOLD_PX) return;
+          if (Math.hypot(dx, dy) < MARQUEE_THRESHOLD_PX) {
+            // Clic sin arrastre: no es un move; profundizar selección como un clic normal.
+            const hit = resolveFrontHit(end);
+            const layerId = hit?.layerId ?? null;
+            if (shouldIgnoreAsDoubleClick(layerId)) return;
+            dispatch({
+              type: "click",
+              layerId,
+              additive: event.ctrlKey || event.metaKey,
+            });
+            return;
+          }
           onTransformCommit({ dx, dy }, meta);
           return;
         }
@@ -596,9 +649,9 @@ export function SiteCreatorSelectionSurface({
           onTransformCommit(box, meta);
           return;
         }
-        const { dw, dh } = resizeDeltaFromHandle(drag.handle, dx, dy);
-        if (Math.hypot(dw, dh) < MARQUEE_THRESHOLD_PX) return;
-        onTransformCommit({ dx: 0, dy: 0, dw, dh }, meta);
+        const box = uniformDeltaFromHandle(drag.handle, dx, dy, drag.startBounds);
+        if (Math.hypot(box.dx, box.dy, box.dw, box.dh) < MARQUEE_THRESHOLD_PX) return;
+        onTransformCommit(box, meta);
         return;
       }
       if (!marqueeStart && !pointerSessionRef.current) return;
@@ -628,6 +681,7 @@ export function SiteCreatorSelectionSurface({
 
       if (!session) return;
       if (session.frontLayerId) {
+        if (shouldIgnoreAsDoubleClick(session.frontLayerId)) return;
         dispatch({ type: "click", layerId: session.frontLayerId, additive: session.additive });
         return;
       }
@@ -645,6 +699,7 @@ export function SiteCreatorSelectionSurface({
       onClipImageTuneChange,
       onTransformCommit,
       onTransformLive,
+      resolveFrontHit,
       scale,
       selection.isolationIds,
       toPage,
@@ -843,6 +898,7 @@ export function SiteCreatorSelectionSurface({
 
   const onDoubleClick = useCallback(
     (event: React.MouseEvent<SVGSVGElement>) => {
+      lastSelectClickRef.current = null;
       if (isEventFromFloatingUi(event)) return;
       const point = toPage(event.clientX, event.clientY);
       if (!point) return;
@@ -859,33 +915,40 @@ export function SiteCreatorSelectionSurface({
         onCanvasBackgroundDoubleClick?.();
         return;
       }
-      const editTarget = onEnterClipImageEdit
-        ? imageEditTarget(hit)
+      const rootUnit = blueprint
+        ? resolveRootClickUnit(hit.layerId, blueprint, index)
         : null;
-      if (editTarget && onEnterClipImageEdit) {
-        event.preventDefault();
-        event.stopPropagation();
-        onEnterClipImageEdit(editTarget);
-        return;
-      }
-      // Designer groupContainer dive OR Studio handles blueprint inspect via special action
-      if (canEnterContainer(hit, blueprint)) {
-        const childHit = frontmostDirectHit(
-          index,
-          [...selection.isolationIds, hit.layerId],
-          point,
-          blueprint,
-          frontHitOptions,
-        );
-        dispatch({
-          type: "doubleClickEnter",
-          containerId: hit.layerId,
-          childId:
-            childHit?.layerId ??
-            isolationUnits(index, [...selection.isolationIds, hit.layerId])[0]?.layerId ??
-            null,
-        });
-        return;
+      const rootNode =
+        rootUnit?.kind === "blueprintNode" && blueprint
+          ? blueprint.nodes[rootUnit.nodeId]
+          : null;
+      const zoomToFirstLevel = Boolean(rootNode && isSemanticContainerNode(rootNode));
+      if (!zoomToFirstLevel) {
+        const editTarget = onEnterClipImageEdit ? imageEditTarget(hit) : null;
+        if (editTarget && onEnterClipImageEdit) {
+          event.preventDefault();
+          event.stopPropagation();
+          onEnterClipImageEdit(editTarget);
+          return;
+        }
+        if (canEnterContainer(hit, blueprint)) {
+          const childHit = frontmostDirectHit(
+            index,
+            [...selection.isolationIds, hit.layerId],
+            point,
+            blueprint,
+            frontHitOptions,
+          );
+          dispatch({
+            type: "doubleClickEnter",
+            containerId: hit.layerId,
+            childId:
+              childHit?.layerId ??
+              isolationUnits(index, [...selection.isolationIds, hit.layerId])[0]?.layerId ??
+              null,
+          });
+          return;
+        }
       }
       dispatch({ type: "doubleClickLayer", layerId: hit.layerId });
     },
@@ -1156,10 +1219,10 @@ export function SiteCreatorSelectionSurface({
       return specs;
     }
     return [
-      { handle: "nw" as const, left: b.x + 8, top: b.y + 8, cursor: "nwse-resize" },
-      { handle: "ne" as const, left: b.x + b.width - 8, top: b.y + 8, cursor: "nesw-resize" },
-      { handle: "sw" as const, left: b.x + 8, top: b.y + b.height - 8, cursor: "nesw-resize" },
-      { handle: "se" as const, left: b.x + b.width - 8, top: b.y + b.height - 8, cursor: "nwse-resize" },
+      { handle: "nw" as const, left: b.x, top: b.y, cursor: "nwse-resize" },
+      { handle: "ne" as const, left: b.x + b.width, top: b.y, cursor: "nesw-resize" },
+      { handle: "sw" as const, left: b.x, top: b.y + b.height, cursor: "nesw-resize" },
+      { handle: "se" as const, left: b.x + b.width, top: b.y + b.height, cursor: "nwse-resize" },
     ];
   })();
 
@@ -1167,10 +1230,121 @@ export function SiteCreatorSelectionSurface({
     Boolean(onFontScale) &&
     (transformKind === "textBox" || transformKind === "textFontOnly") &&
     !transformLive;
+  const showHideToggle = Boolean(onToggleItemHidden) && !transformLive;
+  const showSelectionHud = showFontSlider || showHideToggle;
   const fontPct = Math.round(
     Math.max(ITEM_FONT_SCALE_MIN, Math.min(ITEM_FONT_SCALE_MAX, fontScale)) * 100,
   );
-  const transformChromeBounds = transformPreview?.bounds ?? transformBounds;
+  const transformChromeBounds = transformPreview?.bounds ?? transformBounds ?? unitOutlines[0]?.bounds ?? null;
+  const fontSliderInvScale = 1 / Math.max(0.25, scale);
+  void floatingUiTick;
+  const fontSliderHost =
+    floatingPortalHost ?? (typeof document !== "undefined" ? document.body : null);
+  const fontSliderClient = (() => {
+    if (!showSelectionHud || !transformChromeBounds || !pageAnchorRef?.current) return null;
+    const pageBox = pageAnchorRef.current.getBoundingClientRect();
+    const sx = pageBox.width / Math.max(1, pageWidth);
+    const sy = pageBox.height / Math.max(1, pageHeight);
+    const left = pageBox.left + transformChromeBounds.x * sx;
+    const top = pageBox.top + transformChromeBounds.y * sy;
+    const width = showFontSlider
+      ? Math.max(200, Math.min(280, transformChromeBounds.width * sx * 0.85))
+      : 44;
+    return { left, top: Math.max(8, top - 44), width };
+  })();
+
+  useEffect(() => {
+    if (!showSelectionHud) return;
+    const roots: Array<EventTarget | null> = [
+      captureRootRef?.current ?? null,
+      typeof window !== "undefined" ? window : null,
+    ];
+    const onScroll = () => setFloatingUiTick((n) => n + 1);
+    for (const root of roots) {
+      root?.addEventListener("scroll", onScroll, true);
+    }
+    return () => {
+      for (const root of roots) {
+        root?.removeEventListener("scroll", onScroll, true);
+      }
+    };
+  }, [captureRootRef, showSelectionHud]);
+
+  const HideToggle = showHideToggle ? (
+    <button
+      type="button"
+      data-testid="site-creator-item-visibility"
+      aria-label={itemHidden ? "Mostrar objeto" : "Ocultar objeto"}
+      aria-pressed={!itemHidden}
+      title={itemHidden ? "Mostrar en preview y publicación" : "Ocultar en preview y publicación"}
+      className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${
+        itemHidden ? "text-white/35 hover:text-white/70" : "text-white/70 hover:text-white"
+      }`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggleItemHidden?.();
+      }}
+    >
+      {itemHidden ? (
+        <EyeOff className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      ) : (
+        <Eye className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      )}
+    </button>
+  ) : null;
+
+  const fontSliderUi = showSelectionHud ? (
+    <div
+      data-testid={showFontSlider ? "site-creator-font-scale" : "site-creator-item-visibility-hud"}
+      data-site-creator-floating-ui="true"
+      className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/15 bg-[#101820]/92 px-3 py-1.5 shadow-lg"
+      style={
+        fontSliderClient
+          ? {
+              position: "fixed",
+              left: fontSliderClient.left,
+              top: fontSliderClient.top,
+              width: showFontSlider ? fontSliderClient.width : "auto",
+              zIndex: 100056,
+            }
+          : {
+              position: "absolute",
+              left: transformChromeBounds?.x ?? 0,
+              top: Math.max(0, (transformChromeBounds?.y ?? 0) - 8),
+              width: showFontSlider
+                ? Math.min(220, Math.max(180, (transformChromeBounds?.width ?? 160) * 0.7))
+                : "auto",
+              transform: `scale(${fontSliderInvScale})`,
+              transformOrigin: "left bottom",
+              zIndex: 6,
+            }
+      }
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {showFontSlider ? (
+        <>
+          <span className="shrink-0 text-[11px] tabular-nums text-white/55">50</span>
+          <input
+            type="range"
+            aria-label="Tamaño de letra (50% a 200%)"
+            min={Math.round(ITEM_FONT_SCALE_MIN * 100)}
+            max={Math.round(ITEM_FONT_SCALE_MAX * 100)}
+            value={fontPct}
+            className="site-creator-font-scale-input h-2 min-w-0 flex-1 cursor-ew-resize appearance-none rounded-full bg-white/30 accent-[#A8FF32] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#A8FF32] [&::-webkit-slider-thumb]:shadow-[0_0_0_2px_rgba(16,24,32,0.85)] [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#A8FF32]"
+            onPointerDown={(event) => event.stopPropagation()}
+            onChange={(event) => onFontScale?.(Number(event.target.value) / 100)}
+          />
+          <span className="shrink-0 text-[11px] tabular-nums text-white/55">200</span>
+          <span className="w-10 shrink-0 text-right text-[12px] font-semibold tabular-nums text-white/90">
+            {fontPct}%
+          </span>
+        </>
+      ) : null}
+      {HideToggle}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -1338,34 +1512,9 @@ export function SiteCreatorSelectionSurface({
               boxShadow: "inset 0 0 0 1.5px #A8FF32",
             }}
           />
-          {showFontSlider ? (
-            <div
-              data-testid="site-creator-font-scale"
-              data-site-creator-floating-ui="true"
-              className="pointer-events-auto absolute flex items-center gap-1.5 rounded-full border border-white/12 bg-[#101820]/75 px-2 py-1 shadow-md"
-              style={{
-                left: transformChromeBounds.x,
-                top: Math.max(0, transformChromeBounds.y - 28),
-                width: Math.min(168, Math.max(128, transformChromeBounds.width * 0.55)),
-              }}
-            >
-              <span className="shrink-0 text-[9px] tabular-nums text-white/45">50</span>
-              <input
-                type="range"
-                aria-label="Tamaño de letra (50% a 200%)"
-                min={Math.round(ITEM_FONT_SCALE_MIN * 100)}
-                max={Math.round(ITEM_FONT_SCALE_MAX * 100)}
-                value={fontPct}
-                className="site-creator-font-scale-input h-1.5 min-w-0 flex-1 cursor-ew-resize appearance-none rounded-full bg-white/30 accent-[#A8FF32] [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#A8FF32] [&::-webkit-slider-thumb]:shadow-[0_0_0_2px_rgba(16,24,32,0.85)] [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[#A8FF32]"
-                onPointerDown={(event) => event.stopPropagation()}
-                onChange={(event) => onFontScale?.(Number(event.target.value) / 100)}
-              />
-              <span className="shrink-0 text-[9px] tabular-nums text-white/45">200</span>
-              <span className="w-9 shrink-0 text-right text-[10px] font-semibold tabular-nums text-white/85">
-                {fontPct}%
-              </span>
-            </div>
-          ) : null}
+          {fontSliderClient && fontSliderHost
+            ? createPortal(fontSliderUi, fontSliderHost)
+            : fontSliderUi}
           {transformPreview ? (
             <>
               <div

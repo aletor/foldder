@@ -73,6 +73,8 @@ import {
   isSiteCreatorPreviewChromeBackgroundTarget,
   measureSiteCreatorPreviewAvailableSize,
   resolveSiteCreatorDeviceChromeKind,
+  computeCanvasFocusCamera,
+  SITE_CREATOR_FOCUS_ZOOM_WHEEL_PX,
   scrollWorkAreaToPageRect,
   shouldRedirectCanvasWheelToWorkArea,
   SITE_CREATOR_MIN_VIEWPORT_WIDTH,
@@ -136,6 +138,9 @@ export interface SiteCreatorPreviewProps {
   onCanvasInteraction?: () => void;
   /** Doble clic en fondo del lienzo → Ajustar. */
   onCanvasBackgroundDoubleClick?: () => void;
+  /** Rectángulo en unidades de página al que hacer zoom (doble clic). */
+  focusPageRect?: PageRect | null;
+  onCanvasFocusZoomExit?: () => void;
   /** CSS de fondo de página detectado del Designer (color / degradado). */
   canvasBackground?: string | null;
   /** Clips por capa del layout responsive resuelto (6B.1). */
@@ -173,6 +178,8 @@ export interface SiteCreatorPreviewProps {
   ) => void;
   fontScale?: number;
   onFontScale?: (value: number) => void;
+  itemHidden?: boolean;
+  onToggleItemHidden?: () => void;
   focalLayerId?: string | null;
   onFocalPoint?: (focal: { x: number; y: number }) => void;
   onCancelFocal?: () => void;
@@ -280,6 +287,8 @@ export function SiteCreatorPreview({
   onMicrobarAction,
   onCanvasInteraction,
   onCanvasBackgroundDoubleClick,
+  focusPageRect = null,
+  onCanvasFocusZoomExit,
   canvasBackground = null,
   objectClipById,
   multiCardNav = [],
@@ -296,6 +305,8 @@ export function SiteCreatorPreview({
   onTransformLive,
   fontScale = 1,
   onFontScale,
+  itemHidden = false,
+  onToggleItemHidden,
   focalLayerId = null,
   onFocalPoint,
   onCancelFocal,
@@ -333,6 +344,7 @@ export function SiteCreatorPreview({
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
   const [deviceScrollTop, setDeviceScrollTop] = useState(0);
+  const [focusCameraTransform, setFocusCameraTransform] = useState<string | null>(null);
   const [frameTick, setFrameTick] = useState(0);
   const [dragLabel, setDragLabel] = useState<string | null>(null);
   const lastAvailableSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -549,6 +561,15 @@ export function SiteCreatorPreview({
     const canvas = scrollRef.current;
     if (!canvas) return;
     const onWheel = (event: WheelEvent) => {
+      if (
+        focusPageRect &&
+        onCanvasFocusZoomExit &&
+        Math.hypot(event.deltaX, event.deltaY) >= SITE_CREATOR_FOCUS_ZOOM_WHEEL_PX
+      ) {
+        event.preventDefault();
+        onCanvasFocusZoomExit();
+        return;
+      }
       const inner = deviceScrollRef.current;
       if (
         inner &&
@@ -575,7 +596,7 @@ export function SiteCreatorPreview({
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
-  }, [deviceMode, readOnly]);
+  }, [deviceMode, focusPageRect, onCanvasFocusZoomExit, readOnly]);
 
   /** Edición: flechas = nudge/selección, no scroll. Preview (readOnly) sí usa flechas para scroll. */
   useEffect(() => {
@@ -619,6 +640,55 @@ export function SiteCreatorPreview({
       pageHeight,
     });
   }, [deviceMode, pageHeight, revealPageRect]);
+
+  useLayoutEffect(() => {
+    if (!focusPageRect || readOnly) {
+      setFocusCameraTransform(null);
+      return;
+    }
+    const outer = scrollRef.current;
+    const stage = stageRef.current;
+    if (!outer || !stage) {
+      setFocusCameraTransform(null);
+      return;
+    }
+    const scroller = deviceMode ? deviceScrollRef.current : scrollRef.current;
+    if (scroller) {
+      scrollWorkAreaToPageRect({
+        scroller,
+        stage,
+        pageRect: focusPageRect,
+        pageHeight,
+      });
+    }
+    const bezel = deviceChrome?.bezelPx ?? 0;
+    const camera = computeCanvasFocusCamera({
+      pageRect: focusPageRect,
+      pageWidth,
+      pageHeight,
+      contentDisplayWidth,
+      contentDisplayHeight,
+      contentOffsetX: bezel,
+      contentOffsetY: bezel,
+      wrapperWidth: displayWidth + bezel * 2,
+      wrapperHeight: displayHeight + bezel * 2,
+      availableWidth: outer.clientWidth,
+      availableHeight: outer.clientHeight,
+      scrollTop: deviceMode ? (deviceScrollRef.current?.scrollTop ?? 0) : 0,
+    });
+    setFocusCameraTransform(camera.transform);
+  }, [
+    contentDisplayHeight,
+    contentDisplayWidth,
+    deviceChrome?.bezelPx,
+    deviceMode,
+    displayHeight,
+    displayWidth,
+    focusPageRect,
+    pageHeight,
+    pageWidth,
+    readOnly,
+  ]);
 
   const stationsFnRef = useRef<() => { id: string; y: number }[]>(() => []);
   const multiCardNavRef = useRef(multiCardNav);
@@ -907,6 +977,8 @@ export function SiteCreatorPreview({
             onTransformLive={onTransformLive}
             fontScale={fontScale}
             onFontScale={onFontScale}
+            itemHidden={itemHidden}
+            onToggleItemHidden={onToggleItemHidden}
             focalLayerId={focalLayerId}
             onFocalPoint={onFocalPoint}
             onCancelFocal={onCancelFocal}
@@ -1087,6 +1159,7 @@ export function SiteCreatorPreview({
       <div
         ref={scrollRef}
         data-site-creator-dataset-armed={datasetChipArmed ? "1" : undefined}
+        data-canvas-focus-zoom={focusPageRect ? "1" : "0"}
         className={`site-creator-preview-scroll min-h-0 flex-1 ${
           readOnly
             ? "cursor-default overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
@@ -1094,6 +1167,11 @@ export function SiteCreatorPreview({
               ? "cursor-copy overflow-hidden overscroll-none"
               : "cursor-crosshair overflow-hidden overscroll-none"
         }`}
+        onPointerDown={(event) => {
+          if (readOnly || !focusPageRect) return;
+          if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
+          onCanvasFocusZoomExit?.();
+        }}
         onDoubleClick={(event) => {
           if (readOnly) return;
           if (!isSiteCreatorPreviewChromeBackgroundTarget(event.target)) return;
@@ -1118,16 +1196,21 @@ export function SiteCreatorPreview({
         >
           <div
             className="relative"
-            style={
-              readOnly && pinPreviewActive
+            data-testid="site-creator-focus-camera"
+            data-canvas-focus={focusPageRect ? "1" : "0"}
+            style={{
+              transform: focusCameraTransform ?? "translate(0px, 0px) scale(1)",
+              transformOrigin: "0 0",
+              transition: "transform 220ms ease-out",
+              ...(readOnly && pinPreviewActive
                 ? {
                     width: "100%",
                     maxWidth: previewPageMaxWidth,
                     marginLeft: previewPageMaxWidth ? "auto" : undefined,
                     marginRight: previewPageMaxWidth ? "auto" : undefined,
                   }
-                : undefined
-            }
+                : null),
+            }}
           >
             {readOnly && pinPreviewActive ? pinnedHeaderOverlay : null}
             {spineLayer}
