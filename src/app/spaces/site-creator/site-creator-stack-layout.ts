@@ -22,6 +22,24 @@ export function designedStackInsets(parent: PageRect, content: PageRect): StackI
   };
 }
 
+/**
+ * Fondo a sangre del contenedor (panel de sección), no una superficie local de grupo.
+ * Los rects de columna (~mitad de ancho) no deben estirarse al alto del stack.
+ */
+export function isFullBleedBackgroundRect(
+  source: PageRect,
+  container: PageRect,
+  minWidthRatio = 0.75,
+): boolean {
+  const cw = Math.max(1, container.width);
+  const ch = Math.max(1, container.height);
+  const widthRatio = source.width / cw;
+  if (widthRatio < minWidthRatio) return false;
+  const cover = (source.width * source.height) / (cw * ch);
+  const heightRatio = source.height / ch;
+  return cover >= 0.45 || heightRatio >= 0.55 || widthRatio >= 0.92;
+}
+
 export function scaleStackInsets(insets: StackInsets, scale: number): StackInsets {
   if (!Number.isFinite(scale) || scale <= 0) return { ...insets };
   return {

@@ -46,8 +46,11 @@ import {
 } from "./site-creator-background-cover";
 import { clampNumber } from "./site-creator-responsive-math";
 import {
+  designedStackInsets,
+  isFullBleedBackgroundRect,
   measureStackColumn,
   preservedStackGaps,
+  scaleStackInsets,
   stackColumnX,
   stackLayoutScale,
   type StackInsets,
@@ -630,10 +633,30 @@ function backgroundTargetRect(args: {
   layoutRect: PageRect;
   sourceRect: PageRect;
   sourcePageWidth: number;
-  /** Apilar: el fondo llena el marco de la sección (no conserva márgenes desktop sueltos). */
+  /** Región de la sección en Original (para distinguir fondo a sangre vs panel local). */
+  sourceRegion?: PageRect;
+  /** Apilar: el fondo a sangre llena el marco de la sección. */
   stretchToLayout?: boolean;
 }): PageRect {
-  if (args.stretchToLayout) return { ...args.layoutRect };
+  const region = args.sourceRegion ?? {
+    x: 0,
+    y: args.sourceRect.y,
+    width: args.sourcePageWidth,
+    height: Math.max(1, args.sourceRect.height),
+  };
+  if (args.stretchToLayout) {
+    // Solo paneles a sangre: un fondo local de grupo no crece al alto del stack.
+    if (isFullBleedBackgroundRect(args.sourceRect, region)) {
+      return { ...args.layoutRect };
+    }
+    const sx = args.layoutRect.width / Math.max(1, region.width);
+    return {
+      x: args.layoutRect.x + (args.sourceRect.x - region.x) * sx,
+      y: args.layoutRect.y + (args.sourceRect.y - region.y) * sx,
+      width: Math.max(1, args.sourceRect.width * sx),
+      height: Math.max(1, args.sourceRect.height * sx),
+    };
+  }
   const pageW = Math.max(1, args.sourcePageWidth);
   const leftFrac = Math.max(0, args.sourceRect.x) / pageW;
   const rightFrac = Math.max(0, pageW - args.sourceRect.x - args.sourceRect.width) / pageW;
@@ -690,6 +713,7 @@ function placeBackgroundLayers(args: {
       layoutRect: args.layoutRect,
       sourceRect,
       sourcePageWidth: args.sourcePageWidth,
+      sourceRegion: args.sourceRegion,
       stretchToLayout: args.stretchToLayout,
     });
 
@@ -973,14 +997,36 @@ function measureSurfaceClusterSize(args: {
   band: ResponsiveBand;
   contentWidth: number;
   gap: number;
+  /** Apilar: descartar padding inferior extra (alto igualado a columna hermana). */
+  trimSiblingMatchedHeight?: boolean;
 }): { width: number; height: number; mode: "preserve" | "reflow"; scale: number } {
   const { cluster, index, band, contentWidth, gap } = args;
   const minFont = minFontForBand(band);
-  const scale = Math.min(1, contentWidth / Math.max(1, cluster.bounds.width));
+  const contentUnion = unionPageRects(cluster.members.map((m) => m.bounds));
+  const hugHeight = contentUnion
+    ? (() => {
+        const insets = designedStackInsets(cluster.surfaceBounds, contentUnion);
+        const padTop = insets.top;
+        const padBottom = args.trimSiblingMatchedHeight
+          ? Math.min(insets.bottom, Math.max(insets.top, CLUSTER_PAD))
+          : insets.bottom;
+        return Math.max(
+          cluster.surfaceBounds.height * 0.15,
+          padTop + contentUnion.height + padBottom,
+        );
+      })()
+    : cluster.surfaceBounds.height;
+  const hugWidth = args.trimSiblingMatchedHeight
+    ? Math.max(
+        cluster.surfaceBounds.width,
+        contentUnion?.width ?? cluster.bounds.width,
+      )
+    : cluster.bounds.width;
+  const scale = Math.min(1, contentWidth / Math.max(1, hugWidth));
   if (compositionKeepsUsability(scale, cluster.members, index, minFont)) {
     return {
-      width: cluster.bounds.width * scale,
-      height: cluster.bounds.height * scale,
+      width: hugWidth * scale,
+      height: (args.trimSiblingMatchedHeight ? hugHeight : cluster.bounds.height) * scale,
       mode: "preserve",
       scale,
     };
@@ -1009,10 +1055,11 @@ function measureSurfaceClusterSize(args: {
     innerH += member.bounds.height * s + gap;
   }
   innerH += CLUSTER_PAD - gap;
-  const surfaceH = Math.max(
-    cluster.surfaceBounds.height * Math.min(1, surfaceW / Math.max(1, cluster.surfaceBounds.width)),
-    innerH,
-  );
+  const scaledSurfaceH = args.trimSiblingMatchedHeight
+    ? hugHeight * Math.min(1, surfaceW / Math.max(1, hugWidth))
+    : cluster.surfaceBounds.height *
+      Math.min(1, surfaceW / Math.max(1, cluster.surfaceBounds.width));
+  const surfaceH = Math.max(scaledSurfaceH, innerH);
   return { width: surfaceW, height: surfaceH, mode: "reflow", scale: 1 };
 }
 
@@ -1026,12 +1073,33 @@ function layoutSurfaceClusterAt(args: {
   target: PageRect;
   mode: "preserve" | "reflow";
   scale: number;
+  trimSiblingMatchedHeight?: boolean;
 }): PageRect {
   const { cluster, index, band, contentWidth, gap, target, mode, scale } = args;
   const minFont = minFontForBand(band);
 
   if (mode === "preserve") {
-    return layoutPreserveComposition({
+    if (!args.trimSiblingMatchedHeight) {
+      return layoutPreserveComposition({
+        byId: args.byId,
+        layerIds: cluster.allLayerIds,
+        origin: cluster.bounds,
+        index,
+        band,
+        targetX: target.x,
+        targetY: target.y,
+        scale,
+      });
+    }
+    const contentUnion = unionPageRects(cluster.members.map((m) => m.bounds));
+    const sourceInsets = contentUnion
+      ? designedStackInsets(cluster.surfaceBounds, contentUnion)
+      : { left: 0, right: 0, top: 0, bottom: 0 };
+    const hugSourceInsets = {
+      ...sourceInsets,
+      bottom: Math.min(sourceInsets.bottom, Math.max(sourceInsets.top, CLUSTER_PAD)),
+    };
+    layoutPreserveComposition({
       byId: args.byId,
       layerIds: cluster.allLayerIds,
       origin: cluster.bounds,
@@ -1041,6 +1109,41 @@ function layoutSurfaceClusterAt(args: {
       targetY: target.y,
       scale,
     });
+    const memberRects: PageRect[] = [];
+    for (const member of cluster.members) {
+      for (const id of member.layerIds) {
+        const obj = args.byId.get(id);
+        if (!obj) continue;
+        memberRects.push({ x: obj.x, y: obj.y, width: obj.width, height: obj.height });
+      }
+    }
+    const placedContent = unionPageRects(memberRects);
+    if (placedContent) {
+      const insets = scaleStackInsets(hugSourceInsets, scale);
+      const surfaceRect: PageRect = {
+        x: target.x,
+        y: placedContent.y - insets.top,
+        width: target.width,
+        height: Math.max(
+          1,
+          insets.top + placedContent.height + insets.bottom,
+        ),
+      };
+      writeWorldRect(args.byId, index, cluster.surfaceLayerId, surfaceRect, new Set());
+      return {
+        x: Math.min(surfaceRect.x, placedContent.x),
+        y: Math.min(surfaceRect.y, placedContent.y),
+        width: Math.max(
+          surfaceRect.x + surfaceRect.width,
+          placedContent.x + placedContent.width,
+        ) - Math.min(surfaceRect.x, placedContent.x),
+        height: Math.max(
+          surfaceRect.y + surfaceRect.height,
+          placedContent.y + placedContent.height,
+        ) - Math.min(surfaceRect.y, placedContent.y),
+      };
+    }
+    return { ...target };
   }
 
   const surfaceW = target.width;
@@ -1450,6 +1553,7 @@ function layoutSectionStackMode(args: {
           band,
           contentWidth: stackInnerWidth,
           gap,
+          trimSiblingMatchedHeight: true,
         });
         return {
           cluster,
@@ -1614,6 +1718,7 @@ function layoutSectionStackMode(args: {
         target: placedBox,
         mode: item.mode,
         scale: item.scale,
+        trimSiblingMatchedHeight: true,
       });
       ephemeralClusters.push({
         kind: item.cluster.kind,

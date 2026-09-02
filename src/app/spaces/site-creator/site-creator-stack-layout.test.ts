@@ -10,6 +10,7 @@ import { applyNewSectionResponsiveDefaults } from "./site-creator-section-defaul
 import { SITE_CREATOR_MOBILE_WIDTH } from "./site-creator-viewport";
 import {
   designedStackInsets,
+  isFullBleedBackgroundRect,
   preservedStackGapPx,
   measureStackColumn,
 } from "./site-creator-stack-layout";
@@ -315,5 +316,174 @@ describe("stack layout preserves designed gutters", () => {
     // Apilar no ensancha más que el footprint de Composition de esa sección.
     const panelPreserve = findDisplayObject(preserve.displayPage, "panel")!;
     expect(card.width).toBeLessThanOrEqual(panelPreserve.width + 8);
+  });
+
+  it("isFullBleedBackgroundRect distingue panel local de fondo a sangre", () => {
+    const container = { x: 0, y: 100, width: 1920, height: 900 };
+    expect(
+      isFullBleedBackgroundRect(
+        { x: 0, y: 100, width: 1920, height: 900 },
+        container,
+      ),
+    ).toBe(true);
+    expect(
+      isFullBleedBackgroundRect(
+        { x: 40, y: 120, width: 900, height: 860 },
+        container,
+      ),
+    ).toBe(false);
+  });
+
+  it("Apilar: fondo oliva local del grupo izquierdo no crece al alto de la sección", () => {
+    // Columna izq: superficie oliva + foto + título. Derecha: bloques que al apilar
+    // quedan debajo; el oliva no debe quedar detrás de ellos.
+    const page = makePage([
+      makeLayer({
+        id: "sage",
+        type: "rect",
+        x: 0,
+        y: 100,
+        width: 1920,
+        height: 900,
+        fill: "#e8ebe0",
+      }),
+      makeLayer({
+        id: "olive",
+        type: "rect",
+        x: 40,
+        y: 120,
+        width: 900,
+        height: 860,
+        fill: "#556b2f",
+      }),
+      makeLayer({ id: "photoL", type: "image", x: 60, y: 140, width: 400, height: 820 }),
+      makeLayer({
+        id: "titleL",
+        type: "text",
+        x: 500,
+        y: 180,
+        width: 400,
+        height: 280,
+        text: "ILUSION",
+        fontSize: 48,
+      }),
+      makeLayer({
+        id: "titleR",
+        type: "text",
+        x: 1000,
+        y: 140,
+        width: 420,
+        height: 160,
+        text: "NO ES",
+        fontSize: 40,
+      }),
+      makeLayer({ id: "shirt", type: "image", x: 1440, y: 140, width: 400, height: 320 }),
+      makeLayer({ id: "kitchen", type: "image", x: 1000, y: 500, width: 840, height: 460 }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const section = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: [
+        "sage",
+        "olive",
+        "photoL",
+        "titleL",
+        "titleR",
+        "shirt",
+        "kitchen",
+      ],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    if (!section.ok) throw new Error(section.message);
+    let bp = applyNewSectionResponsiveDefaults(section.blueprint, section.createdNodeId);
+    bp = setResponsiveOverride({
+      blueprint: bp,
+      target: { kind: "blueprintNode", nodeId: section.createdNodeId },
+      band: "mobile",
+      mode: "stack",
+    }).blueprint;
+    const mobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: bp,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const olive = findDisplayObject(mobile.displayPage, "olive")!;
+    const titleR = findDisplayObject(mobile.displayPage, "titleR")!;
+    const kitchen = findDisplayObject(mobile.displayPage, "kitchen")!;
+    const sage = findDisplayObject(mobile.displayPage, "sage")!;
+
+    // El fondo de sección (sage) sí puede llenar el alto; el oliva local no.
+    expect(sage.height).toBeGreaterThan(olive.height + 40);
+    expect(olive.y + olive.height).toBeLessThanOrEqual(titleR.y + 8);
+    expect(olive.y + olive.height).toBeLessThan(kitchen.y);
+  });
+
+  it("Apilar: superficie solo-texto no conserva el alto hermanado de la columna", () => {
+    // Oliva alto (igualado a la foto de al lado) con solo un título dentro.
+    const page = makePage([
+      makeLayer({
+        id: "olive",
+        type: "rect",
+        x: 500,
+        y: 120,
+        width: 400,
+        height: 860,
+        fill: "#556b2f",
+      }),
+      makeLayer({
+        id: "titleL",
+        type: "text",
+        x: 520,
+        y: 200,
+        width: 360,
+        height: 200,
+        text: "ILUSION",
+        fontSize: 42,
+      }),
+      makeLayer({ id: "photoL", type: "image", x: 40, y: 120, width: 420, height: 860 }),
+      makeLayer({
+        id: "titleR",
+        type: "text",
+        x: 1000,
+        y: 140,
+        width: 400,
+        height: 120,
+        text: "NO ES",
+        fontSize: 36,
+      }),
+    ]);
+    const index = buildSiteSelectionIndex(page);
+    const section = createSectionFromSelection({
+      blueprint: createEmptySiteBlueprintV1(),
+      selectedLayerIds: ["olive", "titleL", "photoL", "titleR"],
+      index,
+      committedPage: page,
+      sectionType: "generic",
+    });
+    if (!section.ok) throw new Error(section.message);
+    let bp = applyNewSectionResponsiveDefaults(section.blueprint, section.createdNodeId);
+    bp = setResponsiveOverride({
+      blueprint: bp,
+      target: { kind: "blueprintNode", nodeId: section.createdNodeId },
+      band: "mobile",
+      mode: "stack",
+    }).blueprint;
+    const mobile = resolveSiteCreatorResponsiveDisplay({
+      page,
+      blueprint: bp,
+      referenceIndex: index,
+      viewportWidth: SITE_CREATOR_MOBILE_WIDTH,
+      band: "mobile",
+    });
+    const olive = findDisplayObject(mobile.displayPage, "olive")!;
+    const titleL = findDisplayObject(mobile.displayPage, "titleL")!;
+    const titleR = findDisplayObject(mobile.displayPage, "titleR")!;
+    // Debe abrazar el título, no el alto 860 del Original.
+    expect(olive.height).toBeLessThan(titleL.height * 3.5);
+    expect(olive.y + olive.height).toBeLessThanOrEqual(titleR.y + 8);
   });
 });

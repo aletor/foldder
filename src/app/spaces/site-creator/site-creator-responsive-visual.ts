@@ -191,8 +191,12 @@ export function classifyContainerBackground(args: {
       continue;
     }
 
+    // Exige ancho de contenedor: un panel de columna (p. ej. verde local de grupo)
+    // no debe pasar a fondo de sección aunque sea alto y esté detrás.
     const substantial =
-      cover >= 0.55 || (widthRatio >= 0.8 && heightRatio >= 0.4) || overlapsContainer >= 0.7;
+      (cover >= 0.55 && widthRatio >= 0.7) ||
+      (widthRatio >= 0.85 && heightRatio >= 0.4) ||
+      (overlapsContainer >= 0.7 && widthRatio >= 0.7);
     if (!substantial) {
       reasons[id] = "rejected:insufficient-coverage";
       continue;
