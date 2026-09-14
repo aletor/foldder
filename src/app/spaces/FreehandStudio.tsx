@@ -424,6 +424,11 @@ import {
   type VectorPdfExportOptions,
 } from "./freehand/text-outline";
 import {
+  combinedLetterSpacingPx,
+  liveFontStretchForTextGroup,
+  substituteLiveTextWithRasterImagesInSvg,
+} from "./freehand/rasterize-live-text-for-export";
+import {
   textForeignObjectLineBaselineY,
   textForeignObjectPadPx,
   textLayoutPadPx,
@@ -1832,7 +1837,7 @@ function textObjectToVectorPdfOutlineItem(tx: TextObject) {
     fontSize: tx.fontSize,
     fontWeight: tx.fontWeight,
     lineHeight: tx.lineHeight,
-    letterSpacing: tx.letterSpacing,
+    letterSpacing: combinedLetterSpacingPx(tx.letterSpacing, tx.charSpacing),
     fontKerning: tx.fontKerning,
     textAlign: normalizePdfTextAlign(tx.textAlign),
     paragraphIndent: tx.paragraphIndent,
@@ -1844,6 +1849,13 @@ function textObjectToVectorPdfOutlineItem(tx: TextObject) {
     opacity: tx.opacity,
     richRuns,
   };
+}
+
+function textObjectsToOutlineItems(texts: TextObject[], liveSvg?: SVGSVGElement | null) {
+  return texts.map((tx) => ({
+    ...textObjectToVectorPdfOutlineItem(tx),
+    fontStretch: liveSvg ? liveFontStretchForTextGroup(liveSvg, tx.id) : undefined,
+  }));
 }
 
 /** Rectángulo visual (tras escala) para AABB, marco de selección y hit-test. */
@@ -7831,7 +7843,7 @@ function textObjectToNativeSvgMarkup(t: TextObject): string {
       const fst = t.fontStyle && t.fontStyle !== "normal" ? `${t.fontStyle} ` : "";
       ctx.font = `${fst}${t.fontWeight} ${t.fontSize}px ${t.fontFamily}`;
       const innerW = Math.max(1, boxW - 2 * pad - indent);
-      lines = wrapAreaTextToLinesForExport(raw, innerW, ctx, t.letterSpacing ?? 0);
+      lines = wrapAreaTextToLinesForExport(raw, innerW, ctx, combinedLetterSpacingPx(t.letterSpacing, t.charSpacing));
     } else {
       lines = raw.split("\n");
     }
@@ -7880,7 +7892,7 @@ function textObjectToNativeSvgMarkup(t: TextObject): string {
   const inner =
     `<text font-family="${escapeXmlAttr(t.fontFamily)}" font-size="${t.fontSize}" font-weight="${t.fontWeight}"${fs} ` +
     `fill="${fillAttr}" text-anchor="${textAnchor}" opacity="${t.opacity}" ` +
-    `letter-spacing="${t.letterSpacing}"${strokePart}>${tspans.join("")}</text>`;
+    `letter-spacing="${combinedLetterSpacingPx(t.letterSpacing, t.charSpacing)}" font-kerning="${t.fontKerning === "none" ? "none" : "auto"}"${strokePart}>${tspans.join("")}</text>`;
   const tt = textSvgTransform(t);
   return tt ? `<g transform="${escapeXmlAttr(tt)}">${inner}</g>` : inner;
 }
@@ -7966,18 +7978,39 @@ function substituteNativeTextForRasterExport(svgXml: string, objects: FreehandOb
   return new XMLSerializer().serializeToString(doc.documentElement);
 }
 
-/** Raster PNG: convierte texto a trazados para que las tipografías se respeten al rasterizar el SVG (blob). */
-async function substituteTextForRasterExport(svgXml: string, objects: FreehandObject[]): Promise<string> {
+/** Raster PNG/JPG: pinta el texto del lienzo (CSS) y solo usa trazados si falla. */
+async function substituteTextForRasterExport(
+  svgXml: string,
+  objects: FreehandObject[],
+  liveSvg?: SVGSVGElement | null,
+): Promise<string> {
   const textObjs = collectVisibleTextObjectsDeep(objects);
   if (textObjs.length === 0) return svgXml;
+  let xml = svgXml;
+  const rasterized = new Set<string>();
+  if (liveSvg) {
+    try {
+      const live = await substituteLiveTextWithRasterImagesInSvg(
+        liveSvg,
+        xml,
+        textObjs.map((t) => t.id),
+      );
+      xml = live.svgXml;
+      for (const id of live.rasterizedIds) rasterized.add(id);
+    } catch (e) {
+      console.warn("[Freehand] Live text raster for export failed, using outlines", e);
+    }
+  }
+  const remaining = textObjs.filter((t) => !rasterized.has(t.id));
+  if (remaining.length === 0) return xml;
   try {
     return await substituteTextWithOutlinedPathsInSvg(
-      svgXml,
-      textObjs.map(textObjectToVectorPdfOutlineItem),
+      xml,
+      textObjectsToOutlineItems(remaining, liveSvg),
     );
   } catch (e) {
     console.warn("[Freehand] Text outline for raster export failed, using native SVG text", e);
-    return substituteNativeTextForRasterExport(svgXml, objects);
+    return substituteNativeTextForRasterExport(xml, remaining);
   }
 }
 
@@ -8523,7 +8556,7 @@ async function buildProfessionalExportBlob(args: {
   const str =
     opts.format === "svg" || opts.format === "pdf"
       ? strRaw
-      : await substituteTextForRasterExport(strRaw, objs);
+      : await substituteTextForRasterExport(strRaw, objs, svg);
   const base = opts.filename.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "");
   const ext =
     opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
@@ -8548,7 +8581,7 @@ async function buildProfessionalExportBlob(args: {
     if (textObjs.length > 0) {
       pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
         strRaw,
-        textObjs.map(textObjectToVectorPdfOutlineItem),
+        textObjectsToOutlineItems(textObjs, svg),
         {
           selectableText: opts.pdfSelectableText !== false,
           makeUrlsClickable: opts.pdfMakeUrlsClickable === true,
@@ -11509,7 +11542,7 @@ export function FreehandStudioCanvas({
         if (textObjs.length > 0) {
           strRaw = await substituteTextWithOutlinedPathsInSvg(
             strRaw,
-            textObjs.map(textObjectToVectorPdfOutlineItem),
+            textObjectsToOutlineItems(textObjs, svg),
             pdfOpts,
           );
         }
@@ -11538,7 +11571,7 @@ export function FreehandStudioCanvas({
             scale,
             background: bg,
           });
-          const str = await substituteTextForRasterExport(strRaw, objs);
+          const str = await substituteTextForRasterExport(strRaw, objs, svg);
           const cw = Math.max(1, Math.round(bounds.w * scale));
           const ch = Math.max(1, Math.round(bounds.h * scale));
           const canvas = await svgStringToCanvasSafe(str, cw, ch);
@@ -18664,7 +18697,7 @@ export function FreehandStudioCanvas({
       scale: 1,
       background: bg,
     });
-    const str = await substituteTextForRasterExport(strRaw, objects);
+    const str = await substituteTextForRasterExport(strRaw, objects, svg);
     const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h);
     canvas.toBlob((blob) => {
       if (!blob) return;
@@ -18692,7 +18725,7 @@ export function FreehandStudioCanvas({
       scale: 1,
       background: bg,
     });
-    const str = await substituteTextForRasterExport(strRaw, objects);
+    const str = await substituteTextForRasterExport(strRaw, objects, svg);
     const jpgBg = bg === "transparent" ? "#ffffff" : bg;
     const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h, jpgBg);
     canvas.toBlob((blob) => {
@@ -18721,7 +18754,7 @@ export function FreehandStudioCanvas({
       scale: 1,
       background: bg,
     });
-    const str = await substituteTextForRasterExport(strRaw, objects);
+    const str = await substituteTextForRasterExport(strRaw, objects, svg);
     const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h);
     const dataUrl = canvasToPngDataUrlSafe(canvas);
     const tel = designerBrainTelemetryRef.current;
@@ -18788,6 +18821,7 @@ export function FreehandStudioCanvas({
         background: "transparent",
       }),
       objs,
+      svg,
     );
     const w = Math.max(1, Math.round(b.w));
     const h = Math.max(1, Math.round(b.h));
@@ -18914,7 +18948,7 @@ export function FreehandStudioCanvas({
           scale: 1,
           background,
         });
-        const str = await substituteTextForRasterExport(strRaw, objs);
+        const str = await substituteTextForRasterExport(strRaw, objs, svg);
         const w = Math.max(1, Math.round(bounds.w));
         const h = Math.max(1, Math.round(bounds.h));
         const bgForCanvas = background === "transparent" ? undefined : background;

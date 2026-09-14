@@ -71,6 +71,9 @@ export function registerUserFontBuffer(primaryFamily: string, fontWeight: number
   const key = `${family}|${weight}`;
   userFontBuffers.set(key, buffer.slice(0));
   fontCache.delete(key);
+  fontCache.delete(`${key}|normal`);
+  fontCache.delete(`${key}|condensed`);
+  fontCache.delete(`${key}|expanded`);
 }
 
 function lookupUserFontBuffer(primary: string, fontWeight: number): ArrayBuffer | null {
@@ -109,6 +112,45 @@ const FONT_STYLE_WEIGHT_ALIASES: Array<{ weight: number; aliases: string[] }> = 
   { weight: 800, aliases: ["extrabold", "extra bold", "ultrabold", "ultra bold"] },
   { weight: 900, aliases: ["black", "heavy", "ultrablack", "ultra black"] },
 ];
+
+export type LocalFontStretch = "normal" | "condensed" | "expanded";
+
+export function stretchFromFontLabel(style: string, fullName: string): LocalFontStretch {
+  const s = `${style} ${fullName}`.toLowerCase().replace(/[-_]+/g, " ");
+  if (/\b(ultra\s*)?(extra\s*)?(condens\w*|compress\w*|narrow)\b/.test(s)) return "condensed";
+  if (/\b(expand\w*|extended|wide)\b/.test(s)) return "expanded";
+  return "normal";
+}
+
+export function localFontFamilyMatches(requestedFamily: string, family: string, fullName: string): boolean {
+  const want = requestedFamily.trim().toLowerCase();
+  const fam = family.trim().toLowerCase();
+  const full = fullName.trim().toLowerCase();
+  if (!want) return false;
+  return fam === want || full === want;
+}
+
+/** Menor = mejor. Penaliza recortes condensed/expanded que CSS no está usando. */
+export function scoreLocalFontCandidate(args: {
+  family: string;
+  fullName: string;
+  style: string;
+  requestedFamily: string;
+  requestedWeight: number;
+  requestedStretch: LocalFontStretch;
+}): number {
+  const fromStyle = weightFromFontStyleLabel(args.style) ?? weightFromFontStyleLabel(args.fullName) ?? 400;
+  const weightDist = Math.abs(fromStyle - args.requestedWeight);
+  const stretch = stretchFromFontLabel(args.style, args.fullName);
+  let stretchPenalty = 0;
+  if (stretch !== args.requestedStretch) {
+    stretchPenalty = stretch === "condensed" || args.requestedStretch === "condensed" ? 400 : 80;
+  }
+  const fam = args.family.trim().toLowerCase();
+  const want = args.requestedFamily.trim().toLowerCase();
+  const familyPenalty = fam === want ? 0 : 25;
+  return weightDist + stretchPenalty + familyPenalty;
+}
 
 function weightFromFontStyleLabel(style: string): number | null {
   const lower = style.trim().toLowerCase().replace(/[-_]+/g, " ");
@@ -219,7 +261,11 @@ async function fetchFontFromBunnyNet(slug: string, fontWeight: number): Promise<
  * Local Font Access API: binario real del sistema (Helvetica Neue Light, etc.)
  * cuando el usuario otorga permiso. Sin permiso o sin API → null.
  */
-async function fetchFontFromLocalFonts(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
+async function fetchFontFromLocalFonts(
+  primary: string,
+  fontWeight: number,
+  fontStretch: LocalFontStretch = "normal",
+): Promise<ArrayBuffer | null> {
   if (typeof window === "undefined") return null;
   const queryLocalFonts = (
     window as Window & {
@@ -231,21 +277,26 @@ async function fetchFontFromLocalFonts(primary: string, fontWeight: number): Pro
   if (typeof queryLocalFonts !== "function") return null;
   try {
     const fonts = await queryLocalFonts();
-    const want = normalizeFamilyKey(primary);
-    const matches = fonts.filter((f) => {
-      const fam = normalizeFamilyKey(f.family);
-      const full = normalizeFamilyKey(f.fullName);
-      return fam === want || full.startsWith(want) || fam.includes(want) || want.includes(fam);
-    });
+    const matches = fonts.filter((f) => localFontFamilyMatches(primary, f.family, f.fullName));
     if (matches.length === 0) return null;
     const scored = matches.map((f) => {
-      const fromStyle = weightFromFontStyleLabel(f.style) ?? weightFromFontStyleLabel(f.fullName);
-      const w = fromStyle ?? 400;
-      return { font: f, weight: w, dist: Math.abs(w - fontWeight) };
+      const w = weightFromFontStyleLabel(f.style) ?? weightFromFontStyleLabel(f.fullName) ?? 400;
+      return {
+        font: f,
+        weightDist: Math.abs(w - fontWeight),
+        score: scoreLocalFontCandidate({
+          family: f.family,
+          fullName: f.fullName,
+          style: f.style,
+          requestedFamily: primary,
+          requestedWeight: fontWeight,
+          requestedStretch: fontStretch,
+        }),
+      };
     });
-    scored.sort((a, b) => a.dist - b.dist || a.weight - b.weight);
+    scored.sort((a, b) => a.score - b.score || a.weightDist - b.weightDist);
     const best = scored[0];
-    if (!best || best.dist > 150) return null;
+    if (!best || best.weightDist > 200) return null;
     const blob = await best.font.blob();
     return await blob.arrayBuffer();
   } catch {
@@ -286,7 +337,11 @@ export function isFontFaceAvailableForConversion(primary: string, fontWeight: nu
   }
 }
 
-async function fetchFontBinary(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
+async function fetchFontBinary(
+  primary: string,
+  fontWeight: number,
+  fontStretch: LocalFontStretch = "normal",
+): Promise<ArrayBuffer | null> {
   const userBuf = lookupUserFontBuffer(primary, fontWeight);
   if (userBuf) return userBuf;
 
@@ -303,7 +358,7 @@ async function fetchFontBinary(primary: string, fontWeight: number): Promise<Arr
   const fromGoogle = await fetchFontFromGoogleFonts(primary, fontWeight);
   if (fromGoogle) return fromGoogle;
 
-  const fromLocal = await fetchFontFromLocalFonts(primary, fontWeight);
+  const fromLocal = await fetchFontFromLocalFonts(primary, fontWeight, fontStretch);
   if (fromLocal) return fromLocal;
 
   return fetchWeightMatchedNotoSans(fontWeight);
@@ -313,6 +368,7 @@ export async function loadFontForTextConversion(args: {
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
+  fontStretch?: LocalFontStretch;
   /** Export raster: intenta descargar aunque la fuente no esté cargada en document.fonts. */
   forceFetch?: boolean;
 }): Promise<{ font: opentype.Font } | { error: string }> {
@@ -323,10 +379,11 @@ export async function loadFontForTextConversion(args: {
   ) {
     return { error: FONT_CONVERSION_UNAVAILABLE };
   }
-  const cacheKey = `${normalizeFamilyKey(primary)}|${args.fontWeight}`;
+  const stretch = args.fontStretch ?? "normal";
+  const cacheKey = `${normalizeFamilyKey(primary)}|${args.fontWeight}|${stretch}`;
   if (fontCache.has(cacheKey)) return { font: fontCache.get(cacheKey)! };
 
-  const binary = await fetchFontBinary(primary, args.fontWeight);
+  const binary = await fetchFontBinary(primary, args.fontWeight, stretch);
   if (!binary) return { error: FONT_CONVERSION_UNAVAILABLE };
   try {
     const font = opentype.parse(binary);
@@ -1331,6 +1388,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
     fontSize: number;
     fontWeight: number;
     fontStyle?: "normal" | "italic";
+    fontStretch?: LocalFontStretch;
     lineHeight: number;
     letterSpacing: number;
     fontKerning?: "auto" | "none";
@@ -1357,6 +1415,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
       fontFamily: t.fontFamily,
       fontSize: t.fontSize,
       fontWeight: t.fontWeight,
+      fontStretch: t.fontStretch,
       forceFetch: true,
     });
     if ("error" in fontRes) {
