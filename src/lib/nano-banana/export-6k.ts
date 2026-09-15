@@ -1,7 +1,8 @@
 /**
  * Export 6K · helpers de geometría y post-proceso (sin llamadas de pago).
  *
- * Flujo: Real-ESRGAN (×2 o ×4) → Lanczos al lado largo objetivo (6144) → PNG.
+ * Flujo: (opcional) encoger entrada a tope GPU → Real-ESRGAN (×2 o ×4)
+ * → Lanczos al lado largo objetivo (6144) → PNG.
  * Si la imagen ya es ≥ 6K, no hay upscale ML: solo se entrega (opcionalmente
  * recortada al tope si supera un máximo de seguridad).
  */
@@ -12,10 +13,12 @@ export const EXPORT_6K_LONG_SIDE = 6144;
 /** Tope absoluto para no generar PNG de cientos de MB por accidente. */
 export const EXPORT_6K_MAX_LONG_SIDE = 8192;
 /**
- * Tope de salida Real-ESRGAN en Replicate.
- * ×4 desde ~2K (~8K+) provoca CUDA illegal memory access en el worker.
+ * Tope de salida Real-ESRGAN en lucataco (A100, sin tiles).
+ * 2K 3:4 ChatGPT (1920×2560) ×2 → 3840×5120 petaba CUDA; capamos a ~4K de salida.
  */
-export const ESRGAN_MAX_OUTPUT_LONG = 6144;
+export const ESRGAN_MAX_OUTPUT_LONG = 4096;
+/** Tope de píxeles de salida (~4K 3:2). El retrato 2K ×2 se pasa de esto. */
+export const ESRGAN_MAX_OUTPUT_PIXELS = 4096 * 2732;
 
 export type Export6kPlan = {
   sourceWidth: number;
@@ -30,26 +33,46 @@ export type Export6kPlan = {
 };
 
 /**
- * Elige escala ML segura.
- * - ×4 solo si la salida cabe en ~6K (fuentes ~1K).
- * - Desde ~2K preferir ×2 + Lanczos (×4 tumba CUDA).
+ * Elige escala ML. El recorte de entrada a GPU va aparte (`fitEsrganInput`).
+ * - ×4 para fuentes ~1K.
+ * - ×2 para ~2K (incluido retrato ChatGPT 3:4).
  * - Desde ~4K (cerca de 6K) solo Lanczos.
  */
 export function chooseEsrganScale(sourceLong: number, targetLong: number): 2 | 4 | null {
   if (sourceLong <= 0) return 2;
   if (sourceLong >= targetLong) return null;
-  // Bump pequeño (p. ej. 4K Gemini → 6K): no hace falta GPU.
-  if (sourceLong * 1.25 >= targetLong) return null;
+  // Bump pequeño (p. ej. 4K Gemini 4096 → 6K): no hace falta GPU.
+  if (sourceLong * 1.5 >= targetLong) return null;
+  if (sourceLong <= 1400) return 4;
+  return 2;
+}
 
-  const out2 = sourceLong * 2;
-  const out4 = sourceLong * 4;
+export type EsrganInputFit = {
+  width: number;
+  height: number;
+  needsShrink: boolean;
+};
 
-  // ×2 si nos acerca al target sin pasarnos del tope GPU.
-  if (out2 <= ESRGAN_MAX_OUTPUT_LONG && out2 >= targetLong * 0.8) return 2;
-  // ×4 solo para fuentes pequeñas (1K class).
-  if (out4 <= ESRGAN_MAX_OUTPUT_LONG) return 4;
-  if (out2 <= ESRGAN_MAX_OUTPUT_LONG) return 2;
-  return null;
+/**
+ * Reduce la entrada (Lanczos local, sin API) para que scale × tamaño quepa en GPU.
+ * Una sola llamada Replicate después; no es un reintento.
+ */
+export function fitEsrganInput(width: number, height: number, scale: 2 | 4): EsrganInputFit {
+  const w0 = Math.max(1, Math.round(width));
+  const h0 = Math.max(1, Math.round(height));
+  const maxLong = Math.max(8, Math.floor(ESRGAN_MAX_OUTPUT_LONG / scale));
+  const maxPixels = Math.max(64, Math.floor(ESRGAN_MAX_OUTPUT_PIXELS / (scale * scale)));
+  const long = Math.max(w0, h0);
+  const pixels = w0 * h0;
+  const byLong = long > maxLong ? maxLong / long : 1;
+  const byPixels = pixels > maxPixels ? Math.sqrt(maxPixels / pixels) : 1;
+  const factor = Math.min(1, byLong, byPixels);
+  if (factor >= 0.999) return { width: w0, height: h0, needsShrink: false };
+  return {
+    width: Math.max(8, Math.round(w0 * factor)),
+    height: Math.max(8, Math.round(h0 * factor)),
+    needsShrink: true,
+  };
 }
 
 export function planExport6k(width: number, height: number, longSide = EXPORT_6K_LONG_SIDE): Export6kPlan {

@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { chooseEsrganScale, finalizeExport6kPng, planExport6k, EXPORT_6K_LONG_SIDE } from "./export-6k";
+import {
+  chooseEsrganScale,
+  finalizeExport6kPng,
+  fitEsrganInput,
+  planExport6k,
+  ESRGAN_MAX_OUTPUT_LONG,
+  ESRGAN_MAX_OUTPUT_PIXELS,
+  EXPORT_6K_LONG_SIDE,
+} from "./export-6k";
 
 describe("planExport6k", () => {
   it("elige ×2 desde ~2K (×4 tumba CUDA) y ×4 solo desde ~1K", () => {
     expect(chooseEsrganScale(2752, EXPORT_6K_LONG_SIDE)).toBe(2);
     expect(chooseEsrganScale(2048, EXPORT_6K_LONG_SIDE)).toBe(2);
+    expect(chooseEsrganScale(2560, EXPORT_6K_LONG_SIDE)).toBe(2);
     expect(chooseEsrganScale(1280, EXPORT_6K_LONG_SIDE)).toBe(4);
     expect(chooseEsrganScale(1024, EXPORT_6K_LONG_SIDE)).toBe(4);
     expect(chooseEsrganScale(6144, EXPORT_6K_LONG_SIDE)).toBeNull();
@@ -30,10 +39,32 @@ describe("planExport6k", () => {
     expect(plan.targetWidth).toBe(EXPORT_6K_LONG_SIDE);
   });
 
+  it("ChatGPT 2K 3:4 planifica ×2, no ×4", () => {
+    const plan = planExport6k(1920, 2560);
+    expect(plan.esrganScale).toBe(2);
+    expect(plan.targetHeight).toBe(EXPORT_6K_LONG_SIDE);
+  });
+
   it("marca alreadyAtLeast6k cuando la fuente ya es ≥ 6K", () => {
     const plan = planExport6k(7000, 4000);
     expect(plan.alreadyAtLeast6k).toBe(true);
     expect(plan.esrganScale).toBeNull();
+  });
+});
+
+describe("fitEsrganInput", () => {
+  it("recorta ChatGPT 2K 3:4 para que ×2 no pase de ~4K de salida", () => {
+    const fit = fitEsrganInput(1920, 2560, 2);
+    expect(fit.needsShrink).toBe(true);
+    expect(Math.max(fit.width, fit.height) * 2).toBeLessThanOrEqual(ESRGAN_MAX_OUTPUT_LONG);
+    expect(fit.width * fit.height * 4).toBeLessThanOrEqual(ESRGAN_MAX_OUTPUT_PIXELS + 8_000);
+  });
+
+  it("no recorta un 1K 16:9 a ×4 si ya cabe", () => {
+    const fit = fitEsrganInput(1024, 576, 4);
+    expect(fit.needsShrink).toBe(false);
+    expect(fit.width).toBe(1024);
+    expect(fit.height).toBe(576);
   });
 });
 

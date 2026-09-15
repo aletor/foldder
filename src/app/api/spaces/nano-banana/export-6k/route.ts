@@ -22,7 +22,7 @@ import {
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
-import { finalizeExport6kPng, planExport6k } from "@/lib/nano-banana/export-6k";
+import { finalizeExport6kPng, fitEsrganInput, planExport6k } from "@/lib/nano-banana/export-6k";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -30,10 +30,11 @@ export const maxDuration = 180;
 /**
  * Export 6K · Real-ESRGAN (Replicate) + Lanczos al lado largo 6144.
  * Una sola llamada de pago por gesto del usuario; sin reintentos automáticos.
- * Desde ~2K usamos ×2 (×4 petaba CUDA en Replicate); cerca de 6K solo Lanczos.
+ * Desde ~2K usamos ×2 con entrada recortada a ~4K de salida (el retrato 2K
+ * nativo ×2 petaba CUDA). Cerca de 6K solo Lanczos. Una sola llamada Replicate.
  */
 
-/** lucataco en A100; no mandar ×4 si la salida superaría ~6K (OOM/CUDA). */
+/** lucataco en A100, sin tiles: la entrada se recorta antes para no OOM. */
 const ESRGAN_MODEL =
   "lucataco/real-esrgan:3febd19381dd7e1f52a3ed3260b5b0a5636353de45e37e7c1c3cd814b24077a3";
 const ESRGAN_MODEL_LABEL = "lucataco/real-esrgan";
@@ -117,10 +118,10 @@ function mapReplicateUpscaleError(mlMessage: string): { error: string; retryable
       status: 429,
     };
   }
-  if (/CUDA|illegal memory access|out of memory|OOM/i.test(mlMessage)) {
+  if (/CUDA|illegal memory access|out of memory|OOM|too large|too big|maximum (image )?size/i.test(mlMessage)) {
     return {
       error:
-        "El upscale en Replicate falló por memoria GPU (imagen demasiado grande para ×4). No se ha cobrado. Vuelve a pulsar Exportar 6K: ahora usamos una escala más segura.",
+        "El upscale en Replicate falló por memoria GPU: esta imagen es demasiado grande para el worker. No se ha cobrado. Vuelve a pulsar Exportar 6K.",
       retryable: true,
       status: 503,
     };
@@ -195,6 +196,8 @@ export async function POST(req: Request) {
       });
     }
 
+    const fit = fitEsrganInput(width, height, plan.esrganScale);
+
     walletCharge = await reserveApiWalletCharge({
       req,
       userEmail,
@@ -206,15 +209,20 @@ export async function POST(req: Request) {
         model: ESRGAN_MODEL_LABEL,
         scale: plan.esrganScale,
         source: `${width}x${height}`,
+        mlInput: `${fit.width}x${fit.height}`,
         target: `${plan.targetWidth}x${plan.targetHeight}`,
       },
     });
 
-    // JPEG q92 para no mandar PNG enormes a Replicate (mismo contenido perceptual).
-    const jpegForMl = await sharp(source.buffer, { failOn: "none" })
-      .rotate()
-      .jpeg({ quality: 92, mozjpeg: true })
-      .toBuffer();
+    // Encoger aquí (gratis) para que ×2/×4 quepa en GPU; una sola llamada de pago.
+    let mlSource = sharp(source.buffer, { failOn: "none" }).rotate();
+    if (fit.needsShrink) {
+      mlSource = mlSource.resize(fit.width, fit.height, {
+        kernel: sharp.kernel.lanczos3,
+        fit: "fill",
+      });
+    }
+    const jpegForMl = await mlSource.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
     const imageInput = `data:image/jpeg;base64,${jpegForMl.toString("base64")}`;
 
     const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
@@ -247,6 +255,7 @@ export async function POST(req: Request) {
         note: `Export 6K Real-ESRGAN ×${plan.esrganScale}`,
         metadata: {
           source: `${width}x${height}`,
+          mlInput: `${fit.width}x${fit.height}`,
           target: `${plan.targetWidth}x${plan.targetHeight}`,
           faceEnhance,
         },
@@ -292,6 +301,7 @@ export async function POST(req: Request) {
     console.info("[nano-banana/export-6k] ok", {
       key,
       from: `${width}x${height}`,
+      mlInput: `${fit.width}x${fit.height}`,
       to: `${finalized.width}x${finalized.height}`,
       scale: plan.esrganScale,
       ms: Date.now() - started,
