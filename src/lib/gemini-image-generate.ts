@@ -24,17 +24,15 @@ export const GEMINI_IMAGE_MODELS = {
   flash25: "gemini-2.5-flash-image",
 } as const;
 
-const GEMINI3_NATIVE_HIRES_MODELS = new Set<string>([
-  GEMINI_IMAGE_MODELS.flash31,
-  GEMINI_IMAGE_MODELS.pro3,
-]);
-
 /**
- * Gemini 3 image models often return hazy low-detail frames at native 2K/4K
- * (especially with short prompts). Request 1K from the API and upscale locally.
+ * Pide a Gemini la resolución nativa solicitada (1K / 2K / 4K).
+ *
+ * Antes (junio 2025) forzábamos API 1K + Lanczos local porque el 2K/4K nativo
+ * salía lavado en los previews. Se vuelve a pedir nativo; `upscaleFactor` queda
+ * por si algún modelo futuro vuelve a necesitar un puente local.
  */
 export function resolveGeminiApiImageSize(
-  modelId: string,
+  _modelId: string,
   resolutionInput?: string,
 ): { apiImageSize: string; upscaleFactor: number; requestedResolution: string } {
   const resInput = (resolutionInput && String(resolutionInput).trim()
@@ -47,17 +45,6 @@ export function resolveGeminiApiImageSize(
   else if (resInput === "2k") apiImageSize = "2K";
   else if (resInput === "4k") apiImageSize = "4K";
   else apiImageSize = resInput.toUpperCase();
-
-  if (!GEMINI3_NATIVE_HIRES_MODELS.has(modelId)) {
-    return { apiImageSize, upscaleFactor: 1, requestedResolution: resInput };
-  }
-
-  if (resInput === "2k") {
-    return { apiImageSize: "1K", upscaleFactor: 2, requestedResolution: resInput };
-  }
-  if (resInput === "4k") {
-    return { apiImageSize: "1K", upscaleFactor: 4, requestedResolution: resInput };
-  }
 
   return { apiImageSize, upscaleFactor: 1, requestedResolution: resInput };
 }

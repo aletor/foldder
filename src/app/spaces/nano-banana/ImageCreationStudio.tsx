@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { Check, ChevronLeft, Eraser, Eye, Layers, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, Download, Eraser, Eye, Layers, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { aiHudNanoBananaJobProgress } from "@/lib/ai-hud-generation-progress";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
@@ -28,6 +28,7 @@ import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-
 import { canStudioGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
 import { prepareStudioGenerateCall } from "./studio-prepare-generate";
 import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
+import { downloadExport6kFile, runExport6k } from "./studio-export-6k";
 import { clientPointToImagePoint, lassoAnchorPercent, STUDIO_VIEWER_PAN_GAIN, wheelZoomFactor, zoomTowardPoint } from "./studio-overlay-coords";
 import {
   emptyDraft,
@@ -247,6 +248,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const [composeStage, setComposeStage] = useState<string | null>(null);
   const [composeNotice, setComposeNotice] = useState<StudioComposeNotice | null>(null);
   const [showComposeMask, setShowComposeMask] = useState(false);
+  const [exporting6k, setExporting6k] = useState(false);
+  const [export6kError, setExport6kError] = useState<string | null>(null);
   const [sessionImage, setSessionImage] = useState<string | null>(lastGenerated || initialImage);
   const [showingOriginal, setShowingOriginal] = useState(false);
   const currentImage = showingOriginal && initialImage ? initialImage : sessionImage;
@@ -852,6 +855,22 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     studioAspect,
   ]);
 
+  const onExport6k = useCallback(async () => {
+    const src = historyPreviewUrl || sessionImage || currentImage;
+    if (!src || exporting6k || genStatus === "running") return;
+    setExport6kError(null);
+    setExporting6k(true);
+    try {
+      const result = await runExport6k({ imageSrc: src });
+      await downloadExport6kFile(result.output, `foldder-export-6k-${result.width}x${result.height}.png`);
+    } catch (error) {
+      console.error("[ImageCreationStudio] export-6k:", error);
+      setExport6kError(error instanceof Error ? error.message : "No se pudo exportar en 6K.");
+    } finally {
+      setExporting6k(false);
+    }
+  }, [currentImage, exporting6k, genStatus, historyPreviewUrl, sessionImage]);
+
   const showGenerate =
     !readOnly &&
     genStatus !== "running" &&
@@ -976,7 +995,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             <button
               type="button"
               aria-pressed={preserveUnchanged}
-              disabled={readOnly || genStatus === "running" || inspectingCall}
+              disabled={readOnly || genStatus === "running" || inspectingCall || exporting6k}
               onClick={() => {
                 const next = !preserveUnchanged;
                 setPreserveUnchanged(next);
@@ -991,7 +1010,22 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             </button>
             <button
               type="button"
-              disabled={readOnly || genStatus === "running" || inspectingCall}
+              disabled={
+                !(historyPreviewUrl || sessionImage || currentImage) ||
+                genStatus === "running" ||
+                inspectingCall ||
+                exporting6k
+              }
+              onClick={() => void onExport6k()}
+              className={foldderStudioHeaderActionClassName()}
+              title="Upscale IA (Real-ESRGAN) a 6K y descarga PNG · llamada de pago con confirmación de wallet"
+            >
+              {exporting6k ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+              Exportar 6K
+            </button>
+            <button
+              type="button"
+              disabled={readOnly || genStatus === "running" || inspectingCall || exporting6k}
               onClick={() => void onInspectCall()}
               className={foldderStudioHeaderActionClassName()}
               title="Testing: analiza zonas y muestra el prompt e imágenes que se mandarían"
@@ -1510,10 +1544,10 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               <div className="h-full bg-[#6C5CE7]" style={{ width: `${progress}%` }} />
             </div>
           ) : null}
-          {genStatus === "running" ? (
+          {genStatus === "running" || exporting6k ? (
             <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap text-[10px] font-black uppercase tracking-widest text-violet-200">
               <Loader2 size={12} className="mr-2 inline animate-spin" />
-              {composeStage}
+              {exporting6k ? "Exportando 6K…" : composeStage}
             </div>
           ) : null}
         </section>
@@ -1660,6 +1694,24 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             <p className="mb-3 font-black uppercase tracking-widest text-white/70">Ver llamada</p>
             <p>{inspectError}</p>
             <button type="button" className="mt-4 border border-white/20 px-3 py-1.5 text-[10px] font-black uppercase" onClick={() => setInspectError(null)}>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {export6kError ? (
+        <div className="absolute inset-0 z-[100110] flex items-center justify-center bg-black/70 p-6" onClick={() => setExport6kError(null)}>
+          <div
+            className="max-w-lg border border-white/15 bg-[#0c0d11] p-4 text-[12px] text-red-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="mb-3 font-black uppercase tracking-widest text-white/70">Exportar 6K</p>
+            <p>{export6kError}</p>
+            <button
+              type="button"
+              className="mt-4 border border-white/20 px-3 py-1.5 text-[10px] font-black uppercase"
+              onClick={() => setExport6kError(null)}
+            >
               Cerrar
             </button>
           </div>

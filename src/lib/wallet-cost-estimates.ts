@@ -212,6 +212,18 @@ export function estimateWalletCostForRoute(
     };
   }
 
+  if (route === "/api/spaces/nano-banana/export-6k") {
+    const estimated = 0.012;
+    return {
+      label: "Exportar 6K (upscale IA)",
+      route,
+      category: "image",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.35),
+      tone: "confirm",
+    };
+  }
+
   if (route === "/api/gemini/analyze-areas") {
     const estimated = 0.02;
     return {

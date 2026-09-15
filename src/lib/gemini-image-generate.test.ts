@@ -89,18 +89,18 @@ describe("normalizeGeminiImageAspectRatio", () => {
 });
 
 describe("resolveGeminiApiImageSize", () => {
-  it("maps Gemini 3 2K requests to API 1K with 2x upscale", () => {
+  it("requests native 2K from Gemini 3 (no local upscale)", () => {
     expect(resolveGeminiApiImageSize("gemini-3.1-flash-image-preview", "2k")).toEqual({
-      apiImageSize: "1K",
-      upscaleFactor: 2,
+      apiImageSize: "2K",
+      upscaleFactor: 1,
       requestedResolution: "2k",
     });
   });
 
-  it("maps Gemini 3 4K requests to API 1K with 4x upscale", () => {
+  it("requests native 4K from Gemini 3 Pro (no local upscale)", () => {
     expect(resolveGeminiApiImageSize("gemini-3-pro-image-preview", "4k")).toEqual({
-      apiImageSize: "1K",
-      upscaleFactor: 4,
+      apiImageSize: "4K",
+      upscaleFactor: 1,
       requestedResolution: "4k",
     });
   });
