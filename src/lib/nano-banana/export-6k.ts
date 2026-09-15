@@ -1,8 +1,8 @@
 /**
- * Export 6K · post-proceso Sharp (solo servidor).
+ * Export 6K · reescala local con Sharp (solo servidor, sin IA ni APIs de pago).
  *
- * Flujo: Topaz Gigapixel (2x o 4x) → Lanczos al lado largo 6144 → PNG o JPEG.
- * Si la fuente ya es ≥ 6K o está cerca (4K), no hay API: solo se entrega.
+ * Lanczos3 al lado largo 6144, sin sharpen: no inventa detalle ni añade halos.
+ * Si la fuente ya es ≥ 6K se entrega tal cual (con tope de seguridad).
  */
 
 import sharp from "sharp";
@@ -17,19 +17,12 @@ export {
   EXPORT_6K_JPEG_QUALITY,
   EXPORT_6K_LONG_SIDE,
   EXPORT_6K_MAX_LONG_SIDE,
-  chooseTopazFactor,
   coerceExport6kFormat,
-  estimateTopazUpscaleUsd,
   planExport6k,
-  topazFactorNumeric,
   type Export6kFormat,
   type Export6kPlan,
-  type TopazUpscaleFactor,
 } from "./export-6k-plan";
 
-/**
- * Ajusta el buffer (ya upscaleado por Topaz o la fuente) al tamaño 6K.
- */
 export async function finalizeExport6k(
   buffer: Buffer,
   plan: Export6kPlan,
@@ -55,8 +48,6 @@ export async function finalizeExport6k(
       fit: "fill",
     });
   }
-
-  pipeline = pipeline.sharpen({ sigma: 0.55, m1: 0.45, m2: 0.35 });
 
   if (format === "jpeg") {
     const jpeg = await pipeline

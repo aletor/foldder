@@ -1,11 +1,9 @@
 /**
- * Cliente Studio · Exportar 6K (Topaz Gigapixel vía Replicate + Lanczos).
- * Una sola llamada de pago por gesto; el preflight de wallet confirma el coste.
+ * Cliente Studio · Exportar 6K (reescala local en servidor, sin IA ni coste de API).
  */
 
-import { fetchPostWithWalletPreflight } from "@/lib/wallet-fetch-preflight";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
-import type { Export6kFormat, TopazUpscaleFactor } from "@/lib/nano-banana/export-6k-plan";
+import type { Export6kFormat } from "@/lib/nano-banana/export-6k-plan";
 
 export const EXPORT_6K_ENDPOINT = "/api/spaces/nano-banana/export-6k";
 const SOURCE_DATA_URL_MAX_BYTES = 24_000_000;
@@ -17,8 +15,7 @@ export type Export6kResult = {
   key: string;
   width: number;
   height: number;
-  usedMl: boolean;
-  topazFactor: TopazUpscaleFactor | null;
+  scale: number;
   format: Export6kFormat;
   timeMs: number;
 };
@@ -49,16 +46,13 @@ async function resolveExportImageSource(src: string): Promise<Export6kImageSourc
 export async function runExport6k(args: {
   imageSrc: string;
   format?: Export6kFormat;
-  sourceWidth?: number;
-  sourceHeight?: number;
 }): Promise<Export6kResult> {
   const image = await resolveExportImageSource(args.imageSrc);
   const format: Export6kFormat = args.format === "jpeg" ? "jpeg" : "png";
-  const res = await fetchPostWithWalletPreflight(EXPORT_6K_ENDPOINT, {
-    image,
-    format,
-    sourceWidth: args.sourceWidth,
-    sourceHeight: args.sourceHeight,
+  const res = await fetch(EXPORT_6K_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image, format }),
   });
   const json = (await res.json().catch(() => null)) as
     | (Partial<Export6kResult> & { error?: string })
@@ -71,8 +65,7 @@ export async function runExport6k(args: {
     key: json.key,
     width: typeof json.width === "number" ? json.width : 0,
     height: typeof json.height === "number" ? json.height : 0,
-    usedMl: json.usedMl === true,
-    topazFactor: json.topazFactor === "2x" || json.topazFactor === "4x" ? json.topazFactor : null,
+    scale: typeof json.scale === "number" ? json.scale : 1,
     format: json.format === "jpeg" ? "jpeg" : "png",
     timeMs: typeof json.timeMs === "number" ? json.timeMs : 0,
   };

@@ -22,7 +22,6 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/spaces/describe",
   "/api/spaces/pdf-scan/ocr",
   "/api/spaces/matte",
-  "/api/spaces/nano-banana/export-6k",
   "/api/spaces/guionista",
   "/api/spaces/search",
   "/api/spaces/text-content",
@@ -59,7 +58,6 @@ function sampleBodyForRoute(route: string): Record<string, unknown> {
   if (route === "/api/video-editor/subtitles/transcribe") return { durationSeconds: 120 };
   if (route === "/api/spaces/brandKit/visual/generate") return { axes: { sujeto: "personas" } };
   if (route === "/api/spaces/brandKit/logo/vectorize") return { logoUrl: "https://example.com/logo.png", logoSignature: "abc" };
-  if (route === "/api/spaces/nano-banana/export-6k") return { sourceWidth: 1920, sourceHeight: 2560, format: "png" };
   return {};
 }
 
@@ -191,21 +189,11 @@ describe("wallet-cost-estimates", () => {
     expect(estimateWalletCostForRoute("/api/runway/status/task_1", {})).toBeNull();
   });
 
-  it("estimates Topaz 6K export from source size and skips 4K", () => {
-    const twoK = estimateWalletCostForRoute("/api/spaces/nano-banana/export-6k", {
-      sourceWidth: 1920,
-      sourceHeight: 2560,
-    });
-    expect(twoK).toMatchObject({
-      label: "Exportar 6K (Topaz)",
-      category: "image",
-      tone: "confirm",
-      estimatedCostMicros: 50_000,
-    });
+  it("treats the local Export 6K route as free (no wallet estimate)", () => {
     expect(
       estimateWalletCostForRoute("/api/spaces/nano-banana/export-6k", {
-        sourceWidth: 4096,
-        sourceHeight: 2304,
+        sourceWidth: 1920,
+        sourceHeight: 2560,
       }),
     ).toBeNull();
   });

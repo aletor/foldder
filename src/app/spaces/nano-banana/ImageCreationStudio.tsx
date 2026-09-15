@@ -928,12 +928,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     setExport6kError(null);
     setExporting6k(true);
     try {
-      const result = await runExport6k({
-        imageSrc: src,
-        format: export6kFormat,
-        sourceWidth: imgNat.w > 1 ? imgNat.w : undefined,
-        sourceHeight: imgNat.h > 1 ? imgNat.h : undefined,
-      });
+      const result = await runExport6k({ imageSrc: src, format: export6kFormat });
       const ext = result.format === "jpeg" ? "jpg" : "png";
       await downloadExport6kFile(result.output, `foldder-export-6k-${result.width}x${result.height}.${ext}`);
     } catch (error) {
@@ -942,7 +937,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     } finally {
       setExporting6k(false);
     }
-  }, [currentImage, export6kFormat, exporting6k, genStatus, historyPreviewUrl, imgNat.h, imgNat.w, sessionImage]);
+  }, [currentImage, export6kFormat, exporting6k, genStatus, historyPreviewUrl, sessionImage]);
 
   const showGenerate =
     !readOnly &&
@@ -1104,7 +1099,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               }
               onClick={() => void onExport6k()}
               className={foldderStudioHeaderActionClassName()}
-              title="Upscale IA Topaz a 6K y descarga · llamada de pago con confirmación de wallet"
+              title="Reescala local a 6K (lado largo 6144) y descarga · sin IA ni coste de API. Para máxima calidad genera en 4K"
             >
               {exporting6k ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
               Exportar 6K
