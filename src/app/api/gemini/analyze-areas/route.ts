@@ -39,7 +39,16 @@ interface AreaChange {
   paintData?: string | null;
   assignedColorHex?: string;
   referenceImageData?: string | null;
+  referenceImages?: string[] | null;
+  gridCells?: string[] | null;
   isGlobal?: boolean;
+}
+
+function visualRefsForChange(c: AreaChange): string[] {
+  if (Array.isArray(c.referenceImages) && c.referenceImages.length > 0) {
+    return c.referenceImages.filter((value): value is string => Boolean(value));
+  }
+  return c.referenceImageData ? [c.referenceImageData] : [];
 }
 
 type SharpCallable = (
@@ -245,13 +254,16 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Prompt
-    const hasAnyRef = typedChanges.some((c) => c.referenceImageData);
+    const hasAnyRef = typedChanges.some((c) => visualRefsForChange(c).length > 0);
     for (const [index, change] of typedChanges.entries()) {
-      await assertUserCanAccessMediaReference(
-        usageUserEmail,
-        change.referenceImageData,
-        `visual reference ${index + 1}`,
-      );
+      const refs = visualRefsForChange(change);
+      for (let r = 0; r < refs.length; r++) {
+        await assertUserCanAccessMediaReference(
+          usageUserEmail,
+          refs[r],
+          `visual reference ${index + 1}.${r + 1}`,
+        );
+      }
     }
 
     let systemPrompt: string;
@@ -280,8 +292,12 @@ Devuelve SOLO el prompt, sin texto adicional.`;
             return `- CAMBIO GLOBAL (toda la escena): ${c.description.trim()}`;
           }
           const spatial = buildSpatialDescription(c);
-          const refNote = c.referenceImageData
-            ? ` [TIENE REFERENCIA VISUAL: celda ${c.color.toUpperCase()} en la IMAGEN 3 (grid de referencias)]`
+          const refs = visualRefsForChange(c);
+          const cellIds = Array.isArray(c.gridCells) && c.gridCells.length > 0
+            ? c.gridCells.join(", ")
+            : c.color.toUpperCase();
+          const refNote = refs.length
+            ? ` [TIENE REFERENCIA VISUAL: celdas ${cellIds} en la IMAGEN 3 (grid de referencias); úsalas juntas para este cambio]`
             : "";
           return `- Área / trazo ${c.color}${spatial}: ${c.description}${refNote}`;
         })
@@ -302,11 +318,11 @@ OBLIGATORIO — INTEGRIDAD DE ZONAS: En «Cambios solicitados» hay exactamente 
           : "";
 
       const imagen3Desc = hasAnyRef
-        ? "\n- IMAGEN 3: grid de referencias visuales. Cada celda tiene una cabecera del color del cambio y la imagen de referencia visual que el usuario quiere usar como guía de estilo."
+        ? "\n- IMAGEN 3: grid de referencias visuales. Cada celda está etiquetada (#1A, #1B, …). Las celdas del mismo número de card pertenecen a la misma instrucción y deben usarse juntas."
         : "";
 
       const referenceOutputLine = hasAnyRef
-        ? "\nREFERENCIA 3: grid de referencias visuales — cada celda etiquetada con el color del cambio."
+        ? "\nREFERENCIA 3: grid de referencias visuales — celdas etiquetadas (#1A, #1B, …). Fotos de la misma card se usan juntas."
         : "";
 
       const imageCountHint = hasAnyRef ? "tres" : hasZones ? "dos" : "una";
@@ -347,7 +363,7 @@ Tu tarea:
    e) la acción a realizar.
 2. Para cada CAMBIO GLOBAL, integra la instrucción como afectación a toda la escena (luz, ambiente, hora del día), sin limitarla a una máscara.
 3. En zonas, sé específico respecto al PLANO (encuadre), no solo anatomía del personaje.
-4. Si un cambio tiene REFERENCIA VISUAL (nota [TIENE REFERENCIA VISUAL] en la lista), añade: "siguiendo el estilo visual de la celda [COLOR] de la REFERENCIA 3".
+4. Si un cambio tiene REFERENCIA VISUAL, añade: "siguiendo las celdas [IDs] de la REFERENCIA 3" (todas las celdas de esa card juntas).
 5. Genera el prompt con este formato exacto:
 
 REFERENCIA 1: imagen base. Mantén todo lo que no se indica cambiar, conservando composición donde aplique.

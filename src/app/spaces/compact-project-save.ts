@@ -23,6 +23,7 @@ const PREVIEW_KEYS = new Set([
   "colorMapUrl",
   "paintData",
   "referenceImageData",
+  "schemaData",
 ]);
 
 const DROP_KEYS = new Set([

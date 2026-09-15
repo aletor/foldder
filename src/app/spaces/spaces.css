@@ -9495,26 +9495,48 @@
 }
 
 .custom-node.nano-banana-node.nano-banana-node--has-content .nano-banana-node-main.foldder-node-content-main--with-dock {
-  display: grid !important;
-  grid-template-rows: minmax(0, 1fr) auto;
+  /* Igual que Export: columna flex, el dock no se comprime. */
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.custom-node.nano-banana-node.foldder-node--frameless.node--media .node-content.nano-banana-node-main.foldder-node-content-main--with-dock > div:first-child,
+.custom-node.nano-banana-node.foldder-node--frameless.node--media .nano-banana-node-main.foldder-node-content-main--with-dock > .nano-banana-node-preview-area {
+  width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  flex-shrink: 1 !important;
 }
 
 .custom-node.nano-banana-node.nano-banana-node--connected-only .nano-banana-node-preview-area,
 .custom-node.nano-banana-node.nano-banana-node--has-content:not(.nano-banana-node--has-preview) .nano-banana-node-preview-area {
   background: #f16389 !important;
+  min-height: 140px;
 }
 
 .custom-node.nano-banana-node .nano-banana-node-dock-wrap {
   position: relative;
-  z-index: 2;
-  min-height: 0;
+  z-index: 12;
+  flex: 0 0 auto !important;
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+  min-height: unset !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  pointer-events: auto;
 }
 
 .custom-node.nano-banana-node .nano-banana-node-preview-area,
 .custom-node.nano-banana-node .nano-banana-node-preview-area.foldder-node-content-preview-area {
   position: relative;
   min-height: 0;
-  flex: 1 1 auto;
   overflow: hidden;
   display: flex;
   flex-direction: column;

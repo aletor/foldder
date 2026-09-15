@@ -85,7 +85,6 @@ const ASPECT_RATIO_NODE_TYPES = new Set([
   "imageCreationAdvanced",
   "inspiration",
   "mediaInput",
-  "nanoBanana",
   "urlImage",
   "vfxGenerator",
   "videoEditor",
