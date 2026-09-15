@@ -26,7 +26,9 @@ import {
   type NanoBananaResolution,
 } from "./nano-banana-output-options";
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
+import { StudioFoldderImagePicker, StudioRefSourceButtons } from "./StudioFoldderImagePicker";
 import { canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
+import { mergeStudioCardReferences, planStudioIncomingUrls, STUDIO_SCENE_DEST } from "./studio-foldder-images";
 import { prepareStudioGenerateCall } from "./studio-prepare-generate";
 import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
 import { downloadExport6kFile, runExport6k } from "./studio-export-6k";
@@ -317,6 +319,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const [lassoPoints, setLassoPoints] = useState<StudioPoint[]>([]);
   const [draftCard, setDraftCard] = useState<StudioCard | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [foldderPickerDest, setFoldderPickerDest] = useState<string | null>(null);
   const [schemaMode, setSchemaMode] = useState(false);
   const [schemaTool, setSchemaTool] = useState<"draw" | "erase">("draw");
   const [historyPreviewUrl, setHistoryPreviewUrl] = useState<string | null>(null);
@@ -531,48 +534,88 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     requestAnimationFrame(() => draftTextRef.current?.focus());
   }, [imgNat.h, imgNat.w, lassoPoints]);
 
-  const attachRefsToCard = useCallback(async (cardId: string, files: FileList | File[]) => {
-    const urls = await readFilesAsDataUrls(files);
-    if (urls.length === 0) return;
-    setCards((prev) =>
-      prev.map((card) =>
-        card.id === cardId
-          ? { ...card, references: [...card.references, ...urls].slice(0, STUDIO_MAX_REFS_PER_CARD) }
-          : card,
-      ),
-    );
-    setDraftCard((current) =>
-      current && current.id === cardId
-        ? { ...current, references: [...current.references, ...urls].slice(0, STUDIO_MAX_REFS_PER_CARD) }
-        : current,
-    );
+  const applyIncomingUrls = useCallback((urls: string[], dest: string | null) => {
+    const plan = planStudioIncomingUrls({
+      urls,
+      dest,
+      hasScene: Boolean(currentImageRef.current),
+      maxRefs: STUDIO_MAX_REFS_PER_CARD,
+    });
+    if (plan.sessionImage) {
+      setSessionImage(plan.sessionImage);
+      setShowingOriginal(false);
+    }
+    if (plan.cardUpdate) {
+      const { cardId, add } = plan.cardUpdate;
+      setCards((prev) =>
+        prev.map((card) =>
+          card.id === cardId ? { ...card, references: mergeStudioCardReferences(card.references, add, STUDIO_MAX_REFS_PER_CARD) } : card,
+        ),
+      );
+      setDraftCard((current) =>
+        current && current.id === cardId
+          ? { ...current, references: mergeStudioCardReferences(current.references, add, STUDIO_MAX_REFS_PER_CARD) }
+          : current,
+      );
+    }
+    const newCardRefs = plan.extraCard?.references ?? plan.newCard?.references;
+    if (newCardRefs?.length) {
+      const asDraft = Boolean(plan.newCard);
+      setCards((prev) => {
+        const next = { ...createStudioCard(prev.length), references: newCardRefs };
+        setSelectedCardId(next.id);
+        if (asDraft) setDraftCard(next);
+        return [...prev, next];
+      });
+    }
   }, []);
 
-  const attachUrlToCard = useCallback((cardId: string, url: string) => {
-    setCards((prev) =>
-      prev.map((card) =>
-        card.id === cardId && !card.references.includes(url)
-          ? { ...card, references: [...card.references, url].slice(0, STUDIO_MAX_REFS_PER_CARD) }
-          : card,
-      ),
-    );
-  }, []);
+  const attachRefsToCard = useCallback(
+    async (cardId: string, files: FileList | File[]) => {
+      const urls = await readFilesAsDataUrls(files);
+      applyIncomingUrls(urls, cardId);
+    },
+    [applyIncomingUrls],
+  );
+
+  const attachUrlToCard = useCallback(
+    (cardId: string, url: string) => {
+      applyIncomingUrls([url], cardId);
+    },
+    [applyIncomingUrls],
+  );
+
+  const openPcSource = useCallback(
+    (dest: string) => {
+      if (readOnly || genStatus === "running") return;
+      dropCardIdRef.current = dest;
+      cardFileRef.current?.click();
+    },
+    [genStatus, readOnly],
+  );
+
+  const openFoldderSource = useCallback(
+    (dest: string) => {
+      if (readOnly || genStatus === "running") return;
+      setFoldderPickerDest(dest);
+    },
+    [genStatus, readOnly],
+  );
 
   const useConnectedRef = useCallback(
     (url: string) => {
       if (readOnly || genStatus === "running") return;
+      if (!currentImageRef.current) {
+        applyIncomingUrls([url], STUDIO_SCENE_DEST);
+        return;
+      }
       if (selectedCardId) {
         attachUrlToCard(selectedCardId, url);
         return;
       }
-      setCards((prev) => {
-        const next = { ...createStudioCard(prev.length), references: [url] };
-        setSelectedCardId(next.id);
-        setDraftCard(next);
-        return [...prev, next];
-      });
+      applyIncomingUrls([url], null);
     },
-    [attachUrlToCard, genStatus, readOnly, selectedCardId],
+    [applyIncomingUrls, attachUrlToCard, genStatus, readOnly, selectedCardId],
   );
 
   const removeCard = useCallback((cardId: string) => {
@@ -587,21 +630,16 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       if (readOnly) return;
       const files = event.dataTransfer.files;
       if (!files?.length) return;
-      if (dropCardIdRef.current) {
-        await attachRefsToCard(dropCardIdRef.current, files);
-        dropCardIdRef.current = null;
+      const dest = dropCardIdRef.current;
+      dropCardIdRef.current = null;
+      const urls = await readFilesAsDataUrls(files);
+      if (dest && dest !== STUDIO_SCENE_DEST) {
+        applyIncomingUrls(urls, dest);
         return;
       }
-      const urls = await readFilesAsDataUrls(files);
-      if (urls.length === 0) return;
-      setCards((prev) => {
-        const next = { ...createStudioCard(prev.length), references: urls.slice(0, STUDIO_MAX_REFS_PER_CARD) };
-        setSelectedCardId(next.id);
-        setDraftCard(next);
-        return [...prev, next];
-      });
+      applyIncomingUrls(urls, dest === STUDIO_SCENE_DEST || !currentImageRef.current ? STUDIO_SCENE_DEST : null);
     },
-    [attachRefsToCard, readOnly],
+    [applyIncomingUrls, readOnly],
   );
 
   const clearEdits = useCallback(() => {
@@ -1298,14 +1336,17 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   style={{ width: fitSize.w, height: fitSize.h, objectFit: "contain", display: "block" }}
                 />
               ) : (
-                <button
-                  type="button"
-                  disabled={readOnly || genStatus === "running"}
-                  onClick={startAdd}
-                  className="flex h-full w-full items-center justify-center border border-dashed border-white/25 bg-white/[0.03] text-white/35 disabled:opacity-30"
+                <div
+                  data-studio-overlay-ui
+                  className="flex h-full w-full flex-col items-center justify-center border border-dashed border-white/25 bg-white/[0.03]"
                 >
-                  <Plus size={28} />
-                </button>
+                  <StudioRefSourceButtons
+                    size="lg"
+                    disabled={readOnly || genStatus === "running"}
+                    onPc={() => openPcSource(STUDIO_SCENE_DEST)}
+                    onFoldder={() => openFoldderSource(STUDIO_SCENE_DEST)}
+                  />
+                </div>
               )}
 
               <svg
@@ -1451,16 +1492,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                       </button>
                     ))}
                     {popoverCard.references.length < STUDIO_MAX_REFS_PER_CARD ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          dropCardIdRef.current = popoverCard.id;
-                          cardFileRef.current?.click();
-                        }}
-                        className="flex h-7 w-7 items-center justify-center border border-white/15 text-white/40"
-                      >
-                        <Plus size={12} />
-                      </button>
+                      <StudioRefSourceButtons
+                        disabled={readOnly || genStatus === "running"}
+                        onPc={() => openPcSource(popoverCard.id)}
+                        onFoldder={() => openFoldderSource(popoverCard.id)}
+                      />
                     ) : null}
                     <button
                       type="button"
@@ -1703,16 +1739,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                     </button>
                   ))}
                   {!readOnly && card.references.length < STUDIO_MAX_REFS_PER_CARD ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        dropCardIdRef.current = card.id;
-                        cardFileRef.current?.click();
-                      }}
-                      className="flex h-7 w-7 items-center justify-center border border-white/15 text-white/40"
-                    >
-                      <Plus size={12} />
-                    </button>
+                    <StudioRefSourceButtons
+                      disabled={genStatus === "running"}
+                      onPc={() => openPcSource(card.id)}
+                      onFoldder={() => openFoldderSource(card.id)}
+                    />
                   ) : null}
                 </div>
               </div>
@@ -1724,13 +1755,29 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               multiple
               className="hidden"
               onChange={(e) => {
-                const id = dropCardIdRef.current || selectedCardId;
-                if (id && e.target.files) void attachRefsToCard(id, e.target.files);
+                const dest = dropCardIdRef.current || selectedCardId;
+                dropCardIdRef.current = null;
+                const files = e.target.files ? Array.from(e.target.files) : [];
                 e.target.value = "";
+                if (files.length === 0) return;
+                if (dest === STUDIO_SCENE_DEST || (!dest && !currentImageRef.current)) {
+                  void readFilesAsDataUrls(files).then((urls) => applyIncomingUrls(urls, STUDIO_SCENE_DEST));
+                  return;
+                }
+                if (dest) void attachRefsToCard(dest, files);
               }}
             />
           </aside>
       </div>
+      <StudioFoldderImagePicker
+        open={Boolean(foldderPickerDest)}
+        onClose={() => setFoldderPickerDest(null)}
+        onPick={(url) => {
+          const dest = foldderPickerDest;
+          setFoldderPickerDest(null);
+          applyIncomingUrls([url], dest);
+        }}
+      />
       {inspectError ? (
         <div className="absolute inset-0 z-[100110] flex items-center justify-center bg-black/70 p-6" onClick={() => setInspectError(null)}>
           <div
