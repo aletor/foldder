@@ -1,78 +1,60 @@
 /**
- * Export 6K · helpers de geometría y post-proceso (sin llamadas de pago).
+ * Export 6K · geometría, coste Topaz y post-proceso (sin llamadas de pago).
  *
- * Flujo: (opcional) encoger entrada a tope GPU → Real-ESRGAN (×2 o ×4)
- * → Lanczos al lado largo objetivo (6144) → PNG.
- * Si la imagen ya es ≥ 6K, no hay upscale ML: solo se entrega (opcionalmente
- * recortada al tope si supera un máximo de seguridad).
+ * Flujo: Topaz Gigapixel (2x o 4x) → Lanczos al lado largo 6144 → PNG o JPEG.
+ * Si la fuente ya es ≥ 6K o está cerca (4K), no hay API: solo se entrega.
  */
 
 import sharp from "sharp";
 
 export const EXPORT_6K_LONG_SIDE = 6144;
-/** Tope absoluto para no generar PNG de cientos de MB por accidente. */
+/** Tope absoluto para no generar archivos de cientos de MB por accidente. */
 export const EXPORT_6K_MAX_LONG_SIDE = 8192;
-/**
- * Tope de salida Real-ESRGAN en lucataco (A100, sin tiles).
- * 2K 3:4 ChatGPT (1920×2560) ×2 → 3840×5120 petaba CUDA; capamos a ~4K de salida.
- */
-export const ESRGAN_MAX_OUTPUT_LONG = 4096;
-/** Tope de píxeles de salida (~4K 3:2). El retrato 2K ×2 se pasa de esto. */
-export const ESRGAN_MAX_OUTPUT_PIXELS = 4096 * 2732;
+/** JPEG casi sin pérdida visual (4:4:4). */
+export const EXPORT_6K_JPEG_QUALITY = 96;
+
+export type Export6kFormat = "png" | "jpeg";
+export type TopazUpscaleFactor = "2x" | "4x";
 
 export type Export6kPlan = {
   sourceWidth: number;
   sourceHeight: number;
   targetWidth: number;
   targetHeight: number;
-  /** Factor Real-ESRGAN (2 | 4). null = sin ML (ya es ≥ 6K o bump pequeño → Lanczos). */
-  esrganScale: 2 | 4 | null;
-  /** Tras ESRGAN (o la fuente), ¿hace falta Lanczos al target? */
+  topazFactor: TopazUpscaleFactor | null;
+  topazOutputWidth: number;
+  topazOutputHeight: number;
   needsFinalResize: boolean;
   alreadyAtLeast6k: boolean;
 };
 
 /**
- * Elige escala ML. El recorte de entrada a GPU va aparte (`fitEsrganInput`).
- * - ×4 para fuentes ~1K.
- * - ×2 para ~2K (incluido retrato ChatGPT 3:4).
- * - Desde ~4K (cerca de 6K) solo Lanczos.
+ * 1K class → 4x (cerca de 6K). 2K class → 2x. 4K / ya 6K → sin API.
+ * Nunca 6x: desde 1K se pasa de 6144 y encarece el MP de salida.
  */
-export function chooseEsrganScale(sourceLong: number, targetLong: number): 2 | 4 | null {
-  if (sourceLong <= 0) return 2;
+export function chooseTopazFactor(sourceLong: number, targetLong: number): TopazUpscaleFactor | null {
+  if (sourceLong <= 0) return "2x";
   if (sourceLong >= targetLong) return null;
-  // Bump pequeño (p. ej. 4K Gemini 4096 → 6K): no hace falta GPU.
   if (sourceLong * 1.5 >= targetLong) return null;
-  if (sourceLong <= 1400) return 4;
-  return 2;
+  if (sourceLong * 4 <= targetLong * 1.15) return "4x";
+  return "2x";
 }
 
-export type EsrganInputFit = {
-  width: number;
-  height: number;
-  needsShrink: boolean;
-};
+export function topazFactorNumeric(factor: TopazUpscaleFactor): 2 | 4 {
+  return factor === "4x" ? 4 : 2;
+}
 
-/**
- * Reduce la entrada (Lanczos local, sin API) para que scale × tamaño quepa en GPU.
- * Una sola llamada Replicate después; no es un reintento.
- */
-export function fitEsrganInput(width: number, height: number, scale: 2 | 4): EsrganInputFit {
-  const w0 = Math.max(1, Math.round(width));
-  const h0 = Math.max(1, Math.round(height));
-  const maxLong = Math.max(8, Math.floor(ESRGAN_MAX_OUTPUT_LONG / scale));
-  const maxPixels = Math.max(64, Math.floor(ESRGAN_MAX_OUTPUT_PIXELS / (scale * scale)));
-  const long = Math.max(w0, h0);
-  const pixels = w0 * h0;
-  const byLong = long > maxLong ? maxLong / long : 1;
-  const byPixels = pixels > maxPixels ? Math.sqrt(maxPixels / pixels) : 1;
-  const factor = Math.min(1, byLong, byPixels);
-  if (factor >= 0.999) return { width: w0, height: h0, needsShrink: false };
-  return {
-    width: Math.max(8, Math.round(w0 * factor)),
-    height: Math.max(8, Math.round(h0 * factor)),
-    needsShrink: true,
-  };
+/** Precio Replicate Topaz por megapíxel de salida. */
+export function estimateTopazUpscaleUsd(outputPixels: number): number {
+  const mp = outputPixels / 1_000_000;
+  if (mp <= 24) return 0.05;
+  if (mp <= 48) return 0.1;
+  if (mp <= 60) return 0.15;
+  if (mp <= 96) return 0.2;
+  if (mp <= 132) return 0.24;
+  if (mp <= 168) return 0.29;
+  if (mp <= 336) return 0.53;
+  return 0.82;
 }
 
 export function planExport6k(width: number, height: number, longSide = EXPORT_6K_LONG_SIDE): Export6kPlan {
@@ -83,36 +65,43 @@ export function planExport6k(width: number, height: number, longSide = EXPORT_6K
   const targetWidth = Math.max(1, Math.round(w * scale));
   const targetHeight = Math.max(1, Math.round(h * scale));
   const alreadyAtLeast6k = sourceLong >= longSide;
-  const esrganScale = chooseEsrganScale(sourceLong, longSide);
-  const afterMlLong = esrganScale ? sourceLong * esrganScale : sourceLong;
-  const needsFinalResize = !alreadyAtLeast6k && afterMlLong !== longSide;
+  const topazFactor = chooseTopazFactor(sourceLong, longSide);
+  const mul = topazFactor ? topazFactorNumeric(topazFactor) : 1;
+  const topazOutputWidth = w * mul;
+  const topazOutputHeight = h * mul;
+  const afterLong = Math.max(topazOutputWidth, topazOutputHeight);
   return {
     sourceWidth: w,
     sourceHeight: h,
     targetWidth,
     targetHeight,
-    esrganScale,
-    needsFinalResize: alreadyAtLeast6k ? false : needsFinalResize || afterMlLong !== longSide,
+    topazFactor,
+    topazOutputWidth,
+    topazOutputHeight,
+    needsFinalResize: alreadyAtLeast6k ? false : afterLong !== longSide,
     alreadyAtLeast6k,
   };
 }
 
+export function coerceExport6kFormat(value: unknown): Export6kFormat {
+  return value === "jpeg" || value === "jpg" ? "jpeg" : "png";
+}
+
 /**
- * Ajusta el buffer (ya upscaleado por ML o la fuente) al tamaño objetivo 6K.
- * Aplica un sharpen suave; PNG sin pérdida.
+ * Ajusta el buffer (ya upscaleado por Topaz o la fuente) al tamaño 6K.
  */
-export async function finalizeExport6kPng(
+export async function finalizeExport6k(
   buffer: Buffer,
   plan: Export6kPlan,
-): Promise<{ png: Buffer; width: number; height: number }> {
-  let pipeline = sharp(buffer, { failOn: "none" }).rotate();
+  format: Export6kFormat = "png",
+): Promise<{ bytes: Buffer; width: number; height: number; mime: string }> {
+  let pipeline = sharp(buffer, { failOn: "none", limitInputPixels: false }).rotate();
   const meta = await pipeline.metadata();
   const curW = meta.width ?? plan.sourceWidth;
   const curH = meta.height ?? plan.sourceHeight;
   const curLong = Math.max(curW, curH);
 
   if (plan.alreadyAtLeast6k) {
-    // Ya es ≥ 6K: entregar tal cual (cap de seguridad si supera el máximo).
     if (curLong > EXPORT_6K_MAX_LONG_SIDE) {
       const s = EXPORT_6K_MAX_LONG_SIDE / curLong;
       pipeline = pipeline.resize(Math.round(curW * s), Math.round(curH * s), {
@@ -127,14 +116,27 @@ export async function finalizeExport6kPng(
     });
   }
 
-  const png = await pipeline
-    .sharpen({ sigma: 0.6, m1: 0.5, m2: 0.4 })
-    .png({ compressionLevel: 6 })
-    .toBuffer();
+  pipeline = pipeline.sharpen({ sigma: 0.55, m1: 0.45, m2: 0.35 });
+
+  if (format === "jpeg") {
+    const jpeg = await pipeline
+      .jpeg({ quality: EXPORT_6K_JPEG_QUALITY, mozjpeg: true, chromaSubsampling: "4:4:4" })
+      .toBuffer();
+    const outMeta = await sharp(jpeg).metadata();
+    return {
+      bytes: jpeg,
+      width: outMeta.width ?? plan.targetWidth,
+      height: outMeta.height ?? plan.targetHeight,
+      mime: "image/jpeg",
+    };
+  }
+
+  const png = await pipeline.png({ compressionLevel: 6 }).toBuffer();
   const outMeta = await sharp(png).metadata();
   return {
-    png,
+    bytes: png,
     width: outMeta.width ?? plan.targetWidth,
     height: outMeta.height ?? plan.targetHeight,
+    mime: "image/png",
   };
 }

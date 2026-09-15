@@ -22,24 +22,26 @@ import {
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
-import { finalizeExport6kPng, fitEsrganInput, planExport6k } from "@/lib/nano-banana/export-6k";
+import {
+  coerceExport6kFormat,
+  estimateTopazUpscaleUsd,
+  finalizeExport6k,
+  planExport6k,
+  type Export6kFormat,
+} from "@/lib/nano-banana/export-6k";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
 /**
- * Export 6K · Real-ESRGAN (Replicate) + Lanczos al lado largo 6144.
- * Una sola llamada de pago por gesto del usuario; sin reintentos automáticos.
- * Desde ~2K usamos ×2 con entrada recortada a ~4K de salida (el retrato 2K
- * nativo ×2 petaba CUDA). Cerca de 6K solo Lanczos. Una sola llamada Replicate.
+ * Export 6K · Topaz Gigapixel (Replicate) + Lanczos al lado largo 6144.
+ * Una sola llamada de pago por gesto; sin reintentos automáticos.
+ * La imagen entra por Files API (Buffer), no como data URI.
  */
 
-/** lucataco en A100, sin tiles: la entrada se recorta antes para no OOM. */
-const ESRGAN_MODEL =
-  "lucataco/real-esrgan:3febd19381dd7e1f52a3ed3260b5b0a5636353de45e37e7c1c3cd814b24077a3";
-const ESRGAN_MODEL_LABEL = "lucataco/real-esrgan";
-
-const ESTIMATED_COST_USD = 0.012;
+const TOPAZ_MODEL =
+  "topazlabs/image-upscale:2fdc3b86a01d338ae89ad58e5d9241398a8a01de9b0dda41ba8a0434c8a00dc3";
+const TOPAZ_MODEL_LABEL = "topazlabs/image-upscale";
 const MAX_DATA_URL_BYTES = 28_000_000;
 
 class ExportInputError extends Error {
@@ -94,26 +96,26 @@ async function resolveImage(
 }
 
 function replicateOutputUrl(output: unknown): string {
-  if (typeof output === "string" && /^https?:/i.test(output)) return output;
+  if (typeof output === "string" && /^https?:\/\//i.test(output)) return output;
   if (Array.isArray(output) && typeof output[0] === "string") return output[0];
-  if (output && typeof output === "object" && "url" in output) {
-    const u = (output as { url: unknown }).url;
-    if (typeof u === "string") return u;
-    if (typeof u === "function") {
-      const v = (u as () => string)();
-      if (typeof v === "string") return v;
+  if (output && typeof output === "object") {
+    const row = output as { url?: unknown; href?: unknown };
+    if (typeof row.url === "function") {
+      const v = (row.url as () => string)();
+      if (typeof v === "string" && /^https?:\/\//i.test(v)) return v;
     }
+    if (typeof row.url === "string" && /^https?:\/\//i.test(row.url)) return row.url;
+    if (typeof row.href === "string" && /^https?:\/\//i.test(row.href)) return row.href;
   }
   const asString = String(output ?? "");
-  if (/^https?:/i.test(asString)) return asString;
-  throw new Error("Real-ESRGAN no devolvió una URL de imagen.");
+  if (/^https?:\/\//i.test(asString)) return asString;
+  throw new Error("Topaz no devolvió una URL de imagen.");
 }
 
-function mapReplicateUpscaleError(mlMessage: string): { error: string; retryable: boolean; status: number } {
+function mapTopazError(mlMessage: string): { error: string; retryable: boolean; status: number } {
   if (mlMessage.includes("429")) {
     return {
-      error:
-        "Replicate está saturado o sin saldo. No se reintentó automáticamente; vuelve a pulsar Exportar 6K.",
+      error: "Replicate está saturado o sin saldo. No se reintentó automáticamente; vuelve a pulsar Exportar 6K.",
       retryable: true,
       status: 429,
     };
@@ -121,7 +123,7 @@ function mapReplicateUpscaleError(mlMessage: string): { error: string; retryable
   if (/CUDA|illegal memory access|out of memory|OOM|too large|too big|maximum (image )?size/i.test(mlMessage)) {
     return {
       error:
-        "El upscale en Replicate falló por memoria GPU: esta imagen es demasiado grande para el worker. No se ha cobrado. Vuelve a pulsar Exportar 6K.",
+        "El upscale de Topaz falló por límite de tamaño o memoria. No se ha cobrado. Vuelve a pulsar Exportar 6K.",
       retryable: true,
       status: 503,
     };
@@ -131,6 +133,54 @@ function mapReplicateUpscaleError(mlMessage: string): { error: string; retryable
     retryable: false,
     status: 500,
   };
+}
+
+async function respondExport(
+  userEmail: string,
+  plan: ReturnType<typeof planExport6k>,
+  buffer: Buffer,
+  format: Export6kFormat,
+  started: number,
+  usedMl: boolean,
+) {
+  const finalized = await finalizeExport6k(buffer, plan, format);
+  const filename = format === "jpeg" ? "studio-export-6k.jpg" : "studio-export-6k.png";
+  const key = buildUserAssetObjectKey({
+    userEmail,
+    folder: "generated",
+    filename,
+  });
+  await uploadBufferToS3Key(key, finalized.bytes, finalized.mime);
+  await recordApiUsage({
+    provider: "aws",
+    userEmail,
+    serviceId: "s3-assets",
+    route: "/api/spaces/nano-banana/export-6k",
+    operation: "put_object",
+    costIsKnown: false,
+    costUsd: 0,
+    bytes: finalized.bytes.length,
+    metadata: { key, usedMl, plan, format },
+  });
+  console.info("[nano-banana/export-6k] ok", {
+    key,
+    from: `${plan.sourceWidth}x${plan.sourceHeight}`,
+    to: `${finalized.width}x${finalized.height}`,
+    factor: plan.topazFactor,
+    format,
+    usedMl,
+    ms: Date.now() - started,
+  });
+  return NextResponse.json({
+    output: stableKnowledgeFileUrlFromKey(key),
+    key,
+    width: finalized.width,
+    height: finalized.height,
+    usedMl,
+    topazFactor: plan.topazFactor,
+    format,
+    timeMs: Date.now() - started,
+  });
 }
 
 export async function POST(req: Request) {
@@ -143,18 +193,14 @@ export async function POST(req: Request) {
     if (!authState.ok) return authState.response;
     const userEmail = authState.user.email;
 
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return NextResponse.json({ error: "REPLICATE_API_TOKEN no está configurado." }, { status: 500 });
-    }
-
     const body = (await req.json().catch(() => null)) as
-      | { image?: ImageSourceInput; faceEnhance?: unknown }
+      | { image?: ImageSourceInput; format?: unknown }
       | null;
     if (!body || typeof body !== "object") {
       return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
     }
+    const format = coerceExport6kFormat(body.format);
 
-    const faceEnhance = body.faceEnhance === true;
     const source = await resolveImage(body.image, userEmail);
     const meta = await sharp(source.buffer, { failOn: "none" }).rotate().metadata();
     const width = meta.width ?? 0;
@@ -165,105 +211,82 @@ export async function POST(req: Request) {
 
     const plan = planExport6k(width, height);
 
-    // Sin ML: la imagen ya es ≥ 6K.
-    if (!plan.esrganScale) {
-      const finalized = await finalizeExport6kPng(source.buffer, plan);
-      const key = buildUserAssetObjectKey({
-        userEmail,
-        folder: "generated",
-        filename: "studio-export-6k.png",
-      });
-      await uploadBufferToS3Key(key, finalized.png, "image/png");
-      await recordApiUsage({
-        provider: "aws",
-        userEmail,
-        serviceId: "s3-assets",
-        route: "/api/spaces/nano-banana/export-6k",
-        operation: "put_object",
-        costIsKnown: false,
-        costUsd: 0,
-        bytes: finalized.png.length,
-        metadata: { key, skippedMl: true, plan },
-      });
-      return NextResponse.json({
-        output: stableKnowledgeFileUrlFromKey(key),
-        key,
-        width: finalized.width,
-        height: finalized.height,
-        usedMl: false,
-        esrganScale: null,
-        timeMs: Date.now() - started,
-      });
+    if (!plan.topazFactor) {
+      return respondExport(userEmail, plan, source.buffer, format, started, false);
     }
 
-    const fit = fitEsrganInput(width, height, plan.esrganScale);
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return NextResponse.json({ error: "REPLICATE_API_TOKEN no está configurado." }, { status: 500 });
+    }
 
+    const estimatedUsd = estimateTopazUpscaleUsd(plan.topazOutputWidth * plan.topazOutputHeight);
     walletCharge = await reserveApiWalletCharge({
       req,
       userEmail,
       serviceId: "replicate-upscale",
       provider: "replicate",
       route: "/api/spaces/nano-banana/export-6k",
-      maxCostMicros: reserveUsdToMicros(ESTIMATED_COST_USD, { multiplier: 1.35 }),
+      maxCostMicros: reserveUsdToMicros(estimatedUsd, { multiplier: 1.35 }),
       metadata: {
-        model: ESRGAN_MODEL_LABEL,
-        scale: plan.esrganScale,
+        model: TOPAZ_MODEL_LABEL,
+        factor: plan.topazFactor,
         source: `${width}x${height}`,
-        mlInput: `${fit.width}x${fit.height}`,
+        topazOut: `${plan.topazOutputWidth}x${plan.topazOutputHeight}`,
         target: `${plan.targetWidth}x${plan.targetHeight}`,
+        format,
       },
     });
 
-    // Encoger aquí (gratis) para que ×2/×4 quepa en GPU; una sola llamada de pago.
-    let mlSource = sharp(source.buffer, { failOn: "none" }).rotate();
-    if (fit.needsShrink) {
-      mlSource = mlSource.resize(fit.width, fit.height, {
-        kernel: sharp.kernel.lanczos3,
-        fit: "fill",
-      });
-    }
-    const jpegForMl = await mlSource.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
-    const imageInput = `data:image/jpeg;base64,${jpegForMl.toString("base64")}`;
+    const jpegForMl = await sharp(source.buffer, { failOn: "none" })
+      .rotate()
+      .jpeg({ quality: 95, mozjpeg: true })
+      .toBuffer();
+    const imageBlob = new Blob([new Uint8Array(jpegForMl)], { type: "image/jpeg" });
 
-    const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
+    const replicate = new Replicate({
+      auth: process.env.REPLICATE_API_TOKEN,
+      fileEncodingStrategy: "upload",
+    });
+
     let upscaledUrl: string;
     try {
-      // Un solo intento: si falla, el usuario reintenta con gesto explícito.
-      const output = await replicate.run(ESRGAN_MODEL as `${string}/${string}:${string}`, {
+      const output = await replicate.run(TOPAZ_MODEL as `${string}/${string}:${string}`, {
         input: {
-          image: imageInput,
-          scale: plan.esrganScale,
-          face_enhance: faceEnhance,
+          image: imageBlob,
+          enhance_model: "High Fidelity V2",
+          upscale_factor: plan.topazFactor,
+          output_format: format === "jpeg" ? "jpg" : "png",
+          face_enhancement: false,
         },
       });
       upscaledUrl = replicateOutputUrl(output);
       releaseWalletOnError = false;
       await walletCharge?.capture({
-        actualCostUsd: ESTIMATED_COST_USD,
-        metadata: { model: ESRGAN_MODEL_LABEL, scale: plan.esrganScale },
+        actualCostUsd: estimatedUsd,
+        metadata: { model: TOPAZ_MODEL_LABEL, factor: plan.topazFactor },
       });
       await recordApiUsage({
         provider: "replicate",
         userEmail,
         serviceId: "replicate-upscale",
         route: "/api/spaces/nano-banana/export-6k",
-        model: ESRGAN_MODEL_LABEL,
+        model: TOPAZ_MODEL_LABEL,
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        costUsd: ESTIMATED_COST_USD,
-        note: `Export 6K Real-ESRGAN ×${plan.esrganScale}`,
+        costUsd: estimatedUsd,
+        note: `Export 6K Topaz ${plan.topazFactor}`,
         metadata: {
           source: `${width}x${height}`,
-          mlInput: `${fit.width}x${fit.height}`,
+          topazOut: `${plan.topazOutputWidth}x${plan.topazOutputHeight}`,
           target: `${plan.targetWidth}x${plan.targetHeight}`,
-          faceEnhance,
+          format,
         },
       });
     } catch (mlErr: unknown) {
       const mlMessage = mlErr instanceof Error ? mlErr.message : String(mlErr);
-      console.error("[nano-banana/export-6k] Real-ESRGAN:", mlErr);
-      const mapped = mapReplicateUpscaleError(mlMessage);
+      console.error("[nano-banana/export-6k] Topaz:", mlErr);
+      const mapped = mapTopazError(mlMessage);
       await walletCharge?.release({
         reason: "provider_inference_error",
         metadata: { retryable: mapped.retryable, status: mapped.status },
@@ -275,47 +298,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const upRes = await fetch(upscaledUrl, { signal: AbortSignal.timeout(60_000) });
+    const upRes = await fetch(upscaledUrl, { signal: AbortSignal.timeout(90_000) });
     if (!upRes.ok) throw new Error(`No se pudo descargar el upscale (${upRes.status}).`);
     const upBuffer = Buffer.from(await upRes.arrayBuffer());
-    const finalized = await finalizeExport6kPng(upBuffer, plan);
-
-    const key = buildUserAssetObjectKey({
-      userEmail,
-      folder: "generated",
-      filename: "studio-export-6k.png",
-    });
-    await uploadBufferToS3Key(key, finalized.png, "image/png");
-    await recordApiUsage({
-      provider: "aws",
-      userEmail,
-      serviceId: "s3-assets",
-      route: "/api/spaces/nano-banana/export-6k",
-      operation: "put_object",
-      costIsKnown: false,
-      costUsd: 0,
-      bytes: finalized.png.length,
-      metadata: { key, plan },
-    });
-
-    console.info("[nano-banana/export-6k] ok", {
-      key,
-      from: `${width}x${height}`,
-      mlInput: `${fit.width}x${fit.height}`,
-      to: `${finalized.width}x${finalized.height}`,
-      scale: plan.esrganScale,
-      ms: Date.now() - started,
-    });
-
-    return NextResponse.json({
-      output: stableKnowledgeFileUrlFromKey(key),
-      key,
-      width: finalized.width,
-      height: finalized.height,
-      usedMl: true,
-      esrganScale: plan.esrganScale,
-      timeMs: Date.now() - started,
-    });
+    return respondExport(userEmail, plan, upBuffer, format, started, true);
   } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json({ error: error.message }, { status: 403 });

@@ -1,10 +1,11 @@
 /**
- * Cliente Studio · Exportar 6K (Real-ESRGAN vía Replicate + Lanczos).
+ * Cliente Studio · Exportar 6K (Topaz Gigapixel vía Replicate + Lanczos).
  * Una sola llamada de pago por gesto; el preflight de wallet confirma el coste.
  */
 
 import { fetchPostWithWalletPreflight } from "@/lib/wallet-fetch-preflight";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import type { Export6kFormat, TopazUpscaleFactor } from "@/lib/nano-banana/export-6k";
 
 export const EXPORT_6K_ENDPOINT = "/api/spaces/nano-banana/export-6k";
 const SOURCE_DATA_URL_MAX_BYTES = 24_000_000;
@@ -17,7 +18,8 @@ export type Export6kResult = {
   width: number;
   height: number;
   usedMl: boolean;
-  esrganScale: 2 | 4 | null;
+  topazFactor: TopazUpscaleFactor | null;
+  format: Export6kFormat;
   timeMs: number;
 };
 
@@ -46,12 +48,17 @@ async function resolveExportImageSource(src: string): Promise<Export6kImageSourc
 
 export async function runExport6k(args: {
   imageSrc: string;
-  faceEnhance?: boolean;
+  format?: Export6kFormat;
+  sourceWidth?: number;
+  sourceHeight?: number;
 }): Promise<Export6kResult> {
   const image = await resolveExportImageSource(args.imageSrc);
+  const format: Export6kFormat = args.format === "jpeg" ? "jpeg" : "png";
   const res = await fetchPostWithWalletPreflight(EXPORT_6K_ENDPOINT, {
     image,
-    faceEnhance: args.faceEnhance === true,
+    format,
+    sourceWidth: args.sourceWidth,
+    sourceHeight: args.sourceHeight,
   });
   const json = (await res.json().catch(() => null)) as
     | (Partial<Export6kResult> & { error?: string })
@@ -65,15 +72,16 @@ export async function runExport6k(args: {
     width: typeof json.width === "number" ? json.width : 0,
     height: typeof json.height === "number" ? json.height : 0,
     usedMl: json.usedMl === true,
-    esrganScale: json.esrganScale === 2 || json.esrganScale === 4 ? json.esrganScale : null,
+    topazFactor: json.topazFactor === "2x" || json.topazFactor === "4x" ? json.topazFactor : null,
+    format: json.format === "jpeg" ? "jpeg" : "png",
     timeMs: typeof json.timeMs === "number" ? json.timeMs : 0,
   };
 }
 
-/** Descarga el PNG 6K en el navegador (abre el diálogo de guardar). */
-export async function downloadExport6kFile(outputUrl: string, filename = "foldder-export-6k.png"): Promise<void> {
+/** Descarga el archivo 6K en el navegador. */
+export async function downloadExport6kFile(outputUrl: string, filename: string): Promise<void> {
   const res = await fetch(outputUrl, { cache: "no-store" });
-  if (!res.ok) throw new Error("No se pudo descargar el PNG 6K.");
+  if (!res.ok) throw new Error("No se pudo descargar el archivo 6K.");
   const blob = await res.blob();
   const href = URL.createObjectURL(blob);
   try {

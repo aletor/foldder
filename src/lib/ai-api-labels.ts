@@ -27,6 +27,7 @@ export function getAiRequestLabelForPathname(pathname: string): string | null {
     { test: /^\/api\/grok\/status\//, label: "Grok" },
     { test: /^\/api\/runway\/generate$/, label: "Runway" },
     { test: /^\/api\/runway\/status\//, label: "Runway" },
+    { test: /^\/api\/spaces\/nano-banana\/export-6k$/, label: "Export 6K" },
     { test: /^\/api\/spaces\/matte$/, label: "Replicate" },
     { test: /^\/api\/spaces\/video-matte$/, label: "Replicate" },
     { test: /^\/api\/spaces\/compose$/, label: "Componer" },

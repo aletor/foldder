@@ -254,6 +254,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const [showComposeMask, setShowComposeMask] = useState(false);
   const [exporting6k, setExporting6k] = useState(false);
   const [export6kError, setExport6kError] = useState<string | null>(null);
+  const [export6kFormat, setExport6kFormat] = useState<"png" | "jpeg">("png");
   const [sessionImage, setSessionImage] = useState<string | null>(lastGenerated || initialImage);
   const [showingOriginal, setShowingOriginal] = useState(false);
   const currentImage = showingOriginal && initialImage ? initialImage : sessionImage;
@@ -927,15 +928,21 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     setExport6kError(null);
     setExporting6k(true);
     try {
-      const result = await runExport6k({ imageSrc: src });
-      await downloadExport6kFile(result.output, `foldder-export-6k-${result.width}x${result.height}.png`);
+      const result = await runExport6k({
+        imageSrc: src,
+        format: export6kFormat,
+        sourceWidth: imgNat.w > 1 ? imgNat.w : undefined,
+        sourceHeight: imgNat.h > 1 ? imgNat.h : undefined,
+      });
+      const ext = result.format === "jpeg" ? "jpg" : "png";
+      await downloadExport6kFile(result.output, `foldder-export-6k-${result.width}x${result.height}.${ext}`);
     } catch (error) {
       console.error("[ImageCreationStudio] export-6k:", error);
       setExport6kError(error instanceof Error ? error.message : "No se pudo exportar en 6K.");
     } finally {
       setExporting6k(false);
     }
-  }, [currentImage, exporting6k, genStatus, historyPreviewUrl, sessionImage]);
+  }, [currentImage, export6kFormat, exporting6k, genStatus, historyPreviewUrl, imgNat.h, imgNat.w, sessionImage]);
 
   const showGenerate =
     !readOnly &&
@@ -1076,6 +1083,19 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             </button>
             <button
               type="button"
+              disabled={exporting6k}
+              onClick={() => setExport6kFormat((prev) => (prev === "png" ? "jpeg" : "png"))}
+              className={foldderStudioHeaderActionClassName()}
+              title={
+                export6kFormat === "png"
+                  ? "Formato actual: PNG sin pérdida. Clic para JPEG q96"
+                  : "Formato actual: JPEG q96. Clic para PNG sin pérdida"
+              }
+            >
+              {export6kFormat === "png" ? "PNG" : "JPG"}
+            </button>
+            <button
+              type="button"
               disabled={
                 !(historyPreviewUrl || sessionImage || currentImage) ||
                 genStatus === "running" ||
@@ -1084,7 +1104,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               }
               onClick={() => void onExport6k()}
               className={foldderStudioHeaderActionClassName()}
-              title="Upscale IA (Real-ESRGAN) a 6K y descarga PNG · llamada de pago con confirmación de wallet"
+              title="Upscale IA Topaz a 6K y descarga · llamada de pago con confirmación de wallet"
             >
               {exporting6k ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
               Exportar 6K

@@ -1,6 +1,7 @@
 import {
   estimateBrandKitGalleryWalletCost,
 } from "@/lib/brandkit/brand-kit-gallery-cost";
+import { estimateTopazUpscaleUsd, planExport6k } from "@/lib/nano-banana/export-6k";
 import {
   estimateGeminiImageGenerationUsd,
   estimateGeminiUsd,
@@ -200,6 +201,22 @@ export function estimateWalletCostForRoute(
     };
   }
 
+  if (route === "/api/spaces/nano-banana/export-6k") {
+    const width = numberValue(body.sourceWidth, 1920);
+    const height = numberValue(body.sourceHeight, 2560);
+    const plan = planExport6k(width, height);
+    if (!plan.topazFactor) return null;
+    const estimated = estimateTopazUpscaleUsd(plan.topazOutputWidth * plan.topazOutputHeight);
+    return {
+      label: "Exportar 6K (Topaz)",
+      route,
+      category: "image",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.35),
+      tone: "confirm",
+    };
+  }
+
   if (route === "/api/spaces/matte") {
     const estimated = 0.01;
     return {
@@ -209,18 +226,6 @@ export function estimateWalletCostForRoute(
       estimatedCostMicros: usdToMicros(estimated),
       reserveMicros: reserveUsdToMicros(estimated, 1.25),
       tone: "quiet",
-    };
-  }
-
-  if (route === "/api/spaces/nano-banana/export-6k") {
-    const estimated = 0.012;
-    return {
-      label: "Exportar 6K (upscale IA)",
-      route,
-      category: "image",
-      estimatedCostMicros: usdToMicros(estimated),
-      reserveMicros: reserveUsdToMicros(estimated, 1.35),
-      tone: "confirm",
     };
   }
 

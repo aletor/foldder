@@ -74,7 +74,7 @@ export const USAGE_SERVICES = [
   { id: "grok-video", label: "xAI Grok · Vídeo (Imagine)", category: "ia-video" as const },
   { id: "runway-gen3", label: "Runway · Gen-3 Alpha Turbo", category: "ia-video" as const },
   { id: "replicate-bg", label: "Replicate · Quitar fondo", category: "ia-image" as const },
-  { id: "replicate-upscale", label: "Replicate · Upscale Real-ESRGAN (export 6K)", category: "ia-image" as const },
+  { id: "replicate-upscale", label: "Replicate · Topaz Gigapixel (export 6K)", category: "ia-image" as const },
   { id: "replicate-vmatte", label: "Replicate · Video matte (RVM)", category: "ia-video" as const },
   { id: "layerizer-detect", label: "Gemini · Layerizer detección de objetos", category: "visual-analysis" as const },
   { id: "layerizer-segment", label: "fal/Replicate · Layerizer segmentación (SAM 3)", category: "ia-image" as const },
