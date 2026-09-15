@@ -53,7 +53,7 @@ function persistableOrNull(value: string | null | undefined): string | null {
 }
 
 export function stripBriefForNode(brief: StudioHistoryBrief): StudioHistoryBrief {
-  return {
+  const stripped: StudioHistoryBrief = {
     baseUrl: persistableOrNull(brief.baseUrl),
     cards: brief.cards.map(stripCardForNode),
     global: {
@@ -63,6 +63,10 @@ export function stripBriefForNode(brief: StudioHistoryBrief): StudioHistoryBrief
     },
     outputUrl: brief.outputUrl,
   };
+  const rawOutputUrl = persistableOrNull(brief.rawOutputUrl);
+  if (rawOutputUrl) stripped.rawOutputUrl = rawOutputUrl;
+  if (brief.compose) stripped.compose = brief.compose;
+  return stripped;
 }
 
 export function hydrateCardPaint(card: StudioCard, frame: { height: number; width: number }): StudioCard {
@@ -84,7 +88,7 @@ function mediaKey(nodeId: string): string {
 }
 
 type StudioMediaStore = {
-  briefs: Record<string, { schemaData?: string | null }>;
+  briefs: Record<string, { schemaData?: string | null; composeMaskPreview?: string | null }>;
   cards: Record<string, { paintData?: string | null; references?: string[] }>;
   schemaData?: string | null;
 };
@@ -124,7 +128,10 @@ export function persistStudioMedia(nodeId: string, draft: StudioDraftState, brie
   }
   const briefMedia: StudioMediaStore["briefs"] = {};
   for (const brief of briefs) {
-    briefMedia[brief.outputUrl] = { schemaData: brief.global.schemaData };
+    briefMedia[brief.outputUrl] = {
+      schemaData: brief.global.schemaData,
+      composeMaskPreview: brief.composeMaskPreview ?? null,
+    };
     for (const card of brief.cards) {
       cards[`${brief.outputUrl}:${card.id}`] = {
         paintData: card.paintData,
@@ -161,6 +168,7 @@ export function mergeStudioMedia(nodeId: string, draft: StudioDraftState, briefs
     const extra = store.briefs[brief.outputUrl];
     return {
       ...brief,
+      composeMaskPreview: brief.composeMaskPreview || extra?.composeMaskPreview || null,
       cards: brief.cards.map((card) => {
         const media = store.cards[`${brief.outputUrl}:${card.id}`];
         if (!media) return card;

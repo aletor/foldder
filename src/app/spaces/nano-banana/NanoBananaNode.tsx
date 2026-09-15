@@ -204,6 +204,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     generationHistory?: string[];
     generationBriefs?: StudioHistoryBrief[];
     studioDraft?: StudioDraftState;
+    /** Studio · "Conservar zonas sin cambios" (por defecto activo). */
+    studioPreserveUnchanged?: boolean;
     /**
      * Loop (legacy/semilla): prompt inline. La edición de plantilla vive ahora
      * en el nodo Loop; esto solo sirve como semilla y prompt inline normal.
@@ -1315,6 +1317,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             onResolutionChange={(r) => updateData('resolution', r)}
             onAspectRatioChange={(ratio) => updateData('aspect_ratio', ratio)}
             onModelKeyChange={(key) => updateData('modelKey', key)}
+            preserveUnchanged={nodeData.studioPreserveUnchanged !== false}
+            onPreserveUnchangedChange={(enabled) => updateData("studioPreserveUnchanged", enabled)}
             onImageProviderChange={(provider) => {
               updateData("imageProvider", provider);
               const nextRes = coerceNanoBananaResolution(provider, selectedModel, nodeData.resolution);

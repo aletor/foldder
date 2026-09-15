@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { Check, ChevronLeft, Eraser, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, Eraser, Eye, Layers, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { aiHudNanoBananaJobProgress } from "@/lib/ai-hud-generation-progress";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
@@ -27,6 +27,7 @@ import {
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
 import { canStudioGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
 import { prepareStudioGenerateCall } from "./studio-prepare-generate";
+import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
 import { clientPointToImagePoint, lassoAnchorPercent, STUDIO_VIEWER_PAN_GAIN, wheelZoomFactor, zoomTowardPoint } from "./studio-overlay-coords";
 import {
   emptyDraft,
@@ -41,8 +42,10 @@ import {
 import {
   STUDIO_MAX_REFS_PER_CARD,
   cardHasStartedChange,
+  cardHasZonePaint,
   createStudioCard,
   type StudioCard,
+  type StudioComposeSummary,
   type StudioGlobal,
   type StudioHistoryBrief,
   type StudioPoint,
@@ -71,6 +74,9 @@ export type ImageCreationStudioProps = {
   onAspectRatioChange?: (aspectRatio: NanoBananaAspectRatio) => void;
   onModelKeyChange?: (modelKey: string) => void;
   onImageProviderChange?: (provider: NanoBananaImageProvider) => void;
+  /** "Conservar zonas sin cambios": compone la generación sobre la base (por defecto activo). */
+  preserveUnchanged?: boolean;
+  onPreserveUnchangedChange?: (enabled: boolean) => void;
   generationHistory: string[];
   onGenerationHistoryChange: React.Dispatch<React.SetStateAction<string[]>>;
   generationBriefs?: StudioHistoryBrief[];
@@ -158,10 +164,40 @@ const CALL_SLOT_LABEL: Record<StudioGenerateSlotKind, string> = {
 type StudioCallPreview = {
   analyzeError: string | null;
   images: Array<{ kind: StudioGenerateSlotKind; src: string }>;
+  preserveNote: string;
   prompt: string;
   ranAnalyzeAreas: boolean;
   usedAnalyzeAreas: boolean;
 };
+
+type StudioComposeNotice = {
+  maskPreview: string | null;
+  summary: StudioComposeSummary;
+};
+
+function composeNoticeText(summary: StudioComposeSummary): string {
+  if (summary.composed) {
+    const pct = summary.changedPct != null ? ` · ${summary.changedPct} % modificado` : "";
+    const dropped = summary.componentsDropped ? ` · ${summary.componentsDropped} cambio(s) lejano(s) descartado(s)` : "";
+    return `Zonas sin cambios conservadas de la original${pct}${dropped}.`;
+  }
+  const reason = summary.reason ? ` ${summary.reason}` : "";
+  switch (summary.decision) {
+    case "skip-global":
+      return `Sin integrar: cambio global.${reason}`;
+    case "skip-no-change":
+      return `Sin integrar: el modelo apenas modificó la imagen.${reason}`;
+    case "skip-shift":
+    case "aspect-mismatch":
+      return `Sin integrar: el modelo reencuadró la imagen.${reason}`;
+    case "not-eligible":
+      return `Sin integrar (no es un cambio local).${reason}`;
+    case "error":
+      return `No se pudo integrar sobre la original; se usa la generación tal cual.${reason}`;
+    default:
+      return `Sin integrar.${reason}`;
+  }
+}
 
 export const ImageCreationStudio = memo(function ImageCreationStudio({
   nodeId,
@@ -183,6 +219,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   onAspectRatioChange,
   onModelKeyChange,
   onImageProviderChange,
+  preserveUnchanged: preserveUnchangedProp = true,
+  onPreserveUnchangedChange,
   generationHistory,
   onGenerationHistoryChange,
   generationBriefs = [],
@@ -204,6 +242,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const [inspectingCall, setInspectingCall] = useState(false);
   const [callPreview, setCallPreview] = useState<StudioCallPreview | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
+  const [preserveUnchanged, setPreserveUnchanged] = useState(preserveUnchangedProp);
+  useEffect(() => setPreserveUnchanged(preserveUnchangedProp), [preserveUnchangedProp]);
+  const [composeStage, setComposeStage] = useState<string | null>(null);
+  const [composeNotice, setComposeNotice] = useState<StudioComposeNotice | null>(null);
+  const [showComposeMask, setShowComposeMask] = useState(false);
   const [sessionImage, setSessionImage] = useState<string | null>(lastGenerated || initialImage);
   const [showingOriginal, setShowingOriginal] = useState(false);
   const currentImage = showingOriginal && initialImage ? initialImage : sessionImage;
@@ -571,8 +614,10 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     (url: string) => {
       setHistoryPreviewUrl(null);
       setShowingOriginal(false);
+      setComposeNotice(null);
+      setShowComposeMask(false);
       setSessionImage(url);
-      onGenerated(url);
+      onGenerated(url, tryExtractKnowledgeFilesKeyFromUrl(url) ?? undefined);
       clearEdits();
     },
     [clearEdits, onGenerated],
@@ -585,15 +630,19 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     if (!canGo) return;
     setGenStatus("running");
     setProgress(0);
+    setComposeNotice(null);
+    setShowComposeMask(false);
     let okFinish = false;
     try {
       const ok = await runAiJobWithNotification({ nodeId, label: "Image Creation Studio" }, async () => {
         const scenePrompt = global.promptDraft;
+        const frameWidth = imgNat.w || workingFrameSize(studioAspect).width;
+        const frameHeight = imgNat.h || workingFrameSize(studioAspect).height;
         const prepared = await prepareStudioGenerateCall({
           baseImage: currentImage,
           cards,
-          frameHeight: imgNat.h || workingFrameSize(studioAspect).height,
-          frameWidth: imgNat.w || workingFrameSize(studioAspect).width,
+          frameHeight,
+          frameWidth,
           global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
         });
         const merged = mergePromptWithBrain(
@@ -617,15 +666,79 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             aiHudNanoBananaJobProgress(nodeId, pct);
           },
         );
-        const out = json.output;
         const prev = currentImageRef.current;
+        let out = json.output;
+        let outKey = typeof json.key === "string" ? json.key : undefined;
+        let rawOutputUrl: string | null = null;
+        let composeSummary: StudioComposeSummary | null = null;
+        let composeMaskPreview: string | null = null;
+
+        // "Conservar zonas sin cambios": la generación ya está pagada y subida; este paso es
+        // solo CPU en servidor y, si falla, se conserva la generación cruda.
+        if (preserveUnchanged && prev) {
+          const eligibility = preserveComposeEligibility({
+            baseImage: prev,
+            cards,
+            global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+          });
+          if (eligibility.ok) {
+            setComposeStage("Integrando cambios sobre la original…");
+            try {
+              const outcome = await runPreserveCompose({
+                baseImage: prev,
+                generatedOutput: json.output,
+                generatedKey: outKey ?? null,
+                cards,
+                frame: { width: frameWidth, height: frameHeight },
+              });
+              composeSummary = summarizeComposeOutcome(outcome);
+              composeMaskPreview = outcome.maskPreview;
+              if (outcome.composed && outcome.output) {
+                rawOutputUrl = json.output;
+                out = outcome.output;
+                outKey = outcome.key ?? undefined;
+              }
+            } catch (error) {
+              console.error("[ImageCreationStudio] preserve-compose:", error);
+              composeSummary = {
+                composed: false,
+                decision: "error",
+                reason: error instanceof Error ? error.message : "Error desconocido.",
+                changedPct: null,
+                componentsKept: null,
+                componentsDropped: null,
+              };
+            } finally {
+              setComposeStage(null);
+            }
+          } else if (cards.some(cardHasZonePaint)) {
+            // Solo avisamos si el usuario usó el lazo; en ediciones globales no hay nada que integrar.
+            composeSummary = {
+              composed: false,
+              decision: "not-eligible",
+              reason: eligibility.reason,
+              changedPct: null,
+              componentsKept: null,
+              componentsDropped: null,
+            };
+          }
+        }
+
         onGenerationHistoryChange((h) => {
           const next = [...h];
           if (prev && prev !== out && !next.includes(prev)) next.push(prev);
           if (!next.includes(out)) next.push(out);
           return next;
         });
-        const brief: StudioHistoryBrief = { outputUrl: out, baseUrl: prev, cards, global };
+        const brief: StudioHistoryBrief = {
+          outputUrl: out,
+          baseUrl: prev,
+          cards,
+          global,
+          rawOutputUrl,
+          compose: composeSummary,
+          composeMaskPreview,
+        };
         persistStudioMedia(nodeId, emptyDraft(), [...hydratedBriefs.filter((b) => b.outputUrl !== out), brief]);
         setBriefs((prevBriefs) => [
           ...prevBriefs.filter((b) => b.outputUrl !== out).map(stripBriefForNode),
@@ -634,7 +747,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         currentImageRef.current = out;
         setShowingOriginal(false);
         setSessionImage(out);
-        onGenerated(out, typeof json.key === "string" ? json.key : undefined);
+        if (composeSummary) setComposeNotice({ summary: composeSummary, maskPreview: composeMaskPreview });
+        onGenerated(out, outKey);
         okFinish = true;
       });
       if (!ok) setGenStatus("error");
@@ -669,6 +783,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     onBrainImageGeneratorDiagnostics,
     onGenerated,
     onGenerationHistoryChange,
+    preserveUnchanged,
     prompt,
     nodePrompt,
     readOnly,
@@ -698,9 +813,20 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         prepared.prompt,
       );
       const order = describeStudioGenerateImageOrder(prepared.images);
+      const eligibility = preserveComposeEligibility({
+        baseImage: currentImage,
+        cards,
+        global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+      });
+      const preserveNote = !preserveUnchanged
+        ? "Conservar original: desactivado."
+        : eligibility.ok
+          ? "Conservar original: tras generar se compararán base y resultado y solo las zonas realmente modificadas se superpondrán a la base."
+          : `Conservar original: no se aplicará. ${eligibility.reason}`;
       setCallPreview({
         analyzeError: prepared.analyzeError,
         images: order.kinds.map((kind, index) => ({ kind, src: prepared.imageList[index] ?? "" })).filter((item) => item.src),
+        preserveNote,
         prompt: merged,
         ranAnalyzeAreas: prepared.ranAnalyzeAreas,
         usedAnalyzeAreas: shouldRunAnalyzeAreas(cards) && Boolean(currentImage),
@@ -721,6 +847,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     imgNat.w,
     inspectingCall,
     onBrainImageGeneratorDiagnostics,
+    preserveUnchanged,
     readOnly,
     studioAspect,
   ]);
@@ -848,6 +975,22 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             ))}
             <button
               type="button"
+              aria-pressed={preserveUnchanged}
+              disabled={readOnly || genStatus === "running" || inspectingCall}
+              onClick={() => {
+                const next = !preserveUnchanged;
+                setPreserveUnchanged(next);
+                onPreserveUnchangedChange?.(next);
+              }}
+              className={foldderStudioHeaderActionClassName(
+                preserveUnchanged ? "bg-white text-slate-950 hover:bg-white hover:text-slate-950" : "",
+              )}
+              title="Tras generar un cambio local, conserva de la imagen original todo lo que el modelo no modificó (sin coste de API)"
+            >
+              Conservar original
+            </button>
+            <button
+              type="button"
               disabled={readOnly || genStatus === "running" || inspectingCall}
               onClick={() => void onInspectCall()}
               className={foldderStudioHeaderActionClassName()}
@@ -925,6 +1068,44 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           </button>
         ))}
       </div>
+      ) : null}
+
+      {composeNotice && !readOnly ? (
+        <div
+          className={`flex h-7 shrink-0 items-center gap-3 border-b border-white/10 px-3 text-[10px] font-medium ${
+            composeNotice.summary.composed ? "bg-emerald-500/10 text-emerald-100" : "bg-amber-500/10 text-amber-100"
+          }`}
+          data-foldder-i18n-ignore
+        >
+          <span className="min-w-0 flex-1 truncate" title={composeNoticeText(composeNotice.summary)}>
+            {composeNoticeText(composeNotice.summary)}
+          </span>
+          {composeNotice.maskPreview ? (
+            <button
+              type="button"
+              aria-pressed={showComposeMask}
+              onClick={() => setShowComposeMask((v) => !v)}
+              className={`flex h-5 items-center gap-1 px-2 text-[9px] font-black uppercase tracking-widest ${
+                showComposeMask ? "bg-white text-slate-950" : "bg-white/10 text-white/80 hover:bg-white/20"
+              }`}
+              title="Testing: resalta las zonas que se tomaron de la generación"
+            >
+              <Eye size={11} />
+              Zonas
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              setComposeNotice(null);
+              setShowComposeMask(false);
+            }}
+            className="flex h-5 w-5 items-center justify-center text-white/50 hover:text-white"
+            aria-label="Cerrar aviso"
+          >
+            <X size={12} />
+          </button>
+        </div>
       ) : null}
 
       <div className="flex min-h-0 flex-1">
@@ -1097,6 +1278,16 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 ) : null}
               </svg>
 
+              {showComposeMask && composeNotice?.maskPreview && !readOnly && !showingOriginal ? (
+                <img
+                  src={composeNotice.maskPreview}
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                  style={{ opacity: 0.55, mixBlendMode: "screen" }}
+                />
+              ) : null}
+
               <canvas
                 ref={schemaCanvasRef}
                 className="absolute inset-0 h-full w-full"
@@ -1224,6 +1415,15 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             </div>
           ) : null}
 
+          {readOnly && previewBrief?.compose ? (
+            <div
+              data-foldder-i18n-ignore
+              className="pointer-events-none absolute left-1/2 top-6 z-10 max-w-[70%] -translate-x-1/2 truncate bg-black/60 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/80"
+            >
+              {composeNoticeText(previewBrief.compose)}
+            </div>
+          ) : null}
+
           {readOnly ? (
             <div data-studio-overlay-ui className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
               <button
@@ -1238,8 +1438,20 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   type="button"
                   onClick={() => adoptHistoryAsBase(historyPreviewUrl)}
                   className="flex h-10 w-10 items-center justify-center bg-white text-zinc-950"
+                  title={previewBrief?.compose?.composed ? "Usar esta versión (integrada sobre la original)" : "Usar esta versión"}
                 >
                   <Check size={16} />
+                </button>
+              ) : null}
+              {previewBrief?.rawOutputUrl && previewBrief.rawOutputUrl !== previewBrief.outputUrl ? (
+                <button
+                  type="button"
+                  onClick={() => adoptHistoryAsBase(previewBrief.rawOutputUrl!)}
+                  className="flex h-10 items-center gap-2 bg-white/10 px-3 text-[9px] font-black uppercase tracking-widest text-white/80 hover:bg-white/20"
+                  title="Usar la generación tal cual la devolvió el modelo, sin integrar sobre la original"
+                >
+                  <Layers size={14} />
+                  Sin integrar
                 </button>
               ) : null}
             </div>
@@ -1299,8 +1511,9 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             </div>
           ) : null}
           {genStatus === "running" ? (
-            <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 text-[10px] font-black uppercase tracking-widest text-violet-200">
+            <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap text-[10px] font-black uppercase tracking-widest text-violet-200">
               <Loader2 size={12} className="mr-2 inline animate-spin" />
+              {composeStage}
             </div>
           ) : null}
         </section>
@@ -1486,6 +1699,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                     ? `Análisis falló; prompt local de respaldo.${callPreview.analyzeError ? ` ${callPreview.analyzeError}` : ""}`
                     : "Sin analyze-areas: no hay zona con texto. Prompt local."}
               </p>
+              <p className="mb-3 text-[10px] font-medium text-white/45">{callPreview.preserveNote}</p>
               <pre className="mb-4 whitespace-pre-wrap break-words bg-black/40 p-3 text-[11px] leading-5 text-zinc-200">
                 {callPreview.prompt}
               </pre>

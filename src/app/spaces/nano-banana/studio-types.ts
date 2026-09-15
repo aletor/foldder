@@ -34,11 +34,27 @@ export type StudioGlobal = {
   text: string;
 };
 
+/** Resumen persistible de "Conservar zonas sin cambios" (sin imágenes). */
+export type StudioComposeSummary = {
+  composed: boolean;
+  decision: string;
+  reason: string | null;
+  changedPct: number | null;
+  componentsKept: number | null;
+  componentsDropped: number | null;
+};
+
 export type StudioHistoryBrief = {
   baseUrl: string | null;
   cards: StudioCard[];
   global: StudioGlobal;
+  /** Imagen que quedó como resultado (compuesta sobre la base si hubo preserve-compose). */
   outputUrl: string;
+  /** Generación cruda del modelo cuando `outputUrl` es la versión compuesta. */
+  rawOutputUrl?: string | null;
+  compose?: StudioComposeSummary | null;
+  /** PNG pequeño (data URL) con las zonas integradas; solo sesión, no se persiste en el nodo. */
+  composeMaskPreview?: string | null;
 };
 
 export function paletteColorForCardIndex(index: number): StudioPaletteColor {
