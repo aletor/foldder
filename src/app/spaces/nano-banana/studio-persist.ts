@@ -3,6 +3,7 @@ import {
   emptyStudioGlobal,
   createStudioCard,
   cardHasStartedChange,
+  studioAssetIdentity,
   type StudioCard,
   type StudioGlobal,
   type StudioHistoryBrief,
@@ -128,12 +129,13 @@ export function persistStudioMedia(nodeId: string, draft: StudioDraftState, brie
   }
   const briefMedia: StudioMediaStore["briefs"] = {};
   for (const brief of briefs) {
-    briefMedia[brief.outputUrl] = {
+    const briefKey = studioAssetIdentity(brief.outputUrl) || brief.outputUrl;
+    briefMedia[briefKey] = {
       schemaData: brief.global.schemaData,
       composeMaskPreview: brief.composeMaskPreview ?? null,
     };
     for (const card of brief.cards) {
-      cards[`${brief.outputUrl}:${card.id}`] = {
+      cards[`${briefKey}:${card.id}`] = {
         paintData: card.paintData,
         references: card.references,
       };
@@ -165,12 +167,15 @@ export function mergeStudioMedia(nodeId: string, draft: StudioDraftState, briefs
     },
   };
   const nextBriefs = briefs.map((brief) => {
-    const extra = store.briefs[brief.outputUrl];
+    const briefKey = studioAssetIdentity(brief.outputUrl) || brief.outputUrl;
+    const extra = store.briefs[briefKey] ?? store.briefs[brief.outputUrl];
     return {
       ...brief,
       composeMaskPreview: brief.composeMaskPreview || extra?.composeMaskPreview || null,
       cards: brief.cards.map((card) => {
-        const media = store.cards[`${brief.outputUrl}:${card.id}`];
+        const media =
+          store.cards[`${briefKey}:${card.id}`] ??
+          store.cards[`${brief.outputUrl}:${card.id}`];
         if (!media) return card;
         return {
           ...card,

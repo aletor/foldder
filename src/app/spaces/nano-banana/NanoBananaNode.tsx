@@ -47,7 +47,9 @@ import {
   coerceNanoBananaAspect,
   coerceNanoBananaResolution,
   nanoBananaAspectSelectOptions,
+  nanoBananaModelLabel,
   nanoBananaResolutionSelectOptions,
+  NANO_BANANA_GEMINI_MODELS,
   normalizeNanoBananaResolution,
   resolveNanoBananaImageProvider,
   type NanoBananaAspectRatio,
@@ -76,6 +78,8 @@ import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import { hasFoldderStudioTouched, hasNanoBananaStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
+
+const FOLDDER_NANO_STUDIO_CLAIM_EVENT = "foldder:nano-studio-claim";
 
 interface BaseNodeData {
   value?: string;
@@ -274,6 +278,21 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     "default" | "returnCine" | "returnDesigner"
   >("default");
 
+  useEffect(() => {
+    const onClaim = (event: Event) => {
+      const ownerNodeId = (event as CustomEvent<{ nodeId?: string }>).detail?.nodeId;
+      if (!ownerNodeId || ownerNodeId === id) return;
+      setShowStudio(false);
+    };
+    window.addEventListener(FOLDDER_NANO_STUDIO_CLAIM_EVENT, onClaim as EventListener);
+    return () => window.removeEventListener(FOLDDER_NANO_STUDIO_CLAIM_EVENT, onClaim as EventListener);
+  }, [id]);
+
+  const claimNanoStudio = useCallback(() => {
+    window.dispatchEvent(new CustomEvent(FOLDDER_NANO_STUDIO_CLAIM_EVENT, { detail: { nodeId: id } }));
+    setShowStudio(true);
+  }, [id]);
+
   const updateNodeInternals = useUpdateNodeInternals();
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
     useCallback((active: boolean) => {
@@ -347,8 +366,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setCineStudioSourceImage(null);
     setCineStudioHistory([]);
     setNanoStudioTopBarCloseMode('default');
-    setShowStudio(true);
-  }, []);
+    claimNanoStudio();
+  }, [claimNanoStudio]);
 
   const closeNanoStudio = useCallback(() => {
     const cineSession = cineReturnSessionRef.current;
@@ -443,7 +462,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(session.sourceAssetId || null);
       setCineStudioHistory(session.sourceAssetId ? [session.sourceAssetId] : []);
       setNanoStudioTopBarCloseMode('returnCine');
-      setShowStudio(true);
+      claimNanoStudio();
     };
     const onOpenFromCine = (ev: Event) => {
       const e = ev as CustomEvent<{ nanoNodeId: string; session: CineImageStudioSession }>;
@@ -454,7 +473,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     window.addEventListener('foldder-open-nano-studio-from-cine', onOpenFromCine as EventListener);
     return () =>
       window.removeEventListener('foldder-open-nano-studio-from-cine', onOpenFromCine as EventListener);
-  }, [id]);
+  }, [claimNanoStudio, id]);
 
   useEffect(() => {
     const openFromDesignerSession = (session: DesignerImageStudioSession) => {
@@ -466,7 +485,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(session.sourceImageUrl || null);
       setCineStudioHistory(session.sourceImageUrl ? [session.sourceImageUrl] : []);
       setNanoStudioTopBarCloseMode("returnDesigner");
-      setShowStudio(true);
+      claimNanoStudio();
     };
     const onOpenFromDesigner = (ev: Event) => {
       const e = ev as CustomEvent<{ nanoNodeId: string; session: DesignerImageStudioSession }>;
@@ -480,7 +499,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         "foldder-open-nano-studio-from-designer",
         onOpenFromDesigner as EventListener,
       );
-  }, [id]);
+  }, [claimNanoStudio, id]);
 
   useEffect(() => {
     const onOpenStudio = (ev: Event) => {
@@ -492,7 +511,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(null);
       setCineStudioHistory([]);
       setNanoStudioTopBarCloseMode('default');
-      setShowStudio(true);
+      claimNanoStudio();
     };
     const onCloseStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
@@ -509,7 +528,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       window.removeEventListener('foldder:close-studio', onCloseStudio as EventListener);
       window.removeEventListener('foldder-close-node-studio', onCloseStudio as EventListener);
     };
-  }, [closeNanoStudio, id]);
+  }, [claimNanoStudio, closeNanoStudio, id]);
 
   useLayoutEffect(() => {
     const pendingDesigner = takePendingNanoStudioOpenFromDesigner(id);
@@ -522,7 +541,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(pendingDesigner.sourceImageUrl || null);
       setCineStudioHistory(pendingDesigner.sourceImageUrl ? [pendingDesigner.sourceImageUrl] : []);
       setNanoStudioTopBarCloseMode("returnDesigner");
-      setShowStudio(true);
+      claimNanoStudio();
       return;
     }
     const pending = takePendingNanoStudioOpenFromCine(id);
@@ -535,8 +554,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setCineStudioSourceImage(pending.sourceAssetId || null);
     setCineStudioHistory(pending.sourceAssetId ? [pending.sourceAssetId] : []);
     setNanoStudioTopBarCloseMode('returnCine');
-    setShowStudio(true);
-  }, [id]);
+    claimNanoStudio();
+  }, [claimNanoStudio, id]);
 
   const persistedGenerationHistory = Array.isArray(nodeData.generationHistory)
     ? nodeData.generationHistory
@@ -619,7 +638,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     if (dockAspect !== (nodeData.aspect_ratio || "16:9").trim()) {
       updateData("aspect_ratio", dockAspect);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo al cambiar proveedor/modelo o valores incompatibles
   }, [imageProvider, selectedModel, dockResolution, dockAspect]);
 
   const inlinePromptText = typeof nodeData.promptText === "string" ? nodeData.promptText : "";
@@ -753,8 +771,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
   const hasConnections = brainConnected || promptConnected || connectedSlots.some(Boolean);
   const hasGeneratedOutput = Boolean(outputImage);
-  const outputSettingsLocked = hasGeneratedOutput;
-  /** Como Cine/Export: con salida generada el faldón debe existir aunque no haya cables. */
+  const aspectLocked = hasGeneratedOutput;
   const hasDock = hasConnections || hasGeneratedOutput;
   const isEmpty = !hasConnections && !hasGeneratedOutput;
   const hasHeroPreview = hasGeneratedOutput && nodeMediaVisible;
@@ -822,7 +839,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [brainConnected, connectedSlots, promptConnected]);
 
   const headerTitle = String(nodeData.label || "Image Creation");
-  const modelLabel = isOpenAiProvider ? "GPT Image 2" : modelInfo.label;
+  const modelLabel = nanoBananaModelLabel(selectedModel, isOpenAiProvider);
   const formatLabel = dockAspect;
   const inputsLabel = useMemo(() => {
     const parts: string[] = [];
@@ -1030,7 +1047,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           {hasHeroPreview ? (
             <>
               <div className="nano-banana-node-hero">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={outputPreviewUrl}
                   alt="Generated"
@@ -1082,7 +1098,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               ))}
             </div>
           ) : (
-            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={NANO_BANANA_EMPTY_BACKGROUND_SRC}
               alt=""
@@ -1154,18 +1169,14 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                   <FoldderNodeContentMetaRow
                     label="Modelo"
                     value={
-                      outputSettingsLocked || isOpenAiProvider ? (
+                      isOpenAiProvider ? (
                         modelLabel
                       ) : (
                         <NanoBananaNodeDockSelect
                           value={selectedModel}
                           disabled={isActivelyGenerating}
                           ariaLabel="Modelo de imagen"
-                          options={[
-                            { value: "flash25", label: "NB 1" },
-                            { value: "flash31", label: "NB 2" },
-                            { value: "pro3", label: "Pro" },
-                          ]}
+                          options={NANO_BANANA_GEMINI_MODELS.map((m) => ({ value: m.key, label: m.label }))}
                           onChange={(next) => updateData("modelKey", next)}
                         />
                       )
@@ -1174,7 +1185,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                   <FoldderNodeContentMetaRow
                     label="Formato"
                     value={
-                      outputSettingsLocked ? (
+                      aspectLocked ? (
                         formatLabel
                       ) : (
                       <NanoBananaNodeDockSelect
@@ -1190,9 +1201,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                   <FoldderNodeContentMetaRow
                     label="Resolución"
                     value={
-                      outputSettingsLocked ? (
-                        nbResLabel
-                      ) : (
                       <NanoBananaNodeDockSelect
                         value={dockResolution}
                         disabled={isActivelyGenerating}
@@ -1205,9 +1213,25 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                           )
                         }
                       />
-                      )
                     }
                   />
+                  {isPro && !isOpenAiProvider ? (
+                    <FoldderNodeContentMetaRow
+                      label="Thinking"
+                      value={
+                        <NanoBananaNodeDockSelect
+                          value={nodeData.thinking ? "on" : "off"}
+                          disabled={isActivelyGenerating}
+                          ariaLabel="Thinking de Gemini Pro"
+                          options={[
+                            { value: "off", label: "Off" },
+                            { value: "on", label: "On" },
+                          ]}
+                          onChange={(next) => updateData("thinking", next === "on")}
+                        />
+                      }
+                    />
+                  ) : null}
                   <FoldderNodeContentMetaRow label="Entradas" value={inputsLabel} />
                   <FoldderNodeContentMetaRow label="Versiones" value={versionsLabel} />
                   <FoldderNodeContentMetaRow label="Estado" value={statusLabel} variant="status" />
@@ -1317,6 +1341,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             onResolutionChange={(r) => updateData('resolution', r)}
             onAspectRatioChange={(ratio) => updateData('aspect_ratio', ratio)}
             onModelKeyChange={(key) => updateData('modelKey', key)}
+            onThinkingChange={(next) => updateData("thinking", next)}
             preserveUnchanged={nodeData.studioPreserveUnchanged !== false}
             onPreserveUnchangedChange={(enabled) => updateData("studioPreserveUnchanged", enabled)}
             onImageProviderChange={(provider) => {

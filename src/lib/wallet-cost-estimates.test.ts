@@ -185,6 +185,21 @@ describe("wallet-cost-estimates", () => {
     expect(square?.estimatedCostMicros).toBeGreaterThan(wide?.estimatedCostMicros ?? 0);
   });
 
+  it("multiplies image generation estimate by variantCount for wallet preflight", () => {
+    const one = estimateWalletCostForRoute("/api/gemini/generate-stream", {
+      model: "flash31",
+      resolution: "2k",
+    });
+    const three = estimateWalletCostForRoute("/api/gemini/generate-stream", {
+      model: "flash31",
+      resolution: "2k",
+      variantCount: 3,
+    });
+    expect(one?.estimatedCostMicros).toBe(101_000);
+    expect(three?.estimatedCostMicros).toBe(303_000);
+    expect(three?.label).toBe("Generar imagen ×3");
+  });
+
   it("ignores routes without a wallet-facing estimate", () => {
     expect(estimateWalletCostForRoute("/api/runway/status/task_1", {})).toBeNull();
   });

@@ -102,12 +102,13 @@ export function estimateWalletCostForRoute(
     const model = stringValue(body.model, "flash31");
     const resolution = stringValue(body.resolution);
     const estimated = estimateGeminiImageGenerationUsd(model, resolution);
+    const variants = Math.min(3, Math.max(1, Math.round(numberValue(body.variantCount, 1))));
     return {
-      label: "Generar imagen",
+      label: variants > 1 ? `Generar imagen ×${variants}` : "Generar imagen",
       route,
       category: "image",
-      estimatedCostMicros: usdToMicros(estimated),
-      reserveMicros: reserveUsdToMicros(estimated, 1.15),
+      estimatedCostMicros: usdToMicros(estimated) * variants,
+      reserveMicros: reserveUsdToMicros(estimated, 1.15) * variants,
       tone: "confirm",
     };
   }
@@ -120,12 +121,13 @@ export function estimateWalletCostForRoute(
       quality,
       stringValue(body.aspect_ratio, "16:9"),
     );
+    const variants = Math.min(3, Math.max(1, Math.round(numberValue(body.variantCount, 1))));
     return {
-      label: "Generar imagen ChatGPT",
+      label: variants > 1 ? `Generar imagen ChatGPT ×${variants}` : "Generar imagen ChatGPT",
       route,
       category: "image",
-      estimatedCostMicros: usdToMicros(estimated),
-      reserveMicros: reserveUsdToMicros(estimated, 1.15),
+      estimatedCostMicros: usdToMicros(estimated) * variants,
+      reserveMicros: reserveUsdToMicros(estimated, 1.15) * variants,
       tone: "confirm",
     };
   }

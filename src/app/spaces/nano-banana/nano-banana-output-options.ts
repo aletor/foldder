@@ -12,6 +12,18 @@ export const NANO_BANANA_ASPECT_OPTIONS: readonly NanoBananaAspectRatio[] = [
 
 export const NANO_BANANA_RESOLUTION_OPTIONS: readonly NanoBananaResolution[] = ["1k", "2k", "4k"];
 
+export const NANO_BANANA_GEMINI_MODELS = [
+  { key: "flash25", label: "Flash" },
+  { key: "flash31", label: "3.1" },
+  { key: "pro3", label: "Pro" },
+] as const;
+
+export function nanoBananaModelLabel(modelKey: string, openai: boolean): string {
+  if (openai) return "ChatGPT";
+  const row = NANO_BANANA_GEMINI_MODELS.find((m) => m.key === modelKey);
+  return row?.label ?? "3.1";
+}
+
 export function resolveNanoBananaImageProvider(value: unknown): NanoBananaImageProvider {
   return value === "openai" ? "openai" : "gemini";
 }

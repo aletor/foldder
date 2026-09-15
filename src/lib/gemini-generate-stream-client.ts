@@ -33,7 +33,8 @@ function jsonSize(body: Record<string, unknown>): number {
 
 export async function geminiGenerateWithServerProgress(
   body: Record<string, unknown>,
-  onProgress: (pct: number, stage: string) => void
+  onProgress: (pct: number, stage: string) => void,
+  options?: { skipWalletPreflight?: boolean },
 ): Promise<GeminiStreamResult> {
   const preparedBody = await compactImageStreamReferences(body);
   const preparedSize = jsonSize(preparedBody);
@@ -43,9 +44,11 @@ export async function geminiGenerateWithServerProgress(
     );
   }
 
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (options?.skipWalletPreflight) headers["x-foldder-wallet-preflight-skip"] = "1";
   const res = await fetch("/api/gemini/generate-stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(preparedBody),
   });
 

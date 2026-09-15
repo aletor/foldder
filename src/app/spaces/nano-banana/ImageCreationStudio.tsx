@@ -1,8 +1,38 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { Check, ChevronLeft, Download, Eraser, Eye, Layers, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Eraser,
+  Eye,
+  EyeOff,
+  FolderOpen,
+  History,
+  ImagePlus,
+  Layers,
+  Loader2,
+  Maximize2,
+  Minus,
+  MoreHorizontal,
+  Pencil,
+  RotateCcw,
+  Scan,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  Undo2,
+  Upload,
+  X,
+  ZoomIn,
+} from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
 import { aiHudNanoBananaJobProgress } from "@/lib/ai-hud-generation-progress";
@@ -15,26 +45,32 @@ import { useNanoBananaViewerTouch } from "./nano-banana-viewer-touch";
 import type { BrainImageGeneratorPromptDiagnostics } from "@/lib/brain/build-brain-visual-prompt-context";
 import {
   FoldderStudioHeader,
-  foldderStudioHeaderActionClassName,
 } from "../FoldderStudioHeader";
 import {
   coerceNanoBananaAspect,
   coerceNanoBananaResolution,
+  isNanoBananaResolutionEnabled,
   nanoBananaAspectSelectOptions,
+  nanoBananaModelLabel,
+  NANO_BANANA_GEMINI_MODELS,
   type NanoBananaAspectRatio,
   type NanoBananaImageProvider,
   type NanoBananaResolution,
 } from "./nano-banana-output-options";
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
-import { StudioFoldderImagePicker, StudioRefSourceButtons } from "./StudioFoldderImagePicker";
+import { StudioFoldderImagePicker } from "./StudioFoldderImagePicker";
 import { canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
+import type { ChangeMaskSensitivity } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
 import { mergeStudioCardReferences, planStudioIncomingUrls, STUDIO_SCENE_DEST } from "./studio-foldder-images";
+import { prepareStudioGenerateCallCached } from "./studio-prepare-cache";
 import { prepareStudioGenerateCall } from "./studio-prepare-generate";
 import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
 import { downloadExport6kFile, runExport6k } from "./studio-export-6k";
-import { clientPointToImagePoint, lassoAnchorPercent, STUDIO_VIEWER_PAN_GAIN, wheelZoomFactor, zoomTowardPoint } from "./studio-overlay-coords";
+import { estimateStudioJobUsd, formatStudioUsd } from "./studio-cost";
+import { buildOpenAiEditMaskDataUrl } from "./studio-openai-mask";
+import { buildStudioGenerateImageSlots } from "./studio-generate-payload";
+import { clientPointToImagePoint, STUDIO_VIEWER_PAN_GAIN, wheelZoomFactor, zoomTowardPoint } from "./studio-overlay-coords";
 import {
-  emptyDraft,
   hydrateCardPaint,
   mergeStudioMedia,
   persistStudioMedia,
@@ -45,9 +81,13 @@ import {
 } from "./studio-persist";
 import {
   STUDIO_MAX_REFS_PER_CARD,
+  acceptedStudioHistory,
   cardHasStartedChange,
   cardHasZonePaint,
   createStudioCard,
+  findStudioHistoryBrief,
+  studioAssetsEqual,
+  studioBriefChangeCards,
   type StudioCard,
   type StudioComposeSummary,
   type StudioGlobal,
@@ -78,6 +118,7 @@ export type ImageCreationStudioProps = {
   onAspectRatioChange?: (aspectRatio: NanoBananaAspectRatio) => void;
   onModelKeyChange?: (modelKey: string) => void;
   onImageProviderChange?: (provider: NanoBananaImageProvider) => void;
+  onThinkingChange?: (thinking: boolean) => void;
   /** "Conservar zonas sin cambios": compone la generación sobre la base (por defecto activo). */
   preserveUnchanged?: boolean;
   onPreserveUnchangedChange?: (enabled: boolean) => void;
@@ -148,14 +189,19 @@ function polygonPoints(points: StudioPoint[]): string {
   return points.map((p) => `${p.x},${p.y}`).join(" ");
 }
 
+function polygonCenter(points: StudioPoint[]): StudioPoint {
+  if (points.length === 0) return { x: 0, y: 0 };
+  const total = points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+  return { x: total.x / points.length, y: total.y / points.length };
+}
+
 function studioSetupLabel(
   modelKey: string,
   resolution: string,
   aspect: string,
   openai: boolean,
 ): string {
-  const model = openai ? "GPT" : modelKey === "pro3" ? "Pro" : modelKey === "flash25" ? "NB 1" : "NB 2";
-  return `${model} · ${resolution.toUpperCase()} · ${aspect}`;
+  return `${nanoBananaModelLabel(modelKey, openai)} · ${resolution.toUpperCase()} · ${aspect}`;
 }
 
 const CALL_SLOT_LABEL: Record<StudioGenerateSlotKind, string> = {
@@ -203,6 +249,16 @@ function composeNoticeText(summary: StudioComposeSummary): string {
   }
 }
 
+const STUDIO_ICON_BUTTON =
+  "flex h-9 w-9 shrink-0 items-center justify-center border border-white/10 bg-white/[0.05] text-white/75 transition hover:border-white/25 hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30";
+
+const STUDIO_TEXT_BUTTON =
+  "flex h-9 shrink-0 items-center justify-center gap-2 border border-white/10 bg-white/[0.05] px-3 text-[12px] font-semibold text-white/80 transition hover:border-white/25 hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30";
+
+function studioChangeLabel(card: StudioCard, index: number): string {
+  return card.description.trim() || (card.lassoPoints.length > 2 || card.paintData ? `Zona ${index + 1}` : `Cambio ${index + 1}`);
+}
+
 export const ImageCreationStudio = memo(function ImageCreationStudio({
   nodeId,
   nodeLabel = "Image Creation",
@@ -223,6 +279,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   onAspectRatioChange,
   onModelKeyChange,
   onImageProviderChange,
+  onThinkingChange,
   preserveUnchanged: preserveUnchangedProp = true,
   onPreserveUnchangedChange,
   generationHistory,
@@ -255,6 +312,25 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const [exporting6k, setExporting6k] = useState(false);
   const [export6kError, setExport6kError] = useState<string | null>(null);
   const [export6kFormat, setExport6kFormat] = useState<"png" | "jpeg">("png");
+  const [composeSensitivity, setComposeSensitivity] = useState<ChangeMaskSensitivity>("auto");
+  const [variantCount, setVariantCount] = useState<1 | 2 | 3>(1);
+  const [variantPicks, setVariantPicks] = useState<Array<{ output: string; key?: string }>>([]);
+  const [genStage, setGenStage] = useState<string | null>(null);
+  const [holdingCompare, setHoldingCompare] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [sceneOpen, setSceneOpen] = useState(() => !initialImage);
+  const [showZoneOutlines, setShowZoneOutlines] = useState(true);
+  const [zoomPercent, setZoomPercent] = useState(100);
+  const [canUndo, setCanUndo] = useState(false);
+  const undoSnapRef = useRef<{
+    sessionImage: string | null;
+    cards: StudioCard[];
+    global: StudioGlobal;
+  } | null>(null);
   const [sessionImage, setSessionImage] = useState<string | null>(lastGenerated || initialImage);
   const [showingOriginal, setShowingOriginal] = useState(false);
   const currentImage = showingOriginal && initialImage ? initialImage : sessionImage;
@@ -280,7 +356,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const effectiveStudioResolution = lockFlash25Res ? "1k" : studioResolution;
   const aspectCanChange =
     !lastGenerated && generationHistory.length === 0 && genStatus !== "running" && genStatus !== "success";
-  const settingsCanChange = aspectCanChange;
+  const settingsBusy = genStatus === "running" || inspectingCall || exporting6k;
   const applyStudioProvider = useCallback(
     (next: NanoBananaImageProvider) => {
       setStudioProvider(next);
@@ -336,6 +412,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const nodePrompt = String(prompt ?? "").trim();
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const studioRootRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const schemaCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -370,22 +447,39 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
 
   useEffect(() => () => flushDraft(), [flushDraft]);
 
+  const acceptedHistory = useMemo(
+    () =>
+      acceptedStudioHistory({
+        history: generationHistory,
+        briefs: hydratedBriefs,
+        initialImage,
+        currentImage: sessionImage,
+      }),
+    [generationHistory, hydratedBriefs, initialImage, sessionImage],
+  );
   const previewBrief = useMemo(
-    () => (historyPreviewUrl ? hydratedBriefs.find((b) => b.outputUrl === historyPreviewUrl) ?? null : null),
+    () => findStudioHistoryBrief(hydratedBriefs, historyPreviewUrl),
     [hydratedBriefs, historyPreviewUrl],
   );
   const readOnly = Boolean(historyPreviewUrl);
-  const displayImage = previewBrief
-    ? previewBrief.baseUrl || previewBrief.outputUrl
+  const viewedImage = historyPreviewUrl || sessionImage;
+  const viewedBrief = useMemo(
+    () => findStudioHistoryBrief(hydratedBriefs, viewedImage),
+    [hydratedBriefs, viewedImage],
+  );
+  const compareHoldUrl =
+    viewedBrief?.baseUrl && !studioAssetsEqual(viewedBrief.baseUrl, viewedImage)
+      ? viewedBrief.baseUrl
+      : null;
+  const displayImage = holdingCompare && compareHoldUrl
+    ? compareHoldUrl
     : historyPreviewUrl || currentImage;
   const displayCards = previewBrief ? previewBrief.cards : cards;
-  const visibleCards = displayCards.filter((card) => card.id === draftCard?.id || cardHasStartedChange(card));
+  const visibleCards = displayCards.filter((card) =>
+    readOnly ? cardHasStartedChange(card) : card.id === draftCard?.id || cardHasStartedChange(card),
+  );
+  const activeDraftCard = draftCard ? cards.find((card) => card.id === draftCard.id) ?? null : null;
   const displayGlobal = previewBrief ? previewBrief.global : global;
-  const popoverCard = !readOnly
-    ? displayCards.find((card) => card.id === (selectedCardId || draftCard?.id) && card.lassoPoints.length > 2) ?? null
-    : null;
-  const popoverAnchor = popoverCard ? lassoAnchorPercent(popoverCard.lassoPoints, { width: imgNat.w, height: imgNat.h }) : null;
-
   const vZoom = useRef(1);
   const vPan = useRef({ x: 0, y: 0 });
   const vIsDragging = useRef(false);
@@ -394,6 +488,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const applyViewTransform = () => {
     if (!zoomWrapRef.current) return;
     zoomWrapRef.current.style.transform = `translate(${vPan.current.x}px,${vPan.current.y}px) scale(${vZoom.current})`;
+    setZoomPercent(Math.round(vZoom.current * 100));
   };
   const drawingLassoRef = useRef(false);
   drawingLassoRef.current = drawingLasso;
@@ -443,6 +538,25 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     ro.observe(wrap);
     return () => ro.disconnect();
   }, [recalcFit]);
+
+  const resetViewer = useCallback(() => {
+    vZoom.current = 1;
+    vPan.current = { x: 0, y: 0 };
+    applyViewTransform();
+  }, []);
+
+  const zoomViewer = useCallback((factor: number) => {
+    const wrap = containerRef.current;
+    if (!wrap) return;
+    const next = zoomTowardPoint(
+      { pan: vPan.current, zoom: vZoom.current },
+      { x: wrap.clientWidth / 2, y: wrap.clientHeight / 2 },
+      vZoom.current * factor,
+    );
+    vZoom.current = next.zoom;
+    vPan.current = next.pan;
+    applyViewTransform();
+  }, []);
 
   useEffect(() => {
     if (imgNat.w < 1) return;
@@ -532,6 +646,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     });
     setDrawingLasso(false);
     setLassoPoints([]);
+    setChangesOpen(false);
     requestAnimationFrame(() => draftTextRef.current?.focus());
   }, [imgNat.h, imgNat.w, lassoPoints]);
 
@@ -603,7 +718,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     [genStatus, readOnly],
   );
 
-  const useConnectedRef = useCallback(
+  const attachConnectedRef = useCallback(
     (url: string) => {
       if (readOnly || genStatus === "running") return;
       if (!currentImageRef.current) {
@@ -668,21 +783,150 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   );
 
   const hasGeneratedOutput =
-    Boolean(lastGenerated) || generationHistory.length > 0 || genStatus === "success";
+    Boolean(lastGenerated) || acceptedHistory.length > 0 || genStatus === "success";
 
-  const onGenerate = useCallback(async () => {
-    if (readOnly || inspectingCall) return;
+  const jobCost = useMemo(
+    () =>
+      estimateStudioJobUsd({
+        provider: studioProvider,
+        modelKey: studioModelKey,
+        resolution: effectiveStudioResolution,
+        aspectRatio: studioAspect,
+        cards,
+        hasBaseImage: Boolean(currentImage),
+        variantCount: 1,
+      }),
+    [cards, currentImage, effectiveStudioResolution, studioAspect, studioModelKey, studioProvider],
+  );
+
+  const commitGeneratedOutput = useCallback(
+    async (args: {
+      output: string;
+      key?: string;
+      prev: string | null;
+      cards: StudioCard[];
+      global: StudioGlobal;
+      frameWidth: number;
+      frameHeight: number;
+    }) => {
+      let out = args.output;
+      let outKey = args.key;
+      let rawOutputUrl: string | null = null;
+      let composeSummary: StudioComposeSummary | null = null;
+      let composeMaskPreview: string | null = null;
+
+      if (preserveUnchanged && args.prev) {
+        const eligibility = preserveComposeEligibility({
+          baseImage: args.prev,
+          cards: args.cards,
+          global: args.global,
+        });
+        if (eligibility.ok) {
+          setGenStage("Integrando cambios sobre la original…");
+          setComposeStage("Integrando cambios sobre la original…");
+          try {
+            const outcome = await runPreserveCompose({
+              baseImage: args.prev,
+              generatedOutput: args.output,
+              generatedKey: outKey ?? null,
+              cards: args.cards,
+              frame: { width: args.frameWidth, height: args.frameHeight },
+              sensitivity: composeSensitivity,
+            });
+            composeSummary = summarizeComposeOutcome(outcome);
+            composeMaskPreview = outcome.maskPreview;
+            if (outcome.composed && outcome.output) {
+              rawOutputUrl = args.output;
+              out = outcome.output;
+              outKey = outcome.key ?? undefined;
+            }
+          } catch (error) {
+            console.error("[ImageCreationStudio] preserve-compose:", error);
+            composeSummary = {
+              composed: false,
+              decision: "error",
+              reason: error instanceof Error ? error.message : "Error desconocido.",
+              changedPct: null,
+              componentsKept: null,
+              componentsDropped: null,
+            };
+          } finally {
+            setComposeStage(null);
+          }
+        } else if (args.cards.some(cardHasZonePaint) || args.cards.some((card) => card.lassoPoints.length > 2)) {
+          composeSummary = {
+            composed: false,
+            decision: "not-eligible",
+            reason: eligibility.reason,
+            changedPct: null,
+            componentsKept: null,
+            componentsDropped: null,
+          };
+        }
+      }
+
+      undoSnapRef.current = { sessionImage: args.prev, cards: args.cards, global: args.global };
+      setCanUndo(true);
+      onGenerationHistoryChange((h) => {
+        const next = [...h];
+        if (args.prev && !studioAssetsEqual(args.prev, out) && !next.some((url) => studioAssetsEqual(url, args.prev))) {
+          next.push(args.prev);
+        }
+        if (!next.some((url) => studioAssetsEqual(url, out))) next.push(out);
+        return next;
+      });
+      const brief: StudioHistoryBrief = {
+        outputUrl: out,
+        baseUrl: args.prev,
+        cards: args.cards,
+        global: args.global,
+        rawOutputUrl,
+        compose: composeSummary,
+        composeMaskPreview,
+      };
+      persistStudioMedia(
+        nodeId,
+        { cards: args.cards, global: args.global },
+        [...hydratedBriefs.filter((b) => !studioAssetsEqual(b.outputUrl, out)), brief],
+      );
+      setBriefs((prevBriefs) => [
+        ...prevBriefs.filter((b) => !studioAssetsEqual(b.outputUrl, out)).map(stripBriefForNode),
+        stripBriefForNode(brief),
+      ]);
+      currentImageRef.current = out;
+      setShowingOriginal(false);
+      setSessionImage(out);
+      if (composeSummary) setComposeNotice({ summary: composeSummary, maskPreview: composeMaskPreview });
+      onGenerated(out, outKey);
+    },
+    [composeSensitivity, hydratedBriefs, nodeId, onGenerated, onGenerationHistoryChange, preserveUnchanged, setBriefs],
+  );
+
+  const onGenerate = useCallback(async (opts?: {
+    resolution?: NanoBananaResolution;
+    collectCandidate?: boolean;
+  }) => {
+    if (readOnly || inspectingCall || genStatus === "running" || exporting6k) return;
     const canGo = canStudioPrimaryGenerate(cards, global, {
       nodePrompt,
       hasGeneratedOutput:
-        Boolean(lastGenerated) || generationHistory.length > 0 || genStatus === "success",
+        Boolean(lastGenerated) || acceptedHistory.length > 0 || genStatus === "success",
     });
     if (!canGo) return;
+    const resolution = opts?.resolution
+      ? coerceNanoBananaResolution(studioProvider, studioModelKey, opts.resolution)
+      : effectiveStudioResolution;
+    if (opts?.resolution && resolution !== studioResolution) {
+      setStudioResolution(resolution);
+      onResolutionChange?.(resolution);
+    }
+    const collectCandidate = opts?.collectCandidate ?? variantCount > 1;
     setGenStatus("running");
     setGenError(null);
     setProgress(0);
     setComposeNotice(null);
     setShowComposeMask(false);
+    if (!opts?.collectCandidate) setVariantPicks([]);
     let okFinish = false;
     let failMessage: string | null = null;
     try {
@@ -691,7 +935,13 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           const scenePrompt = global.promptDraft;
           const frameWidth = imgNat.w || workingFrameSize(studioAspect).width;
           const frameHeight = imgNat.h || workingFrameSize(studioAspect).height;
-          const prepared = await prepareStudioGenerateCall({
+          if (shouldRunAnalyzeAreas(cards) && currentImage) setGenStage("Analizando zonas…");
+          else {
+            setGenStage(
+              `Generando · ${nanoBananaModelLabel(studioModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
+            );
+          }
+          const prepared = await prepareStudioGenerateCallCached({
             baseImage: currentImage,
             cards,
             frameHeight,
@@ -704,104 +954,55 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             scenePrompt,
             prepared.prompt,
           );
+          const maskUrl = isOpenAi
+            ? await buildOpenAiEditMaskDataUrl(cards, { width: frameWidth, height: frameHeight })
+            : null;
+          const imageList = maskUrl
+            ? buildStudioGenerateImageSlots({ ...prepared.images, zoneMapImage: null })
+            : prepared.imageList;
           const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
-          const json = await generate(
+          setGenStage(
+            `Generando candidata · ${nanoBananaModelLabel(studioModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
+          );
+          const generated = await generate(
             {
               prompt: merged,
-              images: prepared.imageList,
+              images: imageList,
               aspect_ratio: studioAspect,
-              resolution: effectiveStudioResolution,
+              resolution,
               model: studioModelKey,
               thinking: thinking && isPro && !isOpenAi,
+              ...(maskUrl ? { mask: maskUrl } : {}),
             },
             (pct) => {
               setProgress(pct);
               aiHudNanoBananaJobProgress(nodeId, pct);
             },
           );
-          const prev = currentImageRef.current;
-          let out = json.output;
-          let outKey = typeof json.key === "string" ? json.key : undefined;
-          let rawOutputUrl: string | null = null;
-          let composeSummary: StudioComposeSummary | null = null;
-          let composeMaskPreview: string | null = null;
-
-          // "Conservar zonas sin cambios": la generación ya está pagada y subida; este paso es
-          // solo CPU en servidor y, si falla, se conserva la generación cruda.
-          if (preserveUnchanged && prev) {
-            const eligibility = preserveComposeEligibility({
-              baseImage: prev,
-              cards,
-              global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
-            });
-            if (eligibility.ok) {
-              setComposeStage("Integrando cambios sobre la original…");
-              try {
-                const outcome = await runPreserveCompose({
-                  baseImage: prev,
-                  generatedOutput: json.output,
-                  generatedKey: outKey ?? null,
-                  cards,
-                  frame: { width: frameWidth, height: frameHeight },
-                });
-                composeSummary = summarizeComposeOutcome(outcome);
-                composeMaskPreview = outcome.maskPreview;
-                if (outcome.composed && outcome.output) {
-                  rawOutputUrl = json.output;
-                  out = outcome.output;
-                  outKey = outcome.key ?? undefined;
-                }
-              } catch (error) {
-                console.error("[ImageCreationStudio] preserve-compose:", error);
-                composeSummary = {
-                  composed: false,
-                  decision: "error",
-                  reason: error instanceof Error ? error.message : "Error desconocido.",
-                  changedPct: null,
-                  componentsKept: null,
-                  componentsDropped: null,
-                };
-              } finally {
-                setComposeStage(null);
-              }
-            } else if (cards.some(cardHasZonePaint)) {
-              // Solo avisamos si el usuario usó el lazo; en ediciones globales no hay nada que integrar.
-              composeSummary = {
-                composed: false,
-                decision: "not-eligible",
-                reason: eligibility.reason,
-                changedPct: null,
-                componentsKept: null,
-                componentsDropped: null,
-              };
-            }
+          const json = {
+            output: generated.output,
+            key: typeof generated.key === "string" ? generated.key : undefined,
+          };
+          if (collectCandidate) {
+            undoSnapRef.current = { sessionImage: currentImageRef.current, cards, global };
+            setCanUndo(true);
+            setVariantPicks((previous) =>
+              previous.some((item) => studioAssetsEqual(item.output, json.output))
+                ? previous
+                : [...previous, json],
+            );
+            okFinish = true;
+            return;
           }
-
-          onGenerationHistoryChange((h) => {
-            const next = [...h];
-            if (prev && prev !== out && !next.includes(prev)) next.push(prev);
-            if (!next.includes(out)) next.push(out);
-            return next;
-          });
-          const brief: StudioHistoryBrief = {
-            outputUrl: out,
-            baseUrl: prev,
+          await commitGeneratedOutput({
+            output: json.output,
+            key: json.key,
+            prev: currentImageRef.current,
             cards,
             global,
-            rawOutputUrl,
-            compose: composeSummary,
-            composeMaskPreview,
-          };
-          persistStudioMedia(nodeId, emptyDraft(), [...hydratedBriefs.filter((b) => b.outputUrl !== out), brief]);
-          setBriefs((prevBriefs) => [
-            ...prevBriefs.filter((b) => b.outputUrl !== out).map(stripBriefForNode),
-            stripBriefForNode(brief),
-          ]);
-          currentImageRef.current = out;
-          setShowingOriginal(false);
-          setSessionImage(out);
-          if (composeSummary) setComposeNotice({ summary: composeSummary, maskPreview: composeMaskPreview });
-          onGenerated(out, outKey);
+            frameWidth,
+            frameHeight,
+          });
           okFinish = true;
         } catch (error) {
           failMessage = sanitizeUserFacingErrorMessage(
@@ -822,9 +1023,9 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           sanitizeUserFacingErrorMessage(error instanceof Error ? error.message : String(error)),
       );
     } finally {
+      setGenStage(null);
       if (okFinish) {
         flushSync(() => {
-          clearEdits();
           setProgress(100);
           setGenStatus("success");
           setGenError(null);
@@ -835,32 +1036,31 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     }
   }, [
     cards,
-    clearEdits,
+    commitGeneratedOutput,
     composeBrainImageGeneratorPrompt,
     currentImage,
     effectiveStudioResolution,
+    exporting6k,
     global,
-    hydratedBriefs,
     imgNat.h,
     imgNat.w,
     inspectingCall,
     isOpenAi,
     isPro,
     lastGenerated,
-    generationHistory.length,
+    acceptedHistory.length,
     genStatus,
     nodeId,
     onBrainImageGeneratorDiagnostics,
-    onGenerated,
-    onGenerationHistoryChange,
-    preserveUnchanged,
-    prompt,
+    onResolutionChange,
     nodePrompt,
     readOnly,
-    setBriefs,
     studioAspect,
     studioModelKey,
+    studioProvider,
+    studioResolution,
     thinking,
+    variantCount,
   ]);
 
   const onInspectCall = useCallback(async () => {
@@ -875,6 +1075,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         frameHeight: imgNat.h || workingFrameSize(studioAspect).height,
         frameWidth: imgNat.w || workingFrameSize(studioAspect).width,
         global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+        allowPaidAnalyze: false,
       });
       const merged = mergePromptWithBrain(
         composeBrainImageGeneratorPrompt,
@@ -898,7 +1099,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         images: order.kinds.map((kind, index) => ({ kind, src: prepared.imageList[index] ?? "" })).filter((item) => item.src),
         preserveNote,
         prompt: merged,
-        ranAnalyzeAreas: prepared.ranAnalyzeAreas,
+        ranAnalyzeAreas: false,
         usedAnalyzeAreas: shouldRunAnalyzeAreas(cards) && Boolean(currentImage),
       });
     } catch (error) {
@@ -939,13 +1140,193 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     }
   }, [currentImage, export6kFormat, exporting6k, genStatus, historyPreviewUrl, sessionImage]);
 
+  const rehydrateBrief = useCallback(
+    (brief: StudioHistoryBrief, asBase: "output" | "base") => {
+      const url = asBase === "base" ? brief.baseUrl || brief.outputUrl : brief.outputUrl;
+      flushSync(() => {
+        setHistoryPreviewUrl(null);
+        setShowingOriginal(false);
+        setShowZoneOutlines(true);
+        setCards(brief.cards.map((card) => ({ ...card })));
+        setGlobal({ ...brief.global });
+        setSceneOpen(Boolean(brief.global.promptDraft.trim() || brief.global.text.trim() || brief.global.schemaData));
+        setSessionImage(url);
+      });
+      onGenerated(url, tryExtractKnowledgeFilesKeyFromUrl(url) ?? undefined);
+    },
+    [onGenerated],
+  );
+
+  const undoLastGenerate = useCallback(() => {
+    const snap = undoSnapRef.current;
+    if (!snap || genStatus === "running") return;
+    setSessionImage(snap.sessionImage);
+    setCards(snap.cards);
+    setGlobal(snap.global);
+    currentImageRef.current = snap.sessionImage;
+    undoSnapRef.current = null;
+    setCanUndo(false);
+    setVariantPicks([]);
+    setComposeNotice(null);
+  }, [genStatus]);
+
+  const onReintegrate = useCallback(async () => {
+    const brief =
+      findStudioHistoryBrief(hydratedBriefs, historyPreviewUrl || currentImage) ??
+      hydratedBriefs[hydratedBriefs.length - 1];
+    const raw = brief?.rawOutputUrl;
+    const base = brief?.baseUrl;
+    if (!raw || !base || genStatus === "running") return;
+    setComposeStage("Integrando cambios sobre la original…");
+    setGenStage("Integrando cambios sobre la original…");
+    try {
+      const outcome = await runPreserveCompose({
+        baseImage: base,
+        generatedOutput: raw,
+        generatedKey: tryExtractKnowledgeFilesKeyFromUrl(raw),
+        cards: brief.cards,
+        frame: { width: imgNat.w, height: imgNat.h },
+        sensitivity: composeSensitivity,
+      });
+      const summary = summarizeComposeOutcome(outcome);
+      setComposeNotice({ summary, maskPreview: outcome.maskPreview });
+      if (outcome.composed && outcome.output) {
+        setSessionImage(outcome.output);
+        currentImageRef.current = outcome.output;
+        onGenerated(outcome.output, outcome.key ?? undefined);
+        onGenerationHistoryChange((h) =>
+          h.some((url) => studioAssetsEqual(url, outcome.output)) ? h : [...h, outcome.output!],
+        );
+      }
+    } catch (error) {
+      setGenError(error instanceof Error ? error.message : "No se pudo reintegrar.");
+    } finally {
+      setComposeStage(null);
+      setGenStage(null);
+    }
+  }, [composeSensitivity, currentImage, genStatus, historyPreviewUrl, hydratedBriefs, imgNat.h, imgNat.w, onGenerated, onGenerationHistoryChange]);
+
+  const onPickVariant = useCallback(
+    async (picked: { output: string; key?: string }) => {
+      setVariantPicks([]);
+      const prev = currentImageRef.current;
+      const frame = workingFrameSize(studioAspect);
+      setGenStatus("running");
+      setGenError(null);
+      try {
+        await commitGeneratedOutput({
+          output: picked.output,
+          key: picked.key,
+          prev,
+          cards,
+          global,
+          frameWidth: imgNat.w || frame.width,
+          frameHeight: imgNat.h || frame.height,
+        });
+        setGenStatus("success");
+      } catch (error) {
+        setGenStatus("error");
+        setGenError(error instanceof Error ? error.message : "No se pudo integrar la variante.");
+      } finally {
+        setGenStage(null);
+        setComposeStage(null);
+      }
+    },
+    [cards, commitGeneratedOutput, global, imgNat.h, imgNat.w, studioAspect],
+  );
+
+  const compareBaseUrl = compareHoldUrl;
+
+  useEffect(() => {
+    const isTyping = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const studios = document.querySelectorAll<HTMLElement>("[data-foldder-nano-banana-studio]");
+      if (studios.length > 0 && studios.item(studios.length - 1) !== studioRootRef.current) return;
+      if (event.key === "Escape") {
+        if (settingsOpen || historyOpen || downloadOpen || moreOpen) {
+          setSettingsOpen(false);
+          setHistoryOpen(false);
+          setDownloadOpen(false);
+          setMoreOpen(false);
+          event.preventDefault();
+          return;
+        }
+        if (drawingLasso) {
+          setDrawingLasso(false);
+          setLassoPoints([]);
+          event.preventDefault();
+          return;
+        }
+        if (historyPreviewUrl) {
+          setHistoryPreviewUrl(null);
+          event.preventDefault();
+        }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void onGenerate();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && (event.key === "z" || event.key === "Z") && !event.shiftKey) {
+        if (isTyping(event.target)) return;
+        event.preventDefault();
+        undoLastGenerate();
+        return;
+      }
+      if (isTyping(event.target) || genStatus === "running") return;
+      if (event.key === " " && !event.repeat && compareBaseUrl) {
+        event.preventDefault();
+        setHoldingCompare(true);
+        return;
+      }
+      if (readOnly) return;
+      if (event.key === "l" || event.key === "L") {
+        event.preventDefault();
+        startAdd();
+        return;
+      }
+      if (event.key === "Enter" && drawingLasso) {
+        event.preventDefault();
+        confirmLasso();
+        return;
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === " ") setHoldingCompare(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [
+    compareBaseUrl,
+    confirmLasso,
+    downloadOpen,
+    drawingLasso,
+    genStatus,
+    historyOpen,
+    historyPreviewUrl,
+    moreOpen,
+    onGenerate,
+    readOnly,
+    settingsOpen,
+    startAdd,
+    undoLastGenerate,
+  ]);
+
   const showGenerate =
     !readOnly &&
     genStatus !== "running" &&
     !drawingLasso &&
     canStudioPrimaryGenerate(cards, global, { nodePrompt, hasGeneratedOutput });
-  const canToggleOriginal = Boolean(initialImage && sessionImage && initialImage !== sessionImage) && !readOnly;
-
   const paintSchema = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!schemaDrawing.current || event.buttons === 0) return;
     const canvas = schemaCanvasRef.current;
@@ -1033,89 +1414,90 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
 
   return createPortal(
     <div
+      ref={studioRootRef}
       className="nb-studio-root fixed inset-0 z-[100090] flex flex-col bg-[#07080b] text-white"
       data-foldder-studio-panel
       data-foldder-studio-canvas
       data-foldder-nano-banana-studio
+      data-studio-node-id={nodeId}
       data-foldder-i18n-ignore
     >
       <FoldderStudioHeader
         nodeType="nanoBanana"
         nodeLabel={nodeLabel}
-        subtitle={settingsCanChange ? "" : studioSetupLabel(studioModelKey, effectiveStudioResolution, studioAspect, isOpenAi)}
+        subtitle={studioSetupLabel(studioModelKey, effectiveStudioResolution, studioAspect, isOpenAi)}
         onClose={topBarCloseMode === "default" ? handleClose : undefined}
+        className="nb-image-studio-header"
         actions={
           <>
-            {(["gemini", "openai"] as const).map((provider) => (
-              <button
-                key={provider}
-                type="button"
-                aria-pressed={studioProvider === provider}
-                disabled={readOnly || !settingsCanChange || inspectingCall}
-                onClick={() => applyStudioProvider(provider)}
-                className={foldderStudioHeaderActionClassName(
-                  studioProvider === provider ? "bg-white text-slate-950 hover:bg-white hover:text-slate-950" : "",
-                )}
-              >
-                {provider === "gemini" ? "Gemini" : "ChatGPT"}
-              </button>
-            ))}
+            <div className="flex items-center gap-1 px-1.5">
+              {(["gemini", "openai"] as const).map((provider) => (
+                <button
+                  key={provider}
+                  type="button"
+                  aria-pressed={studioProvider === provider}
+                  disabled={readOnly || settingsBusy}
+                  onClick={() => applyStudioProvider(provider)}
+                  className={`nb-studio-segment h-8 px-3 text-[12px] font-semibold transition disabled:opacity-30 ${
+                    studioProvider === provider ? "nb-studio-segment--active" : "text-white/60 hover:bg-white/10 hover:text-white"
+                  }`}
+                >
+                  {provider === "gemini" ? "Gemini" : "ChatGPT"}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
-              aria-pressed={preserveUnchanged}
-              disabled={readOnly || genStatus === "running" || inspectingCall || exporting6k}
+              disabled={!canUndo || genStatus === "running"}
+              onClick={undoLastGenerate}
+              className={STUDIO_ICON_BUTTON}
+              aria-label="Deshacer última generación"
+              title="Deshacer última generación"
+            >
+              <Undo2 size={16} />
+            </button>
+            <button
+              type="button"
+              disabled={!(historyPreviewUrl || sessionImage || currentImage) || genStatus === "running"}
               onClick={() => {
-                const next = !preserveUnchanged;
-                setPreserveUnchanged(next);
-                onPreserveUnchangedChange?.(next);
+                setDownloadOpen((value) => !value);
+                setSettingsOpen(false);
+                setMoreOpen(false);
               }}
-              className={foldderStudioHeaderActionClassName(
-                preserveUnchanged ? "bg-white text-slate-950 hover:bg-white hover:text-slate-950" : "",
-              )}
-              title="Tras generar un cambio local, conserva de la imagen original todo lo que el modelo no modificó (sin coste de API)"
+              className={STUDIO_ICON_BUTTON}
+              aria-label="Descargar"
+              title="Descargar"
             >
-              Conservar original
+              <Download size={16} />
             </button>
             <button
               type="button"
-              disabled={exporting6k}
-              onClick={() => setExport6kFormat((prev) => (prev === "png" ? "jpeg" : "png"))}
-              className={foldderStudioHeaderActionClassName()}
-              title={
-                export6kFormat === "png"
-                  ? "Formato actual: PNG sin pérdida. Clic para JPEG q96"
-                  : "Formato actual: JPEG q96. Clic para PNG sin pérdida"
-              }
+              onClick={() => {
+                setSettingsOpen((value) => !value);
+                setDownloadOpen(false);
+                setMoreOpen(false);
+              }}
+              className={`${STUDIO_ICON_BUTTON} ${settingsOpen ? "nb-studio-icon--active" : ""}`}
+              aria-label="Ajustes"
+              title="Ajustes"
             >
-              {export6kFormat === "png" ? "PNG" : "JPG"}
+              <Settings2 size={16} />
             </button>
             <button
               type="button"
-              disabled={
-                !(historyPreviewUrl || sessionImage || currentImage) ||
-                genStatus === "running" ||
-                inspectingCall ||
-                exporting6k
-              }
-              onClick={() => void onExport6k()}
-              className={foldderStudioHeaderActionClassName()}
-              title="Reescala local a 6K (lado largo 6144) y descarga · sin IA ni coste de API. Para máxima calidad genera en 4K"
+              onClick={() => {
+                setMoreOpen((value) => !value);
+                setSettingsOpen(false);
+                setDownloadOpen(false);
+              }}
+              className={STUDIO_ICON_BUTTON}
+              aria-label="Más opciones"
+              title="Más opciones"
             >
-              {exporting6k ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-              Exportar 6K
-            </button>
-            <button
-              type="button"
-              disabled={readOnly || genStatus === "running" || inspectingCall || exporting6k}
-              onClick={() => void onInspectCall()}
-              className={foldderStudioHeaderActionClassName()}
-              title="Testing: analiza zonas y muestra el prompt e imágenes que se mandarían"
-            >
-              {inspectingCall ? <Loader2 size={12} className="animate-spin" /> : null}
-              Ver llamada
+              <MoreHorizontal size={17} />
             </button>
             {topBarCloseMode !== "default" ? (
-              <button type="button" onClick={handleClose} className={foldderStudioHeaderActionClassName()}>
+              <button type="button" onClick={handleClose} className={STUDIO_ICON_BUTTON} aria-label="Volver">
                 <ChevronLeft size={14} strokeWidth={2.5} />
               </button>
             ) : null}
@@ -1123,75 +1505,24 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         }
       />
 
-      {settingsCanChange ? (
-      <div className="flex h-8 shrink-0 items-stretch divide-x divide-white/10 border-b border-white/10 bg-white/[0.04]">
-        {!isOpenAi
-          ? [
-              { key: "flash25", label: "NB 1" },
-              { key: "flash31", label: "NB 2" },
-              { key: "pro3", label: "Pro" },
-            ].map((m) => (
-          <button
-            key={m.key}
-            type="button"
-            onClick={() => {
-              setStudioModelKey(m.key);
-              onModelKeyChange?.(m.key);
-            }}
-            className={`px-3 text-[8px] font-black uppercase tracking-[0.08em] ${
-              studioModelKey === m.key ? "bg-white text-slate-950" : "text-white/40"
-            }`}
-          >
-            {m.label}
-          </button>
-            ))
-          : (
-              <span className="flex items-center px-3 text-[8px] font-black uppercase tracking-[0.08em] text-white/40">
-                GPT Image
-              </span>
-            )}
-        {!lockFlash25Res
-          ? (["1k", "2k", "4k"] as const).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => {
-                  setStudioResolution(r);
-                  onResolutionChange?.(r);
-                }}
-                className={`px-3 text-[8px] font-black uppercase ${
-                  effectiveStudioResolution === r ? "bg-white text-slate-950" : "text-white/35"
-                }`}
-              >
-                {r}
-              </button>
-            ))
-          : null}
-        {nanoBananaAspectSelectOptions().map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => {
-              setStudioAspect(option.value);
-              onAspectRatioChange?.(option.value);
-            }}
-            className={`px-3 text-[8px] font-black ${
-              studioAspect === option.value ? "bg-white text-slate-950" : "text-white/35"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-      ) : null}
-
       {genError && !readOnly ? (
         <div
-          className="flex h-auto min-h-7 shrink-0 items-start gap-2 border-b border-rose-400/25 bg-rose-500/15 px-3 py-1.5 text-[10px] font-medium text-rose-100"
+          className="relative z-20 flex min-h-10 shrink-0 items-center gap-3 border-b border-rose-400/25 bg-rose-500/15 px-4 py-2 text-[13px] font-medium text-rose-100"
           data-foldder-i18n-ignore
           role="alert"
         >
           <span className="min-w-0 flex-1 leading-snug">{genError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setGenError(null);
+              void onGenerate();
+            }}
+            className="shrink-0 font-semibold text-rose-100 hover:text-white"
+            title="Nueva llamada de pago con el mismo encargo"
+          >
+            Reintentar
+          </button>
           <button
             type="button"
             onClick={() => setGenError(null)}
@@ -1203,76 +1534,293 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         </div>
       ) : null}
 
-      {composeNotice && !readOnly ? (
-        <div
-          className={`flex h-7 shrink-0 items-center gap-3 border-b border-white/10 px-3 text-[10px] font-medium ${
-            composeNotice.summary.composed ? "bg-emerald-500/10 text-emerald-100" : "bg-amber-500/10 text-amber-100"
-          }`}
-          data-foldder-i18n-ignore
-        >
-          <span className="min-w-0 flex-1 truncate" title={composeNoticeText(composeNotice.summary)}>
-            {composeNoticeText(composeNotice.summary)}
-          </span>
-          {composeNotice.maskPreview ? (
+      {settingsOpen ? (
+        <div className="absolute right-12 top-11 z-[100105] w-[340px] border border-white/15 bg-[#111318] p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-[14px] font-semibold text-white">Ajustes de generación</p>
+              <p className="mt-0.5 text-[12px] text-white/45">Modelo, tamaño y formato</p>
+            </div>
+            <button type="button" onClick={() => setSettingsOpen(false)} className={STUDIO_ICON_BUTTON} aria-label="Cerrar ajustes">
+              <X size={16} />
+            </button>
+          </div>
+
+          {!isOpenAi ? (
+            <div className="mb-4">
+              <p className="mb-2 text-[12px] font-medium text-white/55">Modelo</p>
+              <div className="grid grid-cols-3 gap-1">
+                {NANO_BANANA_GEMINI_MODELS.map((model) => (
+                  <button
+                    key={model.key}
+                    type="button"
+                    disabled={readOnly || settingsBusy}
+                    onClick={() => {
+                      setStudioModelKey(model.key);
+                      onModelKeyChange?.(model.key);
+                    }}
+                    className={`nb-studio-choice h-9 px-2 text-[12px] font-semibold ${
+                      studioModelKey === model.key ? "nb-studio-choice--active" : ""
+                    }`}
+                  >
+                    {model.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mb-4">
+            <p className="mb-2 text-[12px] font-medium text-white/55">Tamaño</p>
+            <div className="grid grid-cols-3 gap-1">
+              {(lockFlash25Res ? (["1k"] as const) : (["1k", "2k", "4k"] as const)).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={readOnly || settingsBusy || !isNanoBananaResolutionEnabled(studioProvider, studioModelKey, value)}
+                  onClick={() => {
+                    setStudioResolution(value);
+                    onResolutionChange?.(value);
+                  }}
+                  className={`nb-studio-choice h-9 text-[12px] font-semibold uppercase ${
+                    effectiveStudioResolution === value ? "nb-studio-choice--active" : ""
+                  }`}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[12px] font-medium text-white/55">Formato</p>
+              {!aspectCanChange ? <span className="text-[11px] text-white/30">Bloqueado tras generar</span> : null}
+            </div>
+            <div className="grid grid-cols-5 gap-1">
+              {nanoBananaAspectSelectOptions().map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={readOnly || settingsBusy || !aspectCanChange}
+                  onClick={() => {
+                    setStudioAspect(option.value);
+                    onAspectRatioChange?.(option.value);
+                  }}
+                  className={`nb-studio-choice h-9 text-[11px] font-semibold ${
+                    studioAspect === option.value ? "nb-studio-choice--active" : ""
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {isPro && !isOpenAi ? (
             <button
               type="button"
-              aria-pressed={showComposeMask}
-              onClick={() => setShowComposeMask((v) => !v)}
-              className={`flex h-5 items-center gap-1 px-2 text-[9px] font-black uppercase tracking-widest ${
-                showComposeMask ? "bg-white text-slate-950" : "bg-white/10 text-white/80 hover:bg-white/20"
+              aria-pressed={thinking}
+              disabled={readOnly || settingsBusy}
+              onClick={() => onThinkingChange?.(!thinking)}
+              className={`mb-3 flex w-full items-center justify-between border px-3 py-2 text-left ${
+                thinking ? "border-violet-400/50 bg-violet-500/15" : "border-white/10 bg-white/[0.03]"
               }`}
-              title="Testing: resalta las zonas que se tomaron de la generación"
             >
-              <Eye size={11} />
-              Zonas
+              <span>
+                <span className="block text-[13px] font-semibold text-white">Más razonamiento</span>
+                <span className="block text-[11px] text-white/40">Solo Pro · más lento y más caro</span>
+              </span>
+              <span className={`h-5 w-9 p-0.5 ${thinking ? "bg-violet-400" : "bg-white/15"}`}>
+                <span className={`block h-4 w-4 bg-white transition ${thinking ? "translate-x-4" : ""}`} />
+              </span>
             </button>
           ) : null}
+
           <button
             type="button"
+            aria-pressed={preserveUnchanged}
+            disabled={readOnly || settingsBusy}
             onClick={() => {
-              setComposeNotice(null);
-              setShowComposeMask(false);
+              const next = !preserveUnchanged;
+              setPreserveUnchanged(next);
+              onPreserveUnchangedChange?.(next);
             }}
-            className="flex h-5 w-5 items-center justify-center text-white/50 hover:text-white"
-            aria-label="Cerrar aviso"
+            className={`flex w-full items-center justify-between border px-3 py-2 text-left ${
+              preserveUnchanged ? "border-emerald-400/40 bg-emerald-500/10" : "border-white/10 bg-white/[0.03]"
+            }`}
           >
-            <X size={12} />
+            <span className="flex min-w-0 items-center gap-2">
+              <ShieldCheck size={17} className={preserveUnchanged ? "text-emerald-300" : "text-white/40"} />
+              <span>
+                <span className="block text-[13px] font-semibold text-white">Solo la zona marcada</span>
+                <span className="block text-[11px] text-white/40">Protege el resto de la foto · sin coste</span>
+              </span>
+            </span>
+            <span className={`h-5 w-9 shrink-0 p-0.5 ${preserveUnchanged ? "bg-emerald-400" : "bg-white/15"}`}>
+              <span className={`block h-4 w-4 bg-white transition ${preserveUnchanged ? "translate-x-4" : ""}`} />
+            </span>
+          </button>
+
+          {preserveUnchanged ? (
+            <div className="mt-3">
+              <p className="mb-2 text-[12px] font-medium text-white/55">Ajuste del borde</p>
+              <div className="grid grid-cols-3 gap-1">
+                {(["strict", "auto", "wide"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setComposeSensitivity(value)}
+                    className={`nb-studio-choice h-9 text-[12px] ${
+                      composeSensitivity === value ? "nb-studio-choice--active" : ""
+                    }`}
+                  >
+                    {value === "strict" ? "Más justo" : value === "wide" ? "Más amplio" : "Automático"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {downloadOpen ? (
+        <div className="absolute right-12 top-11 z-[100105] w-[280px] border border-white/15 bg-[#111318] p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-[14px] font-semibold text-white">Descargar imagen</p>
+              <p className="mt-0.5 text-[12px] text-white/45">6K local · sin IA ni coste</p>
+            </div>
+            <button type="button" onClick={() => setDownloadOpen(false)} className={STUDIO_ICON_BUTTON} aria-label="Cerrar descarga">
+              <X size={16} />
+            </button>
+          </div>
+          <p className="mb-2 text-[12px] font-medium text-white/55">Formato</p>
+          <div className="mb-4 grid grid-cols-2 gap-1">
+            {(["png", "jpeg"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setExport6kFormat(value)}
+                className={`nb-studio-choice h-9 text-[12px] font-semibold uppercase ${
+                  export6kFormat === value ? "nb-studio-choice--active" : ""
+                }`}
+              >
+                {value === "jpeg" ? "JPG" : "PNG"}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={exporting6k}
+            onClick={() => void onExport6k()}
+            className="flex h-11 w-full items-center justify-center gap-2 bg-white text-[13px] font-semibold !text-slate-950 hover:bg-white/90 disabled:opacity-40"
+          >
+            {exporting6k ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {exporting6k ? "Preparando…" : "Descargar en 6K"}
           </button>
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        {generationHistory.length > 0 ? (
-          <div className="flex w-12 shrink-0 flex-col gap-1 overflow-y-auto border-r border-white/10 p-1.5">
-            {generationHistory.map((url) => {
-              const current = url === currentImage;
-              const previewing = url === historyPreviewUrl;
-              return (
-                <button
-                  key={url}
-                  type="button"
-                  onClick={() => {
-                    if (previewing) {
-                      setHistoryPreviewUrl(null);
-                      return;
-                    }
-                    setHistoryPreviewUrl(url);
-                  }}
-                  className={`relative overflow-hidden border ${
-                    previewing ? "border-yellow-300" : current ? "border-white" : "border-white/15"
-                  }`}
-                >
-                  <img src={url} alt="" className="h-10 w-full object-cover" />
-                  {current ? <span className="absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-white" /> : null}
-                </button>
-              );
-            })}
+      {moreOpen ? (
+        <div className="absolute right-10 top-11 z-[100105] w-[260px] border border-white/15 bg-[#111318] p-2">
+          <button
+            type="button"
+            disabled={readOnly || genStatus === "running" || inspectingCall}
+            onClick={() => {
+              setMoreOpen(false);
+              void onInspectCall();
+            }}
+            className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-[13px] text-white/75 hover:bg-white/[0.07] hover:text-white disabled:opacity-30"
+          >
+            {inspectingCall ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
+            <span>
+              <span className="block font-semibold">Ver qué se enviará</span>
+              <span className="block text-[11px] text-white/35">Vista local · nunca cobra</span>
+            </span>
+          </button>
+          <div className="mt-1 border-t border-white/10 px-3 py-2 text-[11px] leading-5 text-white/35">
+            <p>L · marcar zona</p>
+            <p>Espacio · ver versión anterior</p>
+            <p>⌘ ↵ · generar</p>
           </div>
-        ) : null}
+        </div>
+      ) : null}
 
+      <div
+        className={`absolute bottom-0 left-0 top-10 z-[100104] flex w-[320px] flex-col border-r border-white/15 bg-[#0f1116] shadow-2xl transition-transform duration-200 ease-out ${
+          historyOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((value) => !value)}
+            className="absolute left-full top-3 flex h-10 w-10 items-center justify-center border border-l-0 border-white/15 bg-[#151821] text-white/65 shadow-xl transition hover:bg-[#1b1f29] hover:text-white"
+            aria-label={historyOpen ? "Plegar historial" : "Desplegar historial"}
+            title={historyOpen ? "Plegar historial" : "Desplegar historial"}
+          >
+            {historyOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+          </button>
+          <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-3">
+            <div className="flex items-center gap-2">
+              <History size={17} />
+              <span className="text-[14px] font-semibold">Versiones</span>
+            </div>
+            <button type="button" onClick={() => setHistoryOpen(false)} className={STUDIO_ICON_BUTTON} aria-label="Plegar historial">
+              <ChevronLeft size={16} />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            {acceptedHistory.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <History size={24} className="mb-3 text-white/25" />
+                <p className="text-[13px] font-medium text-white/60">Todavía no hay versiones</p>
+                <p className="mt-1 text-[12px] text-white/35">Aparecerán después de generar.</p>
+              </div>
+            ) : (
+              [...acceptedHistory].reverse().map((url, reverseIndex) => {
+                const brief = findStudioHistoryBrief(hydratedBriefs, url);
+                const changes = studioBriefChangeCards(brief);
+                const versionNumber = acceptedHistory.length - reverseIndex;
+                const selected = studioAssetsEqual(historyPreviewUrl, url);
+                const current = !historyPreviewUrl && studioAssetsEqual(sessionImage, url);
+                return (
+                  <button
+                    key={url}
+                    type="button"
+                    onClick={() => {
+                      setHistoryPreviewUrl(url);
+                      setShowZoneOutlines(true);
+                      setChangesOpen(true);
+                    }}
+                    className={`mb-2 flex w-full gap-3 border p-2 text-left transition ${
+                      selected || current ? "border-violet-400/70 bg-violet-500/10" : "border-white/10 hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <img src={url} alt="" className="h-16 w-20 shrink-0 object-cover" />
+                    <span className="min-w-0 flex-1 py-0.5">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-[13px] font-semibold text-white">Versión {versionNumber}</span>
+                        {current ? <span className="text-[10px] font-semibold text-emerald-300">Actual</span> : null}
+                      </span>
+                      <span className="mt-1 block truncate text-[12px] text-white/50">
+                        {changes.length > 0
+                          ? `${changes.length} ${changes.length === 1 ? "cambio" : "cambios"} · ${studioChangeLabel(changes[0]!, 0)}`
+                          : "Imagen original"}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+      <div className="relative z-0 flex min-h-0 flex-1 overflow-hidden">
         <section
           ref={containerRef}
-          className="relative min-w-0 flex-1 bg-[#07080b]"
+          data-studio-viewer
+          className="relative z-0 min-w-0 flex-1 overflow-hidden bg-[#07080b]"
           onDragOver={(e) => e.preventDefault()}
           onDrop={onDropOnCanvas}
           onWheel={(e) => {
@@ -1353,14 +1901,41 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               ) : (
                 <div
                   data-studio-overlay-ui
-                  className="flex h-full w-full flex-col items-center justify-center border border-dashed border-white/25 bg-white/[0.03]"
+                  className="flex h-full w-full flex-col items-center justify-center border border-dashed border-white/20 bg-white/[0.025] px-6 text-center"
                 >
-                  <StudioRefSourceButtons
-                    size="lg"
-                    disabled={readOnly || genStatus === "running"}
-                    onPc={() => openPcSource(STUDIO_SCENE_DEST)}
-                    onFoldder={() => openFoldderSource(STUDIO_SCENE_DEST)}
-                  />
+                  <ImagePlus size={28} className="mb-3 text-white/35" />
+                  <p className="text-[15px] font-semibold text-white/80">Añade una imagen</p>
+                  <p className="mt-1 text-[13px] text-white/40">Arrástrala aquí o elige dónde buscarla</p>
+                  <div className="mt-4 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={readOnly || genStatus === "running"}
+                      onClick={() => openPcSource(STUDIO_SCENE_DEST)}
+                      className={STUDIO_TEXT_BUTTON}
+                    >
+                      <Upload size={16} />
+                      Equipo
+                    </button>
+                    <button
+                      type="button"
+                      disabled={readOnly || genStatus === "running"}
+                      onClick={() => openFoldderSource(STUDIO_SCENE_DEST)}
+                      className={STUDIO_TEXT_BUTTON}
+                    >
+                      <FolderOpen size={16} />
+                      Foldder
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSceneOpen(true);
+                      requestAnimationFrame(() => scenePromptRef.current?.focus());
+                    }}
+                    className="mt-4 text-[12px] font-medium text-violet-300 hover:text-violet-200"
+                  >
+                    O describe una escena nueva
+                  </button>
                 </div>
               )}
 
@@ -1388,22 +1963,41 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   if (drawingLasso) confirmLasso();
                 }}
               >
-                {visibleCards.map((card) =>
-                  card.lassoPoints.length > 2 ? (
-                    <polygon
-                      key={card.id}
-                      points={polygonPoints(card.lassoPoints)}
-                      fill={card.id === selectedCardId ? `${card.assignedColor.hex}66` : `${card.assignedColor.hex}2e`}
-                      stroke={card.assignedColor.hex}
-                      strokeWidth={imgNat.w * (card.id === selectedCardId ? 0.0035 : 0.002)}
-                      style={{ pointerEvents: drawingLasso ? "none" : "auto", cursor: "pointer" }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        setSelectedCardId(card.id);
-                      }}
-                    />
-                  ) : null,
-                )}
+                {showZoneOutlines
+                  ? visibleCards.map((card, index) => {
+                      if (card.lassoPoints.length <= 2) return null;
+                      const center = polygonCenter(card.lassoPoints);
+                      const radius = Math.max(15, imgNat.w * 0.012);
+                      return (
+                        <React.Fragment key={card.id}>
+                          <polygon
+                            points={polygonPoints(card.lassoPoints)}
+                            fill={card.id === selectedCardId ? `${card.assignedColor.hex}66` : `${card.assignedColor.hex}2e`}
+                            stroke={card.assignedColor.hex}
+                            strokeWidth={imgNat.w * (card.id === selectedCardId ? 0.0035 : 0.002)}
+                            style={{ pointerEvents: drawingLasso ? "none" : "auto", cursor: "pointer" }}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              setSelectedCardId(card.id);
+                              if (!readOnly) setDraftCard(card);
+                            }}
+                          />
+                          <circle cx={center.x} cy={center.y} r={radius} fill={card.assignedColor.hex} />
+                          <text
+                            x={center.x}
+                            y={center.y}
+                            dy="0.35em"
+                            fill="#ffffff"
+                            fontSize={radius * 1.15}
+                            fontWeight="700"
+                            textAnchor="middle"
+                          >
+                            {index + 1}
+                          </text>
+                        </React.Fragment>
+                      );
+                    })
+                  : null}
                 {drawingLasso && lassoPoints.length > 1 ? (
                   <polyline
                     points={polygonPoints(lassoPoints)}
@@ -1413,6 +2007,122 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   />
                 ) : null}
               </svg>
+
+              {activeDraftCard && activeDraftCard.lassoPoints.length > 2 && !readOnly ? (() => {
+                const center = polygonCenter(activeDraftCard.lassoPoints);
+                const cardIndex = Math.max(0, cards.findIndex((card) => card.id === activeDraftCard.id));
+                const placeLeft = center.x > imgNat.w * 0.58;
+                return (
+                  <div
+                    data-studio-overlay-ui
+                    className="absolute z-30 w-[280px] border border-white/20 bg-[#12151c]/95 p-3 shadow-2xl backdrop-blur-md"
+                    style={{
+                      left: `${(center.x / Math.max(1, imgNat.w)) * 100}%`,
+                      top: `${(center.y / Math.max(1, imgNat.h)) * 100}%`,
+                      transform: placeLeft
+                        ? `translate(calc(-100% - 14px), -50%) scale(${100 / Math.max(1, zoomPercent)})`
+                        : `translate(14px, -50%) scale(${100 / Math.max(1, zoomPercent)})`,
+                      transformOrigin: placeLeft ? "right center" : "left center",
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <div className="mb-2 flex items-center gap-2">
+                      <span
+                        className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                        style={{ backgroundColor: activeDraftCard.assignedColor.hex }}
+                      >
+                        {cardIndex + 1}
+                      </span>
+                      <span className="min-w-0 flex-1 text-[13px] font-semibold text-white">¿Qué debe cambiar aquí?</span>
+                      <button
+                        type="button"
+                        onClick={() => setDraftCard(null)}
+                        className="text-white/40 hover:text-white"
+                        aria-label="Cerrar encargo"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <textarea
+                      ref={draftTextRef}
+                      value={activeDraftCard.description}
+                      rows={3}
+                      onChange={(event) => {
+                        const description = event.target.value;
+                        setCards((prev) =>
+                          prev.map((card) => (card.id === activeDraftCard.id ? { ...card, description } : card)),
+                        );
+                      }}
+                      placeholder="Ej.: cambia el jarrón por uno de cristal…"
+                      className="w-full resize-none border border-white/12 bg-black/30 p-2 text-[13px] leading-5 text-white outline-none placeholder:text-white/25 focus:border-violet-300/60"
+                    />
+                    {activeDraftCard.references.length > 0 ? (
+                      <div className="mt-2">
+                        <p className="mb-1.5 text-[11px] font-medium text-white/45">
+                          Referencias · {activeDraftCard.references.length}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {activeDraftCard.references.map((src, refIndex) => (
+                            <button
+                              key={`${activeDraftCard.id}-popover-ref-${refIndex}`}
+                              type="button"
+                              onClick={() =>
+                                setCards((prev) =>
+                                  prev.map((card) =>
+                                    card.id === activeDraftCard.id
+                                      ? {
+                                          ...card,
+                                          references: card.references.filter(
+                                            (_, itemIndex) => itemIndex !== refIndex,
+                                          ),
+                                        }
+                                      : card,
+                                  ),
+                                )
+                              }
+                              className="group relative h-12 w-12 overflow-hidden border border-white/20 bg-black/30"
+                              title="Quitar referencia"
+                            >
+                              <img src={src} alt={`Referencia ${refIndex + 1}`} className="h-full w-full object-cover" />
+                              <span className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center bg-black/75 text-white/70 opacity-0 transition group-hover:opacity-100">
+                                <X size={10} />
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => openPcSource(activeDraftCard.id)}
+                        className={STUDIO_ICON_BUTTON}
+                        aria-label="Añadir referencia desde equipo"
+                        title="Añadir referencia desde equipo"
+                      >
+                        <Upload size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openFoldderSource(activeDraftCard.id)}
+                        className={STUDIO_ICON_BUTTON}
+                        aria-label="Añadir referencia desde Foldder"
+                        title="Añadir referencia desde Foldder"
+                      >
+                        <FolderOpen size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDraftCard(null)}
+                        className="nb-studio-primary-action ml-auto h-9 px-3"
+                      >
+                        <Check size={15} />
+                        Listo
+                      </button>
+                    </div>
+                  </div>
+                );
+              })() : null}
 
               {showComposeMask && composeNotice?.maskPreview && !readOnly && !showingOriginal ? (
                 <img
@@ -1469,169 +2179,122 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 </div>
               ) : null}
 
-              {popoverCard && popoverAnchor ? (
-                <div
-                  data-studio-overlay-ui
-                  className="absolute z-20 w-56 border border-white/15 bg-[#0c0d11]/95 p-2 shadow-xl"
-                  style={{ left: `${popoverAnchor.left}%`, top: `${popoverAnchor.top}%`, transform: "translate(8px, -8px)" }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                >
-                  <textarea
-                    ref={draftTextRef}
-                    value={popoverCard.description}
-                    rows={2}
-                    onChange={(e) =>
-                      setCards((prev) =>
-                        prev.map((c) => (c.id === popoverCard.id ? { ...c, description: e.target.value } : c)),
-                      )
-                    }
-                    className="w-full resize-none bg-transparent text-[12px] text-zinc-200 outline-none"
-                  />
-                  <div className="mt-1 flex flex-wrap items-center gap-1">
-                    {popoverCard.references.map((src, index) => (
-                      <button
-                        key={`${popoverCard.id}-pop-${index}`}
-                        type="button"
-                        onClick={() =>
-                          setCards((prev) =>
-                            prev.map((c) =>
-                              c.id === popoverCard.id
-                                ? { ...c, references: c.references.filter((_, i) => i !== index) }
-                                : c,
-                            ),
-                          )
-                        }
-                        className="h-7 w-7 overflow-hidden border border-white/10"
-                      >
-                        <img src={src} alt="" className="h-full w-full object-cover" />
-                      </button>
-                    ))}
-                    {popoverCard.references.length < STUDIO_MAX_REFS_PER_CARD ? (
-                      <StudioRefSourceButtons
-                        disabled={readOnly || genStatus === "running"}
-                        onPc={() => openPcSource(popoverCard.id)}
-                        onFoldder={() => openFoldderSource(popoverCard.id)}
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => removeCard(popoverCard.id)}
-                      className="ml-auto text-white/30 hover:text-white"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-              ) : null}
             </div>
             </div>
           </div>
 
-          {canToggleOriginal && initialImage && sessionImage ? (
-            <div data-studio-overlay-ui className="absolute left-4 top-4 z-10 flex gap-1">
-              <button
-                type="button"
-                onClick={() => setShowingOriginal(true)}
-                className={`h-10 w-10 overflow-hidden border ${showingOriginal ? "border-white" : "border-white/20"}`}
-              >
-                <img src={initialImage} alt="" className="h-full w-full object-cover" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowingOriginal(false)}
-                className={`h-10 w-10 overflow-hidden border ${!showingOriginal ? "border-white" : "border-white/20"}`}
-              >
-                <img src={sessionImage} alt="" className="h-full w-full object-cover" />
-              </button>
+          {(holdingCompare || readOnly) && displayImage ? (
+            <div
+              data-studio-overlay-ui
+              className="pointer-events-none absolute left-3 top-3 z-10 border border-white/15 bg-black/65 px-2.5 py-1 text-[12px] font-semibold text-white/80"
+            >
+              {holdingCompare
+                ? "Versión anterior"
+                : `Versión ${Math.max(
+                    1,
+                    acceptedHistory.findIndex((url) => studioAssetsEqual(url, historyPreviewUrl)) + 1,
+                  )}`}
             </div>
           ) : null}
 
-          {readOnly && previewBrief?.compose ? (
-            <div
-              data-foldder-i18n-ignore
-              className="pointer-events-none absolute left-1/2 top-6 z-10 max-w-[70%] -translate-x-1/2 truncate bg-black/60 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/80"
-            >
-              {composeNoticeText(previewBrief.compose)}
-            </div>
-          ) : null}
+          <div data-studio-overlay-ui className="absolute bottom-3 left-3 z-10 flex items-center gap-1">
+            <button type="button" onClick={() => zoomViewer(0.85)} className={STUDIO_ICON_BUTTON} aria-label="Alejar" title="Alejar">
+              <Minus size={16} />
+            </button>
+            <button type="button" onClick={resetViewer} className={`${STUDIO_TEXT_BUTTON} min-w-[68px] px-2`} title="Ajustar a pantalla">
+              {zoomPercent} %
+            </button>
+            <button type="button" onClick={() => zoomViewer(1.15)} className={STUDIO_ICON_BUTTON} aria-label="Acercar" title="Acercar">
+              <ZoomIn size={16} />
+            </button>
+            <button type="button" onClick={resetViewer} className={STUDIO_ICON_BUTTON} aria-label="Encajar imagen" title="Encajar imagen">
+              <Maximize2 size={16} />
+            </button>
+          </div>
 
           {readOnly ? (
-            <div data-studio-overlay-ui className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
+            <div data-studio-overlay-ui className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
               <button
                 type="button"
-                onClick={() => setHistoryPreviewUrl(null)}
-                className="flex h-10 w-10 items-center justify-center bg-white/10"
+                onClick={() => {
+                  setHistoryPreviewUrl(null);
+                  setShowZoneOutlines(true);
+                }}
+                className={STUDIO_TEXT_BUTTON}
               >
-                <X size={16} />
+                <ChevronLeft size={16} />
+                Volver
               </button>
               {historyPreviewUrl ? (
-                <button
-                  type="button"
-                  onClick={() => adoptHistoryAsBase(historyPreviewUrl)}
-                  className="flex h-10 w-10 items-center justify-center bg-white text-zinc-950"
-                  title={previewBrief?.compose?.composed ? "Usar esta versión (integrada sobre la original)" : "Usar esta versión"}
-                >
+                <button type="button" onClick={() => adoptHistoryAsBase(historyPreviewUrl)} className="nb-studio-primary-action h-10 px-4">
                   <Check size={16} />
+                  Usar versión
                 </button>
               ) : null}
-              {previewBrief?.rawOutputUrl && previewBrief.rawOutputUrl !== previewBrief.outputUrl ? (
-                <button
-                  type="button"
-                  onClick={() => adoptHistoryAsBase(previewBrief.rawOutputUrl!)}
-                  className="flex h-10 items-center gap-2 bg-white/10 px-3 text-[9px] font-black uppercase tracking-widest text-white/80 hover:bg-white/20"
-                  title="Usar la generación tal cual la devolvió el modelo, sin integrar sobre la original"
-                >
-                  <Layers size={14} />
-                  Sin integrar
+              {previewBrief ? (
+                <button type="button" onClick={() => rehydrateBrief(previewBrief, "output")} className={STUDIO_TEXT_BUTTON}>
+                  <Pencil size={15} />
+                  Crear desde aquí
                 </button>
               ) : null}
             </div>
           ) : (
-            <div data-studio-overlay-ui className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
-              <button
-                type="button"
-                onClick={startAdd}
-                disabled={genStatus === "running"}
-                className="flex h-10 w-10 items-center justify-center bg-white text-zinc-950 disabled:opacity-30"
-              >
-                <Plus size={18} />
-              </button>
+            <div data-studio-overlay-ui className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2">
+              {displayImage ? (
+                <button
+                  type="button"
+                  onClick={startAdd}
+                  disabled={genStatus === "running"}
+                  className="nb-studio-primary-light h-10 px-4"
+                >
+                  <Scan size={17} />
+                  Marcar zona
+                </button>
+              ) : null}
+              {visibleCards.some((card) => card.lassoPoints.length > 2) ? (
+                <button
+                  type="button"
+                  aria-pressed={showZoneOutlines}
+                  onClick={() => setShowZoneOutlines((value) => !value)}
+                  className={STUDIO_TEXT_BUTTON}
+                  title={showZoneOutlines ? "Ocultar zonas" : "Mostrar zonas"}
+                >
+                  {showZoneOutlines ? <EyeOff size={16} /> : <Eye size={16} />}
+                  <span className="hidden xl:inline">Zonas</span>
+                </button>
+              ) : null}
+              {compareBaseUrl ? (
+                <button
+                  type="button"
+                  onPointerDown={() => setHoldingCompare(true)}
+                  onPointerUp={() => setHoldingCompare(false)}
+                  onPointerLeave={() => setHoldingCompare(false)}
+                  className={STUDIO_TEXT_BUTTON}
+                  title="Mantén pulsado para ver la versión anterior"
+                >
+                  <Layers size={16} />
+                  Ver anterior
+                </button>
+              ) : null}
               {schemaMode ? (
                 <>
                   <button
                     type="button"
                     onClick={() => setSchemaTool("draw")}
-                    className={`flex h-10 w-10 items-center justify-center ${schemaTool === "draw" ? "bg-white text-zinc-950" : "bg-white/10"}`}
+                    className={`${STUDIO_ICON_BUTTON} ${schemaTool === "draw" ? "nb-studio-icon--active" : ""}`}
+                    aria-label="Dibujar esquema"
                   >
                     <Pencil size={15} />
                   </button>
                   <button
                     type="button"
                     onClick={() => setSchemaTool("erase")}
-                    className={`flex h-10 w-10 items-center justify-center ${schemaTool === "erase" ? "bg-white text-zinc-950" : "bg-white/10"}`}
+                    className={`${STUDIO_ICON_BUTTON} ${schemaTool === "erase" ? "nb-studio-icon--active" : ""}`}
+                    aria-label="Borrar trazo"
                   >
                     <Eraser size={15} />
                   </button>
-                  {global.schemaData ? (
-                    <button
-                      type="button"
-                      onClick={clearSchemaDrawing}
-                      className="flex h-10 w-10 items-center justify-center bg-white/10 text-white/80 hover:bg-white/20"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  ) : null}
                 </>
-              ) : null}
-              {showGenerate ? (
-                <button
-                  type="button"
-                  disabled={inspectingCall}
-                  onClick={() => void onGenerate()}
-                  className="flex h-10 items-center gap-2 bg-[#6C5CE7] px-5 disabled:opacity-40"
-                >
-                  <Sparkles size={16} />
-                </button>
               ) : null}
             </div>
           )}
@@ -1642,138 +2305,256 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             </div>
           ) : null}
           {genStatus === "running" || exporting6k ? (
-            <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap text-[10px] font-black uppercase tracking-widest text-violet-200">
-              <Loader2 size={12} className="mr-2 inline animate-spin" />
-              {exporting6k ? "Exportando 6K…" : composeStage}
+            <div className="pointer-events-none absolute left-1/2 top-4 z-20 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap border border-white/10 bg-black/70 px-3 py-2 text-[13px] font-semibold text-white/85">
+              <Loader2 size={15} className="animate-spin text-violet-300" />
+              {exporting6k ? "Preparando descarga…" : genStage || composeStage || "Generando…"}
             </div>
           ) : null}
         </section>
 
-        <aside className="flex w-[280px] shrink-0 flex-col gap-2 overflow-y-auto border-l border-white/10 bg-[#0c0d11] p-3">
-            {nodeRefs.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {nodeRefs.map((src) => (
-                  <button
-                    key={src}
-                    type="button"
-                    disabled={readOnly}
-                    onClick={() => useConnectedRef(src)}
-                    className={`h-10 w-10 overflow-hidden border ${
-                      src === currentImage ? "border-white" : "border-white/15"
-                    }`}
-                  >
-                    <img src={src} alt="" className="h-full w-full object-cover" />
+        <div
+          className={`absolute bottom-0 right-[320px] top-0 z-20 flex w-[320px] flex-col border-l border-white/15 bg-[#0f1116] shadow-2xl transition-transform duration-200 ease-out max-[1100px]:right-[290px] max-[1100px]:w-[290px] ${
+            changesOpen ? "translate-x-0" : "translate-x-full pointer-events-none"
+          }`}
+        >
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/10 px-4">
+            <div>
+              <p className="text-[15px] font-semibold text-white">{readOnly ? "Cambios de esta versión" : "Cambios por zona"}</p>
+              <p className="mt-0.5 text-[12px] text-white/40">
+                {visibleCards.length} {visibleCards.length === 1 ? "cambio" : "cambios"}
+              </p>
+            </div>
+            <button type="button" onClick={() => setChangesOpen(false)} className={STUDIO_ICON_BUTTON} aria-label="Plegar cambios">
+              <ChevronRight size={16} />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {visibleCards.length === 0 ? (
+              <div className="flex flex-col items-center justify-center border border-dashed border-white/12 px-5 py-8 text-center">
+                <Scan size={22} className="mb-2 text-white/25" />
+                <p className="text-[13px] font-medium text-white/60">
+                  {readOnly ? "Esta versión no guardó cambios por zona" : displayImage ? "Marca una zona para empezar" : "Añade una imagen o describe una escena"}
+                </p>
+                {!readOnly && displayImage ? (
+                  <button type="button" onClick={startAdd} className="mt-3 text-[12px] font-semibold text-violet-300 hover:text-violet-200">
+                    Marcar zona
                   </button>
-                ))}
+                ) : null}
               </div>
             ) : null}
-            <div className="flex items-start gap-2 border border-white/10 bg-white/[0.03] p-2">
-              <textarea
-                ref={scenePromptRef}
-                value={readOnly ? displayGlobal.promptDraft ?? "" : global.promptDraft}
-                onChange={(e) => setGlobal((prev) => ({ ...prev, promptDraft: e.target.value }))}
-                disabled={readOnly}
-                rows={3}
-                className="min-w-0 flex-1 resize-none bg-transparent text-[12px] text-zinc-200 outline-none"
-              />
-              {!readOnly && nodePrompt && global.promptDraft !== nodePrompt ? (
-                <button
-                  type="button"
-                  onClick={() => setGlobal((prev) => ({ ...prev, promptDraft: nodePrompt }))}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center text-white/35 hover:text-white"
+            <div className="space-y-2">
+              {visibleCards.map((card, index) => (
+                <div
+                  key={card.id}
+                  ref={(element) => {
+                    cardElsRef.current[card.id] = element;
+                  }}
+                  onClick={() => setSelectedCardId(card.id)}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    dropCardIdRef.current = card.id;
+                  }}
+                  className={`border p-3 transition ${
+                    selectedCardId === card.id ? "border-white/35 bg-white/[0.07]" : "border-white/10 bg-white/[0.025]"
+                  }`}
+                  style={selectedCardId === card.id ? { borderLeftColor: card.assignedColor.hex, borderLeftWidth: 3 } : undefined}
                 >
-                  <RotateCcw size={13} />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                disabled={readOnly}
-                onClick={() => {
-                  setSchemaMode((v) => !v);
-                  setSchemaTool("draw");
-                  setDrawingLasso(false);
-                }}
-                className={`flex h-8 w-8 shrink-0 items-center justify-center ${schemaMode || global.schemaData ? "bg-white text-zinc-950" : "bg-white/10"}`}
-              >
-                <Pencil size={13} />
-              </button>
-            </div>
-
-            {visibleCards.map((card) => (
-              <div
-                key={card.id}
-                ref={(el) => {
-                  cardElsRef.current[card.id] = el;
-                }}
-                onClick={() => setSelectedCardId(card.id)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  dropCardIdRef.current = card.id;
-                }}
-                className={`border p-2 ${selectedCardId === card.id ? "border-white/50 bg-white/[0.08]" : "border-white/10"}`}
-                style={selectedCardId === card.id ? { boxShadow: `inset 2px 0 0 ${card.assignedColor.hex}` } : undefined}
-              >
-                <div className="flex gap-2">
-                  {card.references[0] ? (
-                    <div className="h-12 w-14 shrink-0 overflow-hidden bg-black/40">
-                      <img src={card.references[0]} alt="" className="h-full w-full object-cover" />
-                    </div>
-                  ) : null}
+                  <div className="mb-2 flex items-center gap-2">
+                    <span
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                      style={{ backgroundColor: card.assignedColor.hex }}
+                    >
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 text-[12px] font-semibold text-white/70">Cambio {index + 1}</span>
+                    <span className="text-[11px] text-white/30">
+                      {card.lassoPoints.length > 2 || card.paintData ? "Zona marcada" : "Sin zona"}
+                    </span>
+                    {!readOnly ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeCard(card.id);
+                        }}
+                        className="text-white/25 hover:text-rose-300"
+                        aria-label={`Eliminar cambio ${index + 1}`}
+                        title="Eliminar cambio"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    ) : null}
+                  </div>
                   <textarea
-                    ref={card.id === draftCard?.id && !popoverCard ? draftTextRef : undefined}
                     value={card.description}
                     disabled={readOnly}
-                    onChange={(e) =>
-                      setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, description: e.target.value } : c)))
+                    onChange={(event) =>
+                      setCards((prev) => prev.map((item) => (item.id === card.id ? { ...item, description: event.target.value } : item)))
                     }
                     rows={2}
-                    className="min-w-0 flex-1 resize-none bg-transparent text-[12px] text-zinc-200 outline-none"
+                    placeholder="Describe qué debe cambiar…"
+                    className="w-full resize-none bg-transparent text-[13px] leading-5 text-white/80 outline-none placeholder:text-white/25"
                   />
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {card.references.map((src, refIndex) => (
+                      <button
+                        key={`${card.id}-${refIndex}`}
+                        type="button"
+                        disabled={readOnly}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setCards((prev) =>
+                            prev.map((item) =>
+                              item.id === card.id
+                                ? { ...item, references: item.references.filter((_, itemIndex) => itemIndex !== refIndex) }
+                                : item,
+                            ),
+                          );
+                        }}
+                        className="relative h-10 w-10 overflow-hidden border border-white/15"
+                        title={readOnly ? "Referencia" : "Quitar referencia"}
+                      >
+                        <img src={src} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                    {!readOnly && card.references.length < STUDIO_MAX_REFS_PER_CARD ? (
+                      <>
+                        <button type="button" onClick={() => openPcSource(card.id)} className={STUDIO_ICON_BUTTON} aria-label="Referencia desde equipo" title="Añadir referencia desde equipo">
+                          <Upload size={15} />
+                        </button>
+                        <button type="button" onClick={() => openFoldderSource(card.id)} className={STUDIO_ICON_BUTTON} aria-label="Referencia desde Foldder" title="Añadir referencia desde Foldder">
+                          <FolderOpen size={15} />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <aside className="relative z-30 flex w-[320px] shrink-0 flex-col border-l border-white/10 bg-[#0c0d11] max-[1100px]:w-[290px]">
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/10 px-4">
+            <div>
+              <p className="text-[15px] font-semibold text-white">{readOnly ? "Versión seleccionada" : "Imagen"}</p>
+              <p className="mt-0.5 text-[12px] text-white/40">
+                {readOnly ? "Consulta o reutiliza esta versión" : "Escena completa y generación"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setChangesOpen((value) => !value)}
+              className={`${STUDIO_TEXT_BUTTON} ${changesOpen ? "nb-studio-icon--active" : ""}`}
+              aria-label={changesOpen ? "Plegar cambios" : "Desplegar cambios"}
+              title={changesOpen ? "Plegar cambios" : "Desplegar cambios"}
+            >
+              <Scan size={15} />
+              <span>{visibleCards.length}</span>
+              {changesOpen ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="mb-3 border border-white/10 bg-white/[0.025]">
+              <button
+                type="button"
+                onClick={() => setSceneOpen((value) => !value)}
+                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+              >
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-semibold text-white/80">Escena completa</span>
+                  {!sceneOpen ? (
+                    <span className="mt-0.5 block truncate text-[11px] text-white/35">
+                      {displayGlobal.promptDraft?.trim() || "Opcional"}
+                    </span>
+                  ) : null}
+                </span>
+                <ChevronDown size={16} className={`shrink-0 text-white/35 transition ${sceneOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {sceneOpen ? (
+                <div className="border-t border-white/10 p-2.5">
+                  <div className="flex items-start gap-1">
+                    <textarea
+                      ref={scenePromptRef}
+                      value={readOnly ? displayGlobal.promptDraft ?? "" : global.promptDraft}
+                      onChange={(event) => setGlobal((prev) => ({ ...prev, promptDraft: event.target.value }))}
+                      disabled={readOnly}
+                      rows={3}
+                      placeholder="Describe la escena o un cambio para toda la imagen…"
+                      className="min-w-0 flex-1 resize-none bg-transparent px-1 text-[13px] leading-5 text-white/80 outline-none placeholder:text-white/25"
+                    />
+                    {!readOnly && nodePrompt && global.promptDraft !== nodePrompt ? (
+                      <button
+                        type="button"
+                        onClick={() => setGlobal((prev) => ({ ...prev, promptDraft: nodePrompt }))}
+                        className={STUDIO_ICON_BUTTON}
+                        aria-label="Restaurar texto"
+                        title="Restaurar texto conectado"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    ) : null}
+                  </div>
                   {!readOnly ? (
-                    <button type="button" onClick={() => removeCard(card.id)} className="text-white/30 hover:text-white">
-                      <X size={14} />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSchemaMode((value) => !value);
+                        setSchemaTool("draw");
+                        setDrawingLasso(false);
+                      }}
+                      className={`mt-2 ${STUDIO_TEXT_BUTTON} ${schemaMode || global.schemaData ? "nb-studio-icon--active" : ""}`}
+                    >
+                      <Pencil size={15} />
+                      Composición
                     </button>
                   ) : null}
+                  {(schemaMode || displayGlobal.schemaData) && !readOnly ? (
+                    <textarea
+                      ref={schemaCaptionRef}
+                      value={global.text}
+                      rows={2}
+                      onChange={(event) => setGlobal((prev) => ({ ...prev, text: event.target.value }))}
+                      placeholder="Explica cómo debe cambiar la composición…"
+                      className="mt-2 w-full resize-none border border-white/10 bg-black/20 p-2 text-[12px] leading-5 text-white/75 outline-none placeholder:text-white/25"
+                    />
+                  ) : null}
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {card.references.map((src, index) => (
+              ) : null}
+            </div>
+
+            {nodeRefs.length > 0 && !readOnly ? (
+              <div className="mb-3">
+                <p className="mb-2 text-[12px] font-medium text-white/45">Imágenes conectadas</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {nodeRefs.map((src) => (
                     <button
-                      key={`${card.id}-${index}`}
+                      key={src}
                       type="button"
-                      disabled={readOnly}
-                      onClick={() =>
-                        setCards((prev) =>
-                          prev.map((c) =>
-                            c.id === card.id ? { ...c, references: c.references.filter((_, i) => i !== index) } : c,
-                          ),
-                        )
-                      }
-                      className="h-7 w-7 overflow-hidden border border-white/10"
+                      onClick={() => attachConnectedRef(src)}
+                      className={`h-11 w-11 overflow-hidden border ${src === currentImage ? "border-violet-300" : "border-white/15"}`}
+                      title={selectedCardId ? "Añadir como referencia al cambio seleccionado" : "Usar imagen"}
                     >
                       <img src={src} alt="" className="h-full w-full object-cover" />
                     </button>
                   ))}
-                  {!readOnly && card.references.length < STUDIO_MAX_REFS_PER_CARD ? (
-                    <StudioRefSourceButtons
-                      disabled={genStatus === "running"}
-                      onPc={() => openPcSource(card.id)}
-                      onFoldder={() => openFoldderSource(card.id)}
-                    />
-                  ) : null}
                 </div>
               </div>
-            ))}
+            ) : null}
+
             <input
               ref={cardFileRef}
               type="file"
               accept="image/*"
               multiple
               className="hidden"
-              onChange={(e) => {
+              onChange={(event) => {
                 const dest = dropCardIdRef.current || selectedCardId;
                 dropCardIdRef.current = null;
-                const files = e.target.files ? Array.from(e.target.files) : [];
-                e.target.value = "";
+                const files = event.target.files ? Array.from(event.target.files) : [];
+                event.target.value = "";
                 if (files.length === 0) return;
                 if (dest === STUDIO_SCENE_DEST || (!dest && !currentImageRef.current)) {
                   void readFilesAsDataUrls(files).then((urls) => applyIncomingUrls(urls, STUDIO_SCENE_DEST));
@@ -1782,8 +2563,133 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 if (dest) void attachRefsToCard(dest, files);
               }}
             />
-          </aside>
+          </div>
+
+          {!readOnly ? (
+            <div className="shrink-0 border-t border-white/10 bg-[#101217] p-3">
+              {cards.some((card) => card.lassoPoints.length > 2 || card.paintData) ? (
+                <button
+                  type="button"
+                  aria-pressed={preserveUnchanged}
+                  onClick={() => {
+                    const next = !preserveUnchanged;
+                    setPreserveUnchanged(next);
+                    onPreserveUnchangedChange?.(next);
+                  }}
+                  className={`mb-2 flex h-9 w-full items-center gap-2 border px-2.5 text-left text-[12px] font-medium ${
+                    preserveUnchanged
+                      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+                      : "border-white/10 text-white/45"
+                  }`}
+                  title="Conserva el resto de la foto al aplicar cambios locales"
+                >
+                  <ShieldCheck size={15} />
+                  <span className="flex-1">Solo la zona marcada</span>
+                  <span className="text-[11px] opacity-65">{preserveUnchanged ? "Sí" : "No"}</span>
+                </button>
+              ) : null}
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-[12px] text-white/40">Resultados</span>
+                <div className="flex flex-1 gap-1">
+                  {([1, 2, 3] as const).map((count) => (
+                    <button
+                      key={count}
+                      type="button"
+                      onClick={() => setVariantCount(count)}
+                      className={`nb-studio-choice h-8 flex-1 text-[12px] ${
+                        variantCount === count ? "nb-studio-choice--active" : ""
+                      }`}
+                      title={count === 1 ? "Generar y usar un resultado" : `${count} candidatas; cada una se confirma por separado`}
+                    >
+                      {count}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={!showGenerate || inspectingCall}
+                onClick={() => void onGenerate()}
+                className="nb-studio-primary-action min-h-11 w-full px-4"
+                title={
+                  showGenerate
+                    ? "Una llamada de pago · confirmación de wallet"
+                    : "Añade una imagen, una escena o un cambio"
+                }
+              >
+                {genStatus === "running" ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
+                <span>{genStatus === "running" ? "Generando…" : showGenerate ? `${variantCount > 1 ? "Generar candidata" : "Generar"} · ${formatStudioUsd(jobCost.totalUsd)}` : "Describe un cambio"}</span>
+              </button>
+            </div>
+          ) : null}
+        </aside>
       </div>
+
+      {(composeNotice && !readOnly) || (readOnly && previewBrief?.compose) ? (
+        <div
+          className={`relative z-20 flex min-h-11 shrink-0 items-center gap-3 border-t border-white/10 px-3 text-[12px] ${
+            (readOnly ? previewBrief?.compose?.composed : composeNotice?.summary.composed)
+              ? "bg-emerald-500/10 text-emerald-100"
+              : "bg-amber-500/10 text-amber-100"
+          }`}
+          title={composeNoticeText((readOnly ? previewBrief?.compose : composeNotice?.summary)!)}
+        >
+          <ShieldCheck size={16} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate">
+            {(readOnly ? previewBrief?.compose?.composed : composeNotice?.summary.composed)
+              ? "Se conservó el resto de la foto"
+              : "No se pudo proteger completamente el resto"}
+          </span>
+          {composeNotice?.maskPreview && !readOnly ? (
+            <button
+              type="button"
+              aria-pressed={showComposeMask}
+              onClick={() => setShowComposeMask((value) => !value)}
+              className={STUDIO_TEXT_BUTTON}
+            >
+              <Eye size={15} />
+              Ver aplicación
+            </button>
+          ) : null}
+          {!readOnly && composeNotice?.summary.composed ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsOpen(true);
+                  setDownloadOpen(false);
+                  setMoreOpen(false);
+                }}
+                className={STUDIO_TEXT_BUTTON}
+              >
+                Ajustar borde
+              </button>
+              <button
+                type="button"
+                disabled={!hydratedBriefs.some((brief) => Boolean(brief.rawOutputUrl && brief.baseUrl))}
+                onClick={() => void onReintegrate()}
+                className={STUDIO_TEXT_BUTTON}
+                title="Vuelve a pegar el resultado sobre la original · sin nueva llamada"
+              >
+                Volver a pegar
+              </button>
+            </>
+          ) : null}
+          {!readOnly ? (
+            <button
+              type="button"
+              onClick={() => {
+                setComposeNotice(null);
+                setShowComposeMask(false);
+              }}
+              className={STUDIO_ICON_BUTTON}
+              aria-label="Cerrar estado"
+            >
+              <X size={15} />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <StudioFoldderImagePicker
         open={Boolean(foldderPickerDest)}
         onClose={() => setFoldderPickerDest(null)}
@@ -1825,18 +2731,73 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           </div>
         </div>
       ) : null}
+      {variantPicks.length > 0 ? (
+        <div className="absolute inset-0 z-[100110] flex items-center justify-center bg-black/75 p-4 sm:p-8">
+          <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden border border-white/15 bg-[#0c0d11]">
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-4 py-3">
+              <div>
+                <p className="text-[16px] font-semibold text-white">Candidatas temporales · {variantPicks.length}/{variantCount}</p>
+                <p className="mt-1 text-[12px] text-white/40">Solo la que elijas se guardará como versión.</p>
+              </div>
+              <button type="button" onClick={() => setVariantPicks([])} className={STUDIO_ICON_BUTTON} aria-label="Descartar candidatas" title="Descartar candidatas">
+                <X size={16} />
+              </button>
+            </div>
+            <div className={`grid gap-3 overflow-y-auto p-4 ${variantPicks.length === 1 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 sm:grid-cols-3"}`}>
+              {variantPicks.map((row, index) => (
+                <button
+                  key={row.output}
+                  type="button"
+                  onClick={() => void onPickVariant(row)}
+                  className="group overflow-hidden border border-white/15 bg-white/[0.025] text-left transition hover:border-violet-300"
+                >
+                  <div className="relative">
+                    <img src={row.output} alt="" className="aspect-[3/4] w-full object-cover" />
+                    <span className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-[12px] font-bold text-white">
+                      {index + 1}
+                    </span>
+                  </div>
+                  <span className="flex h-10 items-center justify-center gap-2 text-[13px] font-semibold text-white/70 group-hover:text-white">
+                    <Check size={15} />
+                    Usar resultado {index + 1}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3">
+              <p className={`text-[11px] ${genError ? "text-rose-200" : "text-white/40"}`}>
+                {genError || "Cada candidata adicional es una nueva llamada y muestra su propia confirmación de coste."}
+              </p>
+              {variantPicks.length < variantCount ? (
+                <button
+                  type="button"
+                  disabled={genStatus === "running"}
+                  onClick={() => void onGenerate({ collectCandidate: true })}
+                  className="nb-studio-primary-action h-10 shrink-0 px-4"
+                >
+                  {genStatus === "running" ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                  Generar otra · {formatStudioUsd(jobCost.totalUsd)}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {callPreview ? (
         <div className="absolute inset-0 z-[100110] flex items-center justify-center bg-black/75 p-4 sm:p-8" onClick={() => setCallPreview(null)}>
           <div
             className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden border border-white/15 bg-[#0c0d11]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/10 px-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/80">Ver llamada</p>
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
+              <div>
+                <p className="text-[14px] font-semibold text-white/85">Qué se enviará</p>
+                <p className="text-[11px] text-white/35">Vista local · abrirla nunca llama al proveedor</p>
+              </div>
               <div className="flex items-stretch">
                 <button
                   type="button"
-                  className="px-3 text-[9px] font-black uppercase tracking-widest text-white/50 hover:text-white"
+                  className="px-3 text-[12px] font-semibold text-white/50 hover:text-white"
                   onClick={() => void navigator.clipboard?.writeText(callPreview.prompt)}
                 >
                   Copiar prompt
@@ -1852,21 +2813,19 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <p className="mb-3 text-[10px] font-medium text-white/45">
-                {callPreview.ranAnalyzeAreas
-                  ? "Prompt final de analyze-areas (misma llamada que usa Generar)."
-                  : callPreview.usedAnalyzeAreas
-                    ? `Análisis falló; prompt local de respaldo.${callPreview.analyzeError ? ` ${callPreview.analyzeError}` : ""}`
-                    : "Sin analyze-areas: no hay zona con texto. Prompt local."}
-              </p>
-              <p className="mb-3 text-[10px] font-medium text-white/45">{callPreview.preserveNote}</p>
-              <pre className="mb-4 whitespace-pre-wrap break-words bg-black/40 p-3 text-[11px] leading-5 text-zinc-200">
+              {callPreview.usedAnalyzeAreas ? (
+                <p className="mb-3 border border-white/10 bg-white/[0.03] p-2.5 text-[12px] text-white/50">
+                  Al pulsar Generar se analizarán las zonas. Esta vista usa una preparación local y no realiza ese análisis.
+                </p>
+              ) : null}
+              <p className="mb-3 text-[12px] font-medium text-white/45">{callPreview.preserveNote}</p>
+              <pre className="mb-4 whitespace-pre-wrap break-words bg-black/40 p-3 text-[12px] leading-5 text-zinc-200">
                 {callPreview.prompt}
               </pre>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {callPreview.images.map((image) => (
                   <figure key={image.kind} className="border border-white/10 bg-black/30">
-                    <figcaption className="border-b border-white/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white/50">
+                    <figcaption className="border-b border-white/10 px-2 py-1.5 text-[11px] font-semibold text-white/50">
                       {CALL_SLOT_LABEL[image.kind]}
                     </figcaption>
                     <img src={image.src} alt={CALL_SLOT_LABEL[image.kind]} className="max-h-64 w-full object-contain" />

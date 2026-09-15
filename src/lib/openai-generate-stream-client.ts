@@ -21,6 +21,7 @@ function jsonSize(body: Record<string, unknown>): number {
 export async function openaiGenerateWithServerProgress(
   body: Record<string, unknown>,
   onProgress: (pct: number, stage: string) => void,
+  options?: { skipWalletPreflight?: boolean },
 ): Promise<OpenAiStreamResult> {
   const preparedBody = await compactImageStreamReferences(body);
   const preparedSize = jsonSize(preparedBody);
@@ -30,9 +31,11 @@ export async function openaiGenerateWithServerProgress(
     );
   }
 
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (options?.skipWalletPreflight) headers["x-foldder-wallet-preflight-skip"] = "1";
   const res = await fetch("/api/openai/generate-stream", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(preparedBody),
   });
 

@@ -12932,6 +12932,65 @@ body.nb-studio-open [data-foldder-sidebar-launcher] {
   isolation: isolate;
 }
 
+.nb-studio-root [data-studio-viewer] {
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.nb-studio-segment,
+.nb-studio-choice {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.62) !important;
+}
+
+.nb-studio-segment--active,
+.nb-studio-choice--active {
+  border-color: rgba(255, 255, 255, 0.9) !important;
+  background: #ffffff !important;
+  color: #111827 !important;
+}
+
+.nb-studio-icon--active {
+  border-color: rgba(167, 139, 250, 0.65) !important;
+  background: rgba(124, 58, 237, 0.24) !important;
+  color: #ede9fe !important;
+}
+
+.nb-studio-primary-action,
+.nb-studio-primary-light {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background-color 150ms ease, opacity 150ms ease;
+}
+
+.nb-studio-primary-action {
+  background: #6c5ce7;
+  color: #ffffff !important;
+}
+
+.nb-studio-primary-action:hover {
+  background: #7c6cf0;
+}
+
+.nb-studio-primary-action:disabled {
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+.nb-studio-primary-light {
+  background: #ffffff;
+  color: #111827 !important;
+}
+
+.nb-studio-primary-light:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
 .nb-studio-controls,
 .nb-studio-bottombar {
   background: rgba(255, 255, 255, 0.03);

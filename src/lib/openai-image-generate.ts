@@ -22,6 +22,8 @@ export type OpenAiImageGenerateBody = {
   image?: string;
   aspect_ratio?: string;
   resolution?: string;
+  /** PNG data URL o clave S3: alfa 0 = zona a editar (images.edit). */
+  mask?: string;
 };
 
 export type OpenAiImageGenerateResult = {
@@ -103,7 +105,7 @@ export async function openAiImageGenerate(
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new OpenAiGenerateError("OPENAI_API_KEY not configured", 500);
 
-  const { prompt, images, image, aspect_ratio, resolution } = raw;
+  const { prompt, images, image, aspect_ratio, resolution, mask } = raw;
   const allImages: string[] = [];
   if (images && Array.isArray(images)) allImages.push(...images.filter(Boolean));
   else if (image) allImages.push(image);
@@ -165,12 +167,34 @@ export async function openAiImageGenerate(
           return toFile(buffer, `openai-ref-${index}.${detected.extension}`, { type: detected.contentType });
         }),
       );
+      let maskFile: Awaited<ReturnType<typeof toFile>> | undefined;
+      if (mask) {
+        const s3Key = tryExtractKnowledgeFilesKeyFromUrl(mask);
+        if (s3Key) {
+          const allowed = usageUserEmail
+            ? await canUserAccessKnowledgeFileKey(usageUserEmail, s3Key)
+            : false;
+          if (!allowed) {
+            throw new OpenAiGenerateError("Forbidden mask image", 403);
+          }
+        }
+        const parsed = await parseReferenceImageForGemini(s3Key ?? mask);
+        if (parsed) {
+          const maskBuffer = Buffer.from(parsed.data, "base64");
+          const maskFmt = detectImageFormat(maskBuffer);
+          maskFile = await toFile(maskBuffer, `openai-mask.${maskFmt.extension}`, {
+            type: maskFmt.contentType,
+          });
+        }
+      }
       const result = await openai.images.edit({
         model: OPENAI_IMAGE_MODEL,
         prompt: normalizedPrompt,
         image: imageFiles.length === 1 ? imageFiles[0]! : imageFiles,
         size,
         quality,
+        input_fidelity: "high",
+        ...(maskFile ? { mask: maskFile } : {}),
       });
       const b64 = result.data?.[0]?.b64_json;
       if (!b64) {

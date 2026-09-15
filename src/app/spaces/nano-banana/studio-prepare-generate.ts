@@ -71,12 +71,22 @@ function buildFallbackPrompt(args: {
   return lines.join("\n");
 }
 
+export function shouldUsePaidAreaAnalysis(args: {
+  allowPaidAnalyze?: boolean;
+  baseImage: string | null;
+  cards: StudioCard[];
+}): boolean {
+  return args.allowPaidAnalyze !== false && Boolean(args.baseImage) && shouldRunAnalyzeAreas(args.cards);
+}
+
 export async function prepareStudioGenerateCall(args: {
   baseImage: string | null;
   cards: StudioCard[];
   frameHeight: number;
   frameWidth: number;
   global?: StudioGlobal;
+  /** False for read-only previews: building a preview must never trigger paid area analysis. */
+  allowPaidAnalyze?: boolean;
 }): Promise<StudioPreparedGenerate> {
   const global = args.global ?? emptyStudioGlobal();
   const cards = args.cards.filter(
@@ -107,7 +117,7 @@ export async function prepareStudioGenerateCall(args: {
   let ranAnalyzeAreas = false;
   let analyzeError: string | null = null;
 
-  if (shouldRunAnalyzeAreas(cards) && args.baseImage) {
+  if (shouldUsePaidAreaAnalysis({ allowPaidAnalyze: args.allowPaidAnalyze, baseImage: args.baseImage, cards })) {
     const colorMapImageKind = zoneMap?.markedBaseUrl ? "marked-base" : "abstract-map";
     const [baseImageForAnalyze, colorMapImageForAnalyze] = await Promise.all([
       compactImageForAnalyzeAreas(args.baseImage, { maxSide: 1280, quality: 0.72, maxBytes: 900_000 }),

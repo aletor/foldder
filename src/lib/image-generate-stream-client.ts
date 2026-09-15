@@ -134,15 +134,43 @@ export async function compactImageStreamReferences(body: Record<string, unknown>
       ? [next.image]
       : [];
 
-  if (!imageValues.some(isDataImage)) return next;
+  if (!imageValues.some(isDataImage) && !isDataImage(next.mask)) return next;
 
-  const compactedImages = await Promise.all(
-    imageValues.map((value, index) =>
-      isDataImage(value) ? uploadReference(value, index) : value,
-    ),
-  );
-  next.images = compactedImages;
-  delete next.image;
+  if (imageValues.some(isDataImage)) {
+    const compactedImages = await Promise.all(
+      imageValues.map((value, index) =>
+        isDataImage(value) ? uploadReference(value, index) : value,
+      ),
+    );
+    next.images = compactedImages;
+    delete next.image;
+  }
+
+  if (isDataImage(next.mask)) {
+    next.mask = await uploadPngKeepAlpha(next.mask as string);
+  }
 
   return next;
+}
+
+async function uploadPngKeepAlpha(dataUrl: string): Promise<string> {
+  const original = dataUrlToFile(dataUrl, `edit-mask-${Date.now()}.png`);
+  if (original && original.size <= REF_UPLOAD_MAX_BYTES) {
+    return uploadReferenceFile(original);
+  }
+  if (typeof document === "undefined") return dataUrl;
+  const img = await loadImage(dataUrl);
+  const scale = Math.min(1, 2048 / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1));
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, width, height);
+  const compacted = canvas.toDataURL("image/png");
+  const file = dataUrlToFile(compacted, `edit-mask-${Date.now()}.png`);
+  if (!file) return dataUrl;
+  return uploadReferenceFile(file);
 }

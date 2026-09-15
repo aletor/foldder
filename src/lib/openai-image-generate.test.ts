@@ -119,5 +119,21 @@ describe("openAiImageGenerate", () => {
 
     expect(editMock).toHaveBeenCalledTimes(1);
     expect(generateMock).not.toHaveBeenCalled();
+    expect(editMock.mock.calls[0]?.[0]).toMatchObject({ input_fidelity: "high" });
+  });
+
+  it("pasa máscara a images.edit cuando hay mask", async () => {
+    await openAiImageGenerate(
+      {
+        prompt: "Cambia solo la chaqueta",
+        images: ["data:image/png;base64,abcd"],
+        mask: "data:image/png;base64,abcd",
+        aspect_ratio: "3:4",
+        resolution: "2k",
+      },
+      () => {},
+      { usageUserEmail: "user@example.com" },
+    );
+    expect(editMock.mock.calls[0]?.[0]?.mask).toBeTruthy();
   });
 });
