@@ -6671,7 +6671,7 @@ export function SpacesContent() {
         {isAuthenticated && <ExternalApiBlockedModal />}
 
         {isAuthenticated && (
-          <div className="pointer-events-none fixed z-[10024] flex flex-col items-end gap-2" data-foldder-canvas-toasts>
+          <div className="pointer-events-none fixed z-[100800] flex flex-col items-end gap-2" data-foldder-canvas-toasts>
             {aiJobToasts.length > 0 && (
               <AiJobToastStack
                 toasts={aiJobToasts}

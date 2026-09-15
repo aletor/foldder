@@ -29,6 +29,18 @@ describe("normalizeGenerativeImagePrompt", () => {
     expect(out).not.toMatch(/feet and shoes fully in frame/i);
   });
 
+  it("does not ask Gemini to outpaint sides on clean text-to-image 16:9", () => {
+    const out = normalizeGenerativeImagePrompt("mujer salta a la comba en bangladesh", {
+      targetAspectRatio: "16:9",
+      textOnlyRecreation: true,
+    });
+    expect(out).toMatch(/native 16:9 landscape/i);
+    expect(out).not.toMatch(/vertical crop/i);
+    expect(out).not.toMatch(/frame-left|frame-right/i);
+    expect(out).not.toMatch(/Horizontally extend/i);
+    expect(out).not.toMatch(/preserving the exact vertical crop/i);
+  });
+
   it("prepends text-only recreation prefix when no reference images", () => {
     const input =
       "SOURCE ORIENTATION: portrait vertical. FINAL OUTPUT FRAMING: FRAME-LEFT EXTENSION: sky continues gradient frame-left.";

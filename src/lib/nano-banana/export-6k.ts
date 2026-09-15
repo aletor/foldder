@@ -11,24 +11,45 @@ import sharp from "sharp";
 export const EXPORT_6K_LONG_SIDE = 6144;
 /** Tope absoluto para no generar PNG de cientos de MB por accidente. */
 export const EXPORT_6K_MAX_LONG_SIDE = 8192;
+/**
+ * Tope de salida Real-ESRGAN en Replicate.
+ * ×4 desde ~2K (~8K+) provoca CUDA illegal memory access en el worker.
+ */
+export const ESRGAN_MAX_OUTPUT_LONG = 6144;
 
 export type Export6kPlan = {
   sourceWidth: number;
   sourceHeight: number;
   targetWidth: number;
   targetHeight: number;
-  /** Factor Real-ESRGAN (2 | 4). null = sin ML (ya es ≥ 6K o casi). */
+  /** Factor Real-ESRGAN (2 | 4). null = sin ML (ya es ≥ 6K o bump pequeño → Lanczos). */
   esrganScale: 2 | 4 | null;
   /** Tras ESRGAN (o la fuente), ¿hace falta Lanczos al target? */
   needsFinalResize: boolean;
   alreadyAtLeast6k: boolean;
 };
 
+/**
+ * Elige escala ML segura.
+ * - ×4 solo si la salida cabe en ~6K (fuentes ~1K).
+ * - Desde ~2K preferir ×2 + Lanczos (×4 tumba CUDA).
+ * - Desde ~4K (cerca de 6K) solo Lanczos.
+ */
 export function chooseEsrganScale(sourceLong: number, targetLong: number): 2 | 4 | null {
-  if (sourceLong <= 0) return 4;
+  if (sourceLong <= 0) return 2;
   if (sourceLong >= targetLong) return null;
-  if (sourceLong * 2 >= targetLong) return 2;
-  return 4;
+  // Bump pequeño (p. ej. 4K Gemini → 6K): no hace falta GPU.
+  if (sourceLong * 1.25 >= targetLong) return null;
+
+  const out2 = sourceLong * 2;
+  const out4 = sourceLong * 4;
+
+  // ×2 si nos acerca al target sin pasarnos del tope GPU.
+  if (out2 <= ESRGAN_MAX_OUTPUT_LONG && out2 >= targetLong * 0.8) return 2;
+  // ×4 solo para fuentes pequeñas (1K class).
+  if (out4 <= ESRGAN_MAX_OUTPUT_LONG) return 4;
+  if (out2 <= ESRGAN_MAX_OUTPUT_LONG) return 2;
+  return null;
 }
 
 export function planExport6k(width: number, height: number, longSide = EXPORT_6K_LONG_SIDE): Export6kPlan {

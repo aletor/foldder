@@ -4,6 +4,7 @@ import { flattenStudioReferenceCells, gridCellsForCard } from "./studio-referenc
 import {
   buildStudioGenerateImageSlots,
   canStudioGenerate,
+  canStudioPrimaryGenerate,
   describeStudioGenerateImageOrder,
   shouldBuildZoneMap,
   shouldRunAnalyzeAreas,
@@ -169,6 +170,22 @@ describe("generate image slots", () => {
     expect(shouldBuildZoneMap(remaining)).toBe(true);
     expect(canStudioGenerate(remaining, global)).toBe(true);
     expect(canStudioGenerate([], global)).toBe(false);
+  });
+
+  it("primary generate allows connected scene prompt before first output", () => {
+    const emptyGlobal = { promptDraft: "a cat in neon", text: "", schemaData: null };
+    expect(
+      canStudioPrimaryGenerate([], emptyGlobal, { nodePrompt: "a cat in neon", hasGeneratedOutput: false }),
+    ).toBe(true);
+    expect(
+      canStudioPrimaryGenerate([], emptyGlobal, { nodePrompt: "a cat in neon", hasGeneratedOutput: true }),
+    ).toBe(false);
+    expect(
+      canStudioPrimaryGenerate([], { ...emptyGlobal, promptDraft: "a dog" }, {
+        nodePrompt: "a cat in neon",
+        hasGeneratedOutput: true,
+      }),
+    ).toBe(true);
   });
 });
 

@@ -32,6 +32,25 @@ export function canStudioGenerate(cards: StudioCard[], global: StudioGlobal): bo
 }
 
 /**
+ * Cuándo mostrar / permitir Generate en Studio.
+ * - Con ediciones (cards / caption / esquema): siempre.
+ * - Sin ediciones: el prompt de escena basta **antes** de la primera imagen del nodo
+ *   (aunque coincida con el prompt conectado). Tras tener output, hace falta cambiar
+ *   el prompt o añadir una edición — si no, el botón desaparece y parece que "no hace nada".
+ */
+export function canStudioPrimaryGenerate(
+  cards: StudioCard[],
+  global: Pick<StudioGlobal, "text" | "schemaData" | "promptDraft">,
+  options: { nodePrompt: string; hasGeneratedOutput: boolean },
+): boolean {
+  if (canStudioGenerate(cards, global)) return true;
+  const scene = global.promptDraft.trim();
+  if (!scene) return false;
+  if (!options.hasGeneratedOutput) return true;
+  return scene !== options.nodePrompt.trim();
+}
+
+/**
  * Fixed slot order. Nulls are omitted; remaining items keep relative order.
  * Zone map is never the schema; schema is never mixed into the color map.
  */

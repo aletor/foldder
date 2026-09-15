@@ -3,6 +3,7 @@
  */
 
 import { compactImageStreamReferences } from "@/lib/image-generate-stream-client";
+import { mapGeminiProviderErrorMessage } from "@/lib/gemini-provider-errors";
 import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
 
 export type GeminiStreamResult = {
@@ -12,14 +13,15 @@ export type GeminiStreamResult = {
   time?: number;
 };
 
-function isProviderDeadlineMessage(status: unknown, message: string): boolean {
-  return status === 503 && /deadline|timeout|timed?\s*out|expired/i.test(message);
+function isTechnicalGeminiDetail(detail: string): boolean {
+  return /^(finishReason|promptFeedback):/i.test(detail.trim());
 }
 
 function normalizeStreamErrorMessage(status: unknown, message: string): string {
-  if (isProviderDeadlineMessage(status, message)) {
-    return "Gemini could not complete the image generation in time (503). No automatic retry was made to avoid extra cost.";
-  }
+  const numericStatus = typeof status === "number" ? status : Number(status);
+  const statusCode = Number.isFinite(numericStatus) ? numericStatus : 0;
+  const mapped = mapGeminiProviderErrorMessage(statusCode, message);
+  if (mapped !== `Gemini Error (${statusCode})`) return mapped;
   return message;
 }
 
@@ -27,10 +29,6 @@ const GEMINI_STREAM_HARD_PAYLOAD_LIMIT = 4_000_000;
 
 function jsonSize(body: Record<string, unknown>): number {
   return new TextEncoder().encode(JSON.stringify(body)).length;
-}
-
-function isTechnicalGeminiDetail(detail: string): boolean {
-  return /^(finishReason|promptFeedback):/i.test(detail.trim());
 }
 
 export async function geminiGenerateWithServerProgress(

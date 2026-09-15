@@ -17,6 +17,7 @@ import {
 } from "@/lib/spaces-access-control";
 import crypto from "crypto";
 import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
+import { mapGeminiProviderErrorMessage } from "@/lib/gemini-provider-errors";
 
 export const GEMINI_IMAGE_MODELS = {
   flash31: "gemini-3.1-flash-image-preview",
@@ -188,10 +189,6 @@ function expectedGeminiWaitMs(modelKey: string, thinking: boolean): number {
   return 35_000;
 }
 
-function isGeminiDeadlineError(status: number, detail: string): boolean {
-  return status === 503 && /deadline|timeout|timed?\s*out|expired/i.test(detail);
-}
-
 type GeminiResponsePart = {
   text?: string;
   thought?: boolean;
@@ -289,19 +286,6 @@ export async function finalizeGeminiImageBuffer(
       extension: detected.extension,
     };
   }
-}
-
-function geminiApiErrorMessage(status: number, detail: string): string {
-  if (status === 429 || /RESOURCE_EXHAUSTED|monthly spending cap|project spend cap/i.test(detail)) {
-    if (/monthly spending cap|project spend cap|ai\.studio\/spend/i.test(detail)) {
-      return "El proyecto de Google AI ha superado el tope de gasto mensual. Súbelo o restablécelo en https://ai.studio/spend y vuelve a intentar.";
-    }
-    return "Cuota o límite de Google Gemini agotado (429). No se ha reintentado automáticamente.";
-  }
-  if (isGeminiDeadlineError(status, detail)) {
-    return "Gemini could not complete the image generation in time (503). No automatic retry was made to avoid extra cost.";
-  }
-  return `Gemini Error (${status})`;
 }
 
 /**
@@ -458,7 +442,7 @@ export async function geminiImageGenerate(
       throw new GeminiGenerateError(MSG_COPYRIGHT_ES, 422, detail);
     }
     throw new GeminiGenerateError(
-      geminiApiErrorMessage(response.status || 500, detail),
+      mapGeminiProviderErrorMessage(response.status || 500, detail),
       response.status || 500,
       detail,
     );

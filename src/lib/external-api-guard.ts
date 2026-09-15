@@ -200,7 +200,29 @@ export function createGuardedFetch(innerFetch: typeof fetch): typeof fetch {
           registerRepeatStrike();
           return json429("repeat");
         }
-        guardState.lastRepeatAt.set(key, Date.now());
+
+        const response = await innerFetch(input, init);
+
+        // No bloquear reintentos cuando el usuario cancela o no puede pagar el preflight
+        // (el diálogo de wallet puede tardar >4s y antes se marcaba el fingerprint al abrirlo).
+        let lockRepeat = true;
+        if (response.status === 409 || response.status === 402) {
+          try {
+            const body = (await response.clone().json()) as { code?: string };
+            if (
+              body?.code === "wallet_preflight_cancelled" ||
+              body?.code === "insufficient_balance"
+            ) {
+              lockRepeat = false;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        if (lockRepeat) {
+          guardState.lastRepeatAt.set(key, Date.now());
+        }
+        return response;
       }
 
       return await innerFetch(input, init);

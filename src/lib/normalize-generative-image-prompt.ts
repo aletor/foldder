@@ -83,36 +83,42 @@ function buildVerticalCropPreservationSuffix(prompt: string): string {
   return "";
 }
 
+/** ¿El prompt pide conversión portrait → landscape (Describer / outpaint)? */
+function needsPortraitToLandscapeGuidance(prompt: string): boolean {
+  return (
+    /SOURCE ORIENTATION:\s*portrait|portrait vertical|portrait source/i.test(prompt) ||
+    /FINAL OUTPUT FRAMING|FRAME-LEFT EXTENSION|SUBJECT BAND|FRAME-RIGHT EXTENSION/i.test(prompt) ||
+    /16:9 native|single seamless widescreen/i.test(prompt)
+  );
+}
+
 /**
- * Fuente → 16:9: recrear como foto horizontal nativa (text-only), recorte vertical bloqueado.
+ * Fuente vertical → 16:9: solo cuando el Describer marca portrait / framing.
+ * En text-to-image limpio NO se usa: el lenguaje “extend frame-left/right” + “vertical crop”
+ * empuja a Gemini a generar un tríptico (columna central + laterales con costuras).
  */
 function buildWidescreenExpansionSuffix(prompt: string, targetAspectRatio?: string): string {
   const ratio = (targetAspectRatio ?? "").trim();
   if (!isLandscapeOutputRatio(ratio)) return "";
+  if (!needsPortraitToLandscapeGuidance(prompt)) return "";
 
-  const portraitSource =
-    /SOURCE ORIENTATION:\s*portrait|portrait vertical|portrait,|portrait source/i.test(prompt);
-
-  const hasNativeFraming =
-    /FINAL OUTPUT FRAMING|FRAME-LEFT EXTENSION|SUBJECT BAND|FRAME-RIGHT EXTENSION/i.test(prompt);
-
-  if (portraitSource || hasNativeFraming || /16:9 native|single seamless widescreen/i.test(prompt)) {
-    return " Output as ONE continuous native 16:9 landscape photograph filling the frame edge to edge. Subject centered with exact vertical crop locked — same top and bottom boundaries, no vertical zoom in or out. Realistically extend environment and sky to frame-left and frame-right with continuous perspective and matching lighting — NOT side panels beside a portrait column.";
-  }
-
-  if (isLandscapeOutputRatio(ratio)) {
-    return " Output 16:9 landscape while preserving the exact vertical crop and subject scale from the description.";
-  }
-
-  return "";
+  return " Output as ONE continuous native 16:9 landscape photograph filling the frame edge to edge. Subject centered with exact vertical crop locked — same top and bottom boundaries, no vertical zoom in or out. Realistically continue environment and sky across the full width with continuous perspective and matching lighting — NOT side panels beside a portrait column.";
 }
 
-/** Anti-tríptico: una sola foto continua, sin costuras ni paneles verticales. */
+/**
+ * Anti-tríptico.
+ * - Conversión portrait→landscape: refuerzo fuerte (sigue habiendo riesgo de paneles).
+ * - Text-to-image limpio a 16:9: nota corta de composición nativa, SIN “extend” ni “vertical crop”.
+ */
 function buildSeamlessWidescreenSuffix(prompt: string, targetAspectRatio?: string): string {
   const ratio = (targetAspectRatio ?? "").trim();
   if (!isLandscapeOutputRatio(ratio)) return "";
 
-  return " ONE continuous photograph filling the entire 16:9 frame — absolutely no vertical black bars, white gutters, panel dividers, triptych layout, diptych, or a center portrait strip with different side images. Horizontally extend environment realistically at frame-left and frame-right; keep identical top and bottom crop on the subject; one unified sky, horizon, and perspective across the full width.";
+  if (needsPortraitToLandscapeGuidance(prompt)) {
+    return " ONE continuous photograph filling the entire 16:9 frame — absolutely no vertical black bars, white gutters, panel dividers, triptych layout, diptych, or a center portrait strip with different side images. Continue environment across the full width with one unified sky, horizon, and perspective; keep identical top and bottom crop on the subject.";
+  }
+
+  return " Compose as a native 16:9 landscape photograph — one continuous scene edge to edge, not a portrait column with added side panels or vertical seams.";
 }
 
 const TEXT_ONLY_RECREATION_PREFIX =

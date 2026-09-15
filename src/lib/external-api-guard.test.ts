@@ -66,6 +66,25 @@ describe("external-api-guard", () => {
     expect(inner).toHaveBeenCalledTimes(2);
   });
 
+  it("does not lock the repeat window when wallet preflight is cancelled", async () => {
+    const inner = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: "wallet_preflight_cancelled", error: "cancel" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    const guarded = createGuardedFetch(inner);
+    const init = { method: "POST", body: JSON.stringify({ prompt: "paid" }) };
+
+    const first = await guarded("/api/gemini/generate-stream", init);
+    const second = await guarded("/api/gemini/generate-stream", init);
+
+    expect(first.status).toBe(409);
+    expect(second.status).toBe(409);
+    expect(inner).toHaveBeenCalledTimes(2);
+  });
+
   it("does not guard non-AI routes", async () => {
     const inner = vi.fn(async () => new Response("{}", { status: 200 }));
     const guarded = createGuardedFetch(inner);

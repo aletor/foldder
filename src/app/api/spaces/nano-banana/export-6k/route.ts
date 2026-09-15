@@ -30,9 +30,10 @@ export const maxDuration = 180;
 /**
  * Export 6K · Real-ESRGAN (Replicate) + Lanczos al lado largo 6144.
  * Una sola llamada de pago por gesto del usuario; sin reintentos automáticos.
+ * Desde ~2K usamos ×2 (×4 petaba CUDA en Replicate); cerca de 6K solo Lanczos.
  */
 
-/** lucataco en A100 aguanta entradas 2K/4K; nightmareai recomienda tope ~1440p. */
+/** lucataco en A100; no mandar ×4 si la salida superaría ~6K (OOM/CUDA). */
 const ESRGAN_MODEL =
   "lucataco/real-esrgan:3febd19381dd7e1f52a3ed3260b5b0a5636353de45e37e7c1c3cd814b24077a3";
 const ESRGAN_MODEL_LABEL = "lucataco/real-esrgan";
@@ -105,6 +106,30 @@ function replicateOutputUrl(output: unknown): string {
   const asString = String(output ?? "");
   if (/^https?:/i.test(asString)) return asString;
   throw new Error("Real-ESRGAN no devolvió una URL de imagen.");
+}
+
+function mapReplicateUpscaleError(mlMessage: string): { error: string; retryable: boolean; status: number } {
+  if (mlMessage.includes("429")) {
+    return {
+      error:
+        "Replicate está saturado o sin saldo. No se reintentó automáticamente; vuelve a pulsar Exportar 6K.",
+      retryable: true,
+      status: 429,
+    };
+  }
+  if (/CUDA|illegal memory access|out of memory|OOM/i.test(mlMessage)) {
+    return {
+      error:
+        "El upscale en Replicate falló por memoria GPU (imagen demasiado grande para ×4). No se ha cobrado. Vuelve a pulsar Exportar 6K: ahora usamos una escala más segura.",
+      retryable: true,
+      status: 503,
+    };
+  }
+  return {
+    error: `Upscale falló: ${mlMessage}`,
+    retryable: false,
+    status: 500,
+  };
 }
 
 export async function POST(req: Request) {
@@ -228,21 +253,16 @@ export async function POST(req: Request) {
       });
     } catch (mlErr: unknown) {
       const mlMessage = mlErr instanceof Error ? mlErr.message : String(mlErr);
-      const is429 = mlMessage.includes("429");
       console.error("[nano-banana/export-6k] Real-ESRGAN:", mlErr);
+      const mapped = mapReplicateUpscaleError(mlMessage);
       await walletCharge?.release({
         reason: "provider_inference_error",
-        metadata: { retryable: is429 },
+        metadata: { retryable: mapped.retryable, status: mapped.status },
       });
       releaseWalletOnError = false;
       return NextResponse.json(
-        {
-          error: is429
-            ? "Replicate está saturado o sin saldo. No se reintentó automáticamente; vuelve a pulsar Exportar 6K."
-            : `Upscale falló: ${mlMessage}`,
-          retryable: is429,
-        },
-        { status: is429 ? 429 : 500 },
+        { error: mapped.error, retryable: mapped.retryable },
+        { status: mapped.status },
       );
     }
 

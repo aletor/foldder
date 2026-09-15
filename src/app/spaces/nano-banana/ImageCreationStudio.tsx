@@ -4,6 +4,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import { createPortal, flushSync } from "react-dom";
 import { Check, ChevronLeft, Download, Eraser, Eye, Layers, Loader2, Pencil, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
+import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
 import { aiHudNanoBananaJobProgress } from "@/lib/ai-hud-generation-progress";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { openaiGenerateWithServerProgress } from "@/lib/openai-generate-stream-client";
@@ -25,7 +26,7 @@ import {
   type NanoBananaResolution,
 } from "./nano-banana-output-options";
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
-import { canStudioGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
+import { canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
 import { prepareStudioGenerateCall } from "./studio-prepare-generate";
 import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
 import { downloadExport6kFile, runExport6k } from "./studio-export-6k";
@@ -239,6 +240,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   );
 
   const [genStatus, setGenStatus] = useState<"idle" | "running" | "success" | "error">("idle");
+  const [genError, setGenError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [inspectingCall, setInspectingCall] = useState(false);
   const [callPreview, setCallPreview] = useState<StudioCallPreview | null>(null);
@@ -626,144 +628,167 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     [clearEdits, onGenerated],
   );
 
+  const hasGeneratedOutput =
+    Boolean(lastGenerated) || generationHistory.length > 0 || genStatus === "success";
+
   const onGenerate = useCallback(async () => {
     if (readOnly || inspectingCall) return;
-    const canGo =
-      canStudioGenerate(cards, global) || global.promptDraft.trim() !== nodePrompt;
+    const canGo = canStudioPrimaryGenerate(cards, global, {
+      nodePrompt,
+      hasGeneratedOutput:
+        Boolean(lastGenerated) || generationHistory.length > 0 || genStatus === "success",
+    });
     if (!canGo) return;
     setGenStatus("running");
+    setGenError(null);
     setProgress(0);
     setComposeNotice(null);
     setShowComposeMask(false);
     let okFinish = false;
+    let failMessage: string | null = null;
     try {
       const ok = await runAiJobWithNotification({ nodeId, label: "Image Creation Studio" }, async () => {
-        const scenePrompt = global.promptDraft;
-        const frameWidth = imgNat.w || workingFrameSize(studioAspect).width;
-        const frameHeight = imgNat.h || workingFrameSize(studioAspect).height;
-        const prepared = await prepareStudioGenerateCall({
-          baseImage: currentImage,
-          cards,
-          frameHeight,
-          frameWidth,
-          global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
-        });
-        const merged = mergePromptWithBrain(
-          composeBrainImageGeneratorPrompt,
-          onBrainImageGeneratorDiagnostics,
-          scenePrompt,
-          prepared.prompt,
-        );
-        const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
-        const json = await generate(
-          {
-            prompt: merged,
-            images: prepared.imageList,
-            aspect_ratio: studioAspect,
-            resolution: effectiveStudioResolution,
-            model: studioModelKey,
-            thinking: thinking && isPro && !isOpenAi,
-          },
-          (pct) => {
-            setProgress(pct);
-            aiHudNanoBananaJobProgress(nodeId, pct);
-          },
-        );
-        const prev = currentImageRef.current;
-        let out = json.output;
-        let outKey = typeof json.key === "string" ? json.key : undefined;
-        let rawOutputUrl: string | null = null;
-        let composeSummary: StudioComposeSummary | null = null;
-        let composeMaskPreview: string | null = null;
-
-        // "Conservar zonas sin cambios": la generación ya está pagada y subida; este paso es
-        // solo CPU en servidor y, si falla, se conserva la generación cruda.
-        if (preserveUnchanged && prev) {
-          const eligibility = preserveComposeEligibility({
-            baseImage: prev,
+        try {
+          const scenePrompt = global.promptDraft;
+          const frameWidth = imgNat.w || workingFrameSize(studioAspect).width;
+          const frameHeight = imgNat.h || workingFrameSize(studioAspect).height;
+          const prepared = await prepareStudioGenerateCall({
+            baseImage: currentImage,
             cards,
+            frameHeight,
+            frameWidth,
             global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
           });
-          if (eligibility.ok) {
-            setComposeStage("Integrando cambios sobre la original…");
-            try {
-              const outcome = await runPreserveCompose({
-                baseImage: prev,
-                generatedOutput: json.output,
-                generatedKey: outKey ?? null,
-                cards,
-                frame: { width: frameWidth, height: frameHeight },
-              });
-              composeSummary = summarizeComposeOutcome(outcome);
-              composeMaskPreview = outcome.maskPreview;
-              if (outcome.composed && outcome.output) {
-                rawOutputUrl = json.output;
-                out = outcome.output;
-                outKey = outcome.key ?? undefined;
+          const merged = mergePromptWithBrain(
+            composeBrainImageGeneratorPrompt,
+            onBrainImageGeneratorDiagnostics,
+            scenePrompt,
+            prepared.prompt,
+          );
+          const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
+          const json = await generate(
+            {
+              prompt: merged,
+              images: prepared.imageList,
+              aspect_ratio: studioAspect,
+              resolution: effectiveStudioResolution,
+              model: studioModelKey,
+              thinking: thinking && isPro && !isOpenAi,
+            },
+            (pct) => {
+              setProgress(pct);
+              aiHudNanoBananaJobProgress(nodeId, pct);
+            },
+          );
+          const prev = currentImageRef.current;
+          let out = json.output;
+          let outKey = typeof json.key === "string" ? json.key : undefined;
+          let rawOutputUrl: string | null = null;
+          let composeSummary: StudioComposeSummary | null = null;
+          let composeMaskPreview: string | null = null;
+
+          // "Conservar zonas sin cambios": la generación ya está pagada y subida; este paso es
+          // solo CPU en servidor y, si falla, se conserva la generación cruda.
+          if (preserveUnchanged && prev) {
+            const eligibility = preserveComposeEligibility({
+              baseImage: prev,
+              cards,
+              global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+            });
+            if (eligibility.ok) {
+              setComposeStage("Integrando cambios sobre la original…");
+              try {
+                const outcome = await runPreserveCompose({
+                  baseImage: prev,
+                  generatedOutput: json.output,
+                  generatedKey: outKey ?? null,
+                  cards,
+                  frame: { width: frameWidth, height: frameHeight },
+                });
+                composeSummary = summarizeComposeOutcome(outcome);
+                composeMaskPreview = outcome.maskPreview;
+                if (outcome.composed && outcome.output) {
+                  rawOutputUrl = json.output;
+                  out = outcome.output;
+                  outKey = outcome.key ?? undefined;
+                }
+              } catch (error) {
+                console.error("[ImageCreationStudio] preserve-compose:", error);
+                composeSummary = {
+                  composed: false,
+                  decision: "error",
+                  reason: error instanceof Error ? error.message : "Error desconocido.",
+                  changedPct: null,
+                  componentsKept: null,
+                  componentsDropped: null,
+                };
+              } finally {
+                setComposeStage(null);
               }
-            } catch (error) {
-              console.error("[ImageCreationStudio] preserve-compose:", error);
+            } else if (cards.some(cardHasZonePaint)) {
+              // Solo avisamos si el usuario usó el lazo; en ediciones globales no hay nada que integrar.
               composeSummary = {
                 composed: false,
-                decision: "error",
-                reason: error instanceof Error ? error.message : "Error desconocido.",
+                decision: "not-eligible",
+                reason: eligibility.reason,
                 changedPct: null,
                 componentsKept: null,
                 componentsDropped: null,
               };
-            } finally {
-              setComposeStage(null);
             }
-          } else if (cards.some(cardHasZonePaint)) {
-            // Solo avisamos si el usuario usó el lazo; en ediciones globales no hay nada que integrar.
-            composeSummary = {
-              composed: false,
-              decision: "not-eligible",
-              reason: eligibility.reason,
-              changedPct: null,
-              componentsKept: null,
-              componentsDropped: null,
-            };
           }
-        }
 
-        onGenerationHistoryChange((h) => {
-          const next = [...h];
-          if (prev && prev !== out && !next.includes(prev)) next.push(prev);
-          if (!next.includes(out)) next.push(out);
-          return next;
-        });
-        const brief: StudioHistoryBrief = {
-          outputUrl: out,
-          baseUrl: prev,
-          cards,
-          global,
-          rawOutputUrl,
-          compose: composeSummary,
-          composeMaskPreview,
-        };
-        persistStudioMedia(nodeId, emptyDraft(), [...hydratedBriefs.filter((b) => b.outputUrl !== out), brief]);
-        setBriefs((prevBriefs) => [
-          ...prevBriefs.filter((b) => b.outputUrl !== out).map(stripBriefForNode),
-          stripBriefForNode(brief),
-        ]);
-        currentImageRef.current = out;
-        setShowingOriginal(false);
-        setSessionImage(out);
-        if (composeSummary) setComposeNotice({ summary: composeSummary, maskPreview: composeMaskPreview });
-        onGenerated(out, outKey);
-        okFinish = true;
+          onGenerationHistoryChange((h) => {
+            const next = [...h];
+            if (prev && prev !== out && !next.includes(prev)) next.push(prev);
+            if (!next.includes(out)) next.push(out);
+            return next;
+          });
+          const brief: StudioHistoryBrief = {
+            outputUrl: out,
+            baseUrl: prev,
+            cards,
+            global,
+            rawOutputUrl,
+            compose: composeSummary,
+            composeMaskPreview,
+          };
+          persistStudioMedia(nodeId, emptyDraft(), [...hydratedBriefs.filter((b) => b.outputUrl !== out), brief]);
+          setBriefs((prevBriefs) => [
+            ...prevBriefs.filter((b) => b.outputUrl !== out).map(stripBriefForNode),
+            stripBriefForNode(brief),
+          ]);
+          currentImageRef.current = out;
+          setShowingOriginal(false);
+          setSessionImage(out);
+          if (composeSummary) setComposeNotice({ summary: composeSummary, maskPreview: composeMaskPreview });
+          onGenerated(out, outKey);
+          okFinish = true;
+        } catch (error) {
+          failMessage = sanitizeUserFacingErrorMessage(
+            error instanceof Error ? error.message : String(error),
+          );
+          throw error;
+        }
       });
-      if (!ok) setGenStatus("error");
+      if (!ok) {
+        setGenStatus("error");
+        setGenError(failMessage || "No se pudo generar la imagen.");
+      }
     } catch (error) {
       console.error("[ImageCreationStudio] generate:", error);
       setGenStatus("error");
+      setGenError(
+        failMessage ||
+          sanitizeUserFacingErrorMessage(error instanceof Error ? error.message : String(error)),
+      );
     } finally {
       if (okFinish) {
         flushSync(() => {
           clearEdits();
           setProgress(100);
           setGenStatus("success");
+          setGenError(null);
           aiHudNanoBananaJobProgress(nodeId, 100);
         });
       }
@@ -782,6 +807,9 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     inspectingCall,
     isOpenAi,
     isPro,
+    lastGenerated,
+    generationHistory.length,
+    genStatus,
     nodeId,
     onBrainImageGeneratorDiagnostics,
     onGenerated,
@@ -875,7 +903,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     !readOnly &&
     genStatus !== "running" &&
     !drawingLasso &&
-    (canStudioGenerate(cards, global) || global.promptDraft.trim() !== nodePrompt);
+    canStudioPrimaryGenerate(cards, global, { nodePrompt, hasGeneratedOutput });
   const canToggleOriginal = Boolean(initialImage && sessionImage && initialImage !== sessionImage) && !readOnly;
 
   const paintSchema = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -983,7 +1011,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 key={provider}
                 type="button"
                 aria-pressed={studioProvider === provider}
-                disabled={readOnly || genStatus === "running" || inspectingCall}
+                disabled={readOnly || !settingsCanChange || inspectingCall}
                 onClick={() => applyStudioProvider(provider)}
                 className={foldderStudioHeaderActionClassName(
                   studioProvider === provider ? "bg-white text-slate-950 hover:bg-white hover:text-slate-950" : "",
@@ -1102,6 +1130,24 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           </button>
         ))}
       </div>
+      ) : null}
+
+      {genError && !readOnly ? (
+        <div
+          className="flex h-auto min-h-7 shrink-0 items-start gap-2 border-b border-rose-400/25 bg-rose-500/15 px-3 py-1.5 text-[10px] font-medium text-rose-100"
+          data-foldder-i18n-ignore
+          role="alert"
+        >
+          <span className="min-w-0 flex-1 leading-snug">{genError}</span>
+          <button
+            type="button"
+            onClick={() => setGenError(null)}
+            className="shrink-0 text-rose-100/70 hover:text-white"
+            title="Cerrar"
+          >
+            <X size={12} />
+          </button>
+        </div>
       ) : null}
 
       {composeNotice && !readOnly ? (

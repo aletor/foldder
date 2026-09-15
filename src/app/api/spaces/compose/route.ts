@@ -5,11 +5,14 @@ import { canUserAccessKnowledgeFileKey, requireSpacesAuthUser } from '@/lib/spac
 
 export const runtime = 'nodejs';
 
-const MAX_COMPOSE_DIMENSION = 4096;
-const MAX_COMPOSE_PIXELS = 18_000_000;
+/** Gemini 4K ~5504 y Export 6K 6144; el tope antiguo (4096) rechazaba ambos. */
+const MAX_COMPOSE_DIMENSION = 8192;
+/** ~6K 16:9 ≈ 21M px; margen para 1:1 hasta ~8192. */
+const MAX_COMPOSE_PIXELS = 40_000_000;
 const MAX_COMPOSE_LAYERS = 60;
 const MAX_LAYERS_JSON_CHARS = 40_000_000;
-const MAX_LAYER_IMAGE_BYTES = 30 * 1024 * 1024;
+/** PNG 4K/6K sin pérdida suelen superar 30 MB; 80 MB cubre esos exports. */
+const MAX_LAYER_IMAGE_BYTES = 80 * 1024 * 1024;
 
 function isBlockedRemoteHost(hostname: string): boolean {
   const host = hostname.trim().toLowerCase();
@@ -140,7 +143,12 @@ export async function POST(req: NextRequest) {
     if (canPassthroughSingleImage) {
       const imageBuffer = await resolveLayerImageBuffer(layers[0], req.nextUrl.origin, authState.user.email);
       if (imageBuffer.length > MAX_LAYER_IMAGE_BYTES) {
-        return NextResponse.json({ error: 'Image is too large to export.' }, { status: 413 });
+        return NextResponse.json(
+          {
+            error: `La imagen supera el máximo de exportación (${Math.round(imageBuffer.length / (1024 * 1024))} MB; límite ${Math.round(MAX_LAYER_IMAGE_BYTES / (1024 * 1024))} MB).`,
+          },
+          { status: 413 },
+        );
       }
       const { default: sharp } = await import('sharp');
       const meta = await sharp(imageBuffer).metadata();
@@ -173,7 +181,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid composition dimensions' }, { status: 400 });
     }
     if (width > MAX_COMPOSE_DIMENSION || height > MAX_COMPOSE_DIMENSION || width * height > MAX_COMPOSE_PIXELS) {
-      return NextResponse.json({ error: 'Composition dimensions are too large' }, { status: 413 });
+      return NextResponse.json(
+        {
+          error: `Dimensiones demasiado grandes para exportar (${width}×${height}; máx. ${MAX_COMPOSE_DIMENSION}px por lado).`,
+        },
+        { status: 413 },
+      );
     }
 
     const { default: sharp } = await import('sharp');
@@ -217,7 +230,9 @@ export async function POST(req: NextRequest) {
         try {
           const imageBuffer = await resolveLayerImageBuffer(layer, req.nextUrl.origin, authState.user.email);
           if (imageBuffer.length > MAX_LAYER_IMAGE_BYTES) {
-            throw new Error(`Layer image too large (${Math.round(imageBuffer.length / 1024)} KB)`);
+            throw new Error(
+              `Capa demasiado grande (${Math.round(imageBuffer.length / (1024 * 1024))} MB; límite ${Math.round(MAX_LAYER_IMAGE_BYTES / (1024 * 1024))} MB)`,
+            );
           }
           
           // Determine Target Width

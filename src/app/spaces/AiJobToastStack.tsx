@@ -10,7 +10,7 @@ type AiJobToastStackProps = {
   onDismiss: (id: string) => void;
 };
 
-function truncateMessage(message: string, max = 56): string {
+function truncateMessage(message: string, max = 140): string {
   const trimmed = message.trim();
   if (trimmed.length <= max) return trimmed;
   return `${trimmed.slice(0, max - 1)}…`;
