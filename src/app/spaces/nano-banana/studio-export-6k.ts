@@ -5,7 +5,7 @@
 
 import { fetchPostWithWalletPreflight } from "@/lib/wallet-fetch-preflight";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
-import type { Export6kFormat, TopazUpscaleFactor } from "@/lib/nano-banana/export-6k";
+import type { Export6kFormat, TopazUpscaleFactor } from "@/lib/nano-banana/export-6k-plan";
 
 export const EXPORT_6K_ENDPOINT = "/api/spaces/nano-banana/export-6k";
 const SOURCE_DATA_URL_MAX_BYTES = 24_000_000;

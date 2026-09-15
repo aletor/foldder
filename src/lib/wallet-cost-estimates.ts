@@ -1,7 +1,7 @@
 import {
   estimateBrandKitGalleryWalletCost,
 } from "@/lib/brandkit/brand-kit-gallery-cost";
-import { estimateTopazUpscaleUsd, planExport6k } from "@/lib/nano-banana/export-6k";
+import { estimateTopazUpscaleUsd, planExport6k } from "@/lib/nano-banana/export-6k-plan";
 import {
   estimateGeminiImageGenerationUsd,
   estimateGeminiUsd,
