@@ -21,14 +21,16 @@ export function studioPrepareCacheKey(args: {
   frameWidth: number;
   frameHeight: number;
   global: StudioGlobal;
+  contextCrop?: boolean;
 }): string {
   return JSON.stringify({
-    base: args.baseImage || "",
+    base: args.baseImage ? `${args.baseImage.length}:${args.baseImage.slice(0, 256)}:${args.baseImage.slice(-64)}` : "",
     w: args.frameWidth,
     h: args.frameHeight,
     cards: args.cards.map(cardFingerprint),
     text: args.global.text.trim(),
     schema: Boolean(args.global.schemaData),
+    crop: Boolean(args.contextCrop),
   });
 }
 
@@ -42,6 +44,7 @@ export async function prepareStudioGenerateCallCached(args: {
   frameWidth: number;
   frameHeight: number;
   global?: StudioGlobal;
+  contextCrop?: boolean;
 }): Promise<StudioPreparedGenerate> {
   const global = args.global ?? { promptDraft: "", schemaData: null, text: "" };
   const key = studioPrepareCacheKey({ ...args, global });

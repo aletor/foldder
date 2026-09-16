@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import sharp from "sharp";
 import { recordApiUsage } from "@/lib/api-usage";
 import { getFromS3, uploadBufferToS3Key } from "@/lib/s3-utils";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
@@ -9,8 +10,9 @@ import {
   requireSpacesAuthUser,
   stableKnowledgeFileUrlFromKey,
 } from "@/lib/spaces-access-control";
-import { preserveComposeImages } from "@/lib/nano-banana/preserve-compose/compose";
+import { preserveComposeImages, type PreserveComposeToneLimits } from "@/lib/nano-banana/preserve-compose/compose";
 import type { ChangeMaskSensitivity, ChangeMaskStats } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
+import type { OpticalMatchStats } from "@/lib/nano-banana/preserve-compose/optical-match";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -28,11 +30,18 @@ const MAX_PRIOR_BYTES = 4_000_000;
 
 type ImageSourceInput = { key?: unknown; url?: unknown; dataUrl?: unknown };
 
+/** Recorte de contexto (px de la base completa) del que procede la generada. */
+export type PreserveComposeCropInput = { x: number; y: number; width: number; height: number };
+
 export type PreserveComposeRequestBody = {
   base: ImageSourceInput;
   generated: ImageSourceInput;
+  /** Lazo en el sistema de coordenadas de `crop` si hay recorte; si no, de la base completa. */
   priorMask?: string | null;
   sensitivity?: ChangeMaskSensitivity;
+  crop?: PreserveComposeCropInput | null;
+  /** Tamaño del fotograma en el que se expresó `crop`; si difiere del nativo se reescala. */
+  cropFrame?: { width: number; height: number } | null;
   debug?: boolean;
 };
 
@@ -46,6 +55,10 @@ export type PreserveComposeResponseBody =
       stats: ChangeMaskStats;
       maskPreview: string | null;
       timeMs: number;
+      optical: OpticalMatchStats | null;
+      toneLimits: PreserveComposeToneLimits;
+      usedPriorFallback: boolean;
+      crop: PreserveComposeCropInput | null;
     }
   | {
       composed: false;
@@ -111,6 +124,90 @@ async function resolveImageSource(
   );
 }
 
+function parseCrop(input: unknown): PreserveComposeCropInput | null {
+  if (!input || typeof input !== "object") return null;
+  const c = input as Record<string, unknown>;
+  const x = Number(c.x);
+  const y = Number(c.y);
+  const width = Number(c.width);
+  const height = Number(c.height);
+  if (![x, y, width, height].every((v) => Number.isFinite(v))) return null;
+  if (width < 8 || height < 8 || x < 0 || y < 0) return null;
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
+/**
+ * Recorta la base (ya orientada) al rectángulo de contexto. Si el cliente expresó el recorte en
+ * otro fotograma (`cropFrame`), se reescala al tamaño nativo. Devuelve el recorte en px nativos.
+ */
+async function extractCrop(
+  base: Buffer,
+  crop: PreserveComposeCropInput,
+  cropFrame: { width: number; height: number } | null,
+): Promise<{ crop: Buffer; nativeCrop: PreserveComposeCropInput; fullWidth: number; fullHeight: number }> {
+  const oriented = sharp(base, { failOn: "none" }).rotate();
+  const meta = await oriented.metadata();
+  const fullWidth = meta.width ?? 0;
+  const fullHeight = meta.height ?? 0;
+  let nativeCrop = crop;
+  if (cropFrame && cropFrame.width > 0 && cropFrame.height > 0 && (cropFrame.width !== fullWidth || cropFrame.height !== fullHeight)) {
+    const sx = fullWidth / cropFrame.width;
+    const sy = fullHeight / cropFrame.height;
+    const x = Math.max(0, Math.round(crop.x * sx));
+    const y = Math.max(0, Math.round(crop.y * sy));
+    nativeCrop = {
+      x,
+      y,
+      width: Math.max(8, Math.min(fullWidth - x, Math.round(crop.width * sx))),
+      height: Math.max(8, Math.min(fullHeight - y, Math.round(crop.height * sy))),
+    };
+  }
+  if (nativeCrop.x + nativeCrop.width > fullWidth || nativeCrop.y + nativeCrop.height > fullHeight) {
+    throw new ComposeInputError(
+      `Recorte (${nativeCrop.x},${nativeCrop.y} ${nativeCrop.width}×${nativeCrop.height}) fuera de la base (${fullWidth}×${fullHeight}).`,
+      400,
+    );
+  }
+  const cropPng = await oriented
+    .extract({ left: nativeCrop.x, top: nativeCrop.y, width: nativeCrop.width, height: nativeCrop.height })
+    .png()
+    .toBuffer();
+  return { crop: cropPng, nativeCrop, fullWidth, fullHeight };
+}
+
+/** Pega el recorte compuesto sobre la base completa (sin pérdida fuera del recorte). */
+async function pasteCropBack(base: Buffer, composedCrop: Buffer, crop: PreserveComposeCropInput): Promise<Buffer> {
+  return sharp(base, { failOn: "none" })
+    .rotate()
+    .removeAlpha()
+    .toColourspace("srgb")
+    .composite([{ input: composedCrop, left: crop.x, top: crop.y }])
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+}
+
+/** Recoloca la vista previa de máscara (relativa al recorte) en un lienzo del fotograma completo. */
+async function maskPreviewToFullFrame(
+  preview: Buffer,
+  crop: PreserveComposeCropInput,
+  fullWidth: number,
+  fullHeight: number,
+  maxSide = 512,
+): Promise<Buffer> {
+  const scale = Math.min(1, maxSide / Math.max(fullWidth, fullHeight));
+  const outW = Math.max(1, Math.round(fullWidth * scale));
+  const outH = Math.max(1, Math.round(fullHeight * scale));
+  const cw = Math.max(1, Math.round(crop.width * scale));
+  const ch = Math.max(1, Math.round(crop.height * scale));
+  const left = Math.min(outW - cw, Math.round(crop.x * scale));
+  const top = Math.min(outH - ch, Math.round(crop.y * scale));
+  const resized = await sharp(preview).resize(cw, ch, { fit: "fill" }).png().toBuffer();
+  return sharp({ create: { width: outW, height: outH, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: resized, left, top }])
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
 export async function POST(req: Request) {
   const started = Date.now();
   try {
@@ -133,15 +230,37 @@ export async function POST(req: Request) {
         : null;
     const sensitivity: ChangeMaskSensitivity =
       body.sensitivity === "strict" || body.sensitivity === "wide" ? body.sensitivity : "auto";
+    const requestedCrop = parseCrop(body.crop);
+    const cropFrame =
+      body.cropFrame && Number.isFinite(Number(body.cropFrame.width)) && Number.isFinite(Number(body.cropFrame.height))
+        ? { width: Math.round(Number(body.cropFrame.width)), height: Math.round(Number(body.cropFrame.height)) }
+        : null;
+
+    let composeBase = base.buffer;
+    let fullFrame: { width: number; height: number } | null = null;
+    let crop: PreserveComposeCropInput | null = null;
+    if (requestedCrop) {
+      const extracted = await extractCrop(base.buffer, requestedCrop, cropFrame);
+      composeBase = extracted.crop;
+      crop = extracted.nativeCrop;
+      fullFrame = { width: extracted.fullWidth, height: extracted.fullHeight };
+    }
 
     const result = await preserveComposeImages({
-      base: base.buffer,
+      base: composeBase,
       generated: generated.buffer,
       priorMask: prior,
       sensitivity,
       wantMaskPreview: true,
+      // Con recorte la salida debe volver SIEMPRE al fotograma completo: si el análisis duda,
+      // se pega por el lazo. Sin recorte se respeta la decisión del análisis como hasta ahora.
+      fallbackToPrior: Boolean(crop && prior),
     });
-    const maskPreview = result.maskPreviewPng ? `data:image/png;base64,${result.maskPreviewPng.toString("base64")}` : null;
+    let maskPreviewPng = result.maskPreviewPng;
+    if (maskPreviewPng && crop && fullFrame) {
+      maskPreviewPng = await maskPreviewToFullFrame(maskPreviewPng, crop, fullFrame.width, fullFrame.height);
+    }
+    const maskPreview = maskPreviewPng ? `data:image/png;base64,${maskPreviewPng.toString("base64")}` : null;
 
     if (!result.composed) {
       console.info("[nano-banana/preserve-compose] skipped", {
@@ -153,8 +272,8 @@ export async function POST(req: Request) {
         composed: false,
         decision: result.decision,
         reason: result.reason,
-        width: result.width,
-        height: result.height,
+        width: fullFrame?.width ?? result.width,
+        height: fullFrame?.height ?? result.height,
         stats: result.stats,
         maskPreview,
         timeMs: Date.now() - started,
@@ -162,12 +281,16 @@ export async function POST(req: Request) {
       return NextResponse.json(payload);
     }
 
+    const outputPng = crop ? await pasteCropBack(base.buffer, result.png, crop) : result.png;
+    const outWidth = fullFrame?.width ?? result.width;
+    const outHeight = fullFrame?.height ?? result.height;
+
     const key = buildUserAssetObjectKey({
       userEmail,
       folder: "generated",
       filename: "studio-preserve-compose.png",
     });
-    await uploadBufferToS3Key(key, result.png, "image/png");
+    await uploadBufferToS3Key(key, outputPng, "image/png");
     await recordApiUsage({
       provider: "aws",
       userEmail,
@@ -176,7 +299,7 @@ export async function POST(req: Request) {
       operation: "put_object",
       costIsKnown: false,
       costUsd: 0,
-      bytes: result.png.length,
+      bytes: outputPng.length,
       metadata: {
         key,
         baseKey: base.key,
@@ -185,13 +308,28 @@ export async function POST(req: Request) {
         componentsKept: result.stats.componentsKept,
         componentsDropped: result.stats.componentsDropped,
         shift: result.stats.shift,
+        optical: result.optical,
+        toneLimits: result.toneLimits,
+        usedPriorFallback: result.usedPriorFallback,
+        crop,
         timings: result.timings,
       },
     });
     console.info("[nano-banana/preserve-compose] composed", {
       key,
-      size: `${result.width}x${result.height}`,
+      size: `${outWidth}x${outHeight}`,
+      crop,
       changedPct: Math.round(result.stats.changedFraction * 1000) / 10,
+      optical: result.optical,
+      opticalComponents: result.opticalComponents.map((c) => ({
+        label: c.label,
+        pixels: c.pixels,
+        baseEdge: c.stats.baseEdgeWidthPx,
+        genEdge: c.stats.generatedEdgeWidthPx,
+        sigma: c.stats.blurSigmaPx,
+        grain: c.stats.grainAdded,
+      })),
+      usedPriorFallback: result.usedPriorFallback,
       timings: result.timings,
     });
 
@@ -199,11 +337,15 @@ export async function POST(req: Request) {
       composed: true,
       output: stableKnowledgeFileUrlFromKey(key),
       key,
-      width: result.width,
-      height: result.height,
+      width: outWidth,
+      height: outHeight,
       stats: result.stats,
       maskPreview,
       timeMs: Date.now() - started,
+      optical: result.optical,
+      toneLimits: result.toneLimits,
+      usedPriorFallback: result.usedPriorFallback,
+      crop,
     };
     return NextResponse.json(payload);
   } catch (error: unknown) {

@@ -195,7 +195,8 @@ export async function POST(req: NextRequest) {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
     const usageUserEmail = authState.user.email;
-    const { baseImage, colorMapImage, colorMapImageKind, changes } = await req.json();
+    const { baseImage, colorMapImage, colorMapImageKind, changes, contextCrop } = await req.json();
+    const isContextCrop = contextCrop === true;
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) return NextResponse.json({ error: "API Key not configured" }, { status: 500 });
@@ -354,6 +355,7 @@ DATOS ESPACIALES que recibes por zona (úsalos TODOS en el prompt de salida para
 - **bbox**: rectángulo envolvente del trazo (rango horizontal y vertical en %).
 - **tamaño relativo**: superficie pintada como % del total de la imagen + etiqueta (muy pequeña / pequeña / mediana / amplia).
 
+${isContextCrop ? "\nNOTA: la IMAGEN 1 es un RECORTE ampliado de una fotografía mayor. Trabaja solo con lo visible en el recorte y exige al modelo devolver exactamente el mismo encuadre.\n" : ""}
 Tu tarea:
 1. Para cada cambio que NO sea global, identifica el elemento bajo el trazo ${useMarked ? "en la IMAGEN 2" : "del mapa en la IMAGEN 2"} y redacta la instrucción incluyendo:
    a) "En la zona del trazo [color] en REF 2"
@@ -361,18 +363,21 @@ Tu tarea:
    c) centroide y bbox ("centroide ~X% desde la izquierda, ~Y% desde arriba; abarcando del X1%-X2% horizontal, Y1%-Y2% vertical")
    d) tamaño ("zona pequeña / mediana / amplia, ~N% de la imagen")
    e) la acción a realizar.
+   f) ÓPTICA LOCAL (obligatorio): mira la IMAGEN 1 y describe el estado fotográfico REAL del entorno inmediato de esa zona: (1) enfoque — "nítido / ligeramente fuera de foco / claramente desenfocado con bokeh" y cuánto (p. ej. "el fondo está fuera de foco, los bordes de los objetos vecinos se funden ~10 px"); (2) luz — dirección de la luz principal (p. ej. "luz cálida de ventana desde la derecha del encuadre"), temperatura, dureza de las sombras y presencia de brillos especulares; (3) textura — grano/ruido y contraste del área. Termina la instrucción con: "El resultado en esta zona debe tener exactamente ese mismo desenfoque, esa misma luz y ese mismo grano; nada nítido dentro de un plano desenfocado, nada iluminado de forma distinta a sus vecinos."
 2. Para cada CAMBIO GLOBAL, integra la instrucción como afectación a toda la escena (luz, ambiente, hora del día), sin limitarla a una máscara.
 3. En zonas, sé específico respecto al PLANO (encuadre), no solo anatomía del personaje.
-4. Si un cambio tiene REFERENCIA VISUAL, añade: "siguiendo las celdas [IDs] de la REFERENCIA 3" (todas las celdas de esa card juntas).
+4. Si un cambio tiene REFERENCIA VISUAL, añade: "siguiendo las celdas [IDs] de la REFERENCIA 3" (todas las celdas de esa card juntas). Las referencias aportan QUÉ es el objeto (forma, color, material); la óptica (enfoque, luz, grano) se toma SIEMPRE de la IMAGEN 1, nunca de la referencia.
 5. Genera el prompt con este formato exacto:
 
 REFERENCIA 1: imagen base. Mantén todo lo que no se indica cambiar, conservando composición donde aplique.
 REFERENCIA 2: zonas marcadas en color (trazos reales del usuario) — respetar la posición, forma y extensión espacial de cada trazo al aplicar el cambio.${referenceOutputLine}
 
-[Para zonas: ancla con cuadrante + centroide + bbox + tamaño + acción. Si el lenguaje natural del usuario y el trazo discrepan en izquierda/derecha, manda la versión alineada al trazo.]
+[Para zonas: ancla con cuadrante + centroide + bbox + tamaño + acción + ÓPTICA LOCAL. Si el lenguaje natural del usuario y el trazo discrepan en izquierda/derecha, manda la versión alineada al trazo.]
 [Para globales: párrafos sobre iluminación/atmósfera de toda la escena.]
 
-CRÍTICO: El trazo señala el sitio exacto y su extensión. Si descripción y trazo discrepan, gana el trazo y el encuadre. Incluye SIEMPRE cuadrante, centroide, bbox y tamaño en cada instrucción de zona.
+INTEGRACIÓN FOTOGRÁFICA: [párrafo final que describa la cámara implícita de la IMAGEN 1 — plano de enfoque, apertura aparente, fuente y color de la luz, grano — y exija que toda zona editada se renderice como captada por esa misma cámara en el mismo instante.]
+
+CRÍTICO: El trazo señala el sitio exacto y su extensión. Si descripción y trazo discrepan, gana el trazo y el encuadre. Incluye SIEMPRE cuadrante, centroide, bbox, tamaño y ÓPTICA LOCAL en cada instrucción de zona.
 ANTES DE ENVIAR: cuenta las zonas con trazo en tu respuesta; deben ser exactamente ${zoneChanges.length} (una por color: ${zoneColorNames || "N/A"}).
 
 SALIDA DEL MODELO DE IMAGEN (obligatorio al final de tu prompt): Añade un párrafo que indique que la imagen final NO debe reproducir trazos de color, círculos de guía, líneas de delineación ni marcas superpuestas de REF 2; esas formas son solo referencia espacial y el resultado debe verse limpio y fotorrealista.

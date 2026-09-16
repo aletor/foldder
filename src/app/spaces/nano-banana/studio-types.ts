@@ -44,7 +44,18 @@ export type StudioComposeSummary = {
   changedPct: number | null;
   componentsKept: number | null;
   componentsDropped: number | null;
+  /** σ (px, escala de análisis) de desenfoque aplicado a la generada para igualar el DoF de la base. */
+  blurSigmaPx?: number | null;
+  /** Grano añadido (σ niveles 0..255) para igualar la textura de la base. */
+  grainAdded?: number | null;
+  /** True si el análisis no confirmó el cambio y se pegó por el lazo (solo con recorte de contexto). */
+  usedPriorFallback?: boolean | null;
+  /** True si la generación se hizo sobre un recorte de contexto y se pegó de vuelta. */
+  contextCrop?: boolean | null;
 };
+
+/** Recorte de contexto (coordenadas del fotograma del Studio) con el que se generó una versión. */
+export type StudioContextCropRect = { x: number; y: number; width: number; height: number };
 
 export type StudioHistoryBrief = {
   baseUrl: string | null;
@@ -54,6 +65,8 @@ export type StudioHistoryBrief = {
   outputUrl: string;
   /** Generación cruda del modelo cuando `outputUrl` es la versión compuesta. */
   rawOutputUrl?: string | null;
+  /** Recorte de contexto usado para generar `rawOutputUrl`; necesario para volver a pegar. */
+  crop?: StudioContextCropRect | null;
   compose?: StudioComposeSummary | null;
   /** PNG pequeño (data URL) con las zonas integradas; solo sesión, no se persiste en el nodo. */
   composeMaskPreview?: string | null;

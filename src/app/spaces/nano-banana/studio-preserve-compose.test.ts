@@ -70,6 +70,18 @@ describe("summarizeComposeOutcome", () => {
       reason: null,
       maskPreview: "data:image/png;base64,AA",
       timeMs: 900,
+      optical: {
+        baseEdgeWidthPx: 6.2,
+        generatedEdgeWidthPx: 2.4,
+        blurSigmaPx: 1.8,
+        baseGrain: 3.1,
+        generatedGrain: 0.8,
+        grainAdded: 2.9,
+        ringPixels: 4000,
+        innerPixels: 3000,
+      },
+      usedPriorFallback: false,
+      contextCrop: true,
       stats: {
         decision: "compose",
         reason: null,
@@ -87,6 +99,17 @@ describe("summarizeComposeOutcome", () => {
         analysisHeight: 576,
       },
     });
-    expect(summary).toEqual({ composed: true, decision: "compose", reason: null, changedPct: 6.3, componentsKept: 1, componentsDropped: 2 });
+    expect(summary).toEqual({
+      composed: true,
+      decision: "compose",
+      reason: null,
+      changedPct: 6.3,
+      componentsKept: 1,
+      componentsDropped: 2,
+      blurSigmaPx: 1.8,
+      grainAdded: 2.9,
+      usedPriorFallback: null,
+      contextCrop: true,
+    });
   });
 });

@@ -65,6 +65,13 @@ import { mergeStudioCardReferences, planStudioIncomingUrls, STUDIO_SCENE_DEST } 
 import { prepareStudioGenerateCallCached } from "./studio-prepare-cache";
 import { prepareStudioGenerateCall } from "./studio-prepare-generate";
 import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
+import {
+  cropBaseImageDataUrl,
+  cropCardsToRect,
+  describeContextCrop,
+  planStudioContextCrop,
+  type StudioContextCrop,
+} from "./studio-context-crop";
 import { downloadExport6kFile, runExport6k } from "./studio-export-6k";
 import { estimateStudioJobUsd, formatStudioUsd } from "./studio-cost";
 import { buildOpenAiEditMaskDataUrl } from "./studio-openai-mask";
@@ -229,7 +236,11 @@ function composeNoticeText(summary: StudioComposeSummary): string {
   if (summary.composed) {
     const pct = summary.changedPct != null ? ` · ${summary.changedPct} % modificado` : "";
     const dropped = summary.componentsDropped ? ` · ${summary.componentsDropped} cambio(s) lejano(s) descartado(s)` : "";
-    return `Zonas sin cambios conservadas de la original${pct}${dropped}.`;
+    const crop = summary.contextCrop ? " · generado sobre un recorte ampliado y pegado de vuelta" : "";
+    const blur = summary.blurSigmaPx ? ` · desenfoque igualado al fondo (σ ${summary.blurSigmaPx} px)` : "";
+    const grain = summary.grainAdded ? ` · grano igualado (${summary.grainAdded})` : "";
+    const fallback = summary.usedPriorFallback ? " · pegado por el lazo (el detector no confirmó el cambio)" : "";
+    return `Zonas sin cambios conservadas de la original${pct}${dropped}${crop}${blur}${grain}${fallback}.`;
   }
   const reason = summary.reason ? ` ${summary.reason}` : "";
   switch (summary.decision) {
@@ -314,7 +325,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const [export6kFormat, setExport6kFormat] = useState<"png" | "jpeg">("png");
   const [composeSensitivity, setComposeSensitivity] = useState<ChangeMaskSensitivity>("auto");
   const [variantCount, setVariantCount] = useState<1 | 2 | 3>(1);
-  const [variantPicks, setVariantPicks] = useState<Array<{ output: string; key?: string }>>([]);
+  const [variantPicks, setVariantPicks] = useState<Array<{ output: string; key?: string; crop?: StudioContextCrop | null }>>([]);
   const [genStage, setGenStage] = useState<string | null>(null);
   const [holdingCompare, setHoldingCompare] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -799,6 +810,20 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     [cards, currentImage, effectiveStudioResolution, studioAspect, studioModelKey, studioProvider],
   );
 
+  /**
+   * Recorte de contexto: solo con "Solo la zona marcada" activo, base presente y edición
+   * puramente local (misma elegibilidad que preserve-compose). Sin recorte ⇒ null.
+   */
+  const resolveContextCrop = useCallback(
+    (args: { base: string | null; cards: StudioCard[]; global: StudioGlobal; frame: { width: number; height: number } }) => {
+      if (!preserveUnchanged || !args.base) return null;
+      const eligibility = preserveComposeEligibility({ baseImage: args.base, cards: args.cards, global: args.global });
+      if (!eligibility.ok) return null;
+      return planStudioContextCrop({ cards: args.cards, global: args.global, frame: args.frame });
+    },
+    [preserveUnchanged],
+  );
+
   const commitGeneratedOutput = useCallback(
     async (args: {
       output: string;
@@ -808,22 +833,25 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       global: StudioGlobal;
       frameWidth: number;
       frameHeight: number;
+      /** Recorte de contexto con el que se generó `output`; obliga a pegar sobre la foto completa. */
+      crop?: StudioContextCrop | null;
     }) => {
       let out = args.output;
       let outKey = args.key;
       let rawOutputUrl: string | null = null;
       let composeSummary: StudioComposeSummary | null = null;
       let composeMaskPreview: string | null = null;
+      const crop = args.crop ?? null;
 
-      if (preserveUnchanged && args.prev) {
+      if ((preserveUnchanged || crop) && args.prev) {
         const eligibility = preserveComposeEligibility({
           baseImage: args.prev,
           cards: args.cards,
           global: args.global,
         });
-        if (eligibility.ok) {
-          setGenStage("Integrando cambios sobre la original…");
-          setComposeStage("Integrando cambios sobre la original…");
+        if (eligibility.ok || crop) {
+          setGenStage(crop ? "Pegando el recorte sobre la foto completa…" : "Integrando cambios sobre la original…");
+          setComposeStage(crop ? "Pegando el recorte sobre la foto completa…" : "Integrando cambios sobre la original…");
           try {
             const outcome = await runPreserveCompose({
               baseImage: args.prev,
@@ -832,6 +860,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               cards: args.cards,
               frame: { width: args.frameWidth, height: args.frameHeight },
               sensitivity: composeSensitivity,
+              crop,
             });
             composeSummary = summarizeComposeOutcome(outcome);
             composeMaskPreview = outcome.maskPreview;
@@ -839,9 +868,18 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               rawOutputUrl = args.output;
               out = outcome.output;
               outKey = outcome.key ?? undefined;
+            } else if (crop) {
+              // Un recorte sin pegar no es una imagen válida: no se aplica y se informa.
+              throw new Error(
+                `El recorte generado no se pudo pegar sobre la foto completa (${outcome.reason || outcome.decision}). La generación no se ha aplicado.`,
+              );
             }
           } catch (error) {
             console.error("[ImageCreationStudio] preserve-compose:", error);
+            if (crop) {
+              setComposeStage(null);
+              throw error;
+            }
             composeSummary = {
               composed: false,
               decision: "error",
@@ -881,6 +919,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         cards: args.cards,
         global: args.global,
         rawOutputUrl,
+        crop,
         compose: composeSummary,
         composeMaskPreview,
       };
@@ -935,18 +974,41 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           const scenePrompt = global.promptDraft;
           const frameWidth = imgNat.w || workingFrameSize(studioAspect).width;
           const frameHeight = imgNat.h || workingFrameSize(studioAspect).height;
-          if (shouldRunAnalyzeAreas(cards) && currentImage) setGenStage("Analizando zonas…");
+          const genGlobal: StudioGlobal = { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text };
+
+          // Recorte de contexto: zonas pequeñas sobre una base ⇒ el modelo trabaja sobre un recorte
+          // ampliado (misma llamada de pago, muchos más píxeles para la zona) y se pega de vuelta.
+          const plannedCrop = resolveContextCrop({ base: currentImage, cards, global: genGlobal, frame: { width: frameWidth, height: frameHeight } });
+          let crop: StudioContextCrop | null = null;
+          let genBase = currentImage;
+          let genCards = cards;
+          let genFrameWidth = frameWidth;
+          let genFrameHeight = frameHeight;
+          if (plannedCrop && currentImage) {
+            setGenStage("Recortando el contexto de la zona…");
+            const cropped = await cropBaseImageDataUrl(currentImage, plannedCrop, { width: frameWidth, height: frameHeight });
+            if (cropped) {
+              crop = plannedCrop;
+              genBase = cropped;
+              genCards = cropCardsToRect(cards, plannedCrop);
+              genFrameWidth = plannedCrop.width;
+              genFrameHeight = plannedCrop.height;
+            }
+          }
+
+          if (shouldRunAnalyzeAreas(genCards) && genBase) setGenStage("Analizando zonas…");
           else {
             setGenStage(
               `Generando · ${nanoBananaModelLabel(studioModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
             );
           }
           const prepared = await prepareStudioGenerateCallCached({
-            baseImage: currentImage,
-            cards,
-            frameHeight,
-            frameWidth,
-            global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+            baseImage: genBase,
+            cards: genCards,
+            frameHeight: genFrameHeight,
+            frameWidth: genFrameWidth,
+            global: genGlobal,
+            contextCrop: Boolean(crop),
           });
           const merged = mergePromptWithBrain(
             composeBrainImageGeneratorPrompt,
@@ -955,7 +1017,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             prepared.prompt,
           );
           const maskUrl = isOpenAi
-            ? await buildOpenAiEditMaskDataUrl(cards, { width: frameWidth, height: frameHeight })
+            ? await buildOpenAiEditMaskDataUrl(genCards, { width: genFrameWidth, height: genFrameHeight })
             : null;
           const imageList = maskUrl
             ? buildStudioGenerateImageSlots({ ...prepared.images, zoneMapImage: null })
@@ -982,6 +1044,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           const json = {
             output: generated.output,
             key: typeof generated.key === "string" ? generated.key : undefined,
+            crop,
           };
           if (collectCandidate) {
             undoSnapRef.current = { sessionImage: currentImageRef.current, cards, global };
@@ -1002,6 +1065,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             global,
             frameWidth,
             frameHeight,
+            crop,
           });
           okFinish = true;
         } catch (error) {
@@ -1055,6 +1119,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     onResolutionChange,
     nodePrompt,
     readOnly,
+    resolveContextCrop,
     studioAspect,
     studioModelKey,
     studioProvider,
@@ -1069,13 +1134,19 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     setInspectingCall(true);
     try {
       const scenePrompt = global.promptDraft;
+      const genGlobal: StudioGlobal = { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text };
+      const frame = { width: imgNat.w || workingFrameSize(studioAspect).width, height: imgNat.h || workingFrameSize(studioAspect).height };
+      const plannedCrop = resolveContextCrop({ base: currentImage, cards, global: genGlobal, frame });
+      const cropped = plannedCrop && currentImage ? await cropBaseImageDataUrl(currentImage, plannedCrop, frame) : null;
+      const crop = cropped ? plannedCrop : null;
       const prepared = await prepareStudioGenerateCall({
-        baseImage: currentImage,
-        cards,
-        frameHeight: imgNat.h || workingFrameSize(studioAspect).height,
-        frameWidth: imgNat.w || workingFrameSize(studioAspect).width,
-        global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+        baseImage: crop ? cropped : currentImage,
+        cards: crop ? cropCardsToRect(cards, crop) : cards,
+        frameHeight: crop ? crop.height : frame.height,
+        frameWidth: crop ? crop.width : frame.width,
+        global: genGlobal,
         allowPaidAnalyze: false,
+        contextCrop: Boolean(crop),
       });
       const merged = mergePromptWithBrain(
         composeBrainImageGeneratorPrompt,
@@ -1087,12 +1158,13 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       const eligibility = preserveComposeEligibility({
         baseImage: currentImage,
         cards,
-        global: { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text },
+        global: genGlobal,
       });
+      const cropNote = crop ? ` ${describeContextCrop(crop, frame)}: el modelo recibe solo ese recorte y el resultado se pega de vuelta sobre la foto completa.` : "";
       const preserveNote = !preserveUnchanged
         ? "Conservar original: desactivado."
         : eligibility.ok
-          ? "Conservar original: tras generar se compararán base y resultado y solo las zonas realmente modificadas se superpondrán a la base."
+          ? `Conservar original: tras generar se compararán base y resultado y solo las zonas realmente modificadas se superpondrán a la base, igualando su desenfoque y grano al entorno.${cropNote}`
           : `Conservar original: no se aplicará. ${eligibility.reason}`;
       setCallPreview({
         analyzeError: prepared.analyzeError,
@@ -1120,6 +1192,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     onBrainImageGeneratorDiagnostics,
     preserveUnchanged,
     readOnly,
+    resolveContextCrop,
     studioAspect,
   ]);
 
@@ -1187,6 +1260,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         cards: brief.cards,
         frame: { width: imgNat.w, height: imgNat.h },
         sensitivity: composeSensitivity,
+        crop: brief.crop ?? null,
       });
       const summary = summarizeComposeOutcome(outcome);
       setComposeNotice({ summary, maskPreview: outcome.maskPreview });
@@ -1207,7 +1281,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   }, [composeSensitivity, currentImage, genStatus, historyPreviewUrl, hydratedBriefs, imgNat.h, imgNat.w, onGenerated, onGenerationHistoryChange]);
 
   const onPickVariant = useCallback(
-    async (picked: { output: string; key?: string }) => {
+    async (picked: { output: string; key?: string; crop?: StudioContextCrop | null }) => {
       setVariantPicks([]);
       const prev = currentImageRef.current;
       const frame = workingFrameSize(studioAspect);
@@ -1222,6 +1296,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           global,
           frameWidth: imgNat.w || frame.width,
           frameHeight: imgNat.h || frame.height,
+          crop: picked.crop ?? null,
         });
         setGenStatus("success");
       } catch (error) {

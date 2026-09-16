@@ -29,6 +29,8 @@ function baseRaw(): Buffer {
   return out;
 }
 
+const sharp_ = (raw: Buffer) => sharp(raw, { raw: { width: W, height: H, channels: 3 } });
+
 const PATCH = { x: 260, y: 180, w: 140, h: 120 };
 const PRIOR = { x: 290, y: 200, w: 80, h: 70 };
 
@@ -94,6 +96,78 @@ describe("preserveComposeImages", () => {
     // El área compuesta es del orden del parche (140×120 ≈ 5.5 %), no de todo el fotograma.
     expect(result.stats.changedFraction).toBeGreaterThan(0.04);
     expect(result.stats.changedFraction).toBeLessThan(0.12);
+  }, 30_000);
+
+  it("iguala el desenfoque: fondo borroso + parche nítido ⇒ el parche compuesto queda desenfocado", async () => {
+    // Base: tablero desenfocado (fondo fuera de foco).
+    const period = 24;
+    const crisp = Buffer.alloc(W * H * 3);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const on = (Math.floor(x / period) + Math.floor(y / period)) % 2 === 0;
+        const v = on ? 200 : 60;
+        const j = (y * W + x) * 3;
+        crisp[j] = v;
+        crisp[j + 1] = v;
+        crisp[j + 2] = v;
+      }
+    }
+    const blurredRaw = await sharp_(crisp).blur(4).raw().toBuffer();
+    const basePng = await sharp_(blurredRaw).png().toBuffer();
+    // Generada: la base borrosa, pero con el tablero NÍTIDO dentro del parche.
+    const genRaw = Buffer.from(blurredRaw);
+    for (let y = PATCH.y; y < PATCH.y + PATCH.h; y++) {
+      for (let x = PATCH.x; x < PATCH.x + PATCH.w; x++) {
+        const j = (y * W + x) * 3;
+        genRaw[j] = crisp[j]!;
+        genRaw[j + 1] = crisp[j + 1]!;
+        genRaw[j + 2] = crisp[j + 2]!;
+      }
+    }
+    const genPng = await sharp_(genRaw).png().toBuffer();
+    const prior = await priorPng();
+
+    const matched = await preserveComposeImages({ base: basePng, generated: genPng, priorMask: prior });
+    expect(matched.composed).toBe(true);
+    if (!matched.composed) return;
+    expect(matched.optical).not.toBeNull();
+    expect(matched.optical!.blurSigmaPx).toBeGreaterThan(1);
+
+    const plain = await preserveComposeImages({ base: basePng, generated: genPng, priorMask: prior, opticalMatch: false });
+    expect(plain.composed).toBe(true);
+    if (!plain.composed) return;
+
+    // Energía L2 del gradiente en el centro del parche (la L1 se conserva en bordes aislados):
+    // con igualado óptico debe ser claramente menor.
+    const gradEnergy = async (png: Buffer) => {
+      const raw = await sharp(png).raw().toBuffer();
+      let e = 0;
+      for (let y = PATCH.y + 20; y < PATCH.y + PATCH.h - 20; y++) {
+        for (let x = PATCH.x + 20; x < PATCH.x + PATCH.w - 21; x++) {
+          const j = (y * W + x) * 3;
+          const d = raw[j]! - raw[j + 3]!;
+          e += d * d;
+        }
+      }
+      return e;
+    };
+    const eMatched = await gradEnergy(matched.png);
+    const ePlain = await gradEnergy(plain.png);
+    expect(eMatched).toBeLessThan(ePlain * 0.6);
+  }, 30_000);
+
+  it("fallbackToPrior: si el análisis no confirma el cambio, pega por el lazo en vez de saltar", async () => {
+    const raw = baseRaw();
+    const basePng = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).png().toBuffer();
+    // Generada sin ningún cambio ⇒ el análisis dice skip-no-change.
+    const skipped = await preserveComposeImages({ base: basePng, generated: basePng, priorMask: await priorPng() });
+    expect(skipped.composed).toBe(false);
+    const forced = await preserveComposeImages({ base: basePng, generated: basePng, priorMask: await priorPng(), fallbackToPrior: true });
+    expect(forced.composed).toBe(true);
+    if (!forced.composed) return;
+    expect(forced.usedPriorFallback).toBe(true);
+    expect(forced.width).toBe(W);
+    expect(forced.height).toBe(H);
   }, 30_000);
 
   it("salta cuando la relación de aspecto no coincide", async () => {

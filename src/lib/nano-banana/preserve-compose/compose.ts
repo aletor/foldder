@@ -14,12 +14,20 @@
 import sharp from "sharp";
 import {
   analyzeChangeMask,
+  dilateRound,
   resolveChangeMaskOptions,
   type ChangeMaskDecision,
   type ChangeMaskOptions,
   type ChangeMaskSensitivity,
   type ChangeMaskStats,
 } from "./analyze-change-mask";
+import {
+  adaptiveToneLimits,
+  makeGrainSampler,
+  measureOpticalMatchPerComponent,
+  type OpticalComponent,
+  type OpticalMatchStats,
+} from "./optical-match";
 import { computeLowFrequencyCorrection } from "./seam-correction";
 
 export const PRESERVE_COMPOSE_DEFAULT_ANALYSIS_SIDE = 1024;
@@ -39,9 +47,19 @@ export type PreserveComposeArgs = {
   maxPixels?: number;
   /** Si true, devuelve un PNG RGBA pequeño (blanco = zona compuesta) para depuración/UI. */
   wantMaskPreview?: boolean;
+  /**
+   * Si el análisis decide no componer (cambio global, reencuadre, sin cambio) pero hay lazo,
+   * compone igualmente usando el lazo dilatado como máscara. Imprescindible cuando la generada
+   * es un recorte de contexto: la salida SIEMPRE debe volver al fotograma completo.
+   */
+  fallbackToPrior?: boolean;
+  /** Igualar nitidez/grano de la generada con el anillo de la base (por defecto true). */
+  opticalMatch?: boolean;
 };
 
 export type PreserveComposeTimings = Record<string, number>;
+
+export type PreserveComposeToneLimits = { robustThreshold: number; maxCorrection: number; unchangedP90: number };
 
 export type PreserveComposeResult =
   | {
@@ -52,6 +70,11 @@ export type PreserveComposeResult =
       stats: ChangeMaskStats;
       maskPreviewPng: Buffer | null;
       timings: PreserveComposeTimings;
+      optical: OpticalMatchStats | null;
+      /** Medición por componente de la máscara (cada zona con su propio σ y grano). */
+      opticalComponents: OpticalComponent[];
+      toneLimits: PreserveComposeToneLimits;
+      usedPriorFallback: boolean;
     }
   | {
       composed: false;
@@ -190,6 +213,31 @@ export function featherPxForSize(width: number, height: number): number {
  * Mezcla in-place: base ← base·(1−α) + (gen + C)·α, con C muestreada bilinealmente
  * desde la escala de análisis.
  */
+/**
+ * Etiqueta del componente en coordenadas de la máscara de análisis (vecino más próximo). En la
+ * pluma exterior (máscara suave > 0 pero fuera de la máscara dura) busca en el vecindario 3×3
+ * para heredar la etiqueta del componente contiguo.
+ */
+function labelAt(labels: Int32Array, lw: number, lh: number, fx: number, fy: number): number {
+  const x = clamp(Math.floor(fx), 0, lw - 1);
+  const y = clamp(Math.floor(fy), 0, lh - 1);
+  const direct = labels[y * lw + x]!;
+  if (direct) return direct;
+  for (let r = 1; r <= 2; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      const yy = y + dy;
+      if (yy < 0 || yy >= lh) continue;
+      for (let dx = -r; dx <= r; dx++) {
+        const xx = x + dx;
+        if (xx < 0 || xx >= lw) continue;
+        const l = labels[yy * lw + xx]!;
+        if (l) return l;
+      }
+    }
+  }
+  return 0;
+}
+
 export function blendInPlace(args: {
   base: Buffer;
   generated: Buffer;
@@ -199,8 +247,29 @@ export function blendInPlace(args: {
   correction: Float32Array;
   correctionWidth: number;
   correctionHeight: number;
+  /** Grano fotográfico a inyectar en la generada dentro de la máscara (σ en niveles 0..255). */
+  grain?: { std: number; seed?: number } | null;
+  /**
+   * Variantes por componente: `labels` (escala de análisis, 0 = fuera) elige para cada píxel qué
+   * buffer de la generada usar (`sources[sourceByLabel[label]]`, índice 0 = `generated` sin
+   * desenfoque) y cuánto grano añadir (`grainByLabel[label]`).
+   */
+  variants?: {
+    labels: Int32Array;
+    labelsWidth: number;
+    labelsHeight: number;
+    sources: Buffer[];
+    sourceByLabel: Int32Array;
+    grainByLabel: Float32Array;
+  } | null;
 }): void {
   const { base, generated, maskSoft, width: W, height: H, correction: C, correctionWidth: cW, correctionHeight: cH } = args;
+  const grainStd = args.grain && args.grain.std > 0 ? args.grain.std : 0;
+  const variants = args.variants ?? null;
+  const anyVariantGrain = variants ? Array.from(variants.grainByLabel).some((g) => g > 0) : false;
+  const sampleGrain = grainStd > 0 || anyVariantGrain ? makeGrainSampler(args.grain?.seed ?? 0x9e3779b9) : null;
+  const lsx = variants ? variants.labelsWidth / W : 0;
+  const lsy = variants ? variants.labelsHeight / H : 0;
   const xIdx0 = new Int32Array(W);
   const xIdx1 = new Int32Array(W);
   const xFrac = new Float32Array(W);
@@ -233,9 +302,24 @@ export function blendInPlace(args: {
       const w10 = (1 - tx) * ty;
       const w11 = tx * ty;
       const p = (rowPx + x) * 3;
+      // Fuente y grano del píxel: por componente si hay variantes; si no, globales.
+      let src = generated;
+      let pixelGrain = grainStd;
+      if (variants) {
+        const label = labelAt(variants.labels, variants.labelsWidth, variants.labelsHeight, x * lsx, y * lsy);
+        if (label > 0) {
+          src = variants.sources[variants.sourceByLabel[label] ?? 0] ?? generated;
+          pixelGrain = variants.grainByLabel[label] ?? 0;
+        } else {
+          pixelGrain = 0;
+        }
+      }
+      // Grano mayormente de luminancia (85 %) con una pizca de variación cromática (15 %).
+      const gl = sampleGrain && pixelGrain > 0 ? sampleGrain() * pixelGrain : 0;
       for (let c = 0; c < 3; c++) {
         const corr = C[i00 + c]! * w00 + C[i01 + c]! * w01 + C[i10 + c]! * w10 + C[i11 + c]! * w11;
-        const g = generated[p + c]! + corr;
+        const noise = sampleGrain && pixelGrain > 0 ? gl * 0.85 + sampleGrain() * pixelGrain * 0.15 : 0;
+        const g = src[p + c]! + corr + noise;
         const b = base[p + c]!;
         const v = b * (1 - a) + g * a;
         base[p + c] = v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
@@ -324,20 +408,47 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   const analysis = analyzeChangeMask({ width: aW, height: aH, base: baseA, generated: genA, prior: priorA, options });
   mark("analyze", t);
 
-  const preview = args.wantMaskPreview ? await maskPreviewPng(analysis.mask, aW, aH) : null;
-
+  // Máscara de trabajo: la del análisis o, como respaldo, el lazo dilatado.
+  let workMask = analysis.mask;
+  let usedPriorFallback = false;
   if (analysis.stats.decision !== "compose") {
-    return {
-      composed: false,
-      decision: analysis.stats.decision,
-      reason: analysis.stats.reason ?? "No se compone.",
-      width: W,
-      height: H,
-      stats: analysis.stats,
-      maskPreviewPng: preview,
-      timings,
-    };
+    const canFallback = Boolean(args.fallbackToPrior && priorA);
+    if (!canFallback) {
+      const preview = args.wantMaskPreview ? await maskPreviewPng(analysis.mask, aW, aH) : null;
+      return {
+        composed: false,
+        decision: analysis.stats.decision,
+        reason: analysis.stats.reason ?? "No se compone.",
+        width: W,
+        height: H,
+        stats: analysis.stats,
+        maskPreviewPng: preview,
+        timings,
+      };
+    }
+    workMask = dilateRound(priorA!, aW, aH, Math.max(2, Math.round(Math.max(aW, aH) * 0.008)));
+    usedPriorFallback = true;
   }
+  const preview = args.wantMaskPreview ? await maskPreviewPng(workMask, aW, aH) : null;
+
+  // Igualación óptica (nitidez + grano) por componente, medida a escala de análisis sobre la
+  // generada ajustada. Cada zona tiene su propio anillo: una en el fondo desenfocado y otra en el
+  // sujeto enfocado no comparten objetivo.
+  t = performance.now();
+  const perComponent =
+    args.opticalMatch === false
+      ? null
+      : measureOpticalMatchPerComponent({
+          base: baseA,
+          generated: analysis.generatedAdjusted,
+          mask: workMask,
+          w: aW,
+          h: aH,
+          ringPx: Math.max(3, analysis.stats.ringRadiusPx || Math.round(Math.max(aW, aH) * 0.02)),
+        });
+  const optical = perComponent?.summary ?? null;
+  const opticalComponents = perComponent?.components ?? [];
+  mark("optical", t);
 
   // Generada a resolución completa: alineada + tono igualado.
   t = performance.now();
@@ -356,10 +467,51 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   const genFull = await genPipeline.raw().toBuffer();
   mark("generatedFull", t);
 
+  // Variantes desenfocadas: una por cada σ distinto (redondeado a 0.25 px de análisis) entre los
+  // componentes; el blend elige la variante por etiqueta. El grano también va por componente.
+  t = performance.now();
+  const grainScale = Math.sqrt(Math.max(1, W / aW));
+  let variants: NonNullable<Parameters<typeof blendInPlace>[0]["variants"]> | null = null;
+  if (perComponent && perComponent.components.length > 0) {
+    const labelCount = perComponent.components.length + 1;
+    const sourceByLabel = new Int32Array(labelCount);
+    const grainByLabel = new Float32Array(labelCount);
+    const sources: Buffer[] = [genFull];
+    const sigmaIndex = new Map<number, number>();
+    for (const comp of perComponent.components) {
+      const sigmaA = Math.round(comp.stats.blurSigmaPx * 4) / 4;
+      const sigmaFull = (sigmaA * W) / aW;
+      if (sigmaFull >= 0.3) {
+        let idx = sigmaIndex.get(sigmaA);
+        if (idx == null) {
+          const blurred = await sharp(genFull, { raw: { width: W, height: H, channels: 3 } })
+            .blur(Math.min(60, sigmaFull))
+            .raw()
+            .toBuffer();
+          idx = sources.push(blurred) - 1;
+          sigmaIndex.set(sigmaA, idx);
+        }
+        sourceByLabel[comp.label] = idx;
+      }
+      grainByLabel[comp.label] = comp.stats.grainAdded > 0 ? Math.min(14, comp.stats.grainAdded * grainScale) : 0;
+    }
+    if (sources.length > 1 || Array.from(grainByLabel).some((g) => g > 0)) {
+      variants = {
+        labels: perComponent.labels,
+        labelsWidth: aW,
+        labelsHeight: aH,
+        sources,
+        sourceByLabel,
+        grainByLabel,
+      };
+    }
+  }
+  mark("opticalVariants", t);
+
   // Máscara suave a resolución completa.
   t = performance.now();
   const featherPx = featherPxForSize(W, H);
-  const maskSoft = await upscaleSoftMask(analysis.mask, aW, aH, W, H, Math.max(0.3, featherPx * 0.5));
+  const maskSoft = await upscaleSoftMask(workMask, aW, aH, W, H, Math.max(0.3, featherPx * 0.5));
   mark("mask", t);
 
   // Corrección de costura (baja frecuencia) a 1/4 de la escala de análisis: es un campo suave,
@@ -377,15 +529,19 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
       sW,
       sH,
     ),
-    upscaleSoftMask(analysis.mask, aW, aH, sW, sH, 0.3),
+    upscaleSoftMask(workMask, aW, aH, sW, sH, 0.3),
   ]);
+  const maskSArr = new Uint8Array(maskS.buffer, maskS.byteOffset, maskS.byteLength);
+  const toneLimits = adaptiveToneLimits({ base: baseS, generated: genS, maskSoft: maskSArr, n: sW * sH });
   const correction = computeLowFrequencyCorrection({
     base: baseS,
     generated: genS,
-    maskSoft: new Uint8Array(maskS.buffer, maskS.byteOffset, maskS.byteLength),
+    maskSoft: maskSArr,
     width: sW,
     height: sH,
     sigmaPx: Math.max(1.5, 0.02 * Math.max(sW, sH)),
+    robustThreshold: toneLimits.robustThreshold,
+    maxCorrection: toneLimits.maxCorrection,
   });
   mark("seam", t);
 
@@ -399,6 +555,8 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
     correction,
     correctionWidth: sW,
     correctionHeight: sH,
+    grain: { std: 0, seed: W * 31 + H },
+    variants,
   });
   mark("blend", t);
 
@@ -416,5 +574,9 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
     stats: analysis.stats,
     maskPreviewPng: preview,
     timings,
+    optical,
+    opticalComponents,
+    toneLimits,
+    usedPriorFallback,
   };
 }

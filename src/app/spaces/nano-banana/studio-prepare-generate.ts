@@ -49,6 +49,11 @@ function buildFallbackPrompt(args: {
     lines.push(
       "REFERENCIA 2: zonas marcadas en color (trazos reales) — respetar la posición, forma y extensión de cada trazo.",
     );
+    if (args.hasBase) {
+      lines.push(
+        "ÓPTICA LOCAL: antes de editar cada zona, observa en REFERENCIA 1 si su entorno está nítido o desenfocado, de dónde viene la luz y qué grano tiene; el contenido nuevo debe igualar ese desenfoque, esa luz y ese grano exactamente.",
+      );
+    }
   }
   if (args.cells.length > 0) {
     lines.push(describeStudioGridForPrompt(args.cells));
@@ -87,6 +92,8 @@ export async function prepareStudioGenerateCall(args: {
   global?: StudioGlobal;
   /** False for read-only previews: building a preview must never trigger paid area analysis. */
   allowPaidAnalyze?: boolean;
+  /** True when `baseImage` is a context crop of the real photo (small-zone edits). Prompt-only. */
+  contextCrop?: boolean;
 }): Promise<StudioPreparedGenerate> {
   const global = args.global ?? emptyStudioGlobal();
   const cards = args.cards.filter(
@@ -206,6 +213,7 @@ export async function prepareStudioGenerateCall(args: {
           colorMapImage: colorMapImageForAnalyze,
           colorMapImageKind,
           changes: changesForAnalyze,
+          contextCrop: Boolean(args.contextCrop),
         }),
       });
       const aiJson = (await aiRes.json().catch(async () => {
@@ -256,7 +264,7 @@ export async function prepareStudioGenerateCall(args: {
   const order = describeStudioGenerateImageOrder(slotsInput);
   const gridBlock = describeStudioGridForPrompt(cells);
   prompt = [order.promptBlock, gridBlock, prompt].filter(Boolean).join("\n\n");
-  prompt = appendStudioOutputGuards(prompt, slotsInput);
+  prompt = appendStudioOutputGuards(prompt, slotsInput, { contextCrop: args.contextCrop });
 
   return {
     images: slotsInput,

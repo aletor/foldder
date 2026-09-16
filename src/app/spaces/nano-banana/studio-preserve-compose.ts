@@ -8,9 +8,11 @@
  */
 
 import type { ChangeMaskSensitivity, ChangeMaskStats } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
+import type { OpticalMatchStats } from "@/lib/nano-banana/preserve-compose/optical-match";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { closeLassoPoints, isValidClosedLasso } from "./lasso-to-paint-data";
 import { loadImageElement } from "./studio-compact";
+import { cropCardsToRect, type StudioContextCrop } from "./studio-context-crop";
 import { cardIsDescribed } from "./studio-generate-payload";
 import type { StudioCard, StudioComposeSummary, StudioGlobal } from "./studio-types";
 
@@ -121,6 +123,9 @@ export type PreserveComposeOutcome = {
   stats: ChangeMaskStats | null;
   maskPreview: string | null;
   timeMs: number | null;
+  optical: OpticalMatchStats | null;
+  usedPriorFallback: boolean;
+  contextCrop: boolean;
 };
 
 export type { StudioComposeSummary };
@@ -133,11 +138,27 @@ export function summarizeComposeOutcome(outcome: PreserveComposeOutcome): Studio
     changedPct: outcome.stats ? Math.round(outcome.stats.changedFraction * 1000) / 10 : null,
     componentsKept: outcome.stats?.componentsKept ?? null,
     componentsDropped: outcome.stats?.componentsDropped ?? null,
+    blurSigmaPx: outcome.optical?.blurSigmaPx ?? null,
+    grainAdded: outcome.optical?.grainAdded ?? null,
+    usedPriorFallback: outcome.usedPriorFallback || null,
+    contextCrop: outcome.contextCrop || null,
   };
 }
 
-function unavailable(reason: string): PreserveComposeOutcome {
-  return { composed: false, output: null, key: null, decision: "unavailable", reason, stats: null, maskPreview: null, timeMs: null };
+function unavailable(reason: string, contextCrop = false): PreserveComposeOutcome {
+  return {
+    composed: false,
+    output: null,
+    key: null,
+    decision: "unavailable",
+    reason,
+    stats: null,
+    maskPreview: null,
+    timeMs: null,
+    optical: null,
+    usedPriorFallback: false,
+    contextCrop,
+  };
 }
 
 export async function runPreserveCompose(args: {
@@ -147,19 +168,31 @@ export async function runPreserveCompose(args: {
   cards: StudioCard[];
   frame: { width: number; height: number };
   sensitivity?: ChangeMaskSensitivity;
+  /** Recorte de contexto (coordenadas del fotograma) con el que se generó `generatedOutput`. */
+  crop?: StudioContextCrop | null;
 }): Promise<PreserveComposeOutcome> {
+  const crop = args.crop ?? null;
+  const priorCards = crop ? cropCardsToRect(args.cards, crop) : args.cards;
+  const priorFrame = crop ? { width: crop.width, height: crop.height } : args.frame;
   const [base, generated, priorMask] = await Promise.all([
     resolveComposeImageSource(args.baseImage),
     args.generatedKey ? Promise.resolve<ComposeImageSource>({ key: args.generatedKey }) : resolveComposeImageSource(args.generatedOutput),
-    buildPriorMaskDataUrl(args.cards, args.frame),
+    buildPriorMaskDataUrl(priorCards, priorFrame),
   ]);
-  if (!base) return unavailable("La imagen base no está disponible para componer.");
-  if (!generated) return unavailable("La imagen generada no está disponible para componer.");
+  if (!base) return unavailable("La imagen base no está disponible para componer.", Boolean(crop));
+  if (!generated) return unavailable("La imagen generada no está disponible para componer.", Boolean(crop));
 
   const res = await fetch(PRESERVE_COMPOSE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ base, generated, priorMask, sensitivity: args.sensitivity ?? "auto" }),
+    body: JSON.stringify({
+      base,
+      generated,
+      priorMask,
+      sensitivity: args.sensitivity ?? "auto",
+      crop,
+      cropFrame: crop ? args.frame : null,
+    }),
   });
   const json = (await res.json().catch(() => null)) as
     | {
@@ -171,6 +204,8 @@ export async function runPreserveCompose(args: {
         stats?: ChangeMaskStats | null;
         maskPreview?: string | null;
         timeMs?: number;
+        optical?: OpticalMatchStats | null;
+        usedPriorFallback?: boolean;
         error?: string;
       }
     | null;
@@ -186,5 +221,8 @@ export async function runPreserveCompose(args: {
     stats: json.stats ?? null,
     maskPreview: typeof json.maskPreview === "string" ? json.maskPreview : null,
     timeMs: typeof json.timeMs === "number" ? json.timeMs : null,
+    optical: json.optical ?? null,
+    usedPriorFallback: json.usedPriorFallback === true,
+    contextCrop: Boolean(crop),
   };
 }
