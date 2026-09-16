@@ -50,6 +50,8 @@ export async function prepareStudioGenerateCallCached(args: {
   const key = studioPrepareCacheKey({ ...args, global });
   if (cached && cached.key === key) return cached.value;
   const value = await prepareStudioGenerateCall(args);
-  cached = { key, value };
+  // Un análisis fallido no se cachea: el siguiente gesto explícito del usuario (Generar o volver a
+  // abrir "Ver qué se enviará") vuelve a intentarlo en vez de arrastrar el prompt de respaldo.
+  if (!value.analyzeError) cached = { key, value };
   return value;
 }

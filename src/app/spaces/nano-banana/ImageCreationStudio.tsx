@@ -63,7 +63,6 @@ import { canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAn
 import type { ChangeMaskSensitivity } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
 import { mergeStudioCardReferences, planStudioIncomingUrls, STUDIO_SCENE_DEST } from "./studio-foldder-images";
 import { prepareStudioGenerateCallCached } from "./studio-prepare-cache";
-import { prepareStudioGenerateCall } from "./studio-prepare-generate";
 import { preserveComposeEligibility, runPreserveCompose, summarizeComposeOutcome } from "./studio-preserve-compose";
 import {
   cropBaseImageDataUrl,
@@ -1139,13 +1138,15 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       const plannedCrop = resolveContextCrop({ base: currentImage, cards, global: genGlobal, frame });
       const cropped = plannedCrop && currentImage ? await cropBaseImageDataUrl(currentImage, plannedCrop, frame) : null;
       const crop = cropped ? plannedCrop : null;
-      const prepared = await prepareStudioGenerateCall({
+      // Misma preparación (y misma caché) que usa Generar: si hay zonas con texto sobre una base,
+      // ejecuta el análisis de zonas (una llamada de pago) y muestra el prompt final tal cual se
+      // enviará. Al pulsar Generar después sin cambiar nada se reutiliza; no se vuelve a llamar.
+      const prepared = await prepareStudioGenerateCallCached({
         baseImage: crop ? cropped : currentImage,
         cards: crop ? cropCardsToRect(cards, crop) : cards,
         frameHeight: crop ? crop.height : frame.height,
         frameWidth: crop ? crop.width : frame.width,
         global: genGlobal,
-        allowPaidAnalyze: false,
         contextCrop: Boolean(crop),
       });
       const merged = mergePromptWithBrain(
@@ -1171,7 +1172,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         images: order.kinds.map((kind, index) => ({ kind, src: prepared.imageList[index] ?? "" })).filter((item) => item.src),
         preserveNote,
         prompt: merged,
-        ranAnalyzeAreas: false,
+        ranAnalyzeAreas: prepared.ranAnalyzeAreas,
         usedAnalyzeAreas: shouldRunAnalyzeAreas(cards) && Boolean(currentImage),
       });
     } catch (error) {
@@ -1811,7 +1812,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             {inspectingCall ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
             <span>
               <span className="block font-semibold">Ver qué se enviará</span>
-              <span className="block text-[11px] text-white/35">Vista local · nunca cobra</span>
+              <span className="block text-[11px] text-white/35">
+                {shouldRunAnalyzeAreas(cards) && currentImage
+                  ? "Analiza las zonas (llamada de pago) · Generar la reutiliza"
+                  : "Vista local · no llama al proveedor"}
+              </span>
             </span>
           </button>
           <div className="mt-1 border-t border-white/10 px-3 py-2 text-[11px] leading-5 text-white/35">
@@ -2867,7 +2872,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 px-4">
               <div>
                 <p className="text-[14px] font-semibold text-white/85">Qué se enviará</p>
-                <p className="text-[11px] text-white/35">Vista local · abrirla nunca llama al proveedor</p>
+                <p className="text-[11px] text-white/35">
+                  {callPreview.ranAnalyzeAreas
+                    ? "Prompt final del análisis de zonas · Generar lo reutiliza sin volver a llamar"
+                    : "Prompt local · sin llamada al proveedor"}
+                </p>
               </div>
               <div className="flex items-stretch">
                 <button
@@ -2888,9 +2897,10 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {callPreview.usedAnalyzeAreas ? (
-                <p className="mb-3 border border-white/10 bg-white/[0.03] p-2.5 text-[12px] text-white/50">
-                  Al pulsar Generar se analizarán las zonas. Esta vista usa una preparación local y no realiza ese análisis.
+              {callPreview.usedAnalyzeAreas && !callPreview.ranAnalyzeAreas ? (
+                <p className="mb-3 border border-red-400/30 bg-red-500/10 p-2.5 text-[12px] text-red-200">
+                  El análisis de zonas falló; se muestra el prompt local de respaldo, que es el que usaría Generar si lo pulsas ahora.
+                  {callPreview.analyzeError ? ` ${callPreview.analyzeError}` : ""}
                 </p>
               ) : null}
               <p className="mb-3 text-[12px] font-medium text-white/45">{callPreview.preserveNote}</p>
