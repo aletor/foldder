@@ -119,7 +119,9 @@ describe("openAiImageGenerate", () => {
 
     expect(editMock).toHaveBeenCalledTimes(1);
     expect(generateMock).not.toHaveBeenCalled();
-    expect(editMock.mock.calls[0]?.[0]).toMatchObject({ input_fidelity: "high" });
+    // gpt-image-2 rechaza `input_fidelity` con 400: nunca debe enviarse.
+    expect(editMock.mock.calls[0]?.[0]).not.toHaveProperty("input_fidelity");
+    expect(editMock.mock.calls[0]?.[0]).toMatchObject({ model: OPENAI_IMAGE_MODEL });
   });
 
   it("pasa máscara a images.edit cuando hay mask", async () => {
@@ -135,5 +137,38 @@ describe("openAiImageGenerate", () => {
       { usageUserEmail: "user@example.com" },
     );
     expect(editMock.mock.calls[0]?.[0]?.mask).toBeTruthy();
+  });
+
+  it("alinea la máscara a las dimensiones exactas de image[0] (orientación EXIF incluida)", async () => {
+    const { default: sharp } = await import("sharp");
+    // Píxeles 60x40 + EXIF orientation 6 (90° CW) ⇒ el navegador la muestra 40x60 y la máscara
+    // se dibuja a 40x60. images.edit exige que base y máscara midan exactamente lo mismo.
+    const basePixels = await sharp({ create: { width: 60, height: 40, channels: 3, background: "#808080" } })
+      .withMetadata({ orientation: 6 })
+      .jpeg()
+      .toBuffer();
+    const maskPng = await sharp({ create: { width: 40, height: 60, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } } })
+      .png()
+      .toBuffer();
+    await openAiImageGenerate(
+      {
+        prompt: "Cambia solo la zona marcada",
+        images: [`data:image/jpeg;base64,${basePixels.toString("base64")}`],
+        mask: `data:image/png;base64,${maskPng.toString("base64")}`,
+        aspect_ratio: "3:4",
+        resolution: "1k",
+      },
+      () => {},
+      { usageUserEmail: "user@example.com" },
+    );
+    const call = editMock.mock.calls[0]?.[0] as unknown as {
+      image: { buffer: Buffer };
+      mask: { buffer: Buffer };
+    };
+    const baseMeta = await sharp(call.image.buffer).metadata();
+    const maskMeta = await sharp(call.mask.buffer).metadata();
+    expect([baseMeta.width, baseMeta.height]).toEqual([40, 60]);
+    expect([maskMeta.width, maskMeta.height]).toEqual([40, 60]);
+    expect(maskMeta.hasAlpha).toBe(true);
   });
 });

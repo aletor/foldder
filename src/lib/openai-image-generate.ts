@@ -91,6 +91,42 @@ function detectImageFormat(buffer: Buffer): { contentType: string; extension: st
   return { contentType: "image/png", extension: "png" };
 }
 
+/**
+ * Deja base y máscara con las mismas dimensiones exactas, como exige images.edit:
+ * - base → PNG con la orientación EXIF aplicada (es la que ve el usuario al dibujar el lazo),
+ * - máscara → PNG RGBA; si no coincide con la base se reescala con `nearest` (bordes duros).
+ * Devuelve null si algo no se puede leer; en ese caso se envía todo tal cual llegó.
+ */
+async function alignMaskToBase(
+  base: Buffer<ArrayBufferLike>,
+  mask: Buffer<ArrayBufferLike>,
+): Promise<{ base: Buffer<ArrayBufferLike>; mask: Buffer<ArrayBufferLike> } | null> {
+  try {
+    const { default: sharp } = await import("sharp");
+    const basePng = await sharp(base, { failOn: "none" }).rotate().png().toBuffer();
+    const baseMeta = await sharp(basePng, { failOn: "none" }).metadata();
+    const baseW = baseMeta.width ?? 0;
+    const baseH = baseMeta.height ?? 0;
+    if (!baseW || !baseH) return null;
+    const maskMeta = await sharp(mask, { failOn: "none" }).metadata();
+    const sameSize = maskMeta.width === baseW && maskMeta.height === baseH;
+    const isRgbaPng = maskMeta.format === "png" && maskMeta.hasAlpha === true;
+    if (sameSize && isRgbaPng) return { base: basePng, mask };
+    const maskPng = await sharp(mask, { failOn: "none" })
+      .ensureAlpha()
+      .resize(baseW, baseH, { fit: "fill", kernel: "nearest" })
+      .png()
+      .toBuffer();
+    console.warn(
+      `[openai-image] mask ${maskMeta.width}x${maskMeta.height} ajustada a base ${baseW}x${baseH}`,
+    );
+    return { base: basePng, mask: maskPng };
+  } catch (error) {
+    console.warn("[openai-image] no se pudo alinear máscara/base:", error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 export async function openAiImageGenerate(
   raw: OpenAiImageGenerateBody,
   onProgress?: (progress: number, stage: string) => void,
@@ -124,7 +160,7 @@ export async function openAiImageGenerate(
   const startTime = Date.now();
   report(4, "prepare");
 
-  const refBuffers: Buffer[] = [];
+  const refBuffers: Array<Buffer<ArrayBufferLike>> = [];
   const n = slice.length || 1;
   for (let i = 0; i < slice.length; i++) {
     const s3Key = tryExtractKnowledgeFilesKeyFromUrl(slice[i]);
@@ -161,12 +197,6 @@ export async function openAiImageGenerate(
   let imageBuffer: Buffer | null = null;
   try {
     if (refBuffers.length > 0) {
-      const imageFiles = await Promise.all(
-        refBuffers.map((buffer, index) => {
-          const detected = detectImageFormat(buffer);
-          return toFile(buffer, `openai-ref-${index}.${detected.extension}`, { type: detected.contentType });
-        }),
-      );
       let maskFile: Awaited<ReturnType<typeof toFile>> | undefined;
       if (mask) {
         const s3Key = tryExtractKnowledgeFilesKeyFromUrl(mask);
@@ -180,20 +210,35 @@ export async function openAiImageGenerate(
         }
         const parsed = await parseReferenceImageForGemini(s3Key ?? mask);
         if (parsed) {
-          const maskBuffer = Buffer.from(parsed.data, "base64");
+          let maskBuffer: Buffer<ArrayBufferLike> = Buffer.from(parsed.data, "base64");
+          // La máscara solo aplica a image[0] y debe medir exactamente lo mismo que esa imagen.
+          // Normalizamos la base a su orientación EXIF (el cliente dibuja la máscara sobre la
+          // imagen ya rotada) y, si aun así difieren, ajustamos la máscara a la base.
+          const aligned = await alignMaskToBase(refBuffers[0]!, maskBuffer);
+          if (aligned) {
+            refBuffers[0] = aligned.base;
+            maskBuffer = aligned.mask;
+          }
           const maskFmt = detectImageFormat(maskBuffer);
           maskFile = await toFile(maskBuffer, `openai-mask.${maskFmt.extension}`, {
             type: maskFmt.contentType,
           });
         }
       }
+      const imageFiles = await Promise.all(
+        refBuffers.map((buffer, index) => {
+          const detected = detectImageFormat(buffer);
+          return toFile(buffer, `openai-ref-${index}.${detected.extension}`, { type: detected.contentType });
+        }),
+      );
+      // gpt-image-2 no acepta `input_fidelity` (la fidelidad alta es su comportamiento por
+      // defecto); enviarlo devuelve 400 "does not support the 'input_fidelity' parameter".
       const result = await openai.images.edit({
         model: OPENAI_IMAGE_MODEL,
         prompt: normalizedPrompt,
         image: imageFiles.length === 1 ? imageFiles[0]! : imageFiles,
         size,
         quality,
-        input_fidelity: "high",
         ...(maskFile ? { mask: maskFile } : {}),
       });
       const b64 = result.data?.[0]?.b64_json;
