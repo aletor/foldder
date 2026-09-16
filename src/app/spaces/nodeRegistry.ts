@@ -731,7 +731,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   promptInput: "value (texto del prompt), label (título visible encima del nodo — obligatorio si el usuario pide nombres/etiquetas por nodo)",
   nanoBanana:
-    "modelKey (flash31|flash25|pro3), aspect_ratio, resolution (1k|2k|4k), thinking (bool), value/s3Key (salida), label; entrada brain desde BrandKit (marca)",
+    "modelKey (flash31|flash25|pro3), openaiModelKey (flare|sunburst), openaiQuality (medium|high|max), aspect_ratio, resolution (1k|2k|4k), imageProvider (gemini|openai), thinking (bool), value/s3Key (salida), label; entrada brain desde BrandKit (marca)",
   grokProcessor: "duration (number, 5|10), resolution, aspect_ratio, value (salida vídeo URL), type ('video'), label",
   geminiVideo:
     "videoModel (veo31|seedance2), videoFormat (16:9|9:16|1:1), resolution (720p|1080p|4K Veo), duration (s), audio (bool), seed, negativePrompt, animationPrompt, cameraPreset, value (salida vídeo URL), type ('video'), s3Key, label",

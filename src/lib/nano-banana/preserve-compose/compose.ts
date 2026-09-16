@@ -55,6 +55,11 @@ export type PreserveComposeArgs = {
   fallbackToPrior?: boolean;
   /** Igualar nitidez/grano de la generada con el anillo de la base (por defecto true). */
   opticalMatch?: boolean;
+  /**
+   * Ampliación de lienzo: píxeles añadidos a cada lado de `base` (la foto original).
+   * La generada cubre el lienzo ampliado; solo se pega en la zona nueva + una costura.
+   */
+  expand?: { left: number; top: number; right: number; bottom: number } | null;
 };
 
 export type PreserveComposeTimings = Record<string, number>;
@@ -328,7 +333,290 @@ export function blendInPlace(args: {
   }
 }
 
+function normalizeExpandPad(expand: { left: number; top: number; right: number; bottom: number }): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} | null {
+  const left = Math.max(0, Math.round(expand.left || 0));
+  const top = Math.max(0, Math.round(expand.top || 0));
+  const right = Math.max(0, Math.round(expand.right || 0));
+  const bottom = Math.max(0, Math.round(expand.bottom || 0));
+  if (left + top + right + bottom === 0) return null;
+  return { left, top, right, bottom };
+}
+
+function expandWorkMask(args: {
+  aW: number;
+  aH: number;
+  origW: number;
+  origH: number;
+  pad: { left: number; top: number; right: number; bottom: number };
+  canvasW: number;
+  canvasH: number;
+}): Uint8Array {
+  const { aW, aH, origW, origH, pad, canvasW, canvasH } = args;
+  const sx = aW / canvasW;
+  const sy = aH / canvasH;
+  const photoX = Math.round(pad.left * sx);
+  const photoY = Math.round(pad.top * sy);
+  const photoW = Math.round(origW * sx);
+  const photoH = Math.round(origH * sy);
+  const seam = Math.max(2, Math.round(Math.min(photoW, photoH) * 0.025));
+  const mask = new Uint8Array(aW * aH);
+  mask.fill(255);
+  const x0 = Math.max(0, photoX + seam);
+  const y0 = Math.max(0, photoY + seam);
+  const x1 = Math.min(aW, photoX + photoW - seam);
+  const y1 = Math.min(aH, photoY + photoH - seam);
+  for (let y = y0; y < y1; y++) {
+    const row = y * aW;
+    for (let x = x0; x < x1; x++) mask[row + x] = 0;
+  }
+  return mask;
+}
+
+async function cropGeneratedToMatchingAspect(generated: Buffer, canvasW: number, canvasH: number): Promise<Buffer> {
+  const oriented = await sharp(generated, { failOn: "none" }).rotate().png().toBuffer();
+  const meta = await sharp(oriented, { failOn: "none" }).metadata();
+  const gw = meta.width ?? 0;
+  const gh = meta.height ?? 0;
+  if (gw < 8 || gh < 8) {
+    throw new Error("La generada no tiene tamaño válido.");
+  }
+  const targetAspect = canvasW / canvasH;
+  const srcAspect = gw / gh;
+  if (Math.abs(srcAspect - targetAspect) / targetAspect <= ASPECT_TOLERANCE) return oriented;
+  let extract = { left: 0, top: 0, width: gw, height: gh };
+  if (srcAspect > targetAspect) {
+    const width = Math.max(8, Math.round(gh * targetAspect));
+    extract = { left: Math.max(0, Math.round((gw - width) / 2)), top: 0, width: Math.min(width, gw), height: gh };
+  } else {
+    const height = Math.max(8, Math.round(gw / targetAspect));
+    extract = { left: 0, top: Math.max(0, Math.round((gh - height) / 2)), width: gw, height: Math.min(height, gh) };
+  }
+  return sharp(oriented, { failOn: "none" }).extract(extract).png().toBuffer();
+}
+
+async function cropGeneratedToCanvas(generated: Buffer, canvasW: number, canvasH: number): Promise<Buffer> {
+  const matched = await cropGeneratedToMatchingAspect(generated, canvasW, canvasH);
+  return sharp(matched, { failOn: "none" })
+    .removeAlpha()
+    .toColourspace("srgb")
+    .resize(canvasW, canvasH, { kernel: sharp.kernel.lanczos3, fit: "fill" })
+    .raw()
+    .toBuffer();
+}
+
+async function expandComposeImages(args: PreserveComposeArgs): Promise<PreserveComposeResult> {
+  const timings: PreserveComposeTimings = {};
+  const mark = (label: string, start: number) => {
+    timings[label] = Math.round(performance.now() - start);
+  };
+  const pad = normalizeExpandPad(args.expand!);
+  if (!pad) {
+    return preserveComposeImages({ ...args, expand: null });
+  }
+  const analysisMaxSide = args.analysisMaxSide ?? PRESERVE_COMPOSE_DEFAULT_ANALYSIS_SIDE;
+  const maxPixels = args.maxPixels ?? PRESERVE_COMPOSE_MAX_PIXELS;
+
+  let t = performance.now();
+  const orig = await decodeRgb(args.base);
+  const canvasW = orig.width + pad.left + pad.right;
+  const canvasH = orig.height + pad.top + pad.bottom;
+  mark("decode", t);
+  if (canvasW * canvasH > maxPixels) {
+    return {
+      composed: false,
+      decision: "too-large",
+      reason: `El lienzo ampliado tiene ${Math.round((canvasW * canvasH) / 1e6)} Mpx; el máximo es ${Math.round(maxPixels / 1e6)} Mpx.`,
+      width: orig.width,
+      height: orig.height,
+      stats: null,
+      maskPreviewPng: null,
+      timings,
+    };
+  }
+
+  t = performance.now();
+  const expanded = await sharp(orig.data, { raw: { width: orig.width, height: orig.height, channels: 3 } })
+    .extend({
+      left: pad.left,
+      top: pad.top,
+      right: pad.right,
+      bottom: pad.bottom,
+      extendWith: "copy",
+    })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const base = { data: expanded.data, width: expanded.info.width, height: expanded.info.height };
+  const W = base.width;
+  const H = base.height;
+  const genFull = await cropGeneratedToCanvas(args.generated, W, H);
+  mark("expandCanvas", t);
+
+  t = performance.now();
+  const scale = Math.min(1, analysisMaxSide / Math.max(W, H));
+  const aW = Math.max(8, Math.round(W * scale));
+  const aH = Math.max(8, Math.round(H * scale));
+  const [baseA, genA] = await Promise.all([
+    resizeRgbRaw(base.data, W, H, aW, aH),
+    resizeRgbRaw(genFull, W, H, aW, aH),
+  ]);
+  const workMask = expandWorkMask({
+    aW,
+    aH,
+    origW: orig.width,
+    origH: orig.height,
+    pad,
+    canvasW: W,
+    canvasH: H,
+  });
+  mark("downscale", t);
+
+  const changed = workMask.reduce((n, v) => n + (v ? 1 : 0), 0);
+  const stats = {
+    decision: "compose" as const,
+    reason: null,
+    changedFraction: changed / (aW * aH),
+    rawChangedFraction: changed / (aW * aH),
+    priorFraction: changed / (aW * aH),
+    componentsKept: 1,
+    componentsDropped: 0,
+    noiseFloor: 0,
+    toneGain: [1, 1, 1] as [number, number, number],
+    toneOffset: [0, 0, 0] as [number, number, number],
+    shift: { dx: 0, dy: 0 },
+    ringRadiusPx: Math.max(3, Math.round(Math.max(aW, aH) * 0.02)),
+    analysisWidth: aW,
+    analysisHeight: aH,
+  };
+  const preview = args.wantMaskPreview ? await maskPreviewPng(workMask, aW, aH) : null;
+
+  t = performance.now();
+  const perComponent =
+    args.opticalMatch === false
+      ? null
+      : measureOpticalMatchPerComponent({
+          base: baseA,
+          generated: genA,
+          mask: workMask,
+          w: aW,
+          h: aH,
+          ringPx: stats.ringRadiusPx,
+        });
+  const optical = perComponent?.summary ?? null;
+  const opticalComponents = perComponent?.components ?? [];
+  mark("optical", t);
+
+  t = performance.now();
+  const grainScale = Math.sqrt(Math.max(1, W / aW));
+  let variants: NonNullable<Parameters<typeof blendInPlace>[0]["variants"]> | null = null;
+  if (perComponent && perComponent.components.length > 0) {
+    const labelCount = perComponent.components.length + 1;
+    const sourceByLabel = new Int32Array(labelCount);
+    const grainByLabel = new Float32Array(labelCount);
+    const sources: Buffer[] = [genFull];
+    const sigmaIndex = new Map<number, number>();
+    for (const comp of perComponent.components) {
+      const sigmaA = Math.round(comp.stats.blurSigmaPx * 4) / 4;
+      const sigmaFull = (sigmaA * W) / aW;
+      if (sigmaFull >= 0.3) {
+        let idx = sigmaIndex.get(sigmaA);
+        if (idx == null) {
+          const blurred = await sharp(genFull, { raw: { width: W, height: H, channels: 3 } })
+            .blur(Math.min(60, sigmaFull))
+            .raw()
+            .toBuffer();
+          idx = sources.push(blurred) - 1;
+          sigmaIndex.set(sigmaA, idx);
+        }
+        sourceByLabel[comp.label] = idx;
+      }
+      grainByLabel[comp.label] = comp.stats.grainAdded > 0 ? Math.min(14, comp.stats.grainAdded * grainScale) : 0;
+    }
+    if (sources.length > 1 || Array.from(grainByLabel).some((g) => g > 0)) {
+      variants = {
+        labels: perComponent.labels,
+        labelsWidth: aW,
+        labelsHeight: aH,
+        sources,
+        sourceByLabel,
+        grainByLabel,
+      };
+    }
+  }
+  mark("opticalVariants", t);
+
+  t = performance.now();
+  const featherPx = featherPxForSize(W, H);
+  const maskSoft = await upscaleSoftMask(workMask, aW, aH, W, H, Math.max(0.3, featherPx * 0.5));
+  mark("mask", t);
+
+  t = performance.now();
+  const seamFactor = 4;
+  const sW = Math.max(4, Math.floor(aW / seamFactor));
+  const sH = Math.max(4, Math.floor(aH / seamFactor));
+  const [baseS, genS, maskS] = await Promise.all([
+    resizeRgbRaw(Buffer.from(baseA.buffer, baseA.byteOffset, baseA.byteLength), aW, aH, sW, sH),
+    resizeRgbRaw(Buffer.from(genA.buffer, genA.byteOffset, genA.byteLength), aW, aH, sW, sH),
+    upscaleSoftMask(workMask, aW, aH, sW, sH, 0.3),
+  ]);
+  const maskSArr = new Uint8Array(maskS.buffer, maskS.byteOffset, maskS.byteLength);
+  const toneLimits = adaptiveToneLimits({ base: baseS, generated: genS, maskSoft: maskSArr, n: sW * sH });
+  const correction = computeLowFrequencyCorrection({
+    base: baseS,
+    generated: genS,
+    maskSoft: maskSArr,
+    width: sW,
+    height: sH,
+    sigmaPx: Math.max(1.5, 0.02 * Math.max(sW, sH)),
+    robustThreshold: toneLimits.robustThreshold,
+    maxCorrection: toneLimits.maxCorrection,
+  });
+  mark("seam", t);
+
+  t = performance.now();
+  blendInPlace({
+    base: base.data,
+    generated: genFull,
+    maskSoft,
+    width: W,
+    height: H,
+    correction,
+    correctionWidth: sW,
+    correctionHeight: sH,
+    grain: { std: 0, seed: W * 31 + H },
+    variants,
+  });
+  mark("blend", t);
+
+  t = performance.now();
+  const png = await sharp(base.data, { raw: { width: W, height: H, channels: 3 } })
+    .png({ compressionLevel: 6 })
+    .toBuffer();
+  mark("encode", t);
+
+  return {
+    composed: true,
+    png,
+    width: W,
+    height: H,
+    stats,
+    maskPreviewPng: preview,
+    timings,
+    optical,
+    opticalComponents,
+    toneLimits,
+    usedPriorFallback: false,
+  };
+}
+
 export async function preserveComposeImages(args: PreserveComposeArgs): Promise<PreserveComposeResult> {
+  if (args.expand && normalizeExpandPad(args.expand)) {
+    return expandComposeImages(args);
+  }
   const timings: PreserveComposeTimings = {};
   const mark = (label: string, start: number) => {
     timings[label] = Math.round(performance.now() - start);
@@ -371,18 +659,10 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   }
   const baseAspect = W / H;
   const genAspect = gw / gh;
-  if (Math.abs(baseAspect - genAspect) / baseAspect > ASPECT_TOLERANCE) {
-    return {
-      composed: false,
-      decision: "aspect-mismatch",
-      reason: `La generada (${gw}×${gh}) no comparte relación de aspecto con la base (${W}×${H}).`,
-      width: W,
-      height: H,
-      stats: null,
-      maskPreviewPng: null,
-      timings,
-    };
-  }
+  const generatedFitted =
+    Math.abs(baseAspect - genAspect) / baseAspect > ASPECT_TOLERANCE
+      ? await cropGeneratedToMatchingAspect(args.generated, W, H)
+      : args.generated;
 
   // Escala de análisis.
   t = performance.now();
@@ -391,7 +671,7 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   const aH = Math.max(8, Math.round(H * scale));
   const [baseA, genA, priorA] = await Promise.all([
     resizeRgbRaw(base.data, W, H, aW, aH),
-    sharp(args.generated, { failOn: "none" })
+    sharp(generatedFitted, { failOn: "none" })
       .rotate()
       .removeAlpha()
       .toColourspace("srgb")
@@ -454,7 +734,7 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   t = performance.now();
   const sdx = Math.round((analysis.stats.shift.dx * W) / aW);
   const sdy = Math.round((analysis.stats.shift.dy * H) / aH);
-  let genPipeline = sharp(args.generated, { failOn: "none" })
+  let genPipeline = sharp(generatedFitted, { failOn: "none" })
     .rotate()
     .removeAlpha()
     .toColourspace("srgb")

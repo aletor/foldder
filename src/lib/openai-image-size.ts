@@ -19,7 +19,7 @@ function parseSizePixels(size: string): number {
   return w * h;
 }
 
-/** Resuelve `size` para gpt-image-2 respetando ratio y resolución del nodo. */
+/** Resuelve `size` para ChatGPT Images respetando ratio y resolución del nodo. */
 export function resolveOpenAiImageSize(aspectRatioInput?: string, resolutionInput?: string): string {
   const res = (resolutionInput || "").trim().toLowerCase();
   const tier = res === "1k" || res === "1024" || res === "1024px"
@@ -40,9 +40,13 @@ export function resolveOpenAiImageSize(aspectRatioInput?: string, resolutionInpu
   return `${width}x${height}`;
 }
 
+export function openAiImageOutputPixels(aspectRatioInput?: string, resolutionInput?: string): number {
+  return parseSizePixels(resolveOpenAiImageSize(aspectRatioInput || "16:9", resolutionInput));
+}
+
 export function openAiImageSizePixelFactor(aspectRatioInput?: string, resolutionInput?: string): number {
-  const actual = parseSizePixels(resolveOpenAiImageSize(aspectRatioInput || "16:9", resolutionInput));
-  const reference = parseSizePixels(resolveOpenAiImageSize("16:9", resolutionInput));
+  const actual = openAiImageOutputPixels(aspectRatioInput, resolutionInput);
+  const reference = openAiImageOutputPixels("16:9", resolutionInput);
   if (reference <= 0) return 1;
   return actual / reference;
 }

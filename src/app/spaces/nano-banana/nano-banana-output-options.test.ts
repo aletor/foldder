@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   coerceNanoBananaAspect,
+  coerceNanoBananaOpenAiQuality,
   coerceNanoBananaResolution,
   isNanoBananaResolutionEnabled,
+  nanoBananaModelLabel,
   nanoBananaResolutionSelectOptions,
+  nearestNanoBananaAspect,
 } from "./nano-banana-output-options";
 
 describe("nano-banana-output-options", () => {
@@ -23,6 +26,18 @@ describe("nano-banana-output-options", () => {
     expect(coerceNanoBananaResolution("gemini", "flash31", "2k")).toBe("2k");
   });
 
+  it("etiqueta Flare/Sunburst en ChatGPT y no el modelo de Gemini", () => {
+    expect(nanoBananaModelLabel("flash31", true)).toBe("Flare");
+    expect(nanoBananaModelLabel("sunburst", true)).toBe("Sunburst");
+    expect(nanoBananaModelLabel("flash31", false)).toBe("3.1");
+  });
+
+  it("usa Alta por defecto y respeta Media o Máxima si el usuario las eligió", () => {
+    expect(coerceNanoBananaOpenAiQuality(undefined)).toBe("high");
+    expect(coerceNanoBananaOpenAiQuality("medium")).toBe("medium");
+    expect(coerceNanoBananaOpenAiQuality("max")).toBe("max");
+  });
+
   it("deshabilita 2K y 4K en el desplegable de Flash 2.5", () => {
     const options = nanoBananaResolutionSelectOptions("gemini", "flash25");
     expect(options).toEqual([
@@ -30,5 +45,11 @@ describe("nano-banana-output-options", () => {
       { value: "2k", label: "2K", disabled: true },
       { value: "4k", label: "4K", disabled: true },
     ]);
+  });
+
+  it("elige el preset de UI más cercano a un lienzo en píxeles", () => {
+    expect(nearestNanoBananaAspect(1920, 1080)).toBe("16:9");
+    expect(nearestNanoBananaAspect(1920, 1440)).toBe("4:3");
+    expect(nearestNanoBananaAspect(1000, 1000)).toBe("1:1");
   });
 });

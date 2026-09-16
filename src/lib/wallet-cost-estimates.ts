@@ -10,6 +10,7 @@ import {
   estimateOpenAIUsd,
   estimateVideoEditorRenderReserveUsd,
   estimateSeedanceVideoUsd,
+  openAiImageWalletLabel,
   resolveOpenAiImageQuality,
   veoResolutionMultiplier,
 } from "@/lib/pricing-config";
@@ -115,7 +116,10 @@ export function estimateWalletCostForRoute(
 
   if (route === "/api/openai/generate-stream") {
     const resolution = stringValue(body.resolution);
-    const quality = resolveOpenAiImageQuality(resolution);
+    const quality = resolveOpenAiImageQuality(
+      resolution,
+      stringValue(body.quality) || stringValue(body.openaiQuality) || undefined,
+    );
     const estimated = estimateOpenAiImageGenerationUsd(
       resolution,
       quality,
@@ -123,7 +127,11 @@ export function estimateWalletCostForRoute(
     );
     const variants = Math.min(3, Math.max(1, Math.round(numberValue(body.variantCount, 1))));
     return {
-      label: variants > 1 ? `Generar imagen ChatGPT ×${variants}` : "Generar imagen ChatGPT",
+      label: openAiImageWalletLabel({
+        model: stringValue(body.model) || undefined,
+        quality,
+        variants,
+      }),
       route,
       category: "image",
       estimatedCostMicros: usdToMicros(estimated) * variants,

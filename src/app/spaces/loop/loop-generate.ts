@@ -11,6 +11,10 @@
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { openaiGenerateWithServerProgress } from "@/lib/openai-generate-stream-client";
 import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
+import {
+  coerceNanoBananaOpenAiModelKey,
+  coerceNanoBananaOpenAiQuality,
+} from "@/app/spaces/nano-banana/nano-banana-output-options";
 
 export type LoopImageProvider = "gemini" | "openai";
 
@@ -20,6 +24,8 @@ export interface LoopTemplateModel {
   resolution?: string;
   thinking?: boolean;
   provider?: LoopImageProvider;
+  openaiModelKey?: string;
+  openaiQuality?: string;
 }
 
 function normalizeResolution(r: string | undefined): "1k" | "2k" | "4k" {
@@ -40,6 +46,7 @@ export async function generateLoopImage(args: {
   const { prompt, images, model } = args;
   const isFlash25 = model.modelKey === "flash25";
   const isPro = model.modelKey === "pro3";
+  const openai = model.provider === "openai";
   const normalizedPrompt = normalizeGenerativeImagePrompt(prompt, {
     targetAspectRatio: model.aspectRatio || "16:9",
     textOnlyRecreation: images.length === 0,
@@ -48,14 +55,20 @@ export async function generateLoopImage(args: {
     prompt: normalizedPrompt,
     images,
     aspect_ratio: model.aspectRatio || "16:9",
-    resolution: isFlash25 ? "1k" : normalizeResolution(model.resolution),
-    model: model.modelKey || "flash31",
-    thinking: !!model.thinking && isPro,
+    resolution: isFlash25 && !openai ? "1k" : normalizeResolution(model.resolution),
+    ...(openai
+      ? {
+          model: coerceNanoBananaOpenAiModelKey(model.openaiModelKey || model.modelKey),
+          quality: coerceNanoBananaOpenAiQuality(model.openaiQuality),
+        }
+      : {
+          model: model.modelKey || "flash31",
+          thinking: !!model.thinking && isPro,
+        }),
   };
   const onProgress = (pct: number) => args.onProgress?.(pct);
-  const json =
-    model.provider === "openai"
-      ? await openaiGenerateWithServerProgress(body, onProgress)
-      : await geminiGenerateWithServerProgress(body, onProgress);
+  const json = openai
+    ? await openaiGenerateWithServerProgress(body, onProgress)
+    : await geminiGenerateWithServerProgress(body, onProgress);
   return { output: json.output, s3Key: typeof json.key === "string" ? json.key : undefined };
 }

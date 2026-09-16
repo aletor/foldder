@@ -23,6 +23,8 @@ export type LoopShareTemplateModel = {
   resolution?: string;
   thinking?: boolean;
   provider?: "gemini" | "openai";
+  openaiModelKey?: string;
+  openaiQuality?: string;
 };
 
 export type LoopShareOptions = {

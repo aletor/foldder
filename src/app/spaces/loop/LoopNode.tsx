@@ -135,6 +135,8 @@ type TemplateConfig = {
     resolution?: string;
     thinking?: boolean;
     imageProvider?: string;
+    openaiModelKey?: string;
+    openaiQuality?: string;
   };
   /** Prompt efectivo (Loop manda; si no, semilla del nodo creativo). */
   promptTemplate: string;
@@ -230,6 +232,8 @@ function resolveTemplateConfig(
       resolution: data.resolution as string | undefined,
       thinking: data.thinking as boolean | undefined,
       imageProvider: data.imageProvider as string | undefined,
+      openaiModelKey: data.openaiModelKey as string | undefined,
+      openaiQuality: data.openaiQuality as string | undefined,
     },
     promptTemplate,
     seedPrompt,
@@ -358,6 +362,8 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
     resolution: template.model.resolution,
     thinking: template.model.thinking,
     provider: template.model.imageProvider === "openai" ? "openai" : "gemini",
+    openaiModelKey: template.model.openaiModelKey,
+    openaiQuality: template.model.openaiQuality,
   }), []);
 
   const onPreview = useCallback(async () => {
@@ -470,6 +476,8 @@ function LoopNodeImpl({ id, data, selected }: NodeProps) {
                 resolution: sData.resolution as string | undefined,
                 thinking: sData.thinking as boolean | undefined,
                 imageProvider: sData.imageProvider as string | undefined,
+                openaiModelKey: sData.openaiModelKey as string | undefined,
+                openaiQuality: sData.openaiQuality as string | undefined,
               },
               settings: nodeData.datasetOutputsByChannel?.[sid],
             };

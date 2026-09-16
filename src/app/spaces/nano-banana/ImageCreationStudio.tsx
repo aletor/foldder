@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Crop,
   Download,
   Eraser,
   Eye,
@@ -48,13 +49,22 @@ import {
 } from "../FoldderStudioHeader";
 import {
   coerceNanoBananaAspect,
+  coerceNanoBananaOpenAiModelKey,
+  coerceNanoBananaOpenAiQuality,
   coerceNanoBananaResolution,
   isNanoBananaResolutionEnabled,
   nanoBananaAspectSelectOptions,
   nanoBananaModelLabel,
+  nanoBananaOpenAiQualityLabel,
+  nearestNanoBananaAspect,
+  parseStoredNanoBananaOpenAiQuality,
   NANO_BANANA_GEMINI_MODELS,
+  NANO_BANANA_OPENAI_MODELS,
+  NANO_BANANA_OPENAI_QUALITIES,
   type NanoBananaAspectRatio,
   type NanoBananaImageProvider,
+  type NanoBananaOpenAiModelKey,
+  type NanoBananaOpenAiQuality,
   type NanoBananaResolution,
 } from "./nano-banana-output-options";
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
@@ -72,6 +82,27 @@ import {
   type StudioContextCrop,
 } from "./studio-context-crop";
 import { downloadExport6kFile, runExport6k } from "./studio-export-6k";
+import { cropStudioImageDataUrl, buildStudioExpandPayload } from "./studio-expand-canvas";
+import {
+  applyFrameHandleDelta,
+  clampFramePad,
+  describeExpandPad,
+  expandAspectToken,
+  expandSides,
+  frameFromPad,
+  hasCropPad,
+  hasExpandPad,
+  isZeroFramePad,
+  resolveStudioGenerateAspect,
+  studioExpandPrompt,
+  translateCardsForCrop,
+  translateCardsForExpand,
+  translatePointToCanvas,
+  ZERO_FRAME_PAD,
+  cloneFramePad,
+  type StudioFrameHandle,
+  type StudioFramePad,
+} from "./studio-frame-adjust";
 import { estimateStudioJobUsd, formatStudioUsd } from "./studio-cost";
 import { buildOpenAiEditMaskDataUrl } from "./studio-openai-mask";
 import { buildStudioGenerateImageSlots } from "./studio-generate-payload";
@@ -110,6 +141,8 @@ export type ImageCreationStudioProps = {
   aspectRatio: string;
   resolution: string;
   imageProvider?: NanoBananaImageProvider;
+  openaiModelKey?: string;
+  openaiQuality?: string;
   thinking: boolean;
   prompt: string;
   externalPromptIgnored?: boolean;
@@ -123,6 +156,8 @@ export type ImageCreationStudioProps = {
   onResolutionChange?: (resolution: NanoBananaResolution) => void;
   onAspectRatioChange?: (aspectRatio: NanoBananaAspectRatio) => void;
   onModelKeyChange?: (modelKey: string) => void;
+  onOpenAiModelKeyChange?: (modelKey: NanoBananaOpenAiModelKey) => void;
+  onOpenAiQualityChange?: (quality: NanoBananaOpenAiQuality) => void;
   onImageProviderChange?: (provider: NanoBananaImageProvider) => void;
   onThinkingChange?: (thinking: boolean) => void;
   /** "Conservar zonas sin cambios": compone la generación sobre la base (por defecto activo). */
@@ -206,8 +241,13 @@ function studioSetupLabel(
   resolution: string,
   aspect: string,
   openai: boolean,
+  pixels?: { w: number; h: number } | null,
+  quality?: NanoBananaOpenAiQuality,
 ): string {
-  return `${nanoBananaModelLabel(modelKey, openai)} · ${resolution.toUpperCase()} · ${aspect}`;
+  const format =
+    pixels && pixels.w > 1 && pixels.h > 1 ? `${pixels.w}×${pixels.h}` : aspect;
+  const qualityBit = openai && quality ? ` · ${nanoBananaOpenAiQualityLabel(quality)}` : "";
+  return `${nanoBananaModelLabel(modelKey, openai)}${qualityBit} · ${resolution.toUpperCase()} · ${format}`;
 }
 
 const CALL_SLOT_LABEL: Record<StudioGenerateSlotKind, string> = {
@@ -236,10 +276,11 @@ function composeNoticeText(summary: StudioComposeSummary): string {
     const pct = summary.changedPct != null ? ` · ${summary.changedPct} % modificado` : "";
     const dropped = summary.componentsDropped ? ` · ${summary.componentsDropped} cambio(s) lejano(s) descartado(s)` : "";
     const crop = summary.contextCrop ? " · generado sobre un recorte ampliado y pegado de vuelta" : "";
+    const expand = summary.canvasExpand ? " · relleno solo en la zona nueva del lienzo" : "";
     const blur = summary.blurSigmaPx ? ` · desenfoque igualado al fondo (σ ${summary.blurSigmaPx} px)` : "";
     const grain = summary.grainAdded ? ` · grano igualado (${summary.grainAdded})` : "";
     const fallback = summary.usedPriorFallback ? " · pegado por el lazo (el detector no confirmó el cambio)" : "";
-    return `Zonas sin cambios conservadas de la original${pct}${dropped}${crop}${blur}${grain}${fallback}.`;
+    return `Zonas sin cambios conservadas de la original${pct}${dropped}${crop}${expand}${blur}${grain}${fallback}.`;
   }
   const reason = summary.reason ? ` ${summary.reason}` : "";
   switch (summary.decision) {
@@ -265,6 +306,17 @@ const STUDIO_ICON_BUTTON =
 const STUDIO_TEXT_BUTTON =
   "flex h-9 shrink-0 items-center justify-center gap-2 border border-white/10 bg-white/[0.05] px-3 text-[12px] font-semibold text-white/80 transition hover:border-white/25 hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30";
 
+const FRAME_HANDLE_HITS: Array<{ id: StudioFrameHandle; style: React.CSSProperties; cursor: string }> = [
+  { id: "n", cursor: "ns-resize", style: { left: 16, right: 16, top: -5, height: 10 } },
+  { id: "s", cursor: "ns-resize", style: { left: 16, right: 16, bottom: -5, height: 10 } },
+  { id: "e", cursor: "ew-resize", style: { top: 16, bottom: 16, right: -5, width: 10 } },
+  { id: "w", cursor: "ew-resize", style: { top: 16, bottom: 16, left: -5, width: 10 } },
+  { id: "nw", cursor: "nwse-resize", style: { left: -6, top: -6, width: 12, height: 12 } },
+  { id: "ne", cursor: "nesw-resize", style: { right: -6, top: -6, width: 12, height: 12 } },
+  { id: "sw", cursor: "nesw-resize", style: { left: -6, bottom: -6, width: 12, height: 12 } },
+  { id: "se", cursor: "nwse-resize", style: { right: -6, bottom: -6, width: 12, height: 12 } },
+];
+
 function studioChangeLabel(card: StudioCard, index: number): string {
   return card.description.trim() || (card.lassoPoints.length > 2 || card.paintData ? `Zona ${index + 1}` : `Cambio ${index + 1}`);
 }
@@ -278,6 +330,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   aspectRatio,
   resolution,
   imageProvider = "gemini",
+  openaiModelKey,
+  openaiQuality,
   thinking,
   prompt,
   composeBrainImageGeneratorPrompt,
@@ -288,6 +342,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   onResolutionChange,
   onAspectRatioChange,
   onModelKeyChange,
+  onOpenAiModelKeyChange,
+  onOpenAiQualityChange,
   onImageProviderChange,
   onThinkingChange,
   preserveUnchanged: preserveUnchangedProp = true,
@@ -340,6 +396,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     sessionImage: string | null;
     cards: StudioCard[];
     global: StudioGlobal;
+    framePad?: StudioFramePad;
   } | null>(null);
   const [sessionImage, setSessionImage] = useState<string | null>(lastGenerated || initialImage);
   const [showingOriginal, setShowingOriginal] = useState(false);
@@ -349,12 +406,24 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
 
   const [studioProvider, setStudioProvider] = useState<NanoBananaImageProvider>(imageProvider);
   const [studioModelKey, setStudioModelKey] = useState(modelKey);
+  const [studioOpenAiModelKey, setStudioOpenAiModelKey] = useState(() =>
+    coerceNanoBananaOpenAiModelKey(openaiModelKey),
+  );
+  const [studioOpenAiQualityOverride, setStudioOpenAiQualityOverride] = useState<
+    NanoBananaOpenAiQuality | undefined
+  >(() => parseStoredNanoBananaOpenAiQuality(openaiQuality));
   const [studioResolution, setStudioResolution] = useState(() =>
     coerceNanoBananaResolution(imageProvider, modelKey, resolution),
   );
   const [studioAspect, setStudioAspect] = useState(() => coerceNanoBananaAspect(aspectRatio));
   useEffect(() => setStudioProvider(imageProvider), [imageProvider]);
   useEffect(() => setStudioModelKey(modelKey), [modelKey]);
+  useEffect(() => {
+    setStudioOpenAiModelKey(coerceNanoBananaOpenAiModelKey(openaiModelKey));
+  }, [openaiModelKey]);
+  useEffect(() => {
+    setStudioOpenAiQualityOverride(parseStoredNanoBananaOpenAiQuality(openaiQuality));
+  }, [openaiQuality]);
   useEffect(() => {
     setStudioResolution(coerceNanoBananaResolution(studioProvider, studioModelKey, resolution));
   }, [resolution, studioModelKey, studioProvider]);
@@ -364,6 +433,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const isPro = studioModelKey === "pro3";
   const lockFlash25Res = !isOpenAi && studioModelKey === "flash25";
   const effectiveStudioResolution = lockFlash25Res ? "1k" : studioResolution;
+  const effectiveOpenAiQuality = coerceNanoBananaOpenAiQuality(studioOpenAiQualityOverride);
+  const studioDisplayModelKey = isOpenAi ? studioOpenAiModelKey : studioModelKey;
   const aspectCanChange =
     !lastGenerated && generationHistory.length === 0 && genStatus !== "running" && genStatus !== "success";
   const settingsBusy = genStatus === "running" || inspectingCall || exporting6k;
@@ -378,6 +449,16 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       }
     },
     [onImageProviderChange, onResolutionChange, studioModelKey, studioResolution],
+  );
+
+  const syncDocumentFormat = useCallback(
+    (width: number, height: number) => {
+      if (width < 8 || height < 8) return;
+      const next = nearestNanoBananaAspect(width, height);
+      setStudioAspect(next);
+      onAspectRatioChange?.(next);
+    },
+    [onAspectRatioChange],
   );
 
   const [cards, setCards] = useState<StudioCard[]>(() => boot.draft.cards.filter(cardHasStartedChange));
@@ -414,6 +495,21 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     const frame = workingFrameSize(coerceNanoBananaAspect(aspectRatio));
     return { w: frame.width, h: frame.height };
   });
+  const [framePad, setFramePad] = useState<StudioFramePad>(ZERO_FRAME_PAD);
+  const framePadRef = useRef(framePad);
+  framePadRef.current = framePad;
+  const [expandPrompt, setExpandPrompt] = useState("");
+  const frameDragRef = useRef<{
+    handle: StudioFrameHandle;
+    startPad: StudioFramePad;
+    startX: number;
+    startY: number;
+    viewW: number;
+    viewH: number;
+    overlayW: number;
+    overlayH: number;
+    symmetric: boolean;
+  } | null>(null);
   const [fitSize, setFitSize] = useState({ w: 480, h: 270 });
   const nodeRefs = useMemo(
     () => connectedImages.filter((src): src is string => Boolean(src && src.trim())),
@@ -484,6 +580,12 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   const displayImage = holdingCompare && compareHoldUrl
     ? compareHoldUrl
     : historyPreviewUrl || currentImage;
+  const frameLayout = useMemo(
+    () => frameFromPad(imgNat.w, imgNat.h, historyPreviewUrl ? ZERO_FRAME_PAD : framePad),
+    [framePad, historyPreviewUrl, imgNat.h, imgNat.w],
+  );
+  const pendingExpand = !historyPreviewUrl && hasExpandPad(framePad);
+  const pendingCrop = !historyPreviewUrl && hasCropPad(framePad);
   const displayCards = previewBrief ? previewBrief.cards : cards;
   const visibleCards = displayCards.filter((card) =>
     readOnly ? cardHasStartedChange(card) : card.id === draftCard?.id || cardHasStartedChange(card),
@@ -526,13 +628,13 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     if (!wrap) return;
     const boxW = Math.max(1, wrap.clientWidth);
     const boxH = Math.max(1, wrap.clientHeight);
-    if (displayImage && imgNat.w > 1 && imgNat.h > 1) {
-      const scale = Math.min(boxW / imgNat.w, boxH / imgNat.h);
-      setFitSize({ w: Math.max(1, imgNat.w * scale), h: Math.max(1, imgNat.h * scale) });
+    if (displayImage && frameLayout.canvasW > 1 && frameLayout.canvasH > 1) {
+      const scale = Math.min(boxW / frameLayout.canvasW, boxH / frameLayout.canvasH);
+      setFitSize({ w: Math.max(1, frameLayout.canvasW * scale), h: Math.max(1, frameLayout.canvasH * scale) });
       return;
     }
     setFitSize(aspectBox(studioAspect, boxW * 0.86, boxH * 0.86));
-  }, [displayImage, imgNat.h, imgNat.w, studioAspect]);
+  }, [displayImage, frameLayout.canvasH, frameLayout.canvasW, studioAspect]);
 
   useEffect(() => {
     if (displayImage) return;
@@ -627,6 +729,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
 
   const startAdd = useCallback(() => {
     if (readOnly || genStatus === "running") return;
+    if (pendingExpand) return;
     if (displayImage) {
       setDrawingLasso(true);
       setLassoPoints([]);
@@ -635,7 +738,108 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       return;
     }
     scenePromptRef.current?.focus();
-  }, [displayImage, genStatus, readOnly]);
+  }, [displayImage, genStatus, pendingExpand, readOnly]);
+
+  const applyFrameCrop = useCallback(async (pad: StudioFramePad) => {
+    if (!currentImageRef.current || imgNat.w < 1) return expandSides(pad);
+    const layout = frameFromPad(imgNat.w, imgNat.h, pad);
+    if (layout.srcW >= imgNat.w && layout.srcH >= imgNat.h && layout.srcX === 0 && layout.srcY === 0) {
+      return expandSides(pad);
+    }
+    const prev = currentImageRef.current;
+    const cropped = await cropStudioImageDataUrl({
+      src: prev,
+      origW: imgNat.w,
+      origH: imgNat.h,
+      srcX: layout.srcX,
+      srcY: layout.srcY,
+      srcW: layout.srcW,
+      srcH: layout.srcH,
+    });
+    const nextCards = translateCardsForCrop(cards, layout);
+    undoSnapRef.current = { sessionImage: prev, cards, global, framePad: pad };
+    setCanUndo(true);
+    setCards(nextCards);
+    setDraftCard(null);
+    setImgNat({ w: layout.srcW, h: layout.srcH });
+    syncDocumentFormat(layout.srcW, layout.srcH);
+    currentImageRef.current = cropped;
+    setSessionImage(cropped);
+    setShowingOriginal(false);
+    onGenerated(cropped);
+    onGenerationHistoryChange((h) => {
+      const next = [...h];
+      if (!next.some((url) => studioAssetsEqual(url, prev))) next.push(prev);
+      if (!next.some((url) => studioAssetsEqual(url, cropped))) next.push(cropped);
+      return next;
+    });
+    const brief: StudioHistoryBrief = {
+      outputUrl: cropped,
+      baseUrl: prev,
+      cards: [],
+      global,
+      compose: {
+        composed: true,
+        decision: "crop",
+        reason: null,
+        changedPct: null,
+        componentsKept: null,
+        componentsDropped: null,
+      },
+    };
+    persistStudioMedia(nodeId, { cards: nextCards, global }, [...hydratedBriefs, brief]);
+    setBriefs((prevBriefs) => [...prevBriefs.map(stripBriefForNode), stripBriefForNode(brief)]);
+    return expandSides(pad);
+  }, [cards, global, hydratedBriefs, imgNat.h, imgNat.w, nodeId, onGenerated, onGenerationHistoryChange, setBriefs, syncDocumentFormat]);
+
+  const finishFrameDrag = useCallback(async () => {
+    const drag = frameDragRef.current;
+    frameDragRef.current = null;
+    if (!drag) return;
+    const clamped = clampFramePad(imgNat.w, imgNat.h, framePadRef.current);
+    if (hasCropPad(clamped)) {
+      const remaining = await applyFrameCrop(clamped);
+      setFramePad(hasExpandPad(remaining) ? remaining : ZERO_FRAME_PAD);
+      return;
+    }
+    setFramePad(hasExpandPad(clamped) ? clamped : ZERO_FRAME_PAD);
+  }, [applyFrameCrop, imgNat.h, imgNat.w]);
+
+  const onFrameHandleDown = useCallback(
+    (handle: StudioFrameHandle, event: React.PointerEvent) => {
+      if (readOnly || genStatus === "running" || drawingLasso || schemaMode || !displayImage) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const overlay = overlayRef.current?.getBoundingClientRect();
+      if (!overlay) return;
+      frameDragRef.current = {
+        handle,
+        startPad: cloneFramePad(framePad),
+        startX: event.clientX,
+        startY: event.clientY,
+        viewW: frameLayout.canvasW,
+        viewH: frameLayout.canvasH,
+        overlayW: overlay.width,
+        overlayH: overlay.height,
+        symmetric: event.shiftKey,
+      };
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    },
+    [displayImage, drawingLasso, frameLayout.canvasH, frameLayout.canvasW, framePad, genStatus, readOnly, schemaMode],
+  );
+
+  const onFrameHandleMove = useCallback((event: React.PointerEvent) => {
+    const drag = frameDragRef.current;
+    if (!drag) return;
+    const dx = ((event.clientX - drag.startX) / Math.max(1, drag.overlayW)) * drag.viewW;
+    const dy = ((event.clientY - drag.startY) / Math.max(1, drag.overlayH)) * drag.viewH;
+    const next = applyFrameHandleDelta(drag.startPad, drag.handle, dx, dy, {
+      symmetric: drag.symmetric || event.shiftKey,
+    });
+    const clamped = clampFramePad(imgNat.w, imgNat.h, next);
+    framePadRef.current = clamped;
+    setFramePad(clamped);
+  }, [imgNat.h, imgNat.w]);
 
   const confirmLasso = useCallback(() => {
     if (!isValidClosedLasso(lassoPoints) || !imgNat.w) {
@@ -670,6 +874,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     if (plan.sessionImage) {
       setSessionImage(plan.sessionImage);
       setShowingOriginal(false);
+      setFramePad(ZERO_FRAME_PAD);
     }
     if (plan.cardUpdate) {
       const { cardId, add } = plan.cardUpdate;
@@ -799,14 +1004,41 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     () =>
       estimateStudioJobUsd({
         provider: studioProvider,
-        modelKey: studioModelKey,
+        modelKey: isOpenAi ? studioOpenAiModelKey : studioModelKey,
         resolution: effectiveStudioResolution,
-        aspectRatio: studioAspect,
-        cards,
+        aspectRatio: pendingExpand
+          ? expandAspectToken(frameLayout)
+          : currentImage && imgNat.w > 1 && imgNat.h > 1
+            ? resolveStudioGenerateAspect({ width: imgNat.w, height: imgNat.h, provider: studioProvider })
+            : studioAspect,
+        cards: pendingExpand ? [] : cards,
         hasBaseImage: Boolean(currentImage),
         variantCount: 1,
+        quality: isOpenAi ? effectiveOpenAiQuality : undefined,
       }),
-    [cards, currentImage, effectiveStudioResolution, studioAspect, studioModelKey, studioProvider],
+    [
+      cards,
+      currentImage,
+      effectiveOpenAiQuality,
+      effectiveStudioResolution,
+      frameLayout,
+      imgNat.h,
+      imgNat.w,
+      isOpenAi,
+      pendingExpand,
+      studioAspect,
+      studioModelKey,
+      studioOpenAiModelKey,
+      studioProvider,
+    ],
+  );
+
+  const studioGenerateModelFields = useMemo(
+    () =>
+      isOpenAi
+        ? { model: studioOpenAiModelKey, quality: effectiveOpenAiQuality }
+        : { model: studioModelKey, thinking: thinking && isPro },
+    [effectiveOpenAiQuality, isOpenAi, isPro, studioModelKey, studioOpenAiModelKey, thinking],
   );
 
   /**
@@ -834,6 +1066,10 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       frameHeight: number;
       /** Recorte de contexto con el que se generó `output`; obliga a pegar sobre la foto completa. */
       crop?: StudioContextCrop | null;
+      /** Ampliación de lienzo; obliga a pegar solo la zona nueva sobre la original. */
+      expand?: StudioFramePad | null;
+      undoCards?: StudioCard[];
+      undoPad?: StudioFramePad;
     }) => {
       let out = args.output;
       let outKey = args.key;
@@ -841,16 +1077,34 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       let composeSummary: StudioComposeSummary | null = null;
       let composeMaskPreview: string | null = null;
       const crop = args.crop ?? null;
+      const expand = args.expand ? expandSides(args.expand) : null;
+      const eligibility = args.prev
+        ? preserveComposeEligibility({
+            baseImage: args.prev,
+            cards: args.cards,
+            global: args.global,
+          })
+        : ({ ok: false, reason: "Sin imagen base: la generación es completa." } as const);
+      const keepDocument = Boolean(
+        args.prev && (crop || (expand && hasExpandPad(expand)) || eligibility.ok),
+      );
 
-      if ((preserveUnchanged || crop) && args.prev) {
-        const eligibility = preserveComposeEligibility({
-          baseImage: args.prev,
-          cards: args.cards,
-          global: args.global,
-        });
-        if (eligibility.ok || crop) {
-          setGenStage(crop ? "Pegando el recorte sobre la foto completa…" : "Integrando cambios sobre la original…");
-          setComposeStage(crop ? "Pegando el recorte sobre la foto completa…" : "Integrando cambios sobre la original…");
+      if ((preserveUnchanged || keepDocument) && args.prev) {
+        if (eligibility.ok || crop || (expand && hasExpandPad(expand))) {
+          setGenStage(
+            expand && hasExpandPad(expand)
+              ? "Integrando el relleno sobre la foto original…"
+              : crop
+                ? "Pegando el recorte sobre la foto completa…"
+                : "Integrando cambios sobre la original…",
+          );
+          setComposeStage(
+            expand && hasExpandPad(expand)
+              ? "Integrando el relleno sobre la foto original…"
+              : crop
+                ? "Pegando el recorte sobre la foto completa…"
+                : "Integrando cambios sobre la original…",
+          );
           try {
             const outcome = await runPreserveCompose({
               baseImage: args.prev,
@@ -859,7 +1113,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               cards: args.cards,
               frame: { width: args.frameWidth, height: args.frameHeight },
               sensitivity: composeSensitivity,
-              crop,
+              crop: expand ? null : crop,
+              expand: expand && hasExpandPad(expand) ? expand : null,
             });
             composeSummary = summarizeComposeOutcome(outcome);
             composeMaskPreview = outcome.maskPreview;
@@ -867,15 +1122,14 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               rawOutputUrl = args.output;
               out = outcome.output;
               outKey = outcome.key ?? undefined;
-            } else if (crop) {
-              // Un recorte sin pegar no es una imagen válida: no se aplica y se informa.
+            } else if (keepDocument) {
               throw new Error(
-                `El recorte generado no se pudo pegar sobre la foto completa (${outcome.reason || outcome.decision}). La generación no se ha aplicado.`,
+                `No se pudo integrar sobre la original (${outcome.reason || outcome.decision}). La generación no se ha aplicado.`,
               );
             }
           } catch (error) {
             console.error("[ImageCreationStudio] preserve-compose:", error);
-            if (crop) {
+            if (keepDocument) {
               setComposeStage(null);
               throw error;
             }
@@ -902,7 +1156,12 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         }
       }
 
-      undoSnapRef.current = { sessionImage: args.prev, cards: args.cards, global: args.global };
+      undoSnapRef.current = {
+        sessionImage: args.prev,
+        cards: args.undoCards ?? args.cards,
+        global: args.global,
+        framePad: args.undoPad ?? ZERO_FRAME_PAD,
+      };
       setCanUndo(true);
       onGenerationHistoryChange((h) => {
         const next = [...h];
@@ -919,6 +1178,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         global: args.global,
         rawOutputUrl,
         crop,
+        expand: expand && hasExpandPad(expand) ? expand : null,
         compose: composeSummary,
         composeMaskPreview,
       };
@@ -945,11 +1205,15 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     collectCandidate?: boolean;
   }) => {
     if (readOnly || inspectingCall || genStatus === "running" || exporting6k) return;
-    const canGo = canStudioPrimaryGenerate(cards, global, {
-      nodePrompt,
-      hasGeneratedOutput:
-        Boolean(lastGenerated) || acceptedHistory.length > 0 || genStatus === "success",
-    });
+    const expandPad = expandSides(framePad);
+    const fillingExpand = hasExpandPad(expandPad) && Boolean(currentImage);
+    const canGo = fillingExpand
+      ? true
+      : canStudioPrimaryGenerate(cards, global, {
+          nodePrompt,
+          hasGeneratedOutput:
+            Boolean(lastGenerated) || acceptedHistory.length > 0 || genStatus === "success",
+        });
     if (!canGo) return;
     const resolution = opts?.resolution
       ? coerceNanoBananaResolution(studioProvider, studioModelKey, opts.resolution)
@@ -958,7 +1222,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       setStudioResolution(resolution);
       onResolutionChange?.(resolution);
     }
-    const collectCandidate = opts?.collectCandidate ?? variantCount > 1;
+    const collectCandidate = fillingExpand ? false : (opts?.collectCandidate ?? variantCount > 1);
     setGenStatus("running");
     setGenError(null);
     setProgress(0);
@@ -974,6 +1238,65 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           const frameWidth = imgNat.w || workingFrameSize(studioAspect).width;
           const frameHeight = imgNat.h || workingFrameSize(studioAspect).height;
           const genGlobal: StudioGlobal = { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text };
+
+          if (fillingExpand && currentImage) {
+            setGenStage("Preparando el lienzo ampliado…");
+            const payload = await buildStudioExpandPayload({
+              src: currentImage,
+              origW: frameWidth,
+              origH: frameHeight,
+              pad: expandPad,
+              provider: studioProvider,
+              resolution,
+            });
+            const expandText = studioExpandPrompt({ pad: expandPad, userText: expandPrompt });
+            const merged = mergePromptWithBrain(
+              composeBrainImageGeneratorPrompt,
+              onBrainImageGeneratorDiagnostics,
+              scenePrompt,
+              expandText,
+            );
+            const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
+            setGenStage(
+              `Rellenando ampliación · ${nanoBananaModelLabel(studioDisplayModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
+            );
+            const generated = await generate(
+              {
+                prompt: merged,
+                images: [payload.canvasDataUrl],
+                aspect_ratio: payload.generateAspect,
+                resolution,
+                ...studioGenerateModelFields,
+                ...(payload.maskDataUrl ? { mask: payload.maskDataUrl } : {}),
+              },
+              (pct) => {
+                setProgress(pct);
+                aiHudNanoBananaJobProgress(nodeId, pct);
+              },
+            );
+            const historyCard = {
+              ...createStudioCard(0),
+              description: [describeExpandPad(expandPad), expandPrompt.trim()].filter(Boolean).join(" · ") || "Ampliar lienzo",
+            };
+            await commitGeneratedOutput({
+              output: generated.output,
+              key: typeof generated.key === "string" ? generated.key : undefined,
+              prev: currentImageRef.current,
+              cards: [historyCard],
+              global: genGlobal,
+              frameWidth,
+              frameHeight,
+              expand: expandPad,
+              undoCards: cards,
+              undoPad: expandPad,
+            });
+            setCards(translateCardsForExpand(cards, expandPad));
+            setDraftCard(null);
+            setFramePad(ZERO_FRAME_PAD);
+            framePadRef.current = ZERO_FRAME_PAD;
+            okFinish = true;
+            return;
+          }
 
           // Recorte de contexto: zonas pequeñas sobre una base ⇒ el modelo trabaja sobre un recorte
           // ampliado (misma llamada de pago, muchos más píxeles para la zona) y se pega de vuelta.
@@ -998,7 +1321,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           if (shouldRunAnalyzeAreas(genCards) && genBase) setGenStage("Analizando zonas…");
           else {
             setGenStage(
-              `Generando · ${nanoBananaModelLabel(studioModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
+              `Generando · ${nanoBananaModelLabel(studioDisplayModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
             );
           }
           const prepared = await prepareStudioGenerateCallCached({
@@ -1023,16 +1346,19 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             : prepared.imageList;
           const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
           setGenStage(
-            `Generando candidata · ${nanoBananaModelLabel(studioModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
+            `Generando candidata · ${nanoBananaModelLabel(studioDisplayModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
           );
           const generated = await generate(
             {
               prompt: merged,
               images: imageList,
-              aspect_ratio: studioAspect,
+              aspect_ratio: resolveStudioGenerateAspect({
+                width: genFrameWidth,
+                height: genFrameHeight,
+                provider: studioProvider,
+              }),
               resolution,
-              model: studioModelKey,
-              thinking: thinking && isPro && !isOpenAi,
+              ...studioGenerateModelFields,
               ...(maskUrl ? { mask: maskUrl } : {}),
             },
             (pct) => {
@@ -1103,13 +1429,14 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     composeBrainImageGeneratorPrompt,
     currentImage,
     effectiveStudioResolution,
+    expandPrompt,
     exporting6k,
+    framePad,
     global,
     imgNat.h,
     imgNat.w,
     inspectingCall,
     isOpenAi,
-    isPro,
     lastGenerated,
     acceptedHistory.length,
     genStatus,
@@ -1120,10 +1447,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     readOnly,
     resolveContextCrop,
     studioAspect,
+    studioDisplayModelKey,
+    studioGenerateModelFields,
     studioModelKey,
     studioProvider,
     studioResolution,
-    thinking,
     variantCount,
   ]);
 
@@ -1133,6 +1461,37 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     setInspectingCall(true);
     try {
       const scenePrompt = global.promptDraft;
+      const expandPad = expandSides(framePad);
+      if (hasExpandPad(expandPad) && currentImage) {
+        const payload = await buildStudioExpandPayload({
+          src: currentImage,
+          origW: imgNat.w || workingFrameSize(studioAspect).width,
+          origH: imgNat.h || workingFrameSize(studioAspect).height,
+          pad: expandPad,
+          provider: studioProvider,
+          resolution: effectiveStudioResolution,
+        });
+        const expandText = studioExpandPrompt({ pad: expandPad, userText: expandPrompt });
+        const merged = mergePromptWithBrain(
+          composeBrainImageGeneratorPrompt,
+          onBrainImageGeneratorDiagnostics,
+          scenePrompt,
+          expandText,
+        );
+        setCallPreview({
+          analyzeError: null,
+          images: [
+            { kind: "base", src: payload.canvasDataUrl },
+            ...(payload.maskDataUrl ? [{ kind: "zoneMap" as const, src: payload.maskDataUrl }] : []),
+          ],
+          preserveNote:
+            "Ampliación: el modelo recibe el lienzo con la zona nueva. Tras generar se pega solo ese relleno sobre la foto original a su resolución.",
+          prompt: merged,
+          ranAnalyzeAreas: false,
+          usedAnalyzeAreas: false,
+        });
+        return;
+      }
       const genGlobal: StudioGlobal = { promptDraft: scenePrompt, schemaData: global.schemaData, text: global.text };
       const frame = { width: imgNat.w || workingFrameSize(studioAspect).width, height: imgNat.h || workingFrameSize(studioAspect).height };
       const plannedCrop = resolveContextCrop({ base: currentImage, cards, global: genGlobal, frame });
@@ -1162,10 +1521,13 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         global: genGlobal,
       });
       const cropNote = crop ? ` ${describeContextCrop(crop, frame)}: el modelo recibe solo ese recorte y el resultado se pega de vuelta sobre la foto completa.` : "";
+      const aspectNote = currentImage
+        ? ` Formato enviado: ${resolveStudioGenerateAspect({ width: crop ? crop.width : frame.width, height: crop ? crop.height : frame.height, provider: studioProvider })} (el de la foto actual, no el del nodo).`
+        : "";
       const preserveNote = !preserveUnchanged
         ? "Conservar original: desactivado."
         : eligibility.ok
-          ? `Conservar original: tras generar se compararán base y resultado y solo las zonas realmente modificadas se superpondrán a la base, igualando su desenfoque y grano al entorno.${cropNote}`
+          ? `Conservar original: tras generar se compararán base y resultado y solo las zonas realmente modificadas se superpondrán a la base, igualando su desenfoque y grano al entorno.${cropNote}${aspectNote}`
           : `Conservar original: no se aplicará. ${eligibility.reason}`;
       setCallPreview({
         analyzeError: prepared.analyzeError,
@@ -1195,6 +1557,10 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     readOnly,
     resolveContextCrop,
     studioAspect,
+    studioProvider,
+    effectiveStudioResolution,
+    expandPrompt,
+    framePad,
   ]);
 
   const onExport6k = useCallback(async () => {
@@ -1237,6 +1603,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     setSessionImage(snap.sessionImage);
     setCards(snap.cards);
     setGlobal(snap.global);
+    setFramePad(snap.framePad ?? ZERO_FRAME_PAD);
     currentImageRef.current = snap.sessionImage;
     undoSnapRef.current = null;
     setCanUndo(false);
@@ -1262,6 +1629,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         frame: { width: imgNat.w, height: imgNat.h },
         sensitivity: composeSensitivity,
         crop: brief.crop ?? null,
+        expand: brief.expand ?? null,
       });
       const summary = summarizeComposeOutcome(outcome);
       setComposeNotice({ summary, maskPreview: outcome.maskPreview });
@@ -1338,6 +1706,11 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           event.preventDefault();
           return;
         }
+        if (!isZeroFramePad(framePad)) {
+          setFramePad(ZERO_FRAME_PAD);
+          event.preventDefault();
+          return;
+        }
         if (historyPreviewUrl) {
           setHistoryPreviewUrl(null);
           event.preventDefault();
@@ -1396,13 +1769,15 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     settingsOpen,
     startAdd,
     undoLastGenerate,
+    framePad,
   ]);
 
   const showGenerate =
     !readOnly &&
     genStatus !== "running" &&
     !drawingLasso &&
-    canStudioPrimaryGenerate(cards, global, { nodePrompt, hasGeneratedOutput });
+    (pendingExpand ||
+      canStudioPrimaryGenerate(cards, global, { nodePrompt, hasGeneratedOutput }));
   const paintSchema = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!schemaDrawing.current || event.buttons === 0) return;
     const canvas = schemaCanvasRef.current;
@@ -1501,7 +1876,14 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       <FoldderStudioHeader
         nodeType="nanoBanana"
         nodeLabel={nodeLabel}
-        subtitle={studioSetupLabel(studioModelKey, effectiveStudioResolution, studioAspect, isOpenAi)}
+        subtitle={studioSetupLabel(
+          studioDisplayModelKey,
+          effectiveStudioResolution,
+          studioAspect,
+          isOpenAi,
+          currentImage ? imgNat : null,
+          isOpenAi ? effectiveOpenAiQuality : undefined,
+        )}
         onClose={topBarCloseMode === "default" ? handleClose : undefined}
         className="nb-image-studio-header"
         actions={
@@ -1615,14 +1997,38 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           <div className="mb-4 flex items-center justify-between">
             <div>
               <p className="text-[14px] font-semibold text-white">Ajustes de generación</p>
-              <p className="mt-0.5 text-[12px] text-white/45">Modelo, tamaño y formato</p>
+              <p className="mt-0.5 text-[12px] text-white/45">
+                {isOpenAi ? "Modelo, calidad, tamaño y formato" : "Modelo, tamaño y formato"}
+              </p>
             </div>
             <button type="button" onClick={() => setSettingsOpen(false)} className={STUDIO_ICON_BUTTON} aria-label="Cerrar ajustes">
               <X size={16} />
             </button>
           </div>
 
-          {!isOpenAi ? (
+          {isOpenAi ? (
+            <div className="mb-4">
+              <p className="mb-2 text-[12px] font-medium text-white/55">Modelo</p>
+              <div className="grid grid-cols-2 gap-1">
+                {NANO_BANANA_OPENAI_MODELS.map((model) => (
+                  <button
+                    key={model.key}
+                    type="button"
+                    disabled={readOnly || settingsBusy}
+                    onClick={() => {
+                      setStudioOpenAiModelKey(model.key);
+                      onOpenAiModelKeyChange?.(model.key);
+                    }}
+                    className={`nb-studio-choice h-9 px-2 text-[12px] font-semibold ${
+                      studioOpenAiModelKey === model.key ? "nb-studio-choice--active" : ""
+                    }`}
+                  >
+                    {model.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
             <div className="mb-4">
               <p className="mb-2 text-[12px] font-medium text-white/55">Modelo</p>
               <div className="grid grid-cols-3 gap-1">
@@ -1644,7 +2050,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 ))}
               </div>
             </div>
-          ) : null}
+          )}
 
           <div className="mb-4">
             <p className="mb-2 text-[12px] font-medium text-white/55">Tamaño</p>
@@ -1667,6 +2073,33 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               ))}
             </div>
           </div>
+
+          {isOpenAi ? (
+            <div className="mb-4">
+              <p className="mb-2 text-[12px] font-medium text-white/55">Calidad</p>
+              <div className="grid grid-cols-3 gap-1">
+                {NANO_BANANA_OPENAI_QUALITIES.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    disabled={readOnly || settingsBusy}
+                    onClick={() => {
+                      setStudioOpenAiQualityOverride(option.key);
+                      onOpenAiQualityChange?.(option.key);
+                    }}
+                    className={`nb-studio-choice h-9 px-2 text-[12px] font-semibold ${
+                      effectiveOpenAiQuality === option.key ? "nb-studio-choice--active" : ""
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[11px] leading-snug text-white/35">
+                Alta es el trabajo diario. Máxima, el render final: cuesta más.
+              </p>
+            </div>
+          ) : null}
 
           <div className="mb-4">
             <div className="mb-2 flex items-center justify-between">
@@ -1965,19 +2398,61 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               className="relative shrink-0"
               style={{ width: fitSize.w, height: fitSize.h }}
             >
+              {displayImage && frameLayout.canvasW > 1 && frameLayout.canvasH > 1 ? (
+                <div
+                  data-studio-overlay-ui
+                  className="pointer-events-none absolute left-0 z-40 flex -translate-y-full items-center gap-1 pb-1.5 text-[10px] font-medium tabular-nums tracking-wide text-white/50"
+                  style={{ top: 0 }}
+                  title="Resolución del lienzo"
+                >
+                  {!isZeroFramePad(framePad) && !readOnly ? <Crop size={10} className="shrink-0 opacity-70" /> : null}
+                  <span>
+                    {frameLayout.canvasW} × {frameLayout.canvasH}
+                    {!readOnly && pendingExpand
+                      ? ` · ${describeExpandPad(framePad)}`
+                      : !readOnly && pendingCrop
+                        ? " · recorte"
+                        : ""}
+                  </span>
+                </div>
+              ) : null}
               {displayImage ? (
-                <img
-                  ref={imgRef}
-                  src={displayImage}
-                  alt=""
-                  draggable={false}
-                  onLoad={() => {
-                    const img = imgRef.current;
-                    if (!img?.naturalWidth) return;
-                    setImgNat({ w: img.naturalWidth, h: img.naturalHeight });
-                  }}
-                  style={{ width: fitSize.w, height: fitSize.h, objectFit: "contain", display: "block" }}
-                />
+                <>
+                  {(pendingExpand || pendingCrop) ? (
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        backgroundColor: "#12131a",
+                        backgroundImage:
+                          "linear-gradient(45deg,#1c1d26 25%,transparent 25%),linear-gradient(-45deg,#1c1d26 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#1c1d26 75%),linear-gradient(-45deg,transparent 75%,#1c1d26 75%)",
+                        backgroundSize: "18px 18px",
+                        backgroundPosition: "0 0,0 9px,9px -9px,-9px 0",
+                      }}
+                    />
+                  ) : null}
+                  <img
+                    ref={imgRef}
+                    src={displayImage}
+                    alt=""
+                    draggable={false}
+                    onLoad={() => {
+                      const img = imgRef.current;
+                      if (!img?.naturalWidth) return;
+                      if (frameDragRef.current) return;
+                      setImgNat({ w: img.naturalWidth, h: img.naturalHeight });
+                      if (!historyPreviewUrl) syncDocumentFormat(img.naturalWidth, img.naturalHeight);
+                    }}
+                    style={{
+                      position: "absolute",
+                      left: `${(frameLayout.photoX / Math.max(1, frameLayout.canvasW)) * 100}%`,
+                      top: `${(frameLayout.photoY / Math.max(1, frameLayout.canvasH)) * 100}%`,
+                      width: `${(frameLayout.photoW / Math.max(1, frameLayout.canvasW)) * 100}%`,
+                      height: `${(frameLayout.photoH / Math.max(1, frameLayout.canvasH)) * 100}%`,
+                      objectFit: "fill",
+                      display: "block",
+                    }}
+                  />
+                </>
               ) : (
                 <div
                   data-studio-overlay-ui
@@ -2025,7 +2500,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   cursor: drawingLasso ? "crosshair" : "default",
                   pointerEvents: drawingLasso ? "auto" : "none",
                 }}
-                viewBox={`0 0 ${Math.max(1, imgNat.w)} ${Math.max(1, imgNat.h)}`}
+                viewBox={`0 0 ${Math.max(1, frameLayout.canvasW)} ${Math.max(1, frameLayout.canvasH)}`}
                 preserveAspectRatio="none"
                 onPointerDown={(e) => {
                   if (!drawingLasso) return;
@@ -2046,15 +2521,16 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 {showZoneOutlines
                   ? visibleCards.map((card, index) => {
                       if (card.lassoPoints.length <= 2) return null;
-                      const center = polygonCenter(card.lassoPoints);
-                      const radius = Math.max(15, imgNat.w * 0.012);
+                      const canvasPoints = card.lassoPoints.map((point) => translatePointToCanvas(point, frameLayout));
+                      const center = polygonCenter(canvasPoints);
+                      const radius = Math.max(15, frameLayout.canvasW * 0.012);
                       return (
                         <React.Fragment key={card.id}>
                           <polygon
-                            points={polygonPoints(card.lassoPoints)}
+                            points={polygonPoints(canvasPoints)}
                             fill={card.id === selectedCardId ? `${card.assignedColor.hex}66` : `${card.assignedColor.hex}2e`}
                             stroke={card.assignedColor.hex}
-                            strokeWidth={imgNat.w * (card.id === selectedCardId ? 0.0035 : 0.002)}
+                            strokeWidth={frameLayout.canvasW * (card.id === selectedCardId ? 0.0035 : 0.002)}
                             style={{ pointerEvents: drawingLasso ? "none" : "auto", cursor: "pointer" }}
                             onPointerDown={(e) => {
                               e.stopPropagation();
@@ -2088,17 +2564,61 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                 ) : null}
               </svg>
 
+              {displayImage && !readOnly && !drawingLasso && !schemaMode && genStatus !== "running" ? (
+                <>
+                  {FRAME_HANDLE_HITS.map((handle) => (
+                    <div
+                      key={handle.id}
+                      data-studio-overlay-ui
+                      onPointerDown={(event) => onFrameHandleDown(handle.id, event)}
+                      onPointerMove={onFrameHandleMove}
+                      onPointerUp={() => void finishFrameDrag()}
+                      onPointerCancel={() => void finishFrameDrag()}
+                      className="absolute z-20"
+                      style={{ ...handle.style, cursor: handle.cursor }}
+                    >
+                      {handle.id.length === 2 ? (
+                        <span className="absolute inset-0 border border-white/80 bg-white/90" />
+                      ) : (
+                        <span
+                          className="absolute bg-white/70"
+                          style={
+                            handle.id === "n" || handle.id === "s"
+                              ? { left: "20%", right: "20%", top: 3, height: 3 }
+                              : { top: "20%", bottom: "20%", left: 3, width: 3 }
+                          }
+                        />
+                      )}
+                    </div>
+                  ))}
+                  {!isZeroFramePad(framePad) ? (
+                    <button
+                      type="button"
+                      data-studio-overlay-ui
+                      className="absolute right-2 top-2 z-30 border border-white/15 bg-[#12151c]/90 px-2 py-1 text-[10px] font-medium text-white/55 hover:text-white"
+                      onClick={() => setFramePad(ZERO_FRAME_PAD)}
+                      aria-label="Restablecer marco"
+                      title="Restablecer marco"
+                    >
+                      <X size={11} />
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+
               {activeDraftCard && activeDraftCard.lassoPoints.length > 2 && !readOnly ? (() => {
-                const center = polygonCenter(activeDraftCard.lassoPoints);
+                const center = polygonCenter(
+                  activeDraftCard.lassoPoints.map((point) => translatePointToCanvas(point, frameLayout)),
+                );
                 const cardIndex = Math.max(0, cards.findIndex((card) => card.id === activeDraftCard.id));
-                const placeLeft = center.x > imgNat.w * 0.58;
+                const placeLeft = center.x > frameLayout.canvasW * 0.58;
                 return (
                   <div
                     data-studio-overlay-ui
                     className="absolute z-30 w-[280px] border border-white/20 bg-[#12151c]/95 p-3 shadow-2xl backdrop-blur-md"
                     style={{
-                      left: `${(center.x / Math.max(1, imgNat.w)) * 100}%`,
-                      top: `${(center.y / Math.max(1, imgNat.h)) * 100}%`,
+                      left: `${(center.x / Math.max(1, frameLayout.canvasW)) * 100}%`,
+                      top: `${(center.y / Math.max(1, frameLayout.canvasH)) * 100}%`,
                       transform: placeLeft
                         ? `translate(calc(-100% - 14px), -50%) scale(${100 / Math.max(1, zoomPercent)})`
                         : `translate(14px, -50%) scale(${100 / Math.max(1, zoomPercent)})`,
@@ -2193,8 +2713,17 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                       </button>
                       <button
                         type="button"
+                        onClick={() => removeCard(activeDraftCard.id)}
+                        className={`${STUDIO_ICON_BUTTON} ml-auto border-rose-400/25 text-rose-200/80 hover:border-rose-400/50 hover:bg-rose-500/15 hover:text-rose-100`}
+                        aria-label="Eliminar selección"
+                        title="Eliminar esta zona"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setDraftCard(null)}
-                        className="nb-studio-primary-action ml-auto h-9 px-3"
+                        className="nb-studio-primary-action h-9 px-3"
                       >
                         <Check size={15} />
                         Listo
@@ -2647,7 +3176,19 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
 
           {!readOnly ? (
             <div className="shrink-0 border-t border-white/10 bg-[#101217] p-3">
-              {cards.some((card) => card.lassoPoints.length > 2 || card.paintData) ? (
+              {pendingExpand ? (
+                <div className="mb-2">
+                  <label className="mb-1 block text-[11px] font-medium text-white/45">Qué debe aparecer en la zona nueva</label>
+                  <input
+                    type="text"
+                    value={expandPrompt}
+                    onChange={(event) => setExpandPrompt(event.target.value)}
+                    placeholder="Vacío: continuar la escena"
+                    className="h-9 w-full border border-white/10 bg-black/20 px-2.5 text-[12px] text-white/80 outline-none placeholder:text-white/25"
+                  />
+                </div>
+              ) : null}
+              {cards.some((card) => card.lassoPoints.length > 2 || card.paintData) && !pendingExpand ? (
                 <button
                   type="button"
                   aria-pressed={preserveUnchanged}
@@ -2668,37 +3209,49 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   <span className="text-[11px] opacity-65">{preserveUnchanged ? "Sí" : "No"}</span>
                 </button>
               ) : null}
-              <div className="mb-2 flex items-center gap-2">
-                <span className="text-[12px] text-white/40">Resultados</span>
-                <div className="flex flex-1 gap-1">
-                  {([1, 2, 3] as const).map((count) => (
-                    <button
-                      key={count}
-                      type="button"
-                      onClick={() => setVariantCount(count)}
-                      className={`nb-studio-choice h-8 flex-1 text-[12px] ${
-                        variantCount === count ? "nb-studio-choice--active" : ""
-                      }`}
-                      title={count === 1 ? "Generar y usar un resultado" : `${count} candidatas; cada una se confirma por separado`}
-                    >
-                      {count}
-                    </button>
-                  ))}
+              {pendingExpand ? null : (
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-[12px] text-white/40">Resultados</span>
+                  <div className="flex flex-1 gap-1">
+                    {([1, 2, 3] as const).map((count) => (
+                      <button
+                        key={count}
+                        type="button"
+                        onClick={() => setVariantCount(count)}
+                        className={`nb-studio-choice h-8 flex-1 text-[12px] ${
+                          variantCount === count ? "nb-studio-choice--active" : ""
+                        }`}
+                        title={count === 1 ? "Generar y usar un resultado" : `${count} candidatas; cada una se confirma por separado`}
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
               <button
                 type="button"
                 disabled={!showGenerate || inspectingCall}
                 onClick={() => void onGenerate()}
                 className="nb-studio-primary-action min-h-11 w-full px-4"
                 title={
-                  showGenerate
+                  pendingExpand
+                    ? "Una llamada de pago para rellenar solo la zona nueva · confirmación de wallet"
+                    : showGenerate
                     ? "Una llamada de pago · confirmación de wallet"
                     : "Añade una imagen, una escena o un cambio"
                 }
               >
-                {genStatus === "running" ? <Loader2 size={17} className="animate-spin" /> : <Sparkles size={17} />}
-                <span>{genStatus === "running" ? "Generando…" : showGenerate ? `${variantCount > 1 ? "Generar candidata" : "Generar"} · ${formatStudioUsd(jobCost.totalUsd)}` : "Describe un cambio"}</span>
+                {genStatus === "running" ? <Loader2 size={17} className="animate-spin" /> : pendingExpand ? <Crop size={17} /> : <Sparkles size={17} />}
+                <span>
+                  {genStatus === "running"
+                    ? "Generando…"
+                    : pendingExpand
+                      ? `Rellenar ampliación · ${formatStudioUsd(jobCost.totalUsd)}`
+                      : showGenerate
+                        ? `${variantCount > 1 ? "Generar candidata" : "Generar"} · ${formatStudioUsd(jobCost.totalUsd)}`
+                        : "Describe un cambio"}
+                </span>
               </button>
             </div>
           ) : null}

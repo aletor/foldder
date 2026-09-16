@@ -49,6 +49,8 @@ export interface MaterializeTemplateModel {
   resolution?: string;
   thinking?: boolean;
   imageProvider?: string;
+  openaiModelKey?: string;
+  openaiQuality?: string;
 }
 
 const ROW_GAP_Y = 560;
@@ -136,6 +138,8 @@ export function buildRowSubgraph(
       resolution: model.resolution || "2k",
       thinking: !!model.thinking,
       imageProvider: model.imageProvider || "gemini",
+      ...(model.openaiModelKey ? { openaiModelKey: model.openaiModelKey } : {}),
+      ...(model.openaiQuality ? { openaiQuality: model.openaiQuality } : {}),
       _loopRowCardId: row.cardId,
       ...(row.output
         ? {
@@ -252,6 +256,8 @@ export function buildPipelineRowSubgraph(
         resolution: model.resolution || "2k",
         thinking: !!model.thinking,
         imageProvider: model.imageProvider || "gemini",
+        ...(model.openaiModelKey ? { openaiModelKey: model.openaiModelKey } : {}),
+        ...(model.openaiQuality ? { openaiQuality: model.openaiQuality } : {}),
         _loopRowCardId: row.cardId,
       });
     }

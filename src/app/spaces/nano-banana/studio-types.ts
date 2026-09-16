@@ -52,6 +52,8 @@ export type StudioComposeSummary = {
   usedPriorFallback?: boolean | null;
   /** True si la generación se hizo sobre un recorte de contexto y se pegó de vuelta. */
   contextCrop?: boolean | null;
+  /** True si se rellenó una ampliación de lienzo pegando solo la zona nueva. */
+  canvasExpand?: boolean | null;
 };
 
 /** Recorte de contexto (coordenadas del fotograma del Studio) con el que se generó una versión. */
@@ -67,6 +69,8 @@ export type StudioHistoryBrief = {
   rawOutputUrl?: string | null;
   /** Recorte de contexto usado para generar `rawOutputUrl`; necesario para volver a pegar. */
   crop?: StudioContextCropRect | null;
+  /** Ampliación de lienzo (px añadidos a la original) con la que se generó esta versión. */
+  expand?: { left: number; top: number; right: number; bottom: number } | null;
   compose?: StudioComposeSummary | null;
   /** PNG pequeño (data URL) con las zonas integradas; solo sesión, no se persiste en el nodo. */
   composeMaskPreview?: string | null;

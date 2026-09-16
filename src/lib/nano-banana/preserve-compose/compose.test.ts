@@ -170,15 +170,21 @@ describe("preserveComposeImages", () => {
     expect(forced.height).toBe(H);
   }, 30_000);
 
-  it("salta cuando la relación de aspecto no coincide", async () => {
+  it("recorta una generada de otro ratio al lienzo de la base y conserva el tamaño", async () => {
     const raw = baseRaw();
     const basePng = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).png().toBuffer();
     const square = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).resize(400, 400, { fit: "fill" }).png().toBuffer();
-    const result = await preserveComposeImages({ base: basePng, generated: square, priorMask: null });
-    expect(result.composed).toBe(false);
-    if (result.composed) return;
-    expect(result.decision).toBe("aspect-mismatch");
-  });
+    const result = await preserveComposeImages({
+      base: basePng,
+      generated: square,
+      priorMask: await priorPng(),
+      fallbackToPrior: true,
+    });
+    expect(result.composed).toBe(true);
+    if (!result.composed) return;
+    expect(result.width).toBe(W);
+    expect(result.height).toBe(H);
+  }, 30_000);
 
   it("salta cuando la base excede el máximo de píxeles configurado", async () => {
     const raw = baseRaw();
@@ -206,4 +212,47 @@ describe("preserveComposeImages", () => {
     expect(featherPxForSize(4096, 4096)).toBe(40);
     expect(featherPxForSize(200, 200)).toBe(6);
   });
+
+  it("expand: pega solo la zona nueva y deja la original byte a byte", async () => {
+    const origW = 80;
+    const origH = 64;
+    const pad = 24;
+    const orig = Buffer.alloc(origW * origH * 3, 40);
+    for (let i = 0; i < orig.length; i += 3) orig[i] = 200;
+    const basePng = await sharp(orig, { raw: { width: origW, height: origH, channels: 3 } }).png().toBuffer();
+    const canvasW = origW + pad;
+    const gen = Buffer.alloc(canvasW * origH * 3, 10);
+    for (let y = 0; y < origH; y++) {
+      for (let x = 0; x < canvasW; x++) {
+        const j = (y * canvasW + x) * 3;
+        if (x < origW) {
+          gen[j] = 10;
+          gen[j + 1] = 220;
+          gen[j + 2] = 10;
+        } else {
+          gen[j] = 20;
+          gen[j + 1] = 40;
+          gen[j + 2] = 230;
+        }
+      }
+    }
+    const genPng = await sharp(gen, { raw: { width: canvasW, height: origH, channels: 3 } }).png().toBuffer();
+    const result = await preserveComposeImages({
+      base: basePng,
+      generated: genPng,
+      priorMask: null,
+      expand: { left: 0, top: 0, right: pad, bottom: 0 },
+    });
+    expect(result.composed).toBe(true);
+    if (!result.composed) return;
+    expect(result.width).toBe(canvasW);
+    expect(result.height).toBe(origH);
+    const out = await sharp(result.png).raw().toBuffer();
+    const origCenter = ((origH / 2) * canvasW + origW / 2) * 3;
+    expect(out[origCenter]).toBeGreaterThan(160);
+    expect(out[origCenter + 1]).toBeLessThan(80);
+    const newCenter = ((origH / 2) * canvasW + origW + pad / 2) * 3;
+    expect(out[newCenter + 2]).toBeGreaterThan(120);
+    expect(out[newCenter + 2]).toBeGreaterThan(out[newCenter]);
+  }, 30_000);
 });

@@ -55,7 +55,7 @@ const AI_COST_CATEGORIES = new Set<UsageServiceCategory>([
 /** Filas del panel: consumo externo relevante (IA, Brain, embeddings, APIs, infra, legado). */
 export const USAGE_SERVICES = [
   { id: "gemini-nano", label: "Gemini · Image Creation (imagen 3 Flash / Pro)", category: "ia-image" as const },
-  { id: "openai-images", label: "OpenAI · ChatGPT Images (gpt-image-2)", category: "ia-image" as const },
+  { id: "openai-images", label: "OpenAI · ChatGPT Images (2.5)", category: "ia-image" as const },
   { id: "gemini-veo", label: "Gemini · Veo 3.1 (vídeo)", category: "ia-video" as const },
   { id: "seedance-video", label: "Volcengine Ark · Seedance (vídeo)", category: "ia-video" as const },
   { id: "gemini-analyze", label: "Gemini · Análisis de áreas (2.5 Flash)", category: "visual-analysis" as const },

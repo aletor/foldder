@@ -28,11 +28,12 @@ export function estimateStudioGenerateUsd(args: {
   modelKey: string;
   resolution: string;
   aspectRatio: string;
+  quality?: string;
 }): number {
   if (args.provider === "openai") {
     return estimateOpenAiImageGenerationUsd(
       args.resolution,
-      resolveOpenAiImageQuality(args.resolution),
+      resolveOpenAiImageQuality(args.resolution, args.quality),
       args.aspectRatio,
     );
   }
@@ -47,6 +48,7 @@ export function estimateStudioJobUsd(args: {
   cards: StudioCard[];
   hasBaseImage: boolean;
   variantCount?: number;
+  quality?: string;
 }): StudioCostBreakdown {
   const variantCount = clampStudioVariantCount(args.variantCount);
   const generateUsd = estimateStudioGenerateUsd(args);

@@ -134,7 +134,10 @@ export async function POST(req: Request, context: { params: Promise<{ token: str
       provider === "openai"
         ? estimateOpenAiImageGenerationUsd(
             payload.templateModel.resolution,
-            resolveOpenAiImageQuality(payload.templateModel.resolution),
+            resolveOpenAiImageQuality(
+              payload.templateModel.resolution,
+              payload.templateModel.openaiQuality,
+            ),
             payload.templateModel.aspectRatio,
           )
         : estimateGeminiImageGenerationUsd(

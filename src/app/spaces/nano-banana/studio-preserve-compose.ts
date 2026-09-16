@@ -126,6 +126,7 @@ export type PreserveComposeOutcome = {
   optical: OpticalMatchStats | null;
   usedPriorFallback: boolean;
   contextCrop: boolean;
+  canvasExpand: boolean;
 };
 
 export type { StudioComposeSummary };
@@ -142,6 +143,7 @@ export function summarizeComposeOutcome(outcome: PreserveComposeOutcome): Studio
     grainAdded: outcome.optical?.grainAdded ?? null,
     usedPriorFallback: outcome.usedPriorFallback || null,
     contextCrop: outcome.contextCrop || null,
+    canvasExpand: outcome.canvasExpand || null,
   };
 }
 
@@ -158,6 +160,7 @@ function unavailable(reason: string, contextCrop = false): PreserveComposeOutcom
     optical: null,
     usedPriorFallback: false,
     contextCrop,
+    canvasExpand: false,
   };
 }
 
@@ -170,14 +173,17 @@ export async function runPreserveCompose(args: {
   sensitivity?: ChangeMaskSensitivity;
   /** Recorte de contexto (coordenadas del fotograma) con el que se generó `generatedOutput`. */
   crop?: StudioContextCrop | null;
+  /** Ampliación: `baseImage` es la original y la generada cubre el lienzo ampliado. */
+  expand?: { left: number; top: number; right: number; bottom: number } | null;
 }): Promise<PreserveComposeOutcome> {
   const crop = args.crop ?? null;
+  const expand = args.expand ?? null;
   const priorCards = crop ? cropCardsToRect(args.cards, crop) : args.cards;
   const priorFrame = crop ? { width: crop.width, height: crop.height } : args.frame;
   const [base, generated, priorMask] = await Promise.all([
     resolveComposeImageSource(args.baseImage),
     args.generatedKey ? Promise.resolve<ComposeImageSource>({ key: args.generatedKey }) : resolveComposeImageSource(args.generatedOutput),
-    buildPriorMaskDataUrl(priorCards, priorFrame),
+    expand ? Promise.resolve(null) : buildPriorMaskDataUrl(priorCards, priorFrame),
   ]);
   if (!base) return unavailable("La imagen base no está disponible para componer.", Boolean(crop));
   if (!generated) return unavailable("La imagen generada no está disponible para componer.", Boolean(crop));
@@ -190,8 +196,9 @@ export async function runPreserveCompose(args: {
       generated,
       priorMask,
       sensitivity: args.sensitivity ?? "auto",
-      crop,
-      cropFrame: crop ? args.frame : null,
+      crop: expand ? null : crop,
+      cropFrame: !expand && crop ? args.frame : null,
+      expand,
     }),
   });
   const json = (await res.json().catch(() => null)) as
@@ -224,5 +231,6 @@ export async function runPreserveCompose(args: {
     optical: json.optical ?? null,
     usedPriorFallback: json.usedPriorFallback === true,
     contextCrop: Boolean(crop),
+    canvasExpand: Boolean(expand),
   };
 }

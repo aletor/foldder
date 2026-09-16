@@ -5,7 +5,7 @@
  * Reusa exactamente el pipeline de generación de Loop/Image Creation (`generateLoopImage`).
  */
 
-import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
+import { estimateGeminiImageGenerationUsd, estimateOpenAiImageGenerationUsd, resolveOpenAiImageQuality } from "@/lib/pricing-config";
 import { generateLoopImage, type LoopImageProvider } from "../../loop-generate";
 import {
   bindableVarsForNodeType,
@@ -68,6 +68,8 @@ export const nanoBananaExecutor: NodeExecutor = {
         resolution: String(data.resolution ?? "2k"),
         thinking: !!data.thinking,
         provider: provider(data),
+        openaiModelKey: typeof data.openaiModelKey === "string" ? data.openaiModelKey : undefined,
+        openaiQuality: typeof data.openaiQuality === "string" ? data.openaiQuality : undefined,
       },
       onProgress: ctx.onProgress,
     });
@@ -77,6 +79,19 @@ export const nanoBananaExecutor: NodeExecutor = {
 
   estimateCost({ node }) {
     const data = node.data ?? {};
+    const imageProvider = provider(data);
+    if (imageProvider === "openai") {
+      const resolution = String(data.resolution ?? "2k");
+      const costUsd = estimateOpenAiImageGenerationUsd(
+        resolution,
+        resolveOpenAiImageQuality(
+          resolution,
+          typeof data.openaiQuality === "string" ? data.openaiQuality : undefined,
+        ),
+        String(data.aspect_ratio ?? "16:9"),
+      );
+      return { costUsd, label: "Generar imagen ChatGPT" };
+    }
     const costUsd = estimateGeminiImageGenerationUsd(
       String(data.modelKey ?? "flash31"),
       String(data.resolution ?? "2k"),

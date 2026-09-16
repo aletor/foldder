@@ -80,8 +80,18 @@ describe("resolveOpenAiImageSize", () => {
 });
 
 describe("resolveOpenAiImageQuality", () => {
-  it("uses high for 4k", () => {
+  it("defaults to high when quality is omitted", () => {
+    expect(resolveOpenAiImageQuality("1k")).toBe("high");
+    expect(resolveOpenAiImageQuality("2k")).toBe("high");
     expect(resolveOpenAiImageQuality("4k")).toBe("high");
+  });
+
+  it("keeps an explicit medium on 4k", () => {
+    expect(resolveOpenAiImageQuality("4k", "medium")).toBe("medium");
+  });
+
+  it("accepts max", () => {
+    expect(resolveOpenAiImageQuality("2k", "max")).toBe("max");
   });
 });
 
@@ -101,6 +111,10 @@ describe("openAiImageGenerate", () => {
     expect(generateMock).toHaveBeenCalledTimes(1);
     expect(editMock).not.toHaveBeenCalled();
     expect(result.model).toBe(OPENAI_IMAGE_MODEL);
+    expect(generateMock.mock.calls[0]?.[0]).toMatchObject({
+      model: OPENAI_IMAGE_MODEL,
+      quality: "high",
+    });
     expect(result.output).toContain("knowledge-files");
     expect(result.key).toContain("generated/");
   });
@@ -119,9 +133,47 @@ describe("openAiImageGenerate", () => {
 
     expect(editMock).toHaveBeenCalledTimes(1);
     expect(generateMock).not.toHaveBeenCalled();
-    // gpt-image-2 rechaza `input_fidelity` con 400: nunca debe enviarse.
+    // Images 2.5 / gpt-image-2 rechazan `input_fidelity` con 400: nunca debe enviarse.
     expect(editMock.mock.calls[0]?.[0]).not.toHaveProperty("input_fidelity");
-    expect(editMock.mock.calls[0]?.[0]).toMatchObject({ model: OPENAI_IMAGE_MODEL });
+    expect(editMock.mock.calls[0]?.[0]).toMatchObject({
+      model: OPENAI_IMAGE_MODEL,
+      quality: "high",
+    });
+  });
+
+  it("envía Sunburst y calidad alta cuando el cliente los pide", async () => {
+    await openAiImageGenerate(
+      {
+        prompt: "A red apple on a table",
+        aspect_ratio: "1:1",
+        resolution: "1k",
+        model: "sunburst",
+        quality: "high",
+      },
+      () => {},
+      { usageUserEmail: "user@example.com" },
+    );
+    expect(generateMock.mock.calls[0]?.[0]).toMatchObject({
+      model: "gpt-image-2.5-sunburst",
+      quality: "high",
+    });
+  });
+
+  it("envía quality max cuando el cliente pide Máxima", async () => {
+    await openAiImageGenerate(
+      {
+        prompt: "A red apple on a table",
+        aspect_ratio: "1:1",
+        resolution: "2k",
+        quality: "max",
+      },
+      () => {},
+      { usageUserEmail: "user@example.com" },
+    );
+    expect(generateMock.mock.calls[0]?.[0]).toMatchObject({
+      model: OPENAI_IMAGE_MODEL,
+      quality: "max",
+    });
   });
 
   it("pasa máscara a images.edit cuando hay mask", async () => {

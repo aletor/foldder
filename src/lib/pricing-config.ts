@@ -3,7 +3,8 @@
  * `recordApiUsage` y rutas que fijan `costUsd` manualmente deben basarse aquí cuando aplique.
  */
 
-import { openAiImageSizePixelFactor } from "@/lib/openai-image-size";
+import { openAiImageOutputPixels } from "@/lib/openai-image-size";
+import { coerceOpenAiImageModelKey } from "@/lib/openai-image-model";
 
 /** USD / 1M tokens — OpenAI chat (aprox.). */
 export function openaiCostPerMillion(model: string | undefined): { in: number; out: number } {
@@ -103,31 +104,101 @@ export function estimateGeminiImageGenerationUsd(modelKey: string, resolution?: 
   return 0.101;
 }
 
-function normalizeOpenAiImageResolution(resolution: string | undefined): "1k" | "2k" | "4k" {
-  const r = (resolution || "").trim().toLowerCase();
-  if (r === "1k" || r === "1024" || r === "1024px") return "1k";
-  if (r === "4k" || r === "4096" || r === "4096px") return "4k";
-  return "2k";
+export type OpenAiImageQuality = "low" | "medium" | "high" | "max";
+
+/** USD / 1M tokens — Images 2.5 Flare y Sunburst (mismas tarifas). */
+export const OPENAI_IMAGE_TEXT_INPUT_USD_PER_MILLION = 5;
+export const OPENAI_IMAGE_INPUT_USD_PER_MILLION = 8;
+export const OPENAI_IMAGE_OUTPUT_USD_PER_MILLION = 30;
+
+/**
+ * Tokens de salida del calculador oficial Images 2.5 a 1024×1024 (sep 2026).
+ * El coste de wallet escala esos tokens por los píxeles reales vs 1024².
+ */
+export const OPENAI_IMAGE_OUTPUT_TOKENS_AT_1024: Record<OpenAiImageQuality, number> = {
+  low: 196,
+  medium: 439,
+  high: 1756,
+  max: 7024,
+};
+
+const OPENAI_IMAGE_REF_PIXELS = 1024 * 1024;
+
+function roundUsd(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-/** Coste orientativo por imagen OpenAI ChatGPT Images (gpt-image-2). */
-export function resolveOpenAiImageQuality(resolutionInput?: string): "low" | "medium" | "high" {
-  const res = (resolutionInput || "").trim().toLowerCase();
-  if (res === "4k" || res === "4096" || res === "4096px") return "high";
-  if (res === "1k" || res === "1024" || res === "1024px") return "medium";
-  return "medium";
+/**
+ * Calidad de ChatGPT Images. Si el cliente manda `quality`, esa gana.
+ * Si falta, el default de estudio es Alta (`high`). `xhigh` no se expone.
+ */
+export function resolveOpenAiImageQuality(
+  _resolutionInput?: string,
+  qualityInput?: string,
+): OpenAiImageQuality {
+  const q = (qualityInput || "").trim().toLowerCase();
+  if (q === "low" || q === "medium" || q === "high" || q === "max") return q;
+  return "high";
 }
 
+export function openAiImageQualityLabel(quality: OpenAiImageQuality): string {
+  if (quality === "max") return "Máxima";
+  if (quality === "high") return "Alta";
+  if (quality === "low") return "Baja";
+  return "Media";
+}
+
+export function openAiImageModelLabel(modelInput?: string): string {
+  return coerceOpenAiImageModelKey(modelInput) === "sunburst" ? "Sunburst" : "Flare";
+}
+
+export function openAiImageWalletLabel(args: {
+  model?: string;
+  quality: OpenAiImageQuality;
+  variants?: number;
+}): string {
+  const variants = Math.min(3, Math.max(1, Math.round(args.variants ?? 1)));
+  const base = `ChatGPT · ${openAiImageModelLabel(args.model)} · ${openAiImageQualityLabel(args.quality)}`;
+  return variants > 1 ? `${base} ×${variants}` : base;
+}
+
+export type OpenAiImageUsageLike = {
+  input_tokens?: number;
+  output_tokens?: number;
+  input_tokens_details?: {
+    image_tokens?: number;
+    text_tokens?: number;
+  };
+};
+
+/** Coste real si Images 2.5 devuelve `usage`; si no hay tokens, null. */
+export function estimateOpenAiImageUsageUsd(usage: OpenAiImageUsageLike | null | undefined): number | null {
+  if (!usage) return null;
+  const textIn = Math.max(0, usage.input_tokens_details?.text_tokens ?? 0);
+  const imageIn = Math.max(0, usage.input_tokens_details?.image_tokens ?? 0);
+  const imageOut = Math.max(0, usage.output_tokens ?? 0);
+  if (textIn <= 0 && imageIn <= 0 && imageOut <= 0) return null;
+  const usd =
+    (textIn * OPENAI_IMAGE_TEXT_INPUT_USD_PER_MILLION +
+      imageIn * OPENAI_IMAGE_INPUT_USD_PER_MILLION +
+      imageOut * OPENAI_IMAGE_OUTPUT_USD_PER_MILLION) /
+    1_000_000;
+  return roundUsd(usd);
+}
+
+/**
+ * Preflight wallet / fallback si la API no manda usage.
+ * Calculador oficial 1024×1024 × (píxeles de salida / 1024²). Flare y Sunburst igual.
+ */
 export function estimateOpenAiImageGenerationUsd(
   resolution?: string,
-  quality: "low" | "medium" | "high" = "medium",
+  quality: OpenAiImageQuality = "high",
   aspectRatio?: string,
 ): number {
-  const tier = normalizeOpenAiImageResolution(resolution);
-  const qualityFactor = quality === "high" ? 1.45 : quality === "low" ? 0.55 : 1;
-  const base = tier === "4k" ? 0.18 : tier === "2k" ? 0.09 : 0.05;
-  const pixelFactor = openAiImageSizePixelFactor(aspectRatio, resolution);
-  return Math.round(base * qualityFactor * pixelFactor * 1_000_000) / 1_000_000;
+  const tokensAt1024 = OPENAI_IMAGE_OUTPUT_TOKENS_AT_1024[quality] ?? OPENAI_IMAGE_OUTPUT_TOKENS_AT_1024.high;
+  const pixels = openAiImageOutputPixels(aspectRatio, resolution);
+  const tokens = tokensAt1024 * (pixels / OPENAI_IMAGE_REF_PIXELS);
+  return roundUsd((tokens * OPENAI_IMAGE_OUTPUT_USD_PER_MILLION) / 1_000_000);
 }
 
 /** Veo: coste orientativo por segundo de salida (sin breakdown de tokens en la API). */

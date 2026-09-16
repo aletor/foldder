@@ -70,7 +70,7 @@ export function estimateLoopImageCostUsd(model: LoopTemplateModel): number {
   if (model.provider === "openai") {
     return estimateOpenAiImageGenerationUsd(
       model.resolution,
-      resolveOpenAiImageQuality(model.resolution),
+      resolveOpenAiImageQuality(model.resolution, model.openaiQuality),
       model.aspectRatio,
     );
   }

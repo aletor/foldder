@@ -1,5 +1,7 @@
 import { geminiImageGenerate, GeminiGenerateError } from "@/lib/gemini-image-generate";
 import { openAiImageGenerate, OpenAiGenerateError } from "@/lib/openai-image-generate";
+import { coerceOpenAiImageModelKey } from "@/lib/openai-image-model";
+import { resolveOpenAiImageQuality } from "@/lib/pricing-config";
 import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
 import type { LoopShareTemplateModel } from "@/lib/loop-share-types";
 
@@ -22,17 +24,26 @@ export async function generateLoopShareImage(args: {
   const { prompt, images, model, ownerEmail } = args;
   const isFlash25 = model.modelKey === "flash25";
   const isPro = model.modelKey === "pro3";
+  const openai = model.provider === "openai";
   const normalizedPrompt = normalizeGenerativeImagePrompt(prompt, {
     targetAspectRatio: model.aspectRatio || "16:9",
     textOnlyRecreation: images.length === 0,
   });
+  const resolution = isFlash25 && !openai ? "1k" : normalizeResolution(model.resolution);
   const body = {
     prompt: normalizedPrompt,
     images,
     aspect_ratio: model.aspectRatio || "16:9",
-    resolution: isFlash25 ? "1k" : normalizeResolution(model.resolution),
-    model: model.modelKey || "flash31",
-    thinking: !!model.thinking && isPro,
+    resolution,
+    ...(openai
+      ? {
+          model: coerceOpenAiImageModelKey(model.openaiModelKey || model.modelKey),
+          quality: resolveOpenAiImageQuality(resolution, model.openaiQuality),
+        }
+      : {
+          model: model.modelKey || "flash31",
+          thinking: !!model.thinking && isPro,
+        }),
   };
   const usageOpts = {
     usageRoute: "/api/loop-share/generate",

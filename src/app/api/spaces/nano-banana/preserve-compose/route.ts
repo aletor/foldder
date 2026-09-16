@@ -42,6 +42,8 @@ export type PreserveComposeRequestBody = {
   crop?: PreserveComposeCropInput | null;
   /** Tamaño del fotograma en el que se expresó `crop`; si difiere del nativo se reescala. */
   cropFrame?: { width: number; height: number } | null;
+  /** Ampliación de lienzo (px de la foto original). Compone solo la zona nueva. */
+  expand?: { left?: unknown; top?: unknown; right?: unknown; bottom?: unknown } | null;
   debug?: boolean;
 };
 
@@ -59,6 +61,7 @@ export type PreserveComposeResponseBody =
       toneLimits: PreserveComposeToneLimits;
       usedPriorFallback: boolean;
       crop: PreserveComposeCropInput | null;
+      expand?: { left: number; top: number; right: number; bottom: number } | null;
     }
   | {
       composed: false;
@@ -122,6 +125,18 @@ async function resolveImageSource(
     `${label}: origen no soportado. Envía una clave S3 propia o la imagen como data URL.`,
     400,
   );
+}
+
+function parseExpand(input: unknown): { left: number; top: number; right: number; bottom: number } | null {
+  if (!input || typeof input !== "object") return null;
+  const e = input as Record<string, unknown>;
+  const left = Math.max(0, Math.round(Number(e.left) || 0));
+  const top = Math.max(0, Math.round(Number(e.top) || 0));
+  const right = Math.max(0, Math.round(Number(e.right) || 0));
+  const bottom = Math.max(0, Math.round(Number(e.bottom) || 0));
+  if (![left, top, right, bottom].every((v) => Number.isFinite(v))) return null;
+  if (left + top + right + bottom === 0) return null;
+  return { left, top, right, bottom };
 }
 
 function parseCrop(input: unknown): PreserveComposeCropInput | null {
@@ -231,6 +246,7 @@ export async function POST(req: Request) {
     const sensitivity: ChangeMaskSensitivity =
       body.sensitivity === "strict" || body.sensitivity === "wide" ? body.sensitivity : "auto";
     const requestedCrop = parseCrop(body.crop);
+    const expand = parseExpand(body.expand);
     const cropFrame =
       body.cropFrame && Number.isFinite(Number(body.cropFrame.width)) && Number.isFinite(Number(body.cropFrame.height))
         ? { width: Math.round(Number(body.cropFrame.width)), height: Math.round(Number(body.cropFrame.height)) }
@@ -239,7 +255,7 @@ export async function POST(req: Request) {
     let composeBase = base.buffer;
     let fullFrame: { width: number; height: number } | null = null;
     let crop: PreserveComposeCropInput | null = null;
-    if (requestedCrop) {
+    if (!expand && requestedCrop) {
       const extracted = await extractCrop(base.buffer, requestedCrop, cropFrame);
       composeBase = extracted.crop;
       crop = extracted.nativeCrop;
@@ -252,9 +268,8 @@ export async function POST(req: Request) {
       priorMask: prior,
       sensitivity,
       wantMaskPreview: true,
-      // Con recorte la salida debe volver SIEMPRE al fotograma completo: si el análisis duda,
-      // se pega por el lazo. Sin recorte se respeta la decisión del análisis como hasta ahora.
-      fallbackToPrior: Boolean(crop && prior),
+      fallbackToPrior: Boolean(prior),
+      expand,
     });
     let maskPreviewPng = result.maskPreviewPng;
     if (maskPreviewPng && crop && fullFrame) {
@@ -312,6 +327,7 @@ export async function POST(req: Request) {
         toneLimits: result.toneLimits,
         usedPriorFallback: result.usedPriorFallback,
         crop,
+        expand,
         timings: result.timings,
       },
     });
@@ -346,6 +362,7 @@ export async function POST(req: Request) {
       toneLimits: result.toneLimits,
       usedPriorFallback: result.usedPriorFallback,
       crop,
+      expand: expand ?? null,
     };
     return NextResponse.json(payload);
   } catch (error: unknown) {

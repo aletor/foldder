@@ -20,7 +20,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /**
- * Misma carga útil que generación Gemini en canvas, pero vía OpenAI gpt-image-2.
+ * Misma carga útil que generación Gemini en canvas, pero vía OpenAI Images 2.5.
  * Respuesta NDJSON con fases y cierre done/error.
  */
 export async function POST(req: NextRequest) {
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
-    const quality = resolveOpenAiImageQuality(body.resolution);
+    const quality = resolveOpenAiImageQuality(body.resolution, body.quality || body.openaiQuality);
     estimatedCostUsd = estimateOpenAiImageGenerationUsd(body.resolution, quality, body.aspect_ratio);
     walletCharge = await reserveApiWalletCharge({
       req,
@@ -49,7 +49,12 @@ export async function POST(req: NextRequest) {
       provider: "openai",
       route: "/api/openai/generate-stream",
       maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.15 }),
-      metadata: { model: "gpt-image-2", resolution: body.resolution, quality, responseMode: "ndjson" },
+      metadata: {
+        model: body.model || "flare",
+        resolution: body.resolution,
+        quality,
+        responseMode: "ndjson",
+      },
     });
   } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
@@ -88,7 +93,7 @@ export async function POST(req: NextRequest) {
         );
         providerSucceeded = true;
         await walletCharge?.capture({
-          actualCostUsd: estimatedCostUsd,
+          actualCostUsd: result.costUsd,
           metadata: {
             model: result.model,
             responseMode: "ndjson",

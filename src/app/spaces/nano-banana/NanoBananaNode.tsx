@@ -45,16 +45,20 @@ import { stripBriefForNode, type StudioDraftState } from "./studio-persist";
 import type { StudioHistoryBrief } from "./studio-types";
 import {
   coerceNanoBananaAspect,
+  coerceNanoBananaOpenAiModelKey,
+  coerceNanoBananaOpenAiQuality,
   coerceNanoBananaResolution,
   nanoBananaAspectSelectOptions,
   nanoBananaModelLabel,
+  nanoBananaOpenAiQualityLabel,
   nanoBananaResolutionSelectOptions,
   NANO_BANANA_GEMINI_MODELS,
+  NANO_BANANA_OPENAI_MODELS,
+  NANO_BANANA_OPENAI_QUALITIES,
   normalizeNanoBananaResolution,
+  parseStoredNanoBananaOpenAiQuality,
   resolveNanoBananaImageProvider,
-  type NanoBananaAspectRatio,
   type NanoBananaImageProvider,
-  type NanoBananaResolution,
 } from "./nano-banana-output-options";
 import { type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
@@ -204,6 +208,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     modelKey?: string;
     thinking?: boolean;
     imageProvider?: NanoBananaImageProvider;
+    openaiModelKey?: string;
+    openaiQuality?: string;
     /** Persisted with the project (Studio + main-run versions). */
     generationHistory?: string[];
     generationBriefs?: StudioHistoryBrief[];
@@ -625,6 +631,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const isPro = selectedModel === 'pro3';
   const imageProvider = resolveNanoBananaImageProvider(nodeData.imageProvider);
   const isOpenAiProvider = imageProvider === 'openai';
+  const openaiModelKey = coerceNanoBananaOpenAiModelKey(nodeData.openaiModelKey);
+  const openaiQuality = coerceNanoBananaOpenAiQuality(nodeData.openaiQuality);
   const dockAspect = coerceNanoBananaAspect(nodeData.aspect_ratio);
   const dockResolution = coerceNanoBananaResolution(imageProvider, selectedModel, nodeData.resolution);
 
@@ -668,8 +676,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           images: connectedRefImages,
           aspect_ratio: dockAspect,
           resolution: dockResolution,
-          model: selectedModel,
-          thinking: nodeData.thinking && isPro,
+          ...(isOpenAiProvider
+            ? { model: openaiModelKey, quality: openaiQuality }
+            : { model: selectedModel, thinking: nodeData.thinking && isPro }),
         };
         const onGenProgress = (pct: number) => {
           if (graphGenEpochRef.current !== epoch) return;
@@ -839,7 +848,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [brainConnected, connectedSlots, promptConnected]);
 
   const headerTitle = String(nodeData.label || "Image Creation");
-  const modelLabel = nanoBananaModelLabel(selectedModel, isOpenAiProvider);
+  const modelLabel = nanoBananaModelLabel(isOpenAiProvider ? openaiModelKey : selectedModel, isOpenAiProvider);
   const formatLabel = dockAspect;
   const inputsLabel = useMemo(() => {
     const parts: string[] = [];
@@ -858,7 +867,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     : isActivelyGenerating
       ? `Generando imagen… ${Math.round(progress)}%`
       : hasGeneratedOutput
-        ? `${modelLabel} · ${nbResLabel} · ${formatLabel}`
+        ? `${modelLabel}${isOpenAiProvider ? ` · ${nanoBananaOpenAiQualityLabel(openaiQuality)}` : ""} · ${nbResLabel} · ${formatLabel}`
         : hasGridPreview
           ? `${connectedRefImages.length} ref${connectedRefImages.length === 1 ? "" : "s"} conectada${connectedRefImages.length === 1 ? "" : "s"}. Abre Studio para generar.`
           : hasConnections
@@ -1170,7 +1179,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                     label="Modelo"
                     value={
                       isOpenAiProvider ? (
-                        modelLabel
+                        <NanoBananaNodeDockSelect
+                          value={openaiModelKey}
+                          disabled={isActivelyGenerating}
+                          ariaLabel="Modelo de ChatGPT Images"
+                          options={NANO_BANANA_OPENAI_MODELS.map((m) => ({ value: m.key, label: m.label }))}
+                          onChange={(next) => updateData("openaiModelKey", coerceNanoBananaOpenAiModelKey(next))}
+                        />
                       ) : (
                         <NanoBananaNodeDockSelect
                           value={selectedModel}
@@ -1215,6 +1230,22 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                       />
                     }
                   />
+                  {isOpenAiProvider ? (
+                    <FoldderNodeContentMetaRow
+                      label="Calidad"
+                      value={
+                        <NanoBananaNodeDockSelect
+                          value={openaiQuality}
+                          disabled={isActivelyGenerating}
+                          ariaLabel="Calidad de ChatGPT Images"
+                          options={NANO_BANANA_OPENAI_QUALITIES.map((q) => ({ value: q.key, label: q.label }))}
+                          onChange={(next) =>
+                            updateData("openaiQuality", coerceNanoBananaOpenAiQuality(next))
+                          }
+                        />
+                      }
+                    />
+                  ) : null}
                   {isPro && !isOpenAiProvider ? (
                     <FoldderNodeContentMetaRow
                       label="Thinking"
@@ -1282,6 +1313,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             aspectRatio={dockAspect}
             resolution={dockResolution}
             imageProvider={imageProvider}
+            openaiModelKey={openaiModelKey}
+            openaiQuality={parseStoredNanoBananaOpenAiQuality(nodeData.openaiQuality)}
             thinking={!!nodeData.thinking}
             prompt={isHostStudioSession ? cineStudioPrompt || promptValue : effectivePromptValue}
             connectedImages={
@@ -1341,6 +1374,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             onResolutionChange={(r) => updateData('resolution', r)}
             onAspectRatioChange={(ratio) => updateData('aspect_ratio', ratio)}
             onModelKeyChange={(key) => updateData('modelKey', key)}
+            onOpenAiModelKeyChange={(key) => updateData("openaiModelKey", key)}
+            onOpenAiQualityChange={(quality) => updateData("openaiQuality", quality)}
             onThinkingChange={(next) => updateData("thinking", next)}
             preserveUnchanged={nodeData.studioPreserveUnchanged !== false}
             onPreserveUnchangedChange={(enabled) => updateData("studioPreserveUnchanged", enabled)}

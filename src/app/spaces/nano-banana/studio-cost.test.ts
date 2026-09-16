@@ -26,7 +26,7 @@ describe("studio-cost", () => {
   it("no cobra análisis sin lazo descrito", () => {
     const job = estimateStudioJobUsd({
       provider: "openai",
-      modelKey: "flash31",
+      modelKey: "flare",
       resolution: "1k",
       aspectRatio: "1:1",
       cards: [],
@@ -35,6 +35,50 @@ describe("studio-cost", () => {
     });
     expect(job.analyzeUsd).toBe(0);
     expect(clampStudioVariantCount(9)).toBe(3);
+  });
+
+  it("encarece ChatGPT si la calidad es Alta a 2K", () => {
+    const medium = estimateStudioJobUsd({
+      provider: "openai",
+      modelKey: "flare",
+      resolution: "2k",
+      aspectRatio: "16:9",
+      cards: [],
+      hasBaseImage: false,
+      quality: "medium",
+    });
+    const high = estimateStudioJobUsd({
+      provider: "openai",
+      modelKey: "flare",
+      resolution: "2k",
+      aspectRatio: "16:9",
+      cards: [],
+      hasBaseImage: false,
+      quality: "high",
+    });
+    expect(high.generateUsd).toBeGreaterThan(medium.generateUsd);
+  });
+
+  it("encarece ChatGPT si la calidad es Máxima", () => {
+    const high = estimateStudioJobUsd({
+      provider: "openai",
+      modelKey: "flare",
+      resolution: "2k",
+      aspectRatio: "16:9",
+      cards: [],
+      hasBaseImage: false,
+      quality: "high",
+    });
+    const max = estimateStudioJobUsd({
+      provider: "openai",
+      modelKey: "flare",
+      resolution: "2k",
+      aspectRatio: "16:9",
+      cards: [],
+      hasBaseImage: false,
+      quality: "max",
+    });
+    expect(max.generateUsd).toBeGreaterThan(high.generateUsd);
   });
 });
 

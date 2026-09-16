@@ -67,6 +67,7 @@ export function stripBriefForNode(brief: StudioHistoryBrief): StudioHistoryBrief
   const rawOutputUrl = persistableOrNull(brief.rawOutputUrl);
   if (rawOutputUrl) stripped.rawOutputUrl = rawOutputUrl;
   if (brief.crop) stripped.crop = brief.crop;
+  if (brief.expand) stripped.expand = brief.expand;
   if (brief.compose) stripped.compose = brief.compose;
   return stripped;
 }

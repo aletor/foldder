@@ -185,6 +185,28 @@ describe("wallet-cost-estimates", () => {
     expect(square?.estimatedCostMicros).toBeGreaterThan(wide?.estimatedCostMicros ?? 0);
   });
 
+  it("uses explicit ChatGPT quality for wallet preflight", () => {
+    const medium = estimateWalletCostForRoute("/api/openai/generate-stream", {
+      resolution: "2k",
+      aspect_ratio: "16:9",
+      quality: "medium",
+    });
+    const high = estimateWalletCostForRoute("/api/openai/generate-stream", {
+      resolution: "2k",
+      aspect_ratio: "16:9",
+      quality: "high",
+    });
+    const max = estimateWalletCostForRoute("/api/openai/generate-stream", {
+      resolution: "2k",
+      aspect_ratio: "16:9",
+      quality: "max",
+      model: "sunburst",
+    });
+    expect(high?.estimatedCostMicros).toBeGreaterThan(medium?.estimatedCostMicros ?? 0);
+    expect(max?.estimatedCostMicros).toBeGreaterThan(500_000);
+    expect(max?.label).toBe("ChatGPT · Sunburst · Máxima");
+  });
+
   it("multiplies image generation estimate by variantCount for wallet preflight", () => {
     const one = estimateWalletCostForRoute("/api/gemini/generate-stream", {
       model: "flash31",
