@@ -1,15 +1,15 @@
 /**
  * Recorte de contexto para ediciones locales pequeñas.
  *
- * Cuando todas las zonas marcadas caben en una fracción pequeña del fotograma, el modelo recibe
- * la foto entera y resuelve la zona con muy pocos píxeles (un pendiente en 2K son ~30 px), sin
- * margen para integrar luz ni desenfoque. Aquí se planifica un recorte ampliado alrededor de las
- * zonas, con la misma relación de aspecto que el fotograma, que se envía como BASE en lugar de la
- * foto completa; el servidor lo pega de vuelta tras componer. Misma cantidad de llamadas de pago.
+ * El modelo no genera el aspect arbitrario del lienzo (p. ej. 2560×2421). El recorte usa un
+ * ratio nativo (Gemini: 1:1, 4:3, 16:9…; ChatGPT: el del parche) alrededor de las zonas, se
+ * genera en ese formato y se pega de vuelta. Misma cantidad de llamadas de pago.
  */
 
 import { closeLassoPoints, isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
 import { loadCanvasSafeImageElement } from "./studio-compact";
+import { pickGeminiContainingRatio } from "./studio-frame-adjust";
+import { parseRatioToken } from "./studio-letterbox";
 import { cardIsDescribed } from "./studio-generate-payload";
 import type { StudioCard, StudioGlobal, StudioPoint } from "./studio-types";
 
@@ -47,6 +47,7 @@ export function planStudioContextCrop(args: {
   cards: StudioCard[];
   global: StudioGlobal;
   frame: { width: number; height: number };
+  provider?: "gemini" | "openai";
 }): StudioContextCrop | null {
   const { width: W, height: H } = args.frame;
   if (W < 64 || H < 64) return null;
@@ -72,26 +73,56 @@ export function planStudioContextCrop(args: {
   if ((bw * bh) / (W * H) > CONTEXT_CROP_MAX_UNION_AREA) return null;
   if (bw / W > CONTEXT_CROP_MAX_UNION_SIDE || bh / H > CONTEXT_CROP_MAX_UNION_SIDE) return null;
 
-  // Recorte con la relación de aspecto del fotograma, centrado en la bbox conjunta.
-  const aspect = W / H;
-  let cw = Math.max(bw * CONTEXT_CROP_EXPANSION, W * CONTEXT_CROP_MIN_SIDE_FRACTION);
-  let ch = Math.max(bh * CONTEXT_CROP_EXPANSION, H * CONTEXT_CROP_MIN_SIDE_FRACTION);
-  if (cw / ch > aspect) ch = cw / aspect;
-  else cw = ch * aspect;
-  cw = Math.min(W, cw);
-  ch = Math.min(H, ch);
-  if (cw >= W * 0.98 && ch >= H * 0.98) return null;
+  const minW = Math.max(bw * CONTEXT_CROP_EXPANSION, W * CONTEXT_CROP_MIN_SIDE_FRACTION);
+  const minH = Math.max(bh * CONTEXT_CROP_EXPANSION, H * CONTEXT_CROP_MIN_SIDE_FRACTION);
+  const provider = args.provider ?? "gemini";
+  let aspect = minW / minH;
+  if (provider === "gemini") {
+    const picked = pickGeminiContainingRatio(minW, minH);
+    const parsed = parseRatioToken(picked.ratio);
+    if (parsed) aspect = parsed.w / parsed.h;
+  }
+
+  const sized = sizeRectForAspect(aspect, minW, minH, W, H);
+  if (!sized) return null;
+  let { width, height } = sized;
+  width -= width % 2;
+  height -= height % 2;
+  width = Math.max(8, Math.min(W, width));
+  height = Math.max(8, Math.min(H, height));
+  if (width >= W * 0.98 && height >= H * 0.98) return null;
 
   const cx = (ux1 + ux2) / 2;
   const cy = (uy1 + uy2) / 2;
-  let x = Math.round(cx - cw / 2);
-  let y = Math.round(cy - ch / 2);
-  const width = Math.max(8, Math.round(cw));
-  const height = Math.max(8, Math.round(ch));
-  x = Math.max(0, Math.min(W - width, x));
-  y = Math.max(0, Math.min(H - height, y));
-  // Par para evitar medio píxel en el reescalado del modelo.
-  return { x, y, width: width - (width % 2), height: height - (height % 2) };
+  const x = Math.max(0, Math.min(W - width, Math.round(cx - width / 2)));
+  const y = Math.max(0, Math.min(H - height, Math.round(cy - height / 2)));
+  if (ux1 < x - 1 || uy1 < y - 1 || ux2 > x + width + 1 || uy2 > y + height + 1) return null;
+  return { x, y, width, height };
+}
+
+function sizeRectForAspect(
+  aspect: number,
+  minW: number,
+  minH: number,
+  maxW: number,
+  maxH: number,
+): { width: number; height: number } | null {
+  let width = Math.max(minW, minH * aspect);
+  let height = width / aspect;
+  if (height < minH) {
+    height = minH;
+    width = height * aspect;
+  }
+  if (width > maxW) {
+    width = maxW;
+    height = width / aspect;
+  }
+  if (height > maxH) {
+    height = maxH;
+    width = height * aspect;
+  }
+  if (width > maxW + 1 || height > maxH + 1) return null;
+  return { width: Math.max(8, Math.round(width)), height: Math.max(8, Math.round(height)) };
 }
 
 /** Traduce los lazos al sistema del recorte y re-rasteriza la pintura para ese fotograma. */

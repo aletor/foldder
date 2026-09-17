@@ -23,16 +23,16 @@ function cardWithLasso(points: Array<[number, number]>, description = "cambiar")
 }
 
 describe("planStudioContextCrop", () => {
-  it("zona pequeña ⇒ recorte con la relación de aspecto del fotograma, centrado y dentro de la imagen", () => {
+  it("zona pequeña ⇒ recorte nativo Gemini (4:3 en un fotograma 4:3), centrado y dentro de la imagen", () => {
     const card = cardWithLasso(rectLasso(1500, 400, 1560, 480));
-    const crop = planStudioContextCrop({ cards: [card], global: emptyStudioGlobal(), frame: FRAME });
+    const crop = planStudioContextCrop({ cards: [card], global: emptyStudioGlobal(), frame: FRAME, provider: "gemini" });
     expect(crop).not.toBeNull();
     if (!crop) return;
     expect(crop.x).toBeGreaterThanOrEqual(0);
     expect(crop.y).toBeGreaterThanOrEqual(0);
     expect(crop.x + crop.width).toBeLessThanOrEqual(FRAME.width);
     expect(crop.y + crop.height).toBeLessThanOrEqual(FRAME.height);
-    expect(Math.abs(crop.width / crop.height - FRAME.width / FRAME.height)).toBeLessThan(0.02);
+    expect(Math.abs(crop.width / crop.height - 4 / 3)).toBeLessThan(0.02);
     // El lazo queda dentro del recorte.
     expect(crop.x).toBeLessThan(1500);
     expect(crop.y).toBeLessThan(400);
@@ -40,6 +40,27 @@ describe("planStudioContextCrop", () => {
     expect(crop.y + crop.height).toBeGreaterThan(480);
     // Recorte sensiblemente menor que el fotograma.
     expect(crop.width * crop.height).toBeLessThan(FRAME.width * FRAME.height * 0.5);
+  });
+
+  it("lienzo 2560×2421: Gemini recorta ~1:1; ChatGPT usa el aspect del parche", () => {
+    const frame = { width: 2560, height: 2421 };
+    const card = cardWithLasso(rectLasso(2000, 400, 2060, 480));
+    const gemini = planStudioContextCrop({ cards: [card], global: emptyStudioGlobal(), frame, provider: "gemini" });
+    expect(gemini).not.toBeNull();
+    if (gemini) {
+      expect(Math.abs(gemini.width / gemini.height - 1)).toBeLessThan(0.02);
+      expect(gemini.x).toBeLessThan(2000);
+      expect(gemini.x + gemini.width).toBeGreaterThan(2060);
+      expect(gemini.y).toBeLessThan(400);
+      expect(gemini.y + gemini.height).toBeGreaterThan(480);
+    }
+    const openai = planStudioContextCrop({ cards: [card], global: emptyStudioGlobal(), frame, provider: "openai" });
+    expect(openai).not.toBeNull();
+    if (openai) {
+      expect(Math.abs(openai.width / openai.height - 1)).toBeGreaterThan(0.02);
+      expect(openai.x).toBeLessThan(2000);
+      expect(openai.x + openai.width).toBeGreaterThan(2060);
+    }
   });
 
   it("zona grande, texto global, esquema o card sin lazo ⇒ sin recorte", () => {

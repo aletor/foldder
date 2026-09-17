@@ -11,6 +11,7 @@ import {
   stableKnowledgeFileUrlFromKey,
 } from "@/lib/spaces-access-control";
 import { preserveComposeImages, type PreserveComposeToneLimits } from "@/lib/nano-banana/preserve-compose/compose";
+import { clampExtractArea, orientImageBuffer } from "@/lib/nano-banana/preserve-compose/oriented-extract";
 import type { ChangeMaskSensitivity, ChangeMaskStats } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
 import type { OpticalMatchStats } from "@/lib/nano-banana/preserve-compose/optical-match";
 
@@ -160,34 +161,32 @@ async function extractCrop(
   crop: PreserveComposeCropInput,
   cropFrame: { width: number; height: number } | null,
 ): Promise<{ crop: Buffer; nativeCrop: PreserveComposeCropInput; fullWidth: number; fullHeight: number }> {
-  const oriented = sharp(base, { failOn: "none" }).rotate();
-  const meta = await oriented.metadata();
-  const fullWidth = meta.width ?? 0;
-  const fullHeight = meta.height ?? 0;
-  let nativeCrop = crop;
-  if (cropFrame && cropFrame.width > 0 && cropFrame.height > 0 && (cropFrame.width !== fullWidth || cropFrame.height !== fullHeight)) {
-    const sx = fullWidth / cropFrame.width;
-    const sy = fullHeight / cropFrame.height;
-    const x = Math.max(0, Math.round(crop.x * sx));
-    const y = Math.max(0, Math.round(crop.y * sy));
-    nativeCrop = {
-      x,
-      y,
-      width: Math.max(8, Math.min(fullWidth - x, Math.round(crop.width * sx))),
-      height: Math.max(8, Math.min(fullHeight - y, Math.round(crop.height * sy))),
-    };
+  const oriented = await orientImageBuffer(base);
+  let requested = crop;
+  if (cropFrame && cropFrame.width > 0 && cropFrame.height > 0) {
+    if (cropFrame.width !== oriented.width || cropFrame.height !== oriented.height) {
+      const sx = oriented.width / cropFrame.width;
+      const sy = oriented.height / cropFrame.height;
+      requested = {
+        x: crop.x * sx,
+        y: crop.y * sy,
+        width: crop.width * sx,
+        height: crop.height * sy,
+      };
+    }
   }
-  if (nativeCrop.x + nativeCrop.width > fullWidth || nativeCrop.y + nativeCrop.height > fullHeight) {
+  const nativeCrop = clampExtractArea(requested, oriented.width, oriented.height);
+  if (!nativeCrop) {
     throw new ComposeInputError(
-      `Recorte (${nativeCrop.x},${nativeCrop.y} ${nativeCrop.width}×${nativeCrop.height}) fuera de la base (${fullWidth}×${fullHeight}).`,
+      `Recorte (${Math.round(requested.x)},${Math.round(requested.y)} ${Math.round(requested.width)}×${Math.round(requested.height)}) fuera de la base (${oriented.width}×${oriented.height}).`,
       400,
     );
   }
-  const cropPng = await oriented
+  const cropPng = await sharp(oriented.png, { failOn: "none" })
     .extract({ left: nativeCrop.x, top: nativeCrop.y, width: nativeCrop.width, height: nativeCrop.height })
     .png()
     .toBuffer();
-  return { crop: cropPng, nativeCrop, fullWidth, fullHeight };
+  return { crop: cropPng, nativeCrop, fullWidth: oriented.width, fullHeight: oriented.height };
 }
 
 /** Pega el recorte compuesto sobre la base completa (sin pérdida fuera del recorte). */
@@ -370,7 +369,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : "preserve-compose failed";
+    const friendly =
+      /extract_area|bad extract area/i.test(message)
+        ? "No se pudo recortar la zona de contexto sobre la foto original. Prueba de nuevo el lazo; si sigue fallando, desactiva el recorte de contexto."
+        : message;
     console.error("[nano-banana/preserve-compose]", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: friendly }, { status: 500 });
   }
 }

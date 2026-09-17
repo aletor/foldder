@@ -170,21 +170,15 @@ describe("preserveComposeImages", () => {
     expect(forced.height).toBe(H);
   }, 30_000);
 
-  it("recorta una generada de otro ratio al lienzo de la base y conserva el tamaño", async () => {
+  it("salta cuando la relación de aspecto no coincide", async () => {
     const raw = baseRaw();
     const basePng = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).png().toBuffer();
     const square = await sharp(raw, { raw: { width: W, height: H, channels: 3 } }).resize(400, 400, { fit: "fill" }).png().toBuffer();
-    const result = await preserveComposeImages({
-      base: basePng,
-      generated: square,
-      priorMask: await priorPng(),
-      fallbackToPrior: true,
-    });
-    expect(result.composed).toBe(true);
-    if (!result.composed) return;
-    expect(result.width).toBe(W);
-    expect(result.height).toBe(H);
-  }, 30_000);
+    const result = await preserveComposeImages({ base: basePng, generated: square, priorMask: null });
+    expect(result.composed).toBe(false);
+    if (result.composed) return;
+    expect(result.decision).toBe("aspect-mismatch");
+  });
 
   it("salta cuando la base excede el máximo de píxeles configurado", async () => {
     const raw = baseRaw();

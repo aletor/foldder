@@ -12,6 +12,7 @@
  */
 
 import sharp from "sharp";
+import { clampExtractArea } from "./oriented-extract";
 import {
   analyzeChangeMask,
   dilateRound,
@@ -396,7 +397,12 @@ async function cropGeneratedToMatchingAspect(generated: Buffer, canvasW: number,
     const height = Math.max(8, Math.round(gw / targetAspect));
     extract = { left: 0, top: Math.max(0, Math.round((gh - height) / 2)), width: gw, height: Math.min(height, gh) };
   }
-  return sharp(oriented, { failOn: "none" }).extract(extract).png().toBuffer();
+  const clamped = clampExtractArea({ x: extract.left, y: extract.top, width: extract.width, height: extract.height }, gw, gh);
+  if (!clamped) return oriented;
+  return sharp(oriented, { failOn: "none" })
+    .extract({ left: clamped.x, top: clamped.y, width: clamped.width, height: clamped.height })
+    .png()
+    .toBuffer();
 }
 
 async function cropGeneratedToCanvas(generated: Buffer, canvasW: number, canvasH: number): Promise<Buffer> {
@@ -659,10 +665,18 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   }
   const baseAspect = W / H;
   const genAspect = gw / gh;
-  const generatedFitted =
-    Math.abs(baseAspect - genAspect) / baseAspect > ASPECT_TOLERANCE
-      ? await cropGeneratedToMatchingAspect(args.generated, W, H)
-      : args.generated;
+  if (Math.abs(baseAspect - genAspect) / baseAspect > ASPECT_TOLERANCE) {
+    return {
+      composed: false,
+      decision: "aspect-mismatch",
+      reason: `La generada (${gw}×${gh}) no comparte relación de aspecto con la base (${W}×${H}).`,
+      width: W,
+      height: H,
+      stats: null,
+      maskPreviewPng: null,
+      timings,
+    };
+  }
 
   // Escala de análisis.
   t = performance.now();
@@ -671,7 +685,7 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   const aH = Math.max(8, Math.round(H * scale));
   const [baseA, genA, priorA] = await Promise.all([
     resizeRgbRaw(base.data, W, H, aW, aH),
-    sharp(generatedFitted, { failOn: "none" })
+    sharp(args.generated, { failOn: "none" })
       .rotate()
       .removeAlpha()
       .toColourspace("srgb")
@@ -734,7 +748,7 @@ export async function preserveComposeImages(args: PreserveComposeArgs): Promise<
   t = performance.now();
   const sdx = Math.round((analysis.stats.shift.dx * W) / aW);
   const sdy = Math.round((analysis.stats.shift.dy * H) / aH);
-  let genPipeline = sharp(generatedFitted, { failOn: "none" })
+  let genPipeline = sharp(args.generated, { failOn: "none" })
     .rotate()
     .removeAlpha()
     .toColourspace("srgb")

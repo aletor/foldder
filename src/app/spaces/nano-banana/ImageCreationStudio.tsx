@@ -69,7 +69,7 @@ import {
 } from "./nano-banana-output-options";
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
 import { StudioFoldderImagePicker } from "./StudioFoldderImagePicker";
-import { canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
+import { buildStudioGenerateImageSlots, canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
 import type { ChangeMaskSensitivity } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
 import { mergeStudioCardReferences, planStudioIncomingUrls, STUDIO_SCENE_DEST } from "./studio-foldder-images";
 import { prepareStudioGenerateCallCached } from "./studio-prepare-cache";
@@ -105,7 +105,7 @@ import {
 } from "./studio-frame-adjust";
 import { estimateStudioJobUsd, formatStudioUsd } from "./studio-cost";
 import { buildOpenAiEditMaskDataUrl } from "./studio-openai-mask";
-import { buildStudioGenerateImageSlots } from "./studio-generate-payload";
+import { applyStudioGenerateFraming, unletterboxImageDataUrl } from "./studio-letterbox";
 import { clientPointToImagePoint, STUDIO_VIEWER_PAN_GAIN, wheelZoomFactor, zoomTowardPoint } from "./studio-overlay-coords";
 import {
   hydrateCardPaint,
@@ -1050,9 +1050,14 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       if (!preserveUnchanged || !args.base) return null;
       const eligibility = preserveComposeEligibility({ baseImage: args.base, cards: args.cards, global: args.global });
       if (!eligibility.ok) return null;
-      return planStudioContextCrop({ cards: args.cards, global: args.global, frame: args.frame });
+      return planStudioContextCrop({
+        cards: args.cards,
+        global: args.global,
+        frame: args.frame,
+        provider: studioProvider,
+      });
     },
-    [preserveUnchanged],
+    [preserveUnchanged, studioProvider],
   );
 
   const commitGeneratedOutput = useCallback(
@@ -1332,18 +1337,26 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             global: genGlobal,
             contextCrop: Boolean(crop),
           });
+          const framed = await applyStudioGenerateFraming({
+            images: prepared.images,
+            prompt: prepared.prompt,
+            baseSrc: genBase,
+            width: genFrameWidth,
+            height: genFrameHeight,
+            provider: studioProvider,
+          });
           const merged = mergePromptWithBrain(
             composeBrainImageGeneratorPrompt,
             onBrainImageGeneratorDiagnostics,
             scenePrompt,
-            prepared.prompt,
+            framed.prompt,
           );
           const maskUrl = isOpenAi
             ? await buildOpenAiEditMaskDataUrl(genCards, { width: genFrameWidth, height: genFrameHeight })
             : null;
           const imageList = maskUrl
-            ? buildStudioGenerateImageSlots({ ...prepared.images, zoneMapImage: null })
-            : prepared.imageList;
+            ? buildStudioGenerateImageSlots({ ...framed.images, zoneMapImage: null })
+            : framed.imageList;
           const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
           setGenStage(
             `Generando candidata · ${nanoBananaModelLabel(studioDisplayModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
@@ -1352,11 +1365,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             {
               prompt: merged,
               images: imageList,
-              aspect_ratio: resolveStudioGenerateAspect({
-                width: genFrameWidth,
-                height: genFrameHeight,
-                provider: studioProvider,
-              }),
+              aspect_ratio: framed.aspect,
               resolution,
               ...studioGenerateModelFields,
               ...(maskUrl ? { mask: maskUrl } : {}),
@@ -1366,9 +1375,15 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               aiHudNanoBananaJobProgress(nodeId, pct);
             },
           );
+          let output = generated.output;
+          let outputKey = typeof generated.key === "string" ? generated.key : undefined;
+          if (framed.inner) {
+            output = await unletterboxImageDataUrl(output, framed.inner.width, framed.inner.height);
+            outputKey = undefined;
+          }
           const json = {
-            output: generated.output,
-            key: typeof generated.key === "string" ? generated.key : undefined,
+            output,
+            key: outputKey,
             crop,
           };
           if (collectCandidate) {
@@ -1508,13 +1523,21 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         global: genGlobal,
         contextCrop: Boolean(crop),
       });
+      const framed = await applyStudioGenerateFraming({
+        images: prepared.images,
+        prompt: prepared.prompt,
+        baseSrc: crop ? cropped : currentImage,
+        width: crop ? crop.width : frame.width,
+        height: crop ? crop.height : frame.height,
+        provider: studioProvider,
+      });
       const merged = mergePromptWithBrain(
         composeBrainImageGeneratorPrompt,
         onBrainImageGeneratorDiagnostics,
         scenePrompt,
-        prepared.prompt,
+        framed.prompt,
       );
-      const order = describeStudioGenerateImageOrder(prepared.images);
+      const order = describeStudioGenerateImageOrder(framed.images);
       const eligibility = preserveComposeEligibility({
         baseImage: currentImage,
         cards,
@@ -1522,7 +1545,9 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       });
       const cropNote = crop ? ` ${describeContextCrop(crop, frame)}: el modelo recibe solo ese recorte y el resultado se pega de vuelta sobre la foto completa.` : "";
       const aspectNote = currentImage
-        ? ` Formato enviado: ${resolveStudioGenerateAspect({ width: crop ? crop.width : frame.width, height: crop ? crop.height : frame.height, provider: studioProvider })} (el de la foto actual, no el del nodo).`
+        ? framed.inner
+          ? ` Formato enviado: ${framed.aspect} con letterbox; el pegado recorta a ${framed.inner.width}×${framed.inner.height} px.`
+          : ` Formato enviado: ${framed.aspect} (el de la foto actual, no el del nodo).`
         : "";
       const preserveNote = !preserveUnchanged
         ? "Conservar original: desactivado."
@@ -1531,7 +1556,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           : `Conservar original: no se aplicará. ${eligibility.reason}`;
       setCallPreview({
         analyzeError: prepared.analyzeError,
-        images: order.kinds.map((kind, index) => ({ kind, src: prepared.imageList[index] ?? "" })).filter((item) => item.src),
+        images: order.kinds.map((kind, index) => ({ kind, src: framed.imageList[index] ?? "" })).filter((item) => item.src),
         preserveNote,
         prompt: merged,
         ranAnalyzeAreas: prepared.ranAnalyzeAreas,
