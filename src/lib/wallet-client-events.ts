@@ -51,6 +51,9 @@ export type WalletCostDecisionRequest = {
   wallet: WalletStatusResponse;
   /** Líneas de desglose (p. ej. varias llamadas IA en ingesta BrandKit). */
   detailLines?: string[];
+  confirmLabel?: string;
+  /** Writer: confirmar siempre, aunque el usuario haya apagado los avisos de pago. */
+  requireExplicitConfirm?: boolean;
 };
 
 export type WalletCostDecisionResult = {
@@ -93,7 +96,7 @@ export async function requestWalletCostDecision(
     request.wallet.account?.billingReviewRequired === true;
   const insufficient = request.wallet.configured && available < request.reserveMicros;
 
-  if (!readPaymentWarningsEnabled()) {
+  if (!readPaymentWarningsEnabled() && !request.requireExplicitConfirm) {
     if (blocked || insufficient) {
       if (insufficient) dispatchWalletOpen("insufficient_balance");
       return {
@@ -124,6 +127,10 @@ export async function requestWalletCostDecision(
         `${request.label}\nReserva máxima: ${formatUsdForFallback(request.reserveMicros)}\nSaldo disponible: ${formatUsdForFallback(available)}`,
       );
       resolve({ allowed: ok, reason: ok ? "approved" : "cancelled" });
+      return;
+    }
+    if (request.requireExplicitConfirm) {
+      resolve({ allowed: false, reason: "cancelled" });
       return;
     }
     resolve({ allowed: true, reason: "approved" });

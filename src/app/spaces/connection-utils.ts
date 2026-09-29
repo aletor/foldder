@@ -644,6 +644,7 @@ const DEFAULT_W: Record<string, number> = {
   space: 320,
   projectAssets: 260,
   guionista: 524,
+  writer: 420,
 };
 
 export function estimateNodeWidth(node: Node): number {

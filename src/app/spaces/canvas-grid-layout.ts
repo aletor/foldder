@@ -49,6 +49,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
 
   // Tier 3 — 4×3 · texto / contenido
   guionista: { cols: 4, rows: 3 },
+  writer: { cols: 4, rows: 3 },
   grokProcessor: { cols: 4, rows: 3 },
   enhancer: { cols: 4, rows: 3 },
   concatenator: { cols: 4, rows: 3 },

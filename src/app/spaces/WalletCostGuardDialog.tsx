@@ -389,7 +389,7 @@ export function WalletCostGuardDialog() {
               className="flex h-10 items-center justify-center gap-1.5 bg-blue-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500"
             >
               <Wallet size={13} aria-hidden />
-              {isSpanish ? "Continuar" : "Continue"}
+              {request.confirmLabel || (isSpanish ? "Continuar" : "Continue")}
             </button>
           )}
         </div>

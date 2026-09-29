@@ -28,6 +28,7 @@ import {
 } from "./CustomNodes";
 import { CineNode } from "./cine/CineNode";
 import { GuionistaNode } from "./guionista/GuionistaNode";
+import { WriterNode } from "./writer/WriterNode";
 import { ExportMultimediaNode, ExportMultipleNode } from "./MediaListConsumerNodes";
 import { NanoBananaNode } from "./nano-banana/NanoBananaNode";
 import { CanvasGroupNode } from "./CanvasGroupNode";
@@ -53,6 +54,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   promptInput: PromptNode,
   notes: NotesNode,
   guionista: GuionistaNode,
+  writer: WriterNode,
   cine: CineNode,
   export_multimedia: ExportMultimediaNode,
   exportMultiple: ExportMultipleNode,

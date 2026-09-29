@@ -98,6 +98,7 @@ function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: numb
 function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'designer') return 'border-[#fdb04b] group-hover/tile:border-[#fdb04b]';
   if (type === 'guionista') return 'border-[#37f1e8] group-hover/tile:border-[#37f1e8]';
+  if (type === 'writer') return 'border-[#d7c4a3] group-hover/tile:border-[#d7c4a3]';
   if (type === 'cine') return 'border-[#b48689] group-hover/tile:border-[#b48689]';
   if (type === 'nanoBanana') return 'border-[#e0dc52] group-hover/tile:border-[#e0dc52]';
   if (type === 'inspiration') return 'border-emerald-400/70 group-hover/tile:border-emerald-300/90';
@@ -115,6 +116,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
 
 const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'brandKit', label: 'BrandKit' },
+  { type: 'writer', label: 'Writer' },
   { type: 'guionista', label: 'Guionista' },
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },

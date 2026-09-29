@@ -230,6 +230,19 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         value: "",
         updatedAt: new Date().toISOString(),
       };
+    case "writer":
+      return {
+        label: "Writer",
+        title: "",
+        profile: "document",
+        pagePreset: "a4",
+        documentId: "",
+        documentKey: "",
+        value: "",
+        promptValue: "",
+        wordCount: 0,
+        updatedAt: new Date().toISOString(),
+      };
     case "guionista":
       return {
         label: "Guionista",

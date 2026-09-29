@@ -143,6 +143,36 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       updatedAt: 'string (ISO timestamp)',
     },
   },
+  writer: {
+    type: 'writer',
+    label: 'Writer',
+    description: 'Editor de documentos: un árbol de texto con perfiles, autoguardado y salida de texto.',
+    inputs: [
+      { id: 'prompt', label: 'Prompt', type: 'prompt' },
+      { id: 'text', label: 'Text', type: 'txt' },
+      { id: 'brain', label: 'Marca', type: 'brain' },
+      { id: 'image', label: 'Imagen', type: 'image' },
+    ],
+    outputs: [
+      { id: 'text', label: 'Text out', type: 'txt' },
+      { id: 'prompt', label: 'Prompt out', type: 'prompt' },
+    ],
+    dataSchema: {
+      title: 'string',
+      profile: 'document | article | post | screenplay',
+      pagePreset: 'a4 | letter | a5 | screen (vista de la hoja; el árbol no cambia)',
+      documentId: 'string (id del archivo del documento)',
+      documentKey: 'string (clave del archivo; el árbol no vive en el nodo)',
+      content: 'ProseMirror JSON solo si el archivo no se pudo guardar',
+      value: 'string (texto plano derivado para Text out)',
+      promptValue: 'string (Markdown derivado para Prompt out)',
+      wordCount: 'number',
+      chapterCount: 'number (capítulos del árbol; el mapa no es otro documento)',
+      canonCount: 'number (notas Canon; la lista vive en el archivo)',
+      ideaCount: 'number (notas Idea; la lista vive en el archivo)',
+      updatedAt: 'string (ISO)',
+    },
+  },
   guionista: {
     type: 'guionista',
     label: 'Guionista',
@@ -760,6 +790,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   pdfScan:
     "sin auto-scan al drop (status staged); mode texts|document; source en S3; texts=raster limpio+textSpans; document=paths+texto+imágenes (pdf_document_layout); fidelity; mediaListOutput; sin LLM en núcleo",
+  writer:
+    "title, profile (document|article|post|screenplay), pagePreset (a4|letter|a5|screen; solo cambia la vista), documentId, documentKey (el árbol está en ese archivo, no en el nodo), value (texto plano), promptValue (Markdown), wordCount, chapterCount, canonCount (establecido), ideaCount (posibilidad). Un capítulo es un subárbol; el mapa solo lo lista. En guion los bloques son encabezado, acción, personaje, acotación, diálogo y transición; Enter y Tab cambian el bloque, sin espacios manuales. La IA propone continuar, reescribir, ampliar o acortar; el texto no cambia hasta aceptar. Una llamada por gesto, con confirmación explícita, sin reintento automático. Memory guarda el texto del usuario como establecido o posibilidad y, en un guion, lo asocia al personaje que habla. La continuidad local marca una contradicción sin llamar a la IA. No es BrandKit. content y memory solo si falló el guardado. Entrada brain solo desde BrandKit.",
   brandKit:
     "label (título opcional); brandKit (BrandKitDocument en node.data); salida brand (tipo brain → Designer, generadores); abre BrandKit Studio",
   projectAssets:

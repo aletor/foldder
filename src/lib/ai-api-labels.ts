@@ -19,6 +19,7 @@ export function getAiRequestLabelForPathname(pathname: string): string | null {
     { test: /^\/api\/spaces\/brandKit\/ingest$/, label: "BrandKit" },
     { test: /^\/api\/spaces\/brandKit\/gallery\/generate$/, label: "BrandKit" },
     { test: /^\/api\/spaces\/text-content$/, label: "Texto" },
+    { test: /^\/api\/spaces\/writer\/assist$/, label: "Writer" },
     { test: /^\/api\/spaces\/guionista$/, label: "Guionista" },
     { test: /^\/api\/spaces\/cine\/analyze$/, label: "Cine" },
     { test: /^\/api\/spaces\/describe$/, label: "OpenAI" },

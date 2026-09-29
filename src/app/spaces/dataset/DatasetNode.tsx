@@ -61,6 +61,7 @@ const NODE_TYPE_LABELS: Record<string, string> = {
   presenter: "Presenter",
   listado: "Listado",
   guionista: "Guionista",
+  writer: "Writer",
   cine: "Cine",
   nanoBanana: "Nano Banana",
   imageCreationAdvanced: "Image Creation",

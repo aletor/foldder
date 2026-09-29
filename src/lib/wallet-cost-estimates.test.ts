@@ -25,6 +25,7 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/spaces/guionista",
   "/api/spaces/search",
   "/api/spaces/text-content",
+  "/api/spaces/writer/assist",
   "/api/spaces/video-matte",
   "/api/video-editor/render",
   "/api/video-editor/subtitles/transcribe",
@@ -47,6 +48,7 @@ function sampleBodyForRoute(route: string): Record<string, unknown> {
   if (route === "/api/spaces/search") return { query: "modern workspace", verify: true, limit: 5 };
   if (route === "/api/spaces/guionista") return { task: "draft", idea: "Idea" };
   if (route === "/api/spaces/text-content") return { action: "correct", text: "Corrige esta frase." };
+  if (route === "/api/spaces/writer/assist") return { action: "continue", profile: "document", before: "Había una vez", after: "", selection: "" };
   if (route === "/api/spaces/assistant") return { prompt: "Create nodes", nodes: [], edges: [] };
   if (route === "/api/spaces/brandKit/crawl") return { url: "https://example.com", enableLlm: true };
   if (route === "/api/spaces/brandKit/ingest") return { enableLlm: true };
@@ -220,6 +222,52 @@ describe("wallet-cost-estimates", () => {
     expect(one?.estimatedCostMicros).toBe(101_000);
     expect(three?.estimatedCostMicros).toBe(303_000);
     expect(three?.label).toBe("Generar imagen ×3");
+  });
+
+  it("confirms Ask Story as one call without showing tokens", () => {
+    const estimate = estimateWalletCostForRoute("/api/spaces/writer/assist", {
+      action: "ask_story",
+      question: "¿Cuál podría ser ahora la motivación de Pedro?",
+      preview: { title: "Pedro", notes: 5, fragments: 7, chapters: "Capítulos 3–6" },
+      storyContext: { entities: [{ label: "Pedro", definition: "Es orgulloso." }] },
+    });
+    expect(estimate?.label).toBe("Consultar Story");
+    expect(estimate?.confirmLabel).toBe("Preguntar");
+    expect(estimate?.requireExplicitConfirm).toBe(true);
+    expect(estimate?.detailLines).toEqual([
+      "Pedro",
+      "5 apuntes",
+      "7 fragmentos relevantes",
+      "Capítulos 3–6",
+      "1 llamada IA",
+      "La consulta también puede actualizar la comprensión de los fragmentos enviados.",
+    ]);
+    expect(estimate?.detailLines?.join(" ").toLowerCase()).not.toContain("token");
+  });
+
+  it("prices Update Story once for the whole plan", () => {
+    const body = {
+      action: "update_story",
+      preview: { blocks: 27, characters: 4, chapterCount: 2, calls: 2, plannedInputChars: 8000 },
+      batch: { dirty: [{ blockId: "a", text: "Pedro salta del barco." }] },
+    };
+    const one = estimateWalletCostForRoute("/api/spaces/writer/assist", {
+      ...body,
+      preview: { ...body.preview, calls: 1, plannedInputChars: 4000 },
+    });
+    const two = estimateWalletCostForRoute("/api/spaces/writer/assist", body);
+    expect(two?.label).toBe("Actualizar Story");
+    expect(two?.confirmLabel).toBe("Actualizar");
+    expect(two?.requireExplicitConfirm).toBe(true);
+    expect(two?.detailLines).toEqual([
+      "27 bloques modificados",
+      "4 personajes relacionados",
+      "2 capítulos afectados",
+      "Se actualizarán: Recorrido, Ahora y Hechos",
+      "2 llamadas IA",
+    ]);
+    expect(two?.estimatedCostMicros).toBe((one?.estimatedCostMicros ?? 0) * 2);
+    expect(two?.detailLines?.join(" ").toLowerCase()).not.toContain("token");
   });
 
   it("ignores routes without a wallet-facing estimate", () => {

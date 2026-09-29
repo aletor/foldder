@@ -76,4 +76,25 @@ describe("requestWalletCostDecision", () => {
     expect(result).toEqual({ allowed: false, reason: "insufficient_balance" });
     expect(eventFired).toBe(false);
   });
+
+  it("still asks before a Writer call when payment warnings are off", async () => {
+    writePaymentWarningsEnabled(false);
+    let eventFired = false;
+    const onDecision = (event: Event) => {
+      eventFired = true;
+      const detail = (event as CustomEvent<{ handled: boolean; resolve: (result: { allowed: boolean; reason: "cancelled" }) => void }>).detail;
+      detail.handled = true;
+      detail.resolve({ allowed: false, reason: "cancelled" });
+    };
+    window.addEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
+    const result = await requestWalletCostDecision({
+      ...baseRequest(2_000_000),
+      requireExplicitConfirm: true,
+    });
+
+    window.removeEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+    expect(eventFired).toBe(true);
+    expect(result).toEqual({ allowed: false, reason: "cancelled" });
+  });
 });

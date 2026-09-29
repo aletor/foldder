@@ -36,6 +36,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   spaceInput: "#76514E",
   spaceOutput: "#76514E",
   guionista: "#1b71df",
+  writer: "#3d4a3a",
   export_multimedia: "#FF99CC",
   exportMultiple: "#3F3C58",
   canvasGroup: "#3F3C58",

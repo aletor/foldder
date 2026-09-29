@@ -830,6 +830,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   inspiration: 'lightbulb',
   notes: 'notes',
   guionista: 'guionista',
+  writer: 'text',
   cine: 'cine',
 };
 

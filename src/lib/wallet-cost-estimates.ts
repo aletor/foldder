@@ -22,6 +22,9 @@ export type WalletCostEstimate = {
   estimatedCostMicros: number;
   reserveMicros: number;
   tone: "quiet" | "confirm" | "strong";
+  detailLines?: string[];
+  confirmLabel?: string;
+  requireExplicitConfirm?: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -338,6 +341,128 @@ export function estimateWalletCostForRoute(
       outputTokens: maxTokens,
       multiplier: 1.6,
     });
+  }
+
+  if (route === "/api/spaces/writer/assist") {
+    const action = stringValue(body.action, "continue");
+    if (action === "ask_story") {
+      const preview = asRecord(body.preview);
+      const title = stringValue(preview.title, "Historia");
+      const notes = Math.max(0, Math.round(Number(preview.notes) || 0));
+      const fragments = Math.max(0, Math.round(Number(preview.fragments) || 0));
+      const chapters = stringValue(preview.chapters);
+      const storyContext = asRecord(body.storyContext);
+      return {
+        ...estimateTextRoute({
+          label: "Consultar Story",
+          route,
+          body,
+          inputChars: Math.max(400, stringValue(body.question).length + JSON.stringify(storyContext).length),
+          model: "gpt-4o-mini",
+          outputTokens: 1100,
+          multiplier: 1.6,
+        }),
+        tone: "confirm",
+        requireExplicitConfirm: true,
+        confirmLabel: "Preguntar",
+        detailLines: [
+          title,
+          notes === 1 ? "1 apunte" : notes > 1 ? `${notes} apuntes` : "",
+          fragments === 1 ? "1 fragmento relevante" : fragments > 1 ? `${fragments} fragmentos relevantes` : "",
+          chapters,
+          "1 llamada IA",
+          "La consulta también puede actualizar la comprensión de los fragmentos enviados.",
+        ].filter((item) => item.length > 0),
+      };
+    }
+    if (action === "update_story") {
+      const preview = asRecord(body.preview);
+      const calls = Math.min(12, Math.max(1, Math.round(Number(preview.calls) || 1)));
+      const blocks = Math.max(0, Math.round(Number(preview.blocks) || 0));
+      const characters = Math.max(0, Math.round(Number(preview.characters) || 0));
+      const chapterCount = Math.max(0, Math.round(Number(preview.chapterCount) || 0));
+      const plannedInput = Math.max(0, Math.round(Number(preview.plannedInputChars) || 0));
+      const bodyChars = JSON.stringify(asRecord(body.batch)).length;
+      const perInput = Math.max(400, Math.ceil((plannedInput || bodyChars * calls) / calls));
+      const one = estimateTextRoute({
+        label: "Actualizar Story",
+        route,
+        body,
+        inputChars: perInput,
+        model: "gpt-4o-mini",
+        outputTokens: 1400,
+        multiplier: 1.6,
+      });
+      return {
+        ...one,
+        estimatedCostMicros: one.estimatedCostMicros * calls,
+        reserveMicros: one.reserveMicros * calls,
+        tone: "confirm",
+        requireExplicitConfirm: true,
+        confirmLabel: "Actualizar",
+        detailLines: [
+          blocks === 1 ? "1 bloque modificado" : `${blocks} bloques modificados`,
+          characters === 1 ? "1 personaje relacionado" : characters > 1 ? `${characters} personajes relacionados` : "",
+          chapterCount === 1 ? "1 capítulo afectado" : chapterCount > 1 ? `${chapterCount} capítulos afectados` : "",
+          "Se actualizarán: Recorrido, Ahora y Hechos",
+          calls === 1 ? "1 llamada IA" : `${calls} llamadas IA`,
+        ].filter((item) => item.length > 0),
+      };
+    }
+    const selection = stringValue(body.selection);
+    const context = asRecord(body.context);
+    const line = stringValue(context.line).slice(0, 160);
+    const memories = Array.isArray(context.memories) ? context.memories : [];
+    let contextChars = stringValue(context.brain).length + stringValue(context.chapter).length;
+    for (const item of memories) {
+      if (item && typeof item === "object" && typeof (item as { text?: unknown }).text === "string") {
+        contextChars += (item as { text: string }).text.length;
+      }
+    }
+    const outputTokens =
+      action === "shorten"
+        ? Math.min(500, Math.max(80, Math.ceil(selection.length / 3)))
+        : action === "continue"
+          ? 700
+          : Math.min(1200, Math.max(256, Math.ceil(selection.length / 2) + 200));
+    const label =
+      action === "rewrite"
+        ? "Writer · reescribir"
+        : action === "expand"
+          ? "Writer · expandir"
+          : action === "shorten"
+            ? "Writer · acortar"
+            : "Writer · continuar";
+    const intent = stringValue(body.intent);
+    const confirmLabel =
+      intent === "natural"
+        ? "Más natural"
+        : intent === "visual"
+          ? "Más visual"
+          : intent === "brief"
+            ? "Más breve"
+          : action === "rewrite"
+            ? "Reescribir"
+            : action === "expand"
+              ? "Expandir"
+              : action === "shorten"
+                ? "Acortar"
+                : "Continuar";
+    return {
+      ...estimateTextRoute({
+        label,
+        route,
+        body,
+        inputChars: textLengthFromFields(body, ["before", "after", "selection"], 800) + contextChars,
+        model: "gpt-4o-mini",
+        outputTokens,
+        multiplier: 1.6,
+      }),
+      tone: "confirm",
+      requireExplicitConfirm: true,
+      confirmLabel,
+      detailLines: ["1 llamada IA", line ? `Contexto: ${line}` : ""].filter((item) => item.length > 0),
+    };
   }
 
   if (route === "/api/spaces/assistant") {

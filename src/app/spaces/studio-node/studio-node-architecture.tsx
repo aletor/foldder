@@ -78,6 +78,14 @@ export const STUDIO_NODE_MANIFESTS = {
     ownsPortal: false,
     description: "Documento visual multipágina sobre FreehandStudio.",
   },
+  writer: {
+    nodeType: "writer",
+    label: "Writer",
+    chrome: "editorial",
+    modulePath: "src/app/spaces/writer/WriterStudio.tsx",
+    ownsPortal: true,
+    description: "Hoja de escritura con documento estructurado y autoguardado.",
+  },
   guionista: {
     nodeType: "guionista",
     label: "Guionista",
