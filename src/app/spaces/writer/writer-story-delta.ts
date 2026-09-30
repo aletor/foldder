@@ -15,6 +15,7 @@ import {
   type StoryRelationType,
   type StoryThreadCandidate,
 } from "./writer-relations";
+import { applyQuestionDelta } from "./writer-questions";
 import {
   STORY_ANALYSIS_VERSION,
   type StoryChapterSummary,
@@ -54,6 +55,7 @@ export function applyStoryDelta(
   doc: ProseMirrorNode,
   cited: StoryAskCitedBlock[],
   delta: StoryDeltaPayload | null | undefined,
+  options?: { allowedQuestionIds?: string[] },
 ): { story: WriterStory; changed: boolean } {
   if (!delta) return { story, changed: false };
   const live = new Map<string, LiveBlock>();
@@ -79,10 +81,13 @@ export function applyStoryDelta(
   const facts = delta.facts.flatMap((item) => acceptFact(story, item, citedById, live, ready) ?? []);
   const relations = (delta.relations ?? []).flatMap((item) => acceptRelation(story, item, citedById, live, ready) ?? []);
   const candidates = (delta.threadCandidates ?? []).flatMap((item) => acceptCandidate(story, item, citedById, live, ready) ?? []);
+  const questionLive = new Map([...live.entries()].map(([id, block]) => [id, { hash: block.hash, order: block.order, text: block.text }]));
+  const questionDelta = applyQuestionDelta(story, delta.questionEvents, cited, questionLive, options?.allowedQuestionIds ? new Set(options.allowedQuestionIds) : undefined);
   for (const item of [...events, ...states, ...facts, ...relations, ...candidates]) {
     for (const blockId of item.sourceBlockIds) analyzed.add(blockId);
   }
-  if (analyzed.size === 0 && relations.length === 0 && candidates.length === 0) return { story, changed: false };
+  for (const blockId of questionDelta.acceptedSourceIds) analyzed.add(blockId);
+  if (analyzed.size === 0 && relations.length === 0 && candidates.length === 0 && questionDelta.acceptedSourceIds.length === 0) return { story, changed: false };
 
   let next = story;
   const touched = new Set<string>([
@@ -113,6 +118,9 @@ export function applyStoryDelta(
       ...next,
       threadCandidates: takeThreadCandidates(next.threadCandidates ?? [], candidates, next.dismissedThreadCandidates ?? [], next.entities),
     };
+  }
+  if (questionDelta.questions !== (story.questions ?? []) && JSON.stringify(questionDelta.questions) !== JSON.stringify(story.questions ?? [])) {
+    next = { ...next, questions: questionDelta.questions };
   }
   const summaries = takeChapterSummaries(delta.chapterSummaries ?? [], live, analyzed, next.analyzed);
   if (summaries.length > 0) {
@@ -146,6 +154,10 @@ export function projectStory(story: WriterStory, doc: ProseMirrorNode): WriterSt
     chapterSummaries: story.chapterSummaries.filter((summary) => sourceStillValid(Object.keys(summary.sourceHashes), summary.sourceHashes, live)),
     relations: projectRelations(story.relations ?? [], live),
     threadCandidates: projectCandidates(story.threadCandidates ?? [], live),
+    questions: (story.questions ?? []).map((question) => ({
+      ...question,
+      events: question.events.filter((event) => event.source === "author" || sourceStillValid(event.sourceBlockIds, event.sourceHashes, live)),
+    })),
   };
 }
 

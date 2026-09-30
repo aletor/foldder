@@ -1,5 +1,6 @@
 import type { WriterProfile } from "./writer-document";
 import type { PresentationDelta } from "./writer-presentation";
+import type { StoryDeltaQuestionEvent } from "./writer-questions";
 
 export const WRITER_AI_ROUTE = "/api/spaces/writer/assist";
 
@@ -69,6 +70,7 @@ export type WriterAskStoryContext = {
   conversationSummary: string;
   recentTurns: { question: string; answer: string }[];
   basis: string;
+  openQuestions?: { id: string; text: string }[];
 };
 
 export type StoryDeltaEvidence = {
@@ -121,6 +123,7 @@ export type StoryDeltaPayload = {
   chapterSummaries?: StoryDeltaChapterSummary[];
   relations?: StoryDeltaRelation[];
   threadCandidates?: StoryDeltaThreadCandidate[];
+  questionEvents?: StoryDeltaQuestionEvent[];
 };
 
 export type WriterAskStoryPreview = {
@@ -161,6 +164,9 @@ export type WriterUpdateStoryBatch = {
     events: string[];
     facts: string[];
   }[];
+  questions?: { id: string; text: string }[];
+  /** Resumen local de toda la obra. Solo viaja en la última llamada ya planificada. */
+  digest?: string;
 };
 
 export type WriterUpdateStoryPreview = {
@@ -463,8 +469,9 @@ function askStoryMessages(input: WriterAskStoryParsed): { system: string; user: 
     "stateChanges son objetivos: physical, location, possession, knowledge, relationship, life o ability. No registres motivaciones ni estados de ánimo.",
     "facts son frases explícitas del bloque. No reescribas la definición del autor.",
     "Cada event, stateChange y fact necesita entityId, sourceBlockIds, evidence y confidence. evidence.text es una cita literal corta del bloque.",
+    "questionEvents solo si un fragmento reciente [blockId] plantea, hace avanzar, resuelve o reabre un misterio explícito. No salen de answer, de una hipótesis ni del resumen. introduced usa questionText. advanced, resolved y reopened usan un questionId de PENDIENTES. No conviertas una pregunta del usuario en pendiente.",
     "conversationSummary es un resumen compacto del hilo actual para el próximo turno. No es un hecho de Story. Si no aporta, cadena vacía.",
-    "Devuelve solo JSON válido, sin texto antes ni después: {\"answer\":\"...\",\"suggestedMemories\":[{\"text\":\"...\"}],\"usedContextSummary\":\"...\",\"conversationSummary\":\"...\",\"storyDelta\":{\"events\":[],\"stateChanges\":[],\"facts\":[],\"relations\":[],\"threadCandidates\":[],\"analyzedBlockIds\":[]}}.",
+    "Devuelve solo JSON válido, sin texto antes ni después: {\"answer\":\"...\",\"suggestedMemories\":[{\"text\":\"...\"}],\"usedContextSummary\":\"...\",\"conversationSummary\":\"...\",\"storyDelta\":{\"events\":[],\"stateChanges\":[],\"facts\":[],\"relations\":[],\"threadCandidates\":[],\"questionEvents\":[],\"analyzedBlockIds\":[]}}.",
     "answer debe ser concreto sobre ESTA obra y el contexto enviado. Si hay fichas, fragmentos o notas, cítalos con nombres y hechos reales. Nunca respondas con definiciones genéricas de qué es un guion, una novela o un personaje.",
     "Si el contexto está vacío o no alcanza, dilo en answer y pide una pista concreta. No inventes personajes ni tramas.",
     "suggestedMemories es como máximo una idea tentativa, o lista vacía. Esa idea no es un event ni un state.",
@@ -499,6 +506,9 @@ function askStoryMessages(input: WriterAskStoryParsed): { system: string; user: 
     chapters ? `Resúmenes de capítulo válidos:\n${chapters}` : "",
     appearances ? `Apariciones:\n${appearances}` : "",
     fresh ? `Texto reciente:\n${fresh}` : "",
+    input.storyContext.openQuestions?.length
+      ? `PENDIENTES:\n${input.storyContext.openQuestions.map((item) => `- ${item.id}: ${item.text}`).join("\n")}`
+      : "",
     input.storyContext.conversationSummary ? `Resumen de la conversación:\n${input.storyContext.conversationSummary}` : "",
     turns ? `Turnos recientes:\n${turns}` : "",
     input.previous && !turns ? `Pregunta anterior: ${input.previous.question}\nRespuesta anterior: ${input.previous.answer}` : "",
@@ -616,6 +626,7 @@ function parseStoryDeltaPayload(value: unknown): StoryDeltaPayload | null {
     chapterSummaries: parseChapterSummaries(row.chapterSummaries),
     relations: parseDeltaRelations(row.relations),
     threadCandidates: parseThreadCandidates(row.threadCandidates),
+    questionEvents: parseQuestionEvents(row.questionEvents),
   };
 }
 
@@ -725,6 +736,36 @@ function parseThreadCandidates(value: unknown): StoryDeltaThreadCandidate[] {
   return rows;
 }
 
+function parseQuestionEvents(value: unknown): StoryDeltaQuestionEvent[] {
+  if (!Array.isArray(value)) return [];
+  const events: StoryDeltaQuestionEvent[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const operation = row.operation === "introduced" || row.operation === "advanced" || row.operation === "resolved" || row.operation === "reopened" ? row.operation : null;
+    if (!operation) continue;
+    const sourceBlockIds = Array.isArray(row.sourceBlockIds)
+      ? row.sourceBlockIds.flatMap((id) => (typeof id === "string" && id.trim() ? [id.trim().slice(0, 80)] : [])).slice(0, 4)
+      : [];
+    const confidence = typeof row.confidence === "number" && Number.isFinite(row.confidence) ? row.confidence : 0;
+    if (sourceBlockIds.length === 0) continue;
+    events.push({
+      operation,
+      questionId: typeof row.questionId === "string" ? row.questionId.trim().slice(0, 80) : undefined,
+      questionText: typeof row.questionText === "string" ? row.questionText.replace(/\s+/g, " ").trim().slice(0, 180) : undefined,
+      relatedEntityIds: Array.isArray(row.relatedEntityIds)
+        ? row.relatedEntityIds.flatMap((id) => (typeof id === "string" && id.trim() ? [id.trim().slice(0, 80)] : [])).slice(0, 6)
+        : [],
+      text: typeof row.text === "string" ? row.text.replace(/\s+/g, " ").trim().slice(0, 180) : undefined,
+      sourceBlockIds,
+      evidence: parseEvidence(row.evidence, sourceBlockIds),
+      confidence,
+    });
+    if (events.length >= 8) break;
+  }
+  return events;
+}
+
 function parseChapterSummaries(value: unknown): StoryDeltaChapterSummary[] {
   if (!Array.isArray(value)) return [];
   const summaries: StoryDeltaChapterSummary[] = [];
@@ -793,10 +834,25 @@ function parseUpdateBatch(value: unknown): WriterUpdateStoryBatch {
       if (entities.length >= 6) break;
     }
   }
+  const questions: { id: string; text: string }[] = [];
+  if (Array.isArray((row as { questions?: unknown }).questions)) {
+    for (const item of (row as { questions: unknown[] }).questions) {
+      if (!item || typeof item !== "object") continue;
+      const question = item as Record<string, unknown>;
+      const id = clipText(question.id, 80);
+      const text = clipText(question.text, 180);
+      if (!id || !text) continue;
+      questions.push({ id, text });
+      if (questions.length >= 6) break;
+    }
+  }
+  const digest = clipText(row.digest, 3200);
   return {
     dirty: parseUpdateBlocks(row.dirty, UPDATE_DIRTY_LIMIT, UPDATE_TEXT_LIMIT),
     context: parseUpdateBlocks(row.context, 3, 400),
     entities,
+    ...(questions.length > 0 ? { questions } : {}),
+    ...(digest ? { digest } : {}),
   };
 }
 
@@ -826,14 +882,24 @@ function updateStoryMessages(input: WriterUpdateStoryParsed): { system: string; 
     "Si un acontecimiento afecta a varias fichas, pon sus ids en entityIds del mismo event. No copies el mismo hecho como eventos distintos.",
     "relations describen un vínculo explícito del bloque pendiente: fromEntityId, toEntityId, type (related, family, romantic, friend, enemy, knows, involved, owns, located_at, knows_about), evidence y confidence. family puede llevar qualifier sibling, parent o child. knows_about exige stance known o not_known_explicit, y solo si el texto lo dice. No infieras desconocimiento. No conviertas una simple coincidencia en involved.",
     "threadCandidates proponen un asunto de Historia que todavía no es ficha. Incluye label, relatedEntityIds, sourceBlockIds, evidence y confidence. No crees la ficha. No propongas temas como amor, culpa o identidad, ni objetos triviales.",
+    "questionEvents es opcional y sale solo de un misterio explícito del bloque pendiente. introduced no lleva questionId: questionText es la pregunta, con ¿. No conviertas temas, tareas de escritura ni «qué hará ahora». advanced, resolved y reopened necesitan el questionId enviado. resolved y reopened solo si el texto lo dice de forma directa, no por sospecha. Si no puedes citarlo, omite el evento.",
     "Los bloques de contexto solo ayudan a entender. No son fuente de events, state, facts, relations ni candidates, y no van en analyzedBlockIds.",
     "chapterSummaries es opcional y solo si este lote deja un capítulo completo. Una frase apoyada en esos bloques. Si no, devuelve una lista vacía. No pidas otra llamada para resumir.",
-    "presentationDelta es opcional y no es conocimiento. No lo conviertas en events, facts, state ni relations. Resume solo lo que dicen los bloques pendientes y las fichas enviadas. Si no puedes hacerlo sin interpretar, omite esa parte.",
-    "storyBrief son como mucho tres frases: la situación, los personajes principales, un cambio de lugar si el texto lo tiene, y el último acontecimiento relevante. No inventes emociones, motivaciones, relaciones ni consecuencias que el texto no diga. Mal: «Juan se siente atrapado». Bien: «Ana y Juan conversan en una sala de curas, donde Ana menciona un accidente a los 22 años. Después, Juan salta por la ventana y la acción sigue en otra localización».",
-    "entityBriefs: una o dos frases por ficha de este lote. Di qué ha hecho, qué le ha ocurrido, qué ha revelado y con quién interactúa si el texto lo muestra. Sin psicología, sin motivaciones inventadas, sin tono literario ni juicios. Mal: «Juan teme no encontrar su lugar». Bien: «Juan se encuentra con un policía y expresa su frustración sobre los problemas que ve en el futuro».",
-    "sceneBriefs es opcional: una sola línea por escena cuyos bloques estén en pendiente. sceneId es el id del encabezado si está en el lote, o el id de un bloque pendiente de esa escena. No hagas una llamada por escena.",
-    "sourceBlockIds solo pueden ser bloques pendientes.",
-    "Devuelve solo JSON: {\"storyDelta\":{\"events\":[],\"stateChanges\":[],\"facts\":[],\"relations\":[],\"threadCandidates\":[],\"analyzedBlockIds\":[],\"chapterSummaries\":[{\"chapterId\":\"...\",\"text\":\"...\"}]},\"presentationDelta\":{\"storyBrief\":{\"text\":\"...\",\"sourceBlockIds\":[]},\"entityBriefs\":[{\"entityId\":\"...\",\"text\":\"...\",\"sourceBlockIds\":[]}],\"sceneBriefs\":[{\"sceneId\":\"...\",\"text\":\"...\",\"sourceBlockIds\":[]}]}}.",
+    "presentationDelta es opcional y no es conocimiento. No lo conviertas en events, facts, state ni relations.",
+    "sceneBriefs: una o dos frases de lo que cambia en esa escena, no un resumen de toda la escena. sceneId es el id del encabezado si está en el lote, o el id de un bloque pendiente de esa escena.",
+    ...(input.batch.digest
+      ? [
+          "El mensaje de usuario incluye RESUMEN GLOBAL. storyDelta sigue saliendo solo de los bloques pendientes.",
+          "globalPresentation describe el RESUMEN GLOBAL, no el lote pendiente. storyOverview: tres o cuatro frases de toda la obra; sceneIds son ids de las líneas ESCENA. entityArcBriefs es el recorrido del personaje en la obra, no su última escena. entityCurrentBriefs es dónde está ahora. relationLines solo puede usar ids de líneas RELACION; no inventes relaciones. revelations cita support kind event, fact o state con un id del conocimiento ya citado; sin temas, sin identidad y sin redención.",
+        ]
+      : [
+          "storyBrief son como mucho tres frases: la situación, los personajes principales, un cambio de lugar si el texto lo tiene, y el último acontecimiento relevante. No inventes emociones, motivaciones, relaciones ni consecuencias que el texto no diga.",
+          "entityBriefs: una o dos frases por ficha de este lote. Di qué ha hecho, qué le ha ocurrido, qué ha revelado y con quién interactúa si el texto lo muestra. Sin psicología.",
+        ]),
+    "sourceBlockIds de storyBrief, entityBriefs y sceneBriefs solo pueden ser bloques pendientes.",
+    input.batch.digest
+      ? "Devuelve solo JSON: {\"storyDelta\":{\"events\":[],\"stateChanges\":[],\"facts\":[],\"relations\":[],\"threadCandidates\":[],\"questionEvents\":[],\"analyzedBlockIds\":[],\"chapterSummaries\":[]},\"presentationDelta\":{\"sceneBriefs\":[{\"sceneId\":\"...\",\"text\":\"...\",\"sourceBlockIds\":[]}],\"globalPresentation\":{\"storyOverview\":{\"text\":\"...\",\"sceneIds\":[]},\"entityArcBriefs\":[{\"entityId\":\"...\",\"text\":\"...\"}],\"entityCurrentBriefs\":[{\"entityId\":\"...\",\"text\":\"...\"}],\"relationLines\":[{\"relationId\":\"...\",\"text\":\"...\"}],\"revelations\":[{\"text\":\"...\",\"support\":[{\"kind\":\"event\",\"id\":\"...\"}]}]}}}."
+      : "Devuelve solo JSON: {\"storyDelta\":{\"events\":[],\"stateChanges\":[],\"facts\":[],\"relations\":[],\"threadCandidates\":[],\"questionEvents\":[{\"operation\":\"introduced\",\"questionText\":\"¿...?\",\"relatedEntityIds\":[],\"text\":\"...\",\"sourceBlockIds\":[],\"evidence\":[{\"blockId\":\"...\",\"text\":\"...\"}],\"confidence\":0.95}],\"analyzedBlockIds\":[],\"chapterSummaries\":[{\"chapterId\":\"...\",\"text\":\"...\"}]},\"presentationDelta\":{\"storyBrief\":{\"text\":\"...\",\"sourceBlockIds\":[]},\"entityBriefs\":[{\"entityId\":\"...\",\"text\":\"...\",\"sourceBlockIds\":[]}],\"sceneBriefs\":[{\"sceneId\":\"...\",\"text\":\"...\",\"sourceBlockIds\":[]}]}}.",
   ].join(" ");
   const known = input.batch.entities
     .map((entity) => {
@@ -847,8 +913,11 @@ function updateStoryMessages(input: WriterUpdateStoryParsed): { system: string; 
     .join("\n\n");
   const dirty = input.batch.dirty.map((block) => `[${block.blockId}] ${block.where ? `${block.where}\n` : ""}${block.text}`).join("\n\n");
   const context = input.batch.context.map((block) => `[${block.blockId}] ${block.where ? `${block.where}\n` : ""}${block.text}`).join("\n\n");
+  const pendingQuestions = (input.batch.questions ?? []).map((item) => `- ${item.id}: ${item.text}`).join("\n");
   const user = [
     known,
+    pendingQuestions ? `PENDIENTES:\n${pendingQuestions}` : "",
+    input.batch.digest ? `RESUMEN GLOBAL:\n${input.batch.digest}` : "",
     context ? `Contexto ya comprendido, no extraer:\n${context}` : "",
     `Pendiente:\n${dirty}`,
   ]
@@ -885,12 +954,75 @@ function parsePresentationDelta(value: unknown): PresentationDelta | undefined {
       if (sceneBriefs.length >= 8) break;
     }
   }
-  if (!storyBrief && entityBriefs.length === 0 && sceneBriefs.length === 0) return undefined;
+  const globalPresentation = parseGlobalPresentation(row.globalPresentation);
+  if (!storyBrief && entityBriefs.length === 0 && sceneBriefs.length === 0 && !globalPresentation) return undefined;
   return {
     ...(storyBrief ? { storyBrief } : {}),
     ...(entityBriefs.length > 0 ? { entityBriefs } : {}),
     ...(sceneBriefs.length > 0 ? { sceneBriefs } : {}),
+    ...(globalPresentation ? { globalPresentation } : {}),
   };
+}
+
+function parseGlobalPresentation(value: unknown): PresentationDelta["globalPresentation"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  const overview = row.storyOverview && typeof row.storyOverview === "object" ? (row.storyOverview as Record<string, unknown>) : null;
+  const overviewText = typeof overview?.text === "string" ? overview.text.replace(/\s+/g, " ").trim().slice(0, 420) : "";
+  const sceneIds = Array.isArray(overview?.sceneIds)
+    ? overview.sceneIds.flatMap((id) => (typeof id === "string" && id.trim() ? [id.trim().slice(0, 80)] : [])).slice(0, 24)
+    : [];
+  const entityArcBriefs = parseEntityTexts(row.entityArcBriefs, 8);
+  const entityCurrentBriefs = parseEntityTexts(row.entityCurrentBriefs, 8);
+  const relationLines = Array.isArray(row.relationLines)
+    ? row.relationLines.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const line = item as Record<string, unknown>;
+        const relationId = typeof line.relationId === "string" ? line.relationId.trim().slice(0, 80) : "";
+        const text = typeof line.text === "string" ? line.text.replace(/\s+/g, " ").trim().slice(0, 180) : "";
+        return relationId && text ? [{ relationId, text }] : [];
+      }).slice(0, 8)
+    : [];
+  const revelations = Array.isArray(row.revelations)
+    ? row.revelations.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+        const revelation = item as Record<string, unknown>;
+        const text = typeof revelation.text === "string" ? revelation.text.replace(/\s+/g, " ").trim().slice(0, 180) : "";
+        const support = Array.isArray(revelation.support)
+          ? revelation.support.flatMap((part) => {
+              if (!part || typeof part !== "object") return [];
+              const supportRow = part as Record<string, unknown>;
+              const kind = supportRow.kind === "event" ? "event" as const : supportRow.kind === "fact" ? "fact" as const : supportRow.kind === "state" ? "state" as const : null;
+              const id = typeof supportRow.id === "string" ? supportRow.id.trim().slice(0, 80) : "";
+              return kind && id ? [{ kind, id }] : [];
+            }).slice(0, 4)
+          : [];
+        return text && support.length > 0 ? [{ text, support }] : [];
+      }).slice(0, 5)
+    : [];
+  if (!overviewText && entityArcBriefs.length === 0 && entityCurrentBriefs.length === 0 && relationLines.length === 0 && revelations.length === 0) return undefined;
+  return {
+    ...(overviewText && sceneIds.length > 0 ? { storyOverview: { text: overviewText, sceneIds } } : {}),
+    ...(entityArcBriefs.length > 0 ? { entityArcBriefs } : {}),
+    ...(entityCurrentBriefs.length > 0 ? { entityCurrentBriefs } : {}),
+    ...(relationLines.length > 0 ? { relationLines } : {}),
+    ...(revelations.length > 0 ? { revelations } : {}),
+  };
+}
+
+function parseEntityTexts(value: unknown, limit: number): { entityId: string; text: string }[] {
+  if (!Array.isArray(value)) return [];
+  const rows: { entityId: string; text: string }[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const entityId = typeof row.entityId === "string" ? row.entityId.trim().slice(0, 80) : "";
+    const text = typeof row.text === "string" ? row.text.replace(/\s+/g, " ").trim().slice(0, 280) : "";
+    if (!entityId || !text) continue;
+    rows.push({ entityId, text });
+    if (rows.length >= limit) break;
+  }
+  return rows;
 }
 
 function parseBrief(value: unknown, limit = 420): { text: string; sourceBlockIds: string[] } | null {

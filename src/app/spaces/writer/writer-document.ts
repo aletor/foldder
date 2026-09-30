@@ -54,6 +54,8 @@ export type WriterNodeData = {
   title: string;
   profile: WriterProfile;
   pagePreset: WriterPagePreset;
+  /** null usa el modo del tipo de documento. No guarda el reparto de páginas. */
+  viewMode: "paged" | "continuous" | null;
   documentId: string | null;
   documentKey: string;
   /** Cuerpo inline solo como recuperación si el archivo no se guardó. */
@@ -75,6 +77,7 @@ export type WriterPersistedPatch = {
   title: string;
   profile: WriterProfile;
   pagePreset: WriterPagePreset;
+  viewMode: "paged" | "continuous" | null;
   documentId: string;
   documentKey: string;
   value: string;
@@ -103,7 +106,7 @@ export function isWriterPagePreset(value: unknown): value is WriterPagePreset {
   return value === "a4" || value === "letter" || value === "a5" || value === "screen";
 }
 
-/** Ancho y alto mínimo de una hoja. La vista sigue siendo continua: el papel crece, no se parte. */
+/** Medidas de la hoja continua. En páginas, el alto físico vive en writerPageBox. */
 export function writerPageMetrics(preset: WriterPagePreset, profile: WriterProfile): WriterPageMetrics {
   if (preset === "screen") {
     return {
@@ -170,6 +173,7 @@ function blockMarkdown(node: JSONContent): string {
       .filter((part) => part.length > 0)
       .join("\n\n");
   }
+  if (node.type === "pageBreak") return "";
   if (node.type === "heading") {
     const level = Math.min(3, Math.max(1, Number(node.attrs?.level) || 1));
     const text = inlineMarkdown(node).trim();
@@ -221,6 +225,7 @@ function plainBlock(node: JSONContent): string {
       .filter((item) => item.length > 0)
       .join("\n");
   }
+  if (node.type === "pageBreak") return "";
   if (isWriterScreenplayBlockName(node.type)) {
     return screenplayLine(node.type, inlineText(node, false));
   }
@@ -303,6 +308,7 @@ export function normalizeWriterNodeData(raw: unknown): WriterNodeData {
     title,
     profile: isWriterProfile(row.profile) ? row.profile : "document",
     pagePreset: isWriterPagePreset(row.pagePreset) ? row.pagePreset : "a4",
+    viewMode: row.viewMode === "paged" || row.viewMode === "continuous" ? row.viewMode : null,
     documentId: isWriterDocumentId(row.documentId) ? row.documentId : null,
     documentKey: typeof row.documentKey === "string" ? row.documentKey : "",
     content: keepInline ? inline : null,
@@ -334,6 +340,7 @@ export function writerPersistedPatch(input: {
   title: string;
   profile: WriterProfile;
   pagePreset: WriterPagePreset;
+  viewMode?: "paged" | "continuous" | null;
   content: WriterDocumentContent;
   documentId: string;
   documentKey: string;
@@ -350,6 +357,7 @@ export function writerPersistedPatch(input: {
     title: input.title,
     profile: input.profile,
     pagePreset: input.pagePreset,
+    viewMode: input.viewMode === "paged" || input.viewMode === "continuous" ? input.viewMode : null,
     documentId: input.documentId,
     documentKey: input.documentKey,
     ...derived,

@@ -31,7 +31,7 @@ export function isWriterScreenplayBlock(value: string): value is WriterScreenpla
 export function createWriterStarterKit() {
   return StarterKit.configure({
     heading: { levels: [1, 2, 3] },
-    trailingNode: { notAfter: [...WRITER_SCREENPLAY_BLOCKS] },
+    trailingNode: { notAfter: [...WRITER_SCREENPLAY_BLOCKS, "pageBreak"] },
   });
 }
 

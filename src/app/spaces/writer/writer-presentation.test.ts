@@ -14,6 +14,7 @@ import {
   presentationBriefIsStale,
   visibleStoryEntities,
 } from "./writer-presentation";
+import { getWriterContextAdapter } from "./writer-context";
 import { createWriterStarterKit, writerScreenplayNodes } from "./writer-screenplay";
 import { deriveStoryStructure, parseSceneHeading } from "./writer-structure";
 import {
@@ -155,9 +156,9 @@ describe("story presentation", () => {
       { blockId: "s1", type: "sceneHeading", text: "INT. SALA DE CURAS", order: 1, chapterId: null, chapterLabel: null, scene: null },
       { blockId: "p", type: "paragraph", text: "Ana habla.", order: 2, chapterId: null, chapterLabel: null, scene: null },
     ];
-    expect(deriveStoryStructure(blocks, { screenplay: false }).kind).toBeNull();
+    expect(deriveStoryStructure(blocks, { kinds: ["chapter", "section"] }).kind).toBeNull();
     expect(deriveStoryStructure(blocks).kind).toBe("scene");
-    const snapshot = buildStorySnapshot(emptyWriterStory(), blocks, [], 0, undefined, false);
+    const snapshot = buildStorySnapshot(emptyWriterStory(), blocks, [], 0, undefined, getWriterContextAdapter("document"));
     expect(snapshot.counts.units).toBe(0);
     expect(snapshot.counts.locations).toBe(0);
   });

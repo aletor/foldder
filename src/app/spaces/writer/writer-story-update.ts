@@ -5,6 +5,7 @@ import { writerAppearances, writerDocumentBlocks, type StoryDocumentBlock } from
 import { writerBlockTextHash } from "./writer-block-id";
 import { applyStoryDelta, projectStory } from "./writer-story-delta";
 import { applyStoryPresentation, type PresentationDelta } from "./writer-presentation";
+import { questionIndex } from "./writer-questions";
 import type { WriterStory } from "./writer-story";
 
 /**
@@ -37,6 +38,7 @@ export type StoryUpdateBatch = {
   entities: StoryUpdateEntityContext[];
   cited: StoryAskCitedBlock[];
   chapters: string[];
+  questions: { id: string; text: string }[];
 };
 
 export type StoryUpdatePlan = {
@@ -142,12 +144,16 @@ export async function executeStoryUpdate(input: {
       const cancelled = Boolean(result.cancelled) && completed === 0;
       return { completed, total, cancelled, error: cancelled ? null : result.error };
     }
-    const applied = applyStoryDelta(input.getStory(), input.getDoc(), batch.cited, result.storyDelta);
+    const applied = applyStoryDelta(input.getStory(), input.getDoc(), batch.cited, result.storyDelta, {
+      allowedQuestionIds: batch.questions.map((item) => item.id),
+    });
+    const live = new Map(writerDocumentBlocks(input.getDoc()).map((block) => [block.blockId, writerBlockTextHash(block.text)]));
     const presented = applyStoryPresentation(
       applied.story,
       result.presentationDelta,
       batch.cited,
       batch.entities.map((entity) => entity.id),
+      { final: index === total - 1, live },
     );
     if (applied.changed || presented.changed) input.commit(presented.story);
     completed += 1;
@@ -184,12 +190,17 @@ function batchOf(
       events: entity.events.filter((event) => event.order < minOrder).slice(-3).map((event) => event.text),
       facts: entity.textFacts.slice(0, 3).map((fact) => fact.text),
     }));
+  const questions = questionIndex(visible.questions ?? [], new Map(blocks.map((block) => [block.blockId, writerBlockTextHash(block.text)]))).open
+    .filter((question) => question.relatedEntityIds.some((id) => linked.has(id)))
+    .slice(0, 6)
+    .map((question) => ({ id: question.id, text: question.text }));
   return {
     dirty: slice.map(present),
     context: context.map(present),
     entities,
     cited,
     chapters: unique(slice.map((block) => block.chapterLabel).filter((label): label is string => Boolean(label))),
+    questions,
   };
 }
 

@@ -161,6 +161,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       title: 'string',
       profile: 'document | article | post | screenplay',
       pagePreset: 'a4 | letter | a5 | screen (vista de la hoja; el árbol no cambia)',
+      viewMode: 'paged | continuous | null (null usa el modo del tipo; las páginas no se guardan)',
       documentId: 'string (id del archivo del documento)',
       documentKey: 'string (clave del archivo; el árbol no vive en el nodo)',
       content: 'ProseMirror JSON solo si el archivo no se pudo guardar',

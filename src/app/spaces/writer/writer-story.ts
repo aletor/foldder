@@ -3,6 +3,7 @@ import { isSaneCharacterCue } from "./writer-cue";
 import type { WriterMemoryScope } from "./writer-entities";
 import { writerEntityId, writerEntityLabel } from "./writer-entities";
 import { normalizePresentation, type StoryPresentation } from "./writer-presentation";
+import { normalizeQuestions, type StoryQuestion } from "./writer-questions";
 import {
   authorRelation,
   candidateCueKey,
@@ -138,6 +139,8 @@ export type WriterStory = {
   relations?: StoryRelation[];
   threadCandidates?: StoryThreadCandidate[];
   dismissedThreadCandidates?: StoryDismissedCandidate[];
+  /** Preguntas narrativas. El estado abierto o resuelto se proyecta; no vive en la ficha. */
+  questions?: StoryQuestion[];
   /** Resúmenes de lectura. No son hechos ni entran en Continuity. */
   presentation?: StoryPresentation;
 };
@@ -180,6 +183,7 @@ export function emptyWriterStory(): WriterStory {
     relations: [],
     threadCandidates: [],
     dismissedThreadCandidates: [],
+    questions: [],
   };
 }
 
@@ -592,6 +596,7 @@ export function normalizeStory(value: unknown): WriterStory | null {
     relations: normalizeRelations(record.relations),
     threadCandidates: normalizeThreadCandidates(record.threadCandidates),
     dismissedThreadCandidates: normalizeDismissedCandidates(record.dismissedThreadCandidates),
+    questions: normalizeQuestions(record.questions),
     ...(normalizePresentation(record.presentation) ? { presentation: normalizePresentation(record.presentation) } : {}),
   };
 }

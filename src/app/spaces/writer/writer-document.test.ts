@@ -163,4 +163,32 @@ describe("writer document", () => {
     expect(plainTextFromWriterContent(content)).toBe(printed);
     expect(normalizeWriterNodeData({ profile: "screenplay" }).profile).toBe("screenplay");
   });
+
+  it("remembers the view and skips a manual page break in derived text", () => {
+    expect(normalizeWriterNodeData(undefined).viewMode).toBeNull();
+    expect(normalizeWriterNodeData({ viewMode: "continuous" }).viewMode).toBe("continuous");
+    expect(normalizeWriterNodeData({ viewMode: "paged" }).viewMode).toBe("paged");
+    expect(normalizeWriterNodeData({ viewMode: "sheet" }).viewMode).toBeNull();
+    const content = {
+      type: "doc" as const,
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Antes" }] },
+        { type: "pageBreak" },
+        { type: "paragraph", content: [{ type: "text", text: "Después" }] },
+      ],
+    };
+    expect(plainTextFromWriterContent(content)).toBe("Antes\n\nDespués");
+    expect(markdownFromWriterContent(content)).toBe("Antes\n\nDespués");
+    const patch = writerPersistedPatch({
+      title: "Hoja",
+      profile: "document",
+      pagePreset: "a4",
+      viewMode: "paged",
+      content,
+      documentId: "33333333-3333-4333-8333-333333333333",
+      documentKey: "",
+    });
+    expect(patch.viewMode).toBe("paged");
+    expect(patch.value).not.toContain("Salto de página");
+  });
 });

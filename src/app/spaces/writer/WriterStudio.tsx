@@ -9,9 +9,22 @@ import { WriterBlockId, assignMissingWriterBlockIds, locateWriterBlock } from ".
 import { buildWriterContextPackage, searchWriterMemory } from "./writer-retrieval";
 import { writerMemoryIndex, writerMemoryPage, writerMemoryShelf, type WriterMemoryFocus } from "./writer-browser";
 import { WriterChapter, WriterChapterTitle } from "./writer-chapter";
+import { WriterPagination, type WriterPaginationStorage } from "./writer-pagination-plugin";
+import {
+  getCurrentPage,
+  getPageForBlock,
+  getPositionForPage,
+  writerContentHeight,
+  writerGapHeight,
+  writerLayoutHash,
+  writerPaginationBox,
+  WRITER_PAGE_GAP,
+  type PageMap,
+} from "./writer-pagination";
 import { fetchWriterDocument, putWriterDocument } from "./writer-document-client";
 import { type WriterMemoryEntry, type WriterMemoryScope } from "./writer-memory";
 import { StoryView } from "./StoryView";
+import { getWriterContextAdapter, writerResolvedView } from "./writer-context";
 import { characterLinkFixes, locateStoryAppearance, writerAppearances, writerDocumentBlocks, type StoryAppearance } from "./writer-appearances";
 import {
   absorbDocumentCues,
@@ -32,6 +45,7 @@ import { WriterSignals } from "./writer-signals";
 import { buildStoryAsk, storyAskContext, type StoryAskOutcome, type StoryAskScope, type StoryAskTurn } from "./writer-ask-story";
 import type { StoryConversation } from "./writer-conversation";
 import { applyStoryDelta, projectStory } from "./writer-story-delta";
+import { buildGlobalStoryDigest } from "./writer-presentation";
 import { executeStoryUpdate, planStoryUpdate, storyUpdatePreview } from "./writer-story-update";
 import { requestWriterAskStory, requestWriterAssist, requestWriterStoryUpdate } from "./writer-ai-client";
 import {
@@ -159,13 +173,31 @@ function focusWriterChapter(id: string) {
   document.querySelector(`[data-chapter-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start" });
 }
 
-function writerPageStyle(preset: WriterPagePreset, profile: WriterProfile): React.CSSProperties {
+function writerPageStyle(preset: WriterPagePreset, profile: WriterProfile, paged: boolean): React.CSSProperties {
+  if (paged) {
+    const box = writerPaginationBox(preset);
+    return {
+      "--writer-page-width": `${box.width}px`,
+      "--writer-page-height": `${box.height}px`,
+      "--writer-page-gap": `${WRITER_PAGE_GAP}px`,
+      "--writer-page-min-height": "0px",
+      "--writer-page-padding": `${box.padTop}px ${box.padRight}px ${box.padBottom}px ${box.padLeft}px`,
+    } as React.CSSProperties;
+  }
   const metrics = writerPageMetrics(preset, profile);
   return {
     "--writer-page-width": metrics.width,
     "--writer-page-min-height": metrics.minHeight,
     "--writer-page-padding": metrics.padding,
   } as React.CSSProperties;
+}
+
+function sceneNumberAt(editor: Editor, pos: number): number | null {
+  let count = 0;
+  editor.state.doc.descendants((node, nodePos) => {
+    if (node.type.name === "sceneHeading" && nodePos <= pos) count += 1;
+  });
+  return count > 0 ? count : null;
 }
 
 export function WriterStudio({ data, onChange, onClose, brandSnippet = "" }: WriterStudioProps) {
@@ -248,6 +280,13 @@ function WriterEditor({
   const [title, setTitle] = useState(initial.title);
   const [profile, setProfile] = useState<WriterProfile>(initial.profile);
   const [pagePreset, setPagePreset] = useState<WriterPagePreset>(initial.pagePreset);
+  const [viewMode, setViewMode] = useState(initial.viewMode);
+  const [sessionContinuous, setSessionContinuous] = useState(false);
+  const [pageMap, setPageMap] = useState<PageMap | null>(null);
+  const [zoomChoice, setZoomChoice] = useState<"80" | "100" | "120" | "fit">("100");
+  const [fitScale, setFitScale] = useState(1);
+  const [goToOpen, setGoToOpen] = useState(false);
+  const [goToDraft, setGoToDraft] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [wordCount, setWordCount] = useState(initial.wordCount);
   const [styleTick, setStyleTick] = useState(0);
@@ -299,6 +338,7 @@ function WriterEditor({
   const titleRef = useRef(title);
   const profileRef = useRef(profile);
   const pagePresetRef = useRef(pagePreset);
+  const viewModeRef = useRef(viewMode);
   const timerRef = useRef<number | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const onChangeRef = useRef(onChange);
@@ -308,6 +348,8 @@ function WriterEditor({
   const savedTitleRef = useRef(initial.title);
   const savedProfileRef = useRef(initial.profile);
   const savedPagePresetRef = useRef(initial.pagePreset);
+  const savedViewModeRef = useRef(initial.viewMode);
+  const pageMapRef = useRef<PageMap | null>(null);
   const savedBundleRef = useRef(JSON.stringify({ story: storySeed, dismissals: dismissalsSeed }));
   const storyRef = useRef(storySeed);
   const memoryRef = useRef<WriterMemoryEntry[]>([]);
@@ -342,6 +384,7 @@ function WriterEditor({
   titleRef.current = title;
   profileRef.current = profile;
   pagePresetRef.current = pagePreset;
+  viewModeRef.current = viewMode;
   storyRef.current = story;
   dismissalsRef.current = dismissals;
   onChangeRef.current = onChange;
@@ -350,6 +393,7 @@ function WriterEditor({
     immediatelyRender: false,
     extensions: [
       createWriterStarterKit(),
+      WriterPagination,
       WriterBlockId,
       WriterSignals,
       WriterChapter,
@@ -389,6 +433,7 @@ function WriterEditor({
     const nextTitle = titleRef.current;
     const nextProfile = profileRef.current;
     const nextPagePreset = pagePresetRef.current;
+    const nextViewMode = viewModeRef.current;
     const bodyChanged = contentSignature(content) !== savedContentRef.current;
     const projected = projectWriterMemory(storyRef.current, writerEntitiesInDocument(current.state.doc).map((entity) => entity.id));
     memoryRef.current = projected;
@@ -397,13 +442,15 @@ function WriterEditor({
     const metaChanged =
       nextTitle !== savedTitleRef.current ||
       nextProfile !== savedProfileRef.current ||
-      nextPagePreset !== savedPagePresetRef.current;
+      nextPagePreset !== savedPagePresetRef.current ||
+      nextViewMode !== savedViewModeRef.current;
     if (!bodyChanged && !memoryChanged && !metaChanged) return true;
 
     const patchInput = {
       title: nextTitle,
       profile: nextProfile,
       pagePreset: nextPagePreset,
+      viewMode: nextViewMode,
       content,
       memory: projected,
       story: storyRef.current,
@@ -416,6 +463,7 @@ function WriterEditor({
       savedTitleRef.current = nextTitle;
       savedProfileRef.current = nextProfile;
       savedPagePresetRef.current = nextPagePreset;
+      savedViewModeRef.current = nextViewMode;
       setSaveState("saved");
       return true;
     }
@@ -431,6 +479,7 @@ function WriterEditor({
       savedTitleRef.current = nextTitle;
       savedProfileRef.current = nextProfile;
       savedPagePresetRef.current = nextPagePreset;
+      savedViewModeRef.current = nextViewMode;
       recoverRef.current = false;
       const patch = writerPersistedPatch({
         ...patchInput,
@@ -588,6 +637,64 @@ function WriterEditor({
     return () => editor.view.dom.removeEventListener("keydown", onKey, true);
   }, [editor]);
 
+  const paged = !sessionContinuous && writerResolvedView(profile, viewMode) === "paged";
+  const [layoutReady, setLayoutReady] = useState(false);
+  const showPages = paged && layoutReady;
+  const pageScale = !showPages ? 1 : zoomChoice === "80" ? 0.8 : zoomChoice === "120" ? 1.2 : zoomChoice === "fit" ? fitScale : 1;
+  pageMapRef.current = showPages ? pageMap : null;
+  const pageForBlock = useCallback((blockId: string) => {
+    const map = pageMapRef.current;
+    if (!map) return null;
+    return getPageForBlock(map, blockId);
+  }, []);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const storage = editor.storage.writerPagination as WriterPaginationStorage;
+    const box = writerPaginationBox(pagePreset);
+    const kind = getWriterContextAdapter(profile).pagination;
+    storage.enabled = showPages;
+    storage.contentHeight = writerContentHeight(box);
+    storage.gapHeight = writerGapHeight(box);
+    storage.kind = kind;
+    storage.layoutHash = writerLayoutHash(pagePreset === "screen" ? "a4" : pagePreset, kind, box);
+    storage.scale = pageScale;
+    storage.getScroller = () => pageRef.current;
+    storage.onMap = (map) => setPageMap(map);
+    storage.onFallback = () => setSessionContinuous(true);
+    if (editor.view.dom.clientWidth < 10) return;
+    editor.view.dispatch(editor.state.tr.setMeta("writer-pagination-refresh", true).setMeta("addToHistory", false));
+  }, [editor, showPages, pagePreset, profile, pageScale]);
+
+  useEffect(() => {
+    const node = pageRef.current;
+    if (!node) return;
+    const read = () => setLayoutReady(node.clientWidth >= 10);
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    try {
+      const observer = new ResizeObserver(read);
+      observer.observe(node);
+      return () => observer.disconnect();
+    } catch {
+      return;
+    }
+  }, [editor]);
+
+  useEffect(() => {
+    const node = pageRef.current;
+    if (!paged || zoomChoice !== "fit" || !node) return;
+    const box = writerPaginationBox(pagePreset);
+    const measure = () => {
+      const available = Math.max(0, node.clientWidth - 32);
+      setFitScale(Math.min(1.4, Math.max(0.35, available / box.width)));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [paged, zoomChoice, pagePreset]);
+
   const cueKey = editor ? writerEntitiesInDocument(editor.state.doc).map((entity) => entity.id).join("\n") : "";
   const memory = useMemo(() => projectWriterMemory(story, cueKey ? cueKey.split("\n") : []), [story, cueKey]);
   memoryRef.current = memory;
@@ -632,19 +739,30 @@ function WriterEditor({
         setContextMark(null);
         return;
       }
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "m" || !event.shiftKey) {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-          const current = editorRef.current;
-          if (!current || !current.state.selection.empty || composerOpenRef.current) return;
-          event.preventDefault();
-          askRef.current("continue");
-        }
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod) return;
+      const current = editorRef.current;
+      if (event.shiftKey && event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        if (current) openComposerRef.current(current);
         return;
       }
-      event.preventDefault();
-      const current = editorRef.current;
-      if (!current) return;
-      openComposerRef.current(current);
+      if (event.key === "Enter" && event.shiftKey) {
+        if (!current) return;
+        event.preventDefault();
+        current.chain().focus().insertContent({ type: "pageBreak" }).run();
+        return;
+      }
+      if (event.key === "Enter") {
+        if (!current || !current.state.selection.empty || composerOpenRef.current) return;
+        event.preventDefault();
+        askRef.current("continue");
+        return;
+      }
+      if (event.key.toLowerCase() === "g" && !event.shiftKey && current && event.target instanceof Node && current.view.dom.contains(event.target)) {
+        event.preventDefault();
+        setGoToOpen(true);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -701,6 +819,7 @@ function WriterEditor({
     else if (value === "blockquote") chain.toggleBlockquote().run();
     else if (value === "bulletList") chain.toggleBulletList().run();
     else if (value === "chapter") chain.insertWriterChapter().run();
+    else if (value === "pageBreak") chain.insertContent({ type: "pageBreak" }).run();
   };
 
   const clearSlashToken = (current: Editor) => {
@@ -944,11 +1063,24 @@ function WriterEditor({
         onProgress: (index, total) => setStoryProgress({ current: index, total }),
         commit: commitStory,
         request: async (batch, index) => {
+          const digest = index === plan.batches.length - 1
+            ? buildGlobalStoryDigest(
+                storyRef.current,
+                writerDocumentBlocks(current.state.doc),
+                batch.dirty.map((block) => block.blockId),
+                getWriterContextAdapter(profileRef.current),
+              )
+            : "";
           const result = await requestWriterStoryUpdate(
             {
               action: "update_story",
               profile: profileRef.current,
-              batch: { dirty: batch.dirty, context: batch.context, entities: batch.entities },
+              batch: {
+                dirty: batch.dirty,
+                context: batch.context,
+                entities: batch.entities,
+                ...(digest ? { digest } : {}),
+              },
               preview: storyUpdatePreview(plan),
             },
             { skipPreflight: index > 0 },
@@ -1008,7 +1140,9 @@ function WriterEditor({
       });
       if (!result.ok) return { ok: false, error: result.error, cancelled: /cancelada/i.test(result.error) };
       if (result.storyDelta && !current.isDestroyed) {
-        const applied = applyStoryDelta(storyRef.current, current.state.doc, built.cited, result.storyDelta);
+        const applied = applyStoryDelta(storyRef.current, current.state.doc, built.cited, result.storyDelta, {
+          allowedQuestionIds: built.openQuestions.map((item) => item.id),
+        });
         if (applied.changed) commitStory(applied.story);
       }
       return {
@@ -1108,6 +1242,14 @@ function WriterEditor({
       editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to, "\n").trim(),
   );
   const saveLabel = saveState === "saving" ? "Guardando…" : saveState === "error" ? "Error al guardar" : "";
+  const wordsLabel = wordCount === 1 ? "1 palabra" : `${wordCount} palabras`;
+  const statusText = (() => {
+    if (!showPages || !pageMap || !editor) return wordsLabel;
+    const page = getCurrentPage(pageMap, editor.state.selection.from);
+    const scene = profile === "screenplay" ? sceneNumberAt(editor, editor.state.selection.from) : null;
+    const place = `Página ${page} de ${pageMap.totalPages}`;
+    return scene ? `Escena ${scene} · ${place}` : `${wordsLabel} · ${place}`;
+  })();
   const entities = editor ? writerEntitiesInDocument(editor.state.doc) : [];
 
   return (
@@ -1143,6 +1285,29 @@ function WriterEditor({
           pagePresetRef.current = value;
           schedule();
         }}
+        viewMode={paged ? "paged" : "continuous"}
+        onViewMode={(value) => {
+          setSessionContinuous(false);
+          setViewMode(value);
+          viewModeRef.current = value;
+          schedule();
+        }}
+        zoomChoice={zoomChoice}
+        onZoomChoice={setZoomChoice}
+        statusText={statusText}
+        onStatus={showPages ? () => setGoToOpen(true) : undefined}
+        goToOpen={goToOpen}
+        goToDraft={goToDraft}
+        onGoToDraft={setGoToDraft}
+        onGoTo={(value) => {
+          const number = Number.parseInt(value, 10);
+          const pos = pageMap ? getPositionForPage(pageMap, number) : null;
+          if (!editor || pos == null) return;
+          const target = Math.max(1, Math.min(pos, editor.state.doc.content.size));
+          editor.chain().focus().setTextSelection(target).scrollIntoView().run();
+          setGoToOpen(false);
+        }}
+        onGoToClose={() => setGoToOpen(false)}
         mapOpen={mapOpen}
         onToggleMap={() => showPanel("map")}
         onToggleMemory={() => {
@@ -1163,8 +1328,8 @@ function WriterEditor({
           <div className="writer-studio-main">
             <div
               ref={pageRef}
-              className={`writer-studio-page${profile === "screenplay" ? " is-screenplay" : ""}`}
-              style={writerPageStyle(pagePreset, profile)}
+              className={`writer-studio-page${profile === "screenplay" ? " is-screenplay" : ""}${showPages ? " is-paged" : ""}`}
+              style={writerPageStyle(pagePreset, profile, showPages)}
               onMouseMove={(event) => {
                 if (!editor) return;
                 const pos = blockPosFromTarget(editor, event.target);
@@ -1198,7 +1363,18 @@ function WriterEditor({
                 }
               }}
             >
-              <EditorContent editor={editor} />
+              <div className="writer-sheet-stack" style={showPages ? ({ zoom: pageScale } as React.CSSProperties) : undefined}>
+                {showPages ? (
+                  <div className="writer-page-plates" aria-hidden="true">
+                    {(pageMap?.pages.length ? pageMap.pages : [{ number: 1 }]).map((page) => (
+                      <div key={page.number} className="writer-page-plate">
+                        <span className="writer-page-number">{page.number}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <EditorContent editor={editor} />
+              </div>
             </div>
           </div>
           {mapOpen ? (
@@ -1532,6 +1708,7 @@ function WriterEditor({
             onClose={closeStory}
             onOpenAppearance={openAppearance}
             onOpenBlock={openBlock}
+            pageForBlock={pageForBlock}
             onAsk={askStory}
             onSaveIdea={saveStoryIdea}
             onOpenFragment={(fragment) => {
@@ -1622,6 +1799,17 @@ function WriterStudioFrame({
   hasOutline = false,
   pagePreset,
   onPagePreset,
+  viewMode,
+  onViewMode,
+  zoomChoice,
+  onZoomChoice,
+  statusText,
+  onStatus,
+  goToOpen = false,
+  goToDraft = "",
+  onGoToDraft,
+  onGoTo,
+  onGoToClose,
   mapOpen = false,
   onToggleMap,
   onToggleMemory,
@@ -1644,6 +1832,17 @@ function WriterStudioFrame({
   hasOutline?: boolean;
   pagePreset?: WriterPagePreset;
   onPagePreset?: (value: WriterPagePreset) => void;
+  viewMode?: "paged" | "continuous";
+  onViewMode?: (value: "paged" | "continuous") => void;
+  zoomChoice?: "80" | "100" | "120" | "fit";
+  onZoomChoice?: (value: "80" | "100" | "120" | "fit") => void;
+  statusText?: string;
+  onStatus?: () => void;
+  goToOpen?: boolean;
+  goToDraft?: string;
+  onGoToDraft?: (value: string) => void;
+  onGoTo?: (value: string) => void;
+  onGoToClose?: () => void;
   mapOpen?: boolean;
   onToggleMap?: () => void;
   onToggleMemory?: () => void;
@@ -1655,6 +1854,7 @@ function WriterStudioFrame({
   children: React.ReactNode;
 }) {
   const editable = Boolean(onTitle && onProfile);
+  const workspaceLabel = getWriterContextAdapter(profile).workspaceLabel;
   return (
     <div className="writer-studio" role="dialog" aria-label="Writer">
       <header className="writer-studio-header">
@@ -1683,7 +1883,33 @@ function WriterStudioFrame({
           </label>
         ) : null}
         <div className={`writer-studio-status${saveError ? " is-error" : ""}`}>
-          <span>{wordCount === 1 ? "1 palabra" : `${wordCount} palabras`}</span>
+          {onStatus ? (
+            <button type="button" className="writer-status-page" onClick={onStatus}>
+              {statusText ?? (wordCount === 1 ? "1 palabra" : `${wordCount} palabras`)}
+            </button>
+          ) : (
+            <span>{statusText ?? (wordCount === 1 ? "1 palabra" : `${wordCount} palabras`)}</span>
+          )}
+          {goToOpen && onGoTo ? (
+            <form
+              className="writer-goto"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onGoTo(goToDraft);
+              }}
+            >
+              <input
+                aria-label="Ir a página"
+                inputMode="numeric"
+                value={goToDraft}
+                autoFocus
+                onChange={(event) => onGoToDraft?.(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") onGoToClose?.();
+                }}
+              />
+            </form>
+          ) : null}
           {saveLabel ? <span>{saveLabel}</span> : null}
         </div>
         {onToggleAi ? (
@@ -1694,18 +1920,18 @@ function WriterStudioFrame({
         {onOpenStory ? (
           <button
             type="button"
-            aria-label={storyOpen ? "Volver a Write" : "Story"}
+            aria-label={storyOpen ? "Volver a Write" : workspaceLabel}
             title={
               storyOpen
                 ? "Volver a Write"
                 : storyPending > 0
-                  ? `Story · ${storyPending} ${storyPending === 1 ? "cambio" : "cambios"}`
-                  : "Story"
+                  ? `${workspaceLabel} · ${storyPending} ${storyPending === 1 ? "cambio" : "cambios"}`
+                  : workspaceLabel
             }
             aria-pressed={storyOpen}
             onClick={onOpenStory}
           >
-            {storyOpen ? "← Write" : "Story"}
+            {storyOpen ? "← Write" : workspaceLabel}
           </button>
         ) : null}
         {editable && onPagePreset && pagePreset ? (
@@ -1714,6 +1940,10 @@ function WriterStudioFrame({
             preset={pagePreset}
             hasOutline={hasOutline}
             onPagePreset={onPagePreset}
+            viewMode={viewMode}
+            onViewMode={onViewMode}
+            zoomChoice={zoomChoice}
+            onZoomChoice={onZoomChoice}
             onToggleMap={onToggleMap}
             onToggleMemory={onToggleMemory}
           />
@@ -1942,6 +2172,10 @@ function WriterToolsMenu({
   preset,
   hasOutline,
   onPagePreset,
+  viewMode,
+  onViewMode,
+  zoomChoice,
+  onZoomChoice,
   onToggleMap,
   onToggleMemory,
 }: {
@@ -1949,10 +2183,14 @@ function WriterToolsMenu({
   preset: WriterPagePreset;
   hasOutline: boolean;
   onPagePreset: (value: WriterPagePreset) => void;
+  viewMode?: "paged" | "continuous";
+  onViewMode?: (value: "paged" | "continuous") => void;
+  zoomChoice?: "80" | "100" | "120" | "fit";
+  onZoomChoice?: (value: "80" | "100" | "120" | "fit") => void;
   onToggleMap?: () => void;
   onToggleMemory?: () => void;
 }) {
-  const [panel, setPanel] = useState<"closed" | "tools" | "page">("closed");
+  const [panel, setPanel] = useState<"closed" | "tools" | "page" | "view">("closed");
   const rootRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (panel === "closed") return;
@@ -1974,12 +2212,47 @@ function WriterToolsMenu({
           {hasOutline && onToggleMap ? (
             <button type="button" role="menuitem" title="Mapa del documento" aria-label="Mapa del documento" onClick={() => { onToggleMap(); setPanel("closed"); }}>☷</button>
           ) : null}
+          <button type="button" role="menuitem" title="Vista" aria-label="Vista" onClick={() => setPanel("view")}>▤</button>
           <button type="button" role="menuitem" title="Diseño de página" aria-label="Diseño de página" onClick={() => setPanel("page")}>▣</button>
           {onToggleMemory ? (
             <button type="button" role="menuitem" title="Memory" aria-label="Memory" onClick={() => { onToggleMemory(); setPanel("closed"); }}>◉</button>
           ) : null}
           <button type="button" role="menuitem" title="Deshacer" aria-label="Deshacer" disabled={!editor?.can().undo()} onMouseDown={(event) => event.preventDefault()} onClick={() => editor?.chain().focus().undo().run()}>↩</button>
           <button type="button" role="menuitem" title="Rehacer" aria-label="Rehacer" disabled={!editor?.can().redo()} onMouseDown={(event) => event.preventDefault()} onClick={() => editor?.chain().focus().redo().run()}>↪</button>
+        </div>
+      ) : null}
+      {panel === "view" && onViewMode && viewMode ? (
+        <div className="writer-studio-menu-panel writer-page-palette" role="menu" aria-label="Vista">
+          {([
+            ["paged", "Páginas"],
+            ["continuous", "Continuo"],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="menuitemradio"
+              aria-label={label}
+              aria-checked={viewMode === id}
+              className={viewMode === id ? "is-active" : ""}
+              onClick={() => { onViewMode(id); setPanel("closed"); }}
+            >
+              {label}
+            </button>
+          ))}
+          {viewMode === "paged" && onZoomChoice && zoomChoice ? (
+            <div className="writer-zoom" role="group" aria-label="Zoom">
+              {([
+                ["80", "80%"],
+                ["100", "100%"],
+                ["120", "120%"],
+                ["fit", "Ajustar"],
+              ] as const).map(([id, label]) => (
+                <button key={id} type="button" aria-pressed={zoomChoice === id} onClick={() => onZoomChoice(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {panel === "page" ? (
@@ -2458,6 +2731,18 @@ const WRITER_STUDIO_CSS = `
   white-space: nowrap;
 }
 .writer-studio-status.is-error { color: #f0b4a8; }
+.writer-status-page { padding: 0; color: inherit; cursor: pointer; }
+.writer-goto input {
+  width: 4.5em;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.35);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.writer-zoom { display: flex; gap: 2px; }
 .writer-studio-message {
   margin: 48px auto;
   max-width: 420px;
@@ -2898,6 +3183,74 @@ const WRITER_STUDIO_CSS = `
   font-size: 16px;
   line-height: 1.35;
 }
+.writer-sheet-stack { position: relative; }
+.writer-studio-page.is-paged { background: #d4cdc2; }
+.writer-studio-page.is-paged .tiptap .writer-chapter { margin: 0; }
+.writer-studio-page.is-paged .writer-sheet-stack {
+  width: var(--writer-page-width, 794px);
+  margin: 0 auto;
+}
+.writer-page-plates {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 0;
+}
+.writer-page-plate {
+  position: relative;
+  height: var(--writer-page-height, 1123px);
+  margin: 0 0 var(--writer-page-gap, 28px);
+  background: #fff;
+  border-radius: 2px;
+}
+.writer-page-plate:last-child { margin-bottom: 0; }
+.writer-page-number {
+  position: absolute;
+  right: 28px;
+  bottom: 22px;
+  font-size: 11px;
+  color: #9a9186;
+  user-select: none;
+}
+.writer-studio-page.is-paged .tiptap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.writer-page-gap {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  clear: both;
+  line-height: 0;
+  font-size: 0;
+  pointer-events: none;
+  user-select: none;
+}
+.writer-page-break {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 1.6em 0;
+  color: #9a9186;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+.writer-page-break::before,
+.writer-page-break::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid #d9d1c6;
+}
+.writer-studio-page.is-paged .writer-page-break { display: none; }
 .writer-studio-page .tiptap .writer-sp-sceneHeading {
   margin: 1.35em 0 0.7em;
   font-weight: 700;

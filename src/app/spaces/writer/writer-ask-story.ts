@@ -9,6 +9,9 @@ import { conversationPriorTurns } from "./writer-conversation";
 import { candidateCueKey, currentStance, relationNeighborIds, relationRowsFor } from "./writer-relations";
 import { validChapterSummaries, type StoryEntity, type WriterStory } from "./writer-story";
 import { projectNavigationStory } from "./writer-presentation";
+import { deriveStoryStructure, sceneChronology } from "./writer-structure";
+import { writerEntityId } from "./writer-entities";
+import { questionIndex, questionsMatch } from "./writer-questions";
 
 /**
  * Ask Story arma el contexto en local. Una pregunta interpretativa = una llamada.
@@ -67,6 +70,7 @@ export type StoryAskMetrics = {
   events: number;
   blocks: number;
   chapterSummaries: number;
+  questions: number;
   local: boolean;
 };
 
@@ -109,6 +113,7 @@ export type StoryAskPackage = {
   recentTurns: StoryAskTurn[];
   conversationSummary: string;
   metrics: StoryAskMetrics;
+  openQuestions: { id: string; text: string }[];
 };
 
 export function buildStoryAsk(
@@ -134,6 +139,12 @@ export function buildStoryAsk(
   const aboutIdeas = /(?:^|[^\p{L}\p{N}])ideas?(?![\p{L}\p{N}])/u.test(fold(question));
   const profileFocus = entityProfileQuestion(question);
   const local = localStoryAnswer(story, index.appearances, blocks, question);
+  const openQuestions = questionIndex(story.questions ?? [], liveHashes).open
+    .filter((item) => input.scope.type === "entity"
+      ? item.relatedEntityIds.includes(input.scope.entityId)
+      : entities.some((entity) => item.relatedEntityIds.includes(entity.id)))
+    .slice(0, 6)
+    .map((item) => ({ id: item.id, text: item.text }));
 
   const notes = rankNotes(entities, input.scope, tokens, aboutIdeas);
   const hasStructured = entities.some((entity) => entity.stateSummary || entity.traceSummary || entity.events.length > 0);
@@ -192,13 +203,15 @@ export function buildStoryAsk(
     JSON.stringify(fresh).length +
     JSON.stringify(rankedChapters).length +
     conversationSummary.length +
-    JSON.stringify(recentTurns).length;
+    JSON.stringify(recentTurns).length +
+    openQuestions.reduce((sum, item) => sum + item.text.length + item.id.length, 0);
   const metrics: StoryAskMetrics = {
     contextChars,
     entities: entities.length,
     events: eventCount,
     blocks: cited.length,
     chapterSummaries: rankedChapters.length,
+    questions: openQuestions.length,
     local: local != null,
   };
   return {
@@ -217,6 +230,7 @@ export function buildStoryAsk(
     recentTurns,
     conversationSummary,
     metrics,
+    openQuestions,
   };
 }
 
@@ -251,6 +265,7 @@ export function storyAskContext(pkg: StoryAskPackage): WriterAskStoryContext {
     conversationSummary: pkg.conversationSummary,
     recentTurns: pkg.recentTurns,
     basis: pkg.basis,
+    openQuestions: pkg.openQuestions,
   };
 }
 
@@ -676,6 +691,8 @@ function localStoryAnswer(
   if (!question) return null;
   if (entityProfileQuestion(question)) return null;
   if (isCharacterRosterQuestion(question)) return listCharacters(story, appearances, question);
+  const pending = localQuestionAnswer(story, blocks, question);
+  if (pending) return pending;
   const related = localRelationAnswer(story, appearances, question);
   if (related) return related;
   if (isScriptOverviewQuestion(question)) return scriptOverviewLocal(story, appearances);
@@ -703,7 +720,107 @@ function localStoryAnswer(
   if (where?.[1]) return chaptersOf(story, appearances, cleanName(where[1]));
   const knows = question.match(/qu[eé]\s+sabe\s+(.+?)\s+que\s+(.+?)\s+(?:no|todav[ií]a\s+no)\s+sabe/i);
   if (knows?.[1] && knows[2]) return knowledgeGap(story, cleanName(knows[1]), cleanName(knows[2]));
+  if (/cu[aá]ntas localizaciones/i.test(question)) return locationCount(blocks);
+  const scenes = question.match(/en qu[eé] escenas aparece\s+(.+?)\s*\??\s*$/i);
+  if (scenes?.[1]) return scenesOfCharacter(story, blocks, cleanName(scenes[1]));
+  if (/cronolog[ií]a|es lineal|orden cronol[oó]gico/i.test(question)) return chronologyAnswer(blocks);
   return null;
+}
+
+function locationCount(blocks: StoryDocumentBlock[]): LocalHit {
+  const count = deriveStoryStructure(blocks).locations.length;
+  const answer = count === 1 ? "Hay 1 localización." : `Hay ${count} localizaciones.`;
+  return { answer, basis: "Localizaciones", fragment: null };
+}
+
+function scenesOfCharacter(story: WriterStory, blocks: StoryDocumentBlock[], name: string): LocalHit | null {
+  const person = resolveCue(story, name);
+  if (person === "ambiguous") return { answer: "Hay más de una ficha con ese nombre.", basis: "", fragment: null };
+  if (!person) return null;
+  const slug = writerEntityId(person.label);
+  const titles = deriveStoryStructure(blocks).units
+    .filter((unit) => unit.kind === "scene" && unit.cast.some((cue) => writerEntityId(cue) === slug))
+    .map((unit) => unit.title);
+  if (titles.length === 0) return { answer: `${person.label} no aparece en ninguna escena.`, basis: person.label, fragment: null };
+  return { answer: `${person.label} aparece en ${titles.join(", ")}.`, basis: person.label, fragment: null };
+}
+
+function chronologyAnswer(blocks: StoryDocumentBlock[]): LocalHit {
+  const units = deriveStoryStructure(blocks).units;
+  const clock = sceneChronology(units);
+  if (!clock.confident) return { answer: "No hay tiempos suficientes para ordenar las escenas.", basis: "Cronología", fragment: null };
+  if (!clock.nonlinear) return { answer: "La narración sigue el orden del documento.", basis: "Cronología", fragment: null };
+  const ordered = units
+    .filter((unit) => unit.chronologyOrder != null)
+    .sort((a, b) => (a.chronologyOrder ?? 0) - (b.chronologyOrder ?? 0))
+    .map((unit) => `${unit.timeLabel ?? ""} ${unit.title}`.trim());
+  return { answer: `La narración no es lineal. Orden temporal: ${ordered.join(", ")}.`, basis: "Cronología", fragment: null };
+}
+
+function localQuestionAnswer(story: WriterStory, blocks: StoryDocumentBlock[], question: string): LocalHit | null {
+  const asks =
+    /cabos?|pendientes?|cuestiones?/iu.test(question) &&
+    /abiert|tiene|siguen|relacionad|resuelt|avanz|sin tocar|se resolvi/iu.test(question);
+  if (!asks) return null;
+  const live = new Map(blocks.map((block) => [block.blockId, writerBlockTextHash(block.text)]));
+  const index = questionIndex(story.questions ?? [], live);
+  const currentOrder = blocks.reduce((max, block) => Math.max(max, block.order), 0);
+  const place = (order: number | null) => {
+    if (order == null) return "el documento";
+    const block = [...blocks].reverse().find((item) => item.order <= order);
+    return block?.scene || block?.chapterLabel || "el documento";
+  };
+  const named = question.match(/(?:tiene|de|sobre|con)\s+(.+?)\s*\??\s*$/iu);
+  if (/tiene/iu.test(question) && named?.[1] && !/abiert/iu.test(named[1])) {
+    const person = resolveCue(story, cleanName(named[1]));
+    if (person && person !== "ambiguous") {
+      const own = index.open.filter((item) => item.relatedEntityIds.includes(person.id));
+      if (own.length === 0) return { answer: `${person.label} no tiene cabos abiertos.`, basis: person.label, fragment: null };
+      return { answer: `${person.label}: ${own.map((item) => item.text).join(" ")}`, basis: person.label, fragment: null };
+    }
+  }
+  if (/resuelt/iu.test(question)) {
+    const needle = cleanName(question.replace(/.*cuesti[oó]n de\s+/iu, "").replace(/\?+$/u, ""));
+    const found = [...index.open, ...index.resolved].find((item) => questionsMatch(item.text, needle) || fold(item.text).includes(fold(needle)));
+    if (!found) return { answer: "No encuentro esa cuestión.", basis: "Pendientes", fragment: null };
+    return {
+      answer: found.status === "resolved" ? `${found.text} está resuelta.` : `${found.text} sigue abierta.`,
+      basis: "Pendientes",
+      fragment: null,
+    };
+  }
+  if (/avanz/iu.test(question)) {
+    const needle = cleanName(question.replace(/.*(?:cuesti[oó]n|cabo)\s+(?:de\s+)?/iu, "").replace(/\?+$/u, ""));
+    const found = index.open.find((item) => fold(item.text).includes(fold(needle)));
+    if (!found) return { answer: "No encuentro ese cabo abierto.", basis: "Pendientes", fragment: null };
+    return { answer: `${found.text} Último avance: ${place(found.lastAdvancedOrder)}.`, basis: "Pendientes", fragment: null };
+  }
+  if (/sin tocar/iu.test(question)) {
+    const ranked = [...index.open].sort((a, b) => (a.lastAdvancedOrder ?? 0) - (b.lastAdvancedOrder ?? 0));
+    const oldest = ranked[0];
+    if (!oldest) return { answer: "No hay cabos abiertos.", basis: "Pendientes", fragment: null };
+    const gap = currentOrder - (oldest.lastAdvancedOrder ?? 0);
+    return { answer: `${oldest.text} es el cabo que lleva más tiempo sin avanzar.`, basis: `${gap}`, fragment: null };
+  }
+  if (/se resolvi[oó]/iu.test(question)) {
+    const where = question.match(/(?:escena|cap[ií]tulo)\s+(.+?)\s*\??\s*$/iu)?.[1] ?? "";
+    const resolved = index.resolved.filter((item) => {
+      const label = place(item.lastAdvancedOrder);
+      return !where || fold(label).includes(fold(where));
+    });
+    if (resolved.length === 0) return { answer: "Ahí no hay cuestiones resueltas.", basis: "Pendientes", fragment: null };
+    return { answer: resolved.map((item) => item.text).join(" "), basis: "Pendientes", fragment: null };
+  }
+  if (/relacionad/iu.test(question) && named?.[1]) {
+    const subject = resolveCue(story, cleanName(named[1]));
+    if (subject && subject !== "ambiguous") {
+      const own = index.open.filter((item) => item.relatedEntityIds.includes(subject.id));
+      if (own.length === 0) return { answer: `No hay cuestiones abiertas relacionadas con ${subject.label}.`, basis: subject.label, fragment: null };
+      return { answer: own.map((item) => item.text).join(" "), basis: subject.label, fragment: null };
+    }
+  }
+  if (index.open.length === 0) return { answer: "No hay cabos abiertos.", basis: "Pendientes", fragment: null };
+  return { answer: index.open.map((item) => item.text).join(" "), basis: "Pendientes", fragment: null };
 }
 
 function localRelationAnswer(story: WriterStory, appearances: StoryAppearance[], question: string): LocalHit | null {

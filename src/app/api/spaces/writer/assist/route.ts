@@ -35,7 +35,9 @@ export async function POST(req: Request) {
     if ("error" in parsed) return NextResponse.json({ error: parsed.error }, { status: parsed.status });
 
     const messages = writerAiMessages(parsed);
-    const maxTokens = writerAiMaxTokens(parsed.action, parsed.selection.length);
+    const maxTokens = parsed.action === "update_story" && parsed.batch.digest
+      ? 2600
+      : writerAiMaxTokens(parsed.action, parsed.selection.length);
     const estimatedInputTokens = Math.ceil((messages.system.length + messages.user.length + 40) / 4);
     const estimatedCostUsd = estimateOpenAIUsd(WRITER_AI_MODEL, estimatedInputTokens, maxTokens);
 

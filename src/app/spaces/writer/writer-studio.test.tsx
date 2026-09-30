@@ -595,7 +595,7 @@ describe("Writer studio", () => {
     expect(screen.queryByRole("heading", { name: "Recorrido" })).toBeNull();
   });
 
-  it("creates a character in Story and restores the page when returning to Write", async () => {
+  it("creates an entity in Contexto and restores the page when returning to Write", async () => {
     const user = userEvent.setup();
     render(
       <WriterStudio
@@ -611,14 +611,16 @@ describe("Writer studio", () => {
     await waitFor(() => expect(document.querySelector(".ProseMirror")).toBeTruthy());
     const page = document.querySelector(".writer-studio-page") as HTMLElement;
     page.scrollTop = 180;
-    await user.click(screen.getByRole("button", { name: "Story" }));
+    await user.click(screen.getByRole("button", { name: "Contexto" }));
     expect(document.querySelector(".ProseMirror")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Personajes" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Escenas" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "+ Nuevo" }));
-    await user.click(screen.getByRole("menuitem", { name: "Personaje" }));
-    await user.type(screen.getByRole("textbox", { name: "Nombre del personaje" }), "Pedro");
+    await user.click(screen.getByRole("menuitem", { name: "Entidad" }));
+    await user.type(screen.getByRole("textbox", { name: "Nombre de la entidad" }), "Pedro");
     await user.keyboard("{Enter}");
-    await user.click(screen.getByRole("button", { name: "+ Definir personaje" }));
-    await user.type(screen.getByRole("textbox", { name: "Perfil" }), "Guarda el faro.");
+    await user.click(screen.getByRole("button", { name: "+ Añadir información" }));
+    await user.type(screen.getByRole("textbox", { name: "Información" }), "Guarda el faro.");
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await user.click(screen.getByRole("button", { name: "+ Añadir" }));
     await user.type(screen.getByRole("textbox", { name: "Nota" }), "No habla del accidente.");
@@ -626,16 +628,12 @@ describe("Writer studio", () => {
     expect(screen.getByText("No habla del accidente.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Volver a Write" }));
     await waitFor(() => expect(page.scrollTop).toBe(180));
-    expect(screen.queryByRole("region", { name: "Story" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Story" }));
-    await user.click(within(screen.getByRole("navigation", { name: "Navegación de Story" })).getByRole("button", { name: "Pedro" }));
+    expect(screen.queryByRole("region", { name: "Contexto" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Contexto" }));
+    await user.click(within(screen.getByRole("navigation", { name: "Navegación de Contexto" })).getByRole("button", { name: "Pedro" }));
     expect(screen.getByText("Guarda el faro.")).toBeTruthy();
     expect(screen.getByText("No habla del accidente.")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "+ Nuevo" }));
-    await user.click(screen.getByRole("menuitem", { name: "Elemento de historia" }));
-    await user.type(screen.getByRole("textbox", { name: "Nombre del elemento" }), "La casa");
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("heading", { name: "La casa" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Recorrido" })).toBeNull();
   });
 
   it("lists where Pedro appears and returns to that block", async () => {

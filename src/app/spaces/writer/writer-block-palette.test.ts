@@ -6,10 +6,10 @@ import { createWriterStarterKit, writerScreenplayNodes } from "./writer-screenpl
 
 describe("writer block palette", () => {
   it("uses a compact script palette and a prose palette", () => {
-    expect(writerBlockPalette("screenplay").map((item) => item.mark)).toEqual(["#", "¶", "@", "()", "“”", "→"]);
-    expect(writerBlockPalette("document").map((item) => item.mark)).toEqual(["T", "H1", "H2", "H3", "¶", "“", "•"]);
-    expect(writerBlockPalette("article").map((item) => item.mark)).toEqual(["T", "H1", "H2", "H3", "¶", "“", "•"]);
-    expect(writerBlockPalette("post").map((item) => item.mark)).toEqual(["H1", "H2", "H3", "¶", "“", "•"]);
+    expect(writerBlockPalette("screenplay").map((item) => item.mark)).toEqual(["#", "¶", "@", "()", "“”", "→", "—"]);
+    expect(writerBlockPalette("document").map((item) => item.mark)).toEqual(["T", "H1", "H2", "H3", "¶", "“", "•", "—"]);
+    expect(writerBlockPalette("article").map((item) => item.mark)).toEqual(["T", "H1", "H2", "H3", "¶", "“", "•", "—"]);
+    expect(writerBlockPalette("post").map((item) => item.mark)).toEqual(["H1", "H2", "H3", "¶", "“", "•", "—"]);
     expect(writerBlockPalette("screenplay").some((item) => item.id === "image")).toBe(false);
   });
 
@@ -19,7 +19,8 @@ describe("writer block palette", () => {
     expect(writerSlashMatches("screenplay", "per").map((item) => item.id)).toEqual(["character"]);
     expect(writerSlashMatches("document", "cita").map((item) => item.id)).toEqual(["blockquote"]);
     expect(writerSlashMatches("document", "lista").map((item) => item.id)).toEqual(["bulletList"]);
-    expect(writerSlashMatches("screenplay", "").map((item) => item.mark)).toEqual(["#", "¶", "@", "()", "“”", "→"]);
+    expect(writerSlashMatches("screenplay", "").map((item) => item.mark)).toEqual(["#", "¶", "@", "()", "“”", "→", "—"]);
+    expect(writerSlashMatches("document", "salto").map((item) => item.id)).toEqual(["pageBreak"]);
   });
 
   it("reads a slash query only at the start of the block", () => {

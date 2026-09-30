@@ -27,6 +27,13 @@ const PROSE: WriterBlockCommand[] = [
   { id: "bulletList", mark: "•", label: "Lista", keywords: ["lista"] },
 ];
 
+const PAGE_BREAK: WriterBlockCommand = {
+  id: "pageBreak",
+  mark: "—",
+  label: "Salto de página",
+  keywords: ["salto", "pagina", "página", "break"],
+};
+
 const CHAPTER: WriterBlockCommand = {
   id: "chapter",
   mark: "T",
@@ -35,9 +42,9 @@ const CHAPTER: WriterBlockCommand = {
 };
 
 export function writerBlockPalette(profile: WriterProfile): WriterBlockCommand[] {
-  if (profile === "screenplay") return SCRIPT;
-  if (profile === "document" || profile === "article") return [CHAPTER, ...PROSE];
-  return PROSE;
+  if (profile === "screenplay") return [...SCRIPT, PAGE_BREAK];
+  if (profile === "document" || profile === "article") return [CHAPTER, ...PROSE, PAGE_BREAK];
+  return [...PROSE, PAGE_BREAK];
 }
 
 export function writerSlashMatches(profile: WriterProfile, query: string): WriterBlockCommand[] {

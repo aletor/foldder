@@ -1,5 +1,6 @@
 import { mergeAttributes, Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
+import { WriterPageBreak } from "./writer-page-break";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -35,7 +36,10 @@ export const WriterChapterTitle = Node.create({
 export const WriterChapter = Node.create({
   name: "chapter",
   group: "block",
-  content: "chapterTitle (paragraph | heading | bulletList | orderedList | blockquote | sceneHeading | action | character | dialogue | parenthetical | transition)*",
+  addExtensions() {
+    return [WriterPageBreak];
+  },
+  content: "chapterTitle (paragraph | heading | bulletList | orderedList | blockquote | pageBreak | sceneHeading | action | character | dialogue | parenthetical | transition)*",
   defining: true,
   isolating: true,
   addAttributes() {

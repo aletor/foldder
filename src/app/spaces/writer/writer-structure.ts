@@ -20,6 +20,9 @@ export type StoryStructureUnit = {
   order: number;
   blockId: string;
   cast: string[];
+  timeLabel: string | null;
+  parsedMinutes: number | null;
+  chronologyOrder: number | null;
 };
 
 export type StoryLocation = {
@@ -32,9 +35,13 @@ const TIME_SUFFIX =
 
 const HEADING_PREFIX = /^(INT\.?\s*\/\s*EXT\.?|EXT\.?\s*\/\s*INT\.?|I\/E\.?|INT\.?|EXT\.?)\s+/iu;
 
-export function parseSceneHeading(heading: string): { setting: StorySetting | null; locationLabel: string | null } {
+const CLOCK = /^(\d{1,2}):(\d{2})$/;
+const RELATIVE_TIME = /^(un|una|dos|tres|cuatro|\d+)\s+horas?\s+(antes|despu[eé]s)$/iu;
+const WORD_HOURS: Record<string, number> = { un: 1, una: 1, dos: 2, tres: 3, cuatro: 4 };
+
+export function parseSceneHeading(heading: string): { setting: StorySetting | null; locationLabel: string | null; timeLabel: string | null } {
   let text = heading.replace(/\s+/g, " ").trim();
-  if (!text) return { setting: null, locationLabel: null };
+  if (!text) return { setting: null, locationLabel: null, timeLabel: null };
   let setting: StorySetting | null = null;
   const prefix = text.match(HEADING_PREFIX);
   if (prefix?.[1]) {
@@ -43,27 +50,55 @@ export function parseSceneHeading(heading: string): { setting: StorySetting | nu
     text = text.slice(prefix[0].length).trim();
   }
   const parts = text.split(/\s+[-–—]\s+/).map((part) => part.trim()).filter(Boolean);
-  while (parts.length > 1 && TIME_SUFFIX.test(parts[parts.length - 1] ?? "")) parts.pop();
+  let timeLabel: string | null = null;
+  while (parts.length > 1) {
+    const last = parts[parts.length - 1] ?? "";
+    if (TIME_SUFFIX.test(last)) {
+      parts.pop();
+      continue;
+    }
+    const clock = clockLabel(last);
+    const relative = relativeLabel(last);
+    if ((clock || relative) && !timeLabel) {
+      parts.pop();
+      timeLabel = clock ?? relative;
+      continue;
+    }
+    break;
+  }
   const location = parts.join(" - ").trim();
-  if (!location) return { setting, locationLabel: null };
-  return { setting, locationLabel: locationCase(location) };
+  if (!location) return { setting, locationLabel: null, timeLabel };
+  return { setting, locationLabel: locationCase(location), timeLabel };
+}
+
+export function sceneChronology(units: StoryStructureUnit[]): { nonlinear: boolean; confident: boolean } {
+  const timed = units.filter((unit) => unit.parsedMinutes != null);
+  const confident = timed.length >= 2;
+  const nonlinear = confident && timed.some((unit, index) => index > 0 && (unit.parsedMinutes ?? 0) < (timed[index - 1]?.parsedMinutes ?? 0));
+  return { nonlinear, confident };
 }
 
 export function deriveStoryStructure(
   blocks: StoryDocumentBlock[],
-  options?: { screenplay?: boolean },
+  options?: { kinds?: StoryStructureKind[] },
 ): {
   kind: StoryStructureKind | null;
   units: StoryStructureUnit[];
   locations: StoryLocation[];
 } {
-  const allowScenes = options?.screenplay !== false;
-  const scenes = allowScenes ? blocks.filter((block) => block.type === "sceneHeading" && block.text.trim()) : [];
-  if (scenes.length > 0) return finish("scene", sceneUnits(blocks, scenes));
-  const chapters = chapterUnits(blocks);
-  if (chapters.length > 0) return finish("chapter", chapters);
-  const sections = blocks.filter((block) => block.type === "heading" && block.text.trim());
-  if (sections.length > 0) return finish("section", sectionUnits(blocks, sections));
+  const kinds = options?.kinds ?? ["scene", "chapter", "section"];
+  if (kinds.includes("scene")) {
+    const scenes = blocks.filter((block) => block.type === "sceneHeading" && block.text.trim());
+    if (scenes.length > 0) return finish("scene", sceneUnits(blocks, scenes));
+  }
+  if (kinds.includes("chapter")) {
+    const chapters = chapterUnits(blocks);
+    if (chapters.length > 0) return finish("chapter", chapters);
+  }
+  if (kinds.includes("section")) {
+    const sections = blocks.filter((block) => block.type === "heading" && block.text.trim());
+    if (sections.length > 0) return finish("section", sectionUnits(blocks, sections));
+  }
   return { kind: null, units: [], locations: [] };
 }
 
@@ -76,13 +111,16 @@ function finish(kind: StoryStructureKind, units: StoryStructureUnit[]): {
 }
 
 function sceneUnits(blocks: StoryDocumentBlock[], headings: StoryDocumentBlock[]): StoryStructureUnit[] {
-  return headings.map((heading, index) => {
+  let anchor: number | null = null;
+  const units = headings.map((heading, index) => {
     const next = headings[index + 1];
     const range = blocks.filter((block) => block.order >= heading.order && (next ? block.order < next.order : true));
     const parsed = parseSceneHeading(heading.text);
+    const minutes = resolveMinutes(parsed.timeLabel, anchor);
+    if (clockMinutes(parsed.timeLabel) != null) anchor = clockMinutes(parsed.timeLabel);
     return {
       id: heading.blockId,
-      kind: "scene",
+      kind: "scene" as const,
       heading: heading.text,
       title: parsed.locationLabel || locationCase(heading.text),
       locationLabel: parsed.locationLabel,
@@ -90,8 +128,16 @@ function sceneUnits(blocks: StoryDocumentBlock[], headings: StoryDocumentBlock[]
       order: index + 1,
       blockId: heading.blockId,
       cast: castOf(range),
+      timeLabel: parsed.timeLabel,
+      parsedMinutes: minutes,
+      chronologyOrder: null as number | null,
     };
   });
+  const timed = [...units].filter((unit) => unit.parsedMinutes != null).sort((a, b) => (a.parsedMinutes ?? 0) - (b.parsedMinutes ?? 0) || a.order - b.order);
+  timed.forEach((unit, index) => {
+    unit.chronologyOrder = index + 1;
+  });
+  return units;
 }
 
 function chapterUnits(blocks: StoryDocumentBlock[]): StoryStructureUnit[] {
@@ -114,6 +160,9 @@ function chapterUnits(blocks: StoryDocumentBlock[]): StoryStructureUnit[] {
       order: index + 1,
       blockId: titleBlock?.blockId || range[0]?.blockId || chapterId,
       cast: castOf(range),
+      timeLabel: null,
+      parsedMinutes: null,
+      chronologyOrder: null,
     };
   });
 }
@@ -132,6 +181,9 @@ function sectionUnits(blocks: StoryDocumentBlock[], headings: StoryDocumentBlock
       order: index + 1,
       blockId: heading.blockId,
       cast: castOf(range),
+      timeLabel: null,
+      parsedMinutes: null,
+      chronologyOrder: null,
     };
   });
 }
@@ -148,6 +200,38 @@ function castOf(blocks: StoryDocumentBlock[]): string[] {
     cast.push(title);
   }
   return cast;
+}
+
+function clockLabel(value: string): string | null {
+  const match = value.match(CLOCK);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function relativeLabel(value: string): string | null {
+  if (!RELATIVE_TIME.test(value)) return null;
+  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase("es");
+}
+
+function clockMinutes(label: string | null): number | null {
+  if (!label) return null;
+  const match = label.match(CLOCK);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function resolveMinutes(label: string | null, anchor: number | null): number | null {
+  const clock = clockMinutes(label);
+  if (clock != null) return clock;
+  const match = label?.match(RELATIVE_TIME);
+  if (!match?.[1] || !match[2] || anchor == null) return null;
+  const hours = WORD_HOURS[match[1].toLocaleLowerCase("es")] ?? Number(match[1]);
+  if (!Number.isFinite(hours)) return null;
+  const delta = hours * 60;
+  return /antes/i.test(match[2]) ? anchor - delta : anchor + delta;
 }
 
 function locationsOf(units: StoryStructureUnit[]): StoryLocation[] {
