@@ -19,12 +19,12 @@ import { nodeFrameNeedsSync, resolveNodeFrameWidth } from "../studio-node-aspect
 import {
   normalizeGuionistaData,
   plainTextFromMarkdown,
-  type GuionistaBrainContext,
   type GuionistaFormat,
   type GuionistaNodeData,
   type GuionistaSocialPlatform,
   type GuionistaTextAsset,
 } from "../guionista-types";
+import { useGuionistaBrandKitRuntime } from "../guionista-brandkit-client";
 import {
   StudioCanvasNodeShell,
   type StudioCanvasNodeHandleSpec,
@@ -68,10 +68,6 @@ function selectGuionistaConnections(
     brainConnected,
     hasConnections: promptConnected || textConnected || brainConnected,
   };
-}
-
-function summarizeGuionistaBrainContext(_enabled: boolean): GuionistaBrainContext {
-  return { enabled: false };
 }
 
 type GuionistaAssetVisualMeta = {
@@ -347,7 +343,9 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
   }, [activeTextAsset, assetsCtx?.generatedTextAssets?.items, sourceAssetIdForDerivatives]);
   const socialDerivatives = generatedDerivatives.filter((asset) => asset.type === "post" && asset.platform);
 
-  const brainConnected = inputSnapshot.brainConnected || connectionSnapshot.brainConnected;
+  const brandRuntime = useGuionistaBrandKitRuntime(id);
+  const brainConnected =
+    brandRuntime.brainConnected || inputSnapshot.brainConnected || connectionSnapshot.brainConnected;
   const initialBriefing = inputSnapshot.initialBriefing;
   const hasConnections = connectionSnapshot.hasConnections;
   const hasGeneratedText = Boolean(activeTextAsset || currentVersion?.markdown?.trim());
@@ -356,17 +354,14 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
   const showConnectedIcon = hasDock;
   const connectedOnly = hasConnections && !hasGeneratedText && !hasDerivatives;
 
-  const brainHints = useMemo(
-    () =>
-      brainConnected
-        ? ["Tono del proyecto", "Contexto del proyecto", "Claims aprobados", "Frases a evitar", "Notas relevantes"]
-        : [],
-    [brainConnected],
-  );
-  const brainContext = useMemo(
-    () => summarizeGuionistaBrainContext(brainConnected),
-    [brainConnected],
-  );
+  const brainHints = brandRuntime.brainConnected
+    ? brandRuntime.brainHints
+    : brainConnected
+      ? ["Conecta un BrandKit para inyectar tono, claims y reglas de marca"]
+      : [];
+  const brainContext = brandRuntime.brainConnected
+    ? brandRuntime.brainContext
+    : { enabled: false };
   const activeVersionIndex = useMemo(() => {
     const versions = nodeData.versions ?? [];
     const index = versions.findIndex((version) => version.id === nodeData.activeVersionId);

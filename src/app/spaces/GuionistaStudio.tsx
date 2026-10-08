@@ -608,14 +608,14 @@ function ProfessionalDocumentEditor({
   }
 
   return (
-    <div className="mx-auto max-w-[920px]">
-      <div className={GUI_STUDIO_PAPER_WRAP}>
+    <div className="w-full min-w-0">
+      <div className={`${GUI_STUDIO_PAPER_WRAP} w-full`}>
         <DocumentTextarea
           ref={editorRef}
           value={version.markdown}
           onChange={onChange}
           onCaptureSelection={onCaptureSelection}
-          className="min-h-[76vh] bg-[#fffaf0] font-serif text-[19px] leading-[1.86] text-[#15130f]"
+          className="min-h-[76vh] w-full bg-[#fffaf0] font-serif text-[19px] leading-[1.86] text-[#15130f]"
         />
       </div>
     </div>

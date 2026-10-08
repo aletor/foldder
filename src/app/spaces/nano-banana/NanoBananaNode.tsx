@@ -41,6 +41,8 @@ import { NanoBananaNodeExteriorHistoryThumb } from "./nano-banana-node-exterior-
 import { NanoBananaNodeDockProviderSelect } from "./nano-banana-node-dock-provider-select";
 import { NanoBananaNodeDockSelect } from "./nano-banana-node-dock-select";
 import { ImageCreationStudio } from "./ImageCreationStudio";
+import { useImageCreatorBrandKit } from "./image-creator-brandkit-client";
+import { appendBrandStyleImages, mergeImageCreatorPrompt } from "./image-creator-brandkit";
 import { stripBriefForNode, type StudioDraftState } from "./studio-persist";
 import type { StudioHistoryBrief } from "./studio-types";
 import {
@@ -314,6 +316,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, []);
 
   const brainConnected = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_BRAIN] === "1";
+  const brandKit = useImageCreatorBrandKit(id);
+  const brandStyleBlock = brandKit.styleBlock;
+  const brandStyleImageUrls = brandKit.styleImageUrls;
   const promptConnected = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_PROMPT_CONNECTED] === "1";
   const promptValue = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_PROMPT_VALUE] ?? "";
   const connectedSlots = useMemo(
@@ -662,7 +667,12 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       targetAspectRatio: dockAspect,
       textOnlyRecreation,
     });
-    const promptToSend = userPromptRaw;
+    const promptToSend = mergeImageCreatorPrompt(userPromptRaw, brandStyleBlock);
+    const generateImages = appendBrandStyleImages(
+      connectedRefImages,
+      brandStyleImageUrls,
+      isPro ? 5 : 4,
+    );
 
     const epoch = ++graphGenEpochRef.current;
     setStatus('running');
@@ -673,7 +683,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       const ok = await runAiJobWithNotification({ nodeId: id, label: 'Image Creation' }, async () => {
         const generateBody = {
           prompt: promptToSend,
-          images: connectedRefImages,
+          images: generateImages,
           aspect_ratio: dockAspect,
           resolution: dockResolution,
           ...(isOpenAiProvider
@@ -1324,6 +1334,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                   : []
                 : connectedRefImages
             }
+            applyBrandPrompt={
+              !isHostStudioSession && brandStyleBlock
+                ? (theme, body) =>
+                    mergeImageCreatorPrompt([theme, body].filter(Boolean).join("\n\n"), brandStyleBlock)
+                : undefined
+            }
+            brandStyleImageUrls={isHostStudioSession ? [] : brandStyleImageUrls}
             onBrainImageGeneratorDiagnostics={setBrainImageDiagSync}
             topBarCloseMode={nanoStudioTopBarCloseMode}
             generationHistory={isHostStudioSession ? cineStudioHistory : persistedGenerationHistory}

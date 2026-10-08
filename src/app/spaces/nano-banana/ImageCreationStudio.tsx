@@ -69,6 +69,7 @@ import {
 } from "./nano-banana-output-options";
 import { isValidClosedLasso, rasterizeLassoToPaintData } from "./lasso-to-paint-data";
 import { StudioFoldderImagePicker } from "./StudioFoldderImagePicker";
+import { appendBrandStyleImages } from "./image-creator-brandkit";
 import { buildStudioGenerateImageSlots, canStudioPrimaryGenerate, describeStudioGenerateImageOrder, shouldRunAnalyzeAreas, type StudioGenerateSlotKind } from "./studio-generate-payload";
 import type { ChangeMaskSensitivity } from "@/lib/nano-banana/preserve-compose/analyze-change-mask";
 import { mergeStudioCardReferences, planStudioIncomingUrls, STUDIO_SCENE_DEST } from "./studio-foldder-images";
@@ -170,6 +171,9 @@ export type ImageCreationStudioProps = {
   studioDraft?: StudioDraftState;
   onStudioDraftChange?: (draft: StudioDraftState) => void;
   connectedImages?: (string | null)[];
+  /** BrandKit conectado: el brief del usuario prevalece si hay conflicto. */
+  applyBrandPrompt?: (userTheme: string, studioBody: string) => string;
+  brandStyleImageUrls?: string[];
 };
 
 function mergePromptWithBrain(
@@ -177,9 +181,14 @@ function mergePromptWithBrain(
   onDiag: ImageCreationStudioProps["onBrainImageGeneratorDiagnostics"],
   userTheme: string,
   body: string,
+  applyBrandPrompt?: ImageCreationStudioProps["applyBrandPrompt"],
 ): string {
   const theme = userTheme.trim();
   const studio = body.trim();
+  if (applyBrandPrompt) {
+    onDiag?.(null);
+    return applyBrandPrompt(theme, studio);
+  }
   if (!compose) return [theme, studio].filter(Boolean).join("\n\n");
   const pack = compose(theme || "Generación en Image Creation Studio.");
   if (!pack) {
@@ -355,6 +364,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   studioDraft,
   onStudioDraftChange,
   connectedImages = [],
+  applyBrandPrompt,
+  brandStyleImageUrls = [],
 }: ImageCreationStudioProps) {
   const { isTouchUI } = useInputMode();
   const boot = useMemo(
@@ -1260,6 +1271,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
               onBrainImageGeneratorDiagnostics,
               scenePrompt,
               expandText,
+              applyBrandPrompt,
             );
             const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
             setGenStage(
@@ -1350,13 +1362,14 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
             onBrainImageGeneratorDiagnostics,
             scenePrompt,
             framed.prompt,
+            applyBrandPrompt,
           );
           const maskUrl = isOpenAi
             ? await buildOpenAiEditMaskDataUrl(genCards, { width: genFrameWidth, height: genFrameHeight })
             : null;
           const imageList = maskUrl
             ? buildStudioGenerateImageSlots({ ...framed.images, zoneMapImage: null })
-            : framed.imageList;
+            : appendBrandStyleImages(framed.imageList, brandStyleImageUrls, isOpenAi ? 4 : 5);
           const generate = isOpenAi ? openaiGenerateWithServerProgress : geminiGenerateWithServerProgress;
           setGenStage(
             `Generando candidata · ${nanoBananaModelLabel(studioDisplayModelKey, isOpenAi)} · ${resolution.toUpperCase()}`,
@@ -1441,6 +1454,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
   }, [
     cards,
     commitGeneratedOutput,
+    applyBrandPrompt,
+    brandStyleImageUrls,
     composeBrainImageGeneratorPrompt,
     currentImage,
     effectiveStudioResolution,
@@ -1492,6 +1507,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           onBrainImageGeneratorDiagnostics,
           scenePrompt,
           expandText,
+          applyBrandPrompt,
         );
         setCallPreview({
           analyzeError: null,
@@ -1536,6 +1552,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
         onBrainImageGeneratorDiagnostics,
         scenePrompt,
         framed.prompt,
+        applyBrandPrompt,
       );
       const order = describeStudioGenerateImageOrder(framed.images);
       const eligibility = preserveComposeEligibility({
@@ -1570,6 +1587,8 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
     }
   }, [
     cards,
+    applyBrandPrompt,
+    brandStyleImageUrls,
     composeBrainImageGeneratorPrompt,
     currentImage,
     genStatus,
