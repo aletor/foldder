@@ -1,7 +1,14 @@
 import { normalizeBrandKitDocument } from "@/lib/brandkit/brand-kit-defaults";
 import { buildBrandKitStylePrompt } from "@/lib/brandkit/compile-brand-kit";
 import { galleryStyleReferenceUrls } from "@/lib/brandkit/brand-kit-gallery-generate-profile";
-import type { BrandKitDocument, BrandKitNodeData, GalleryValue, VisualWorldValue } from "@/lib/brandkit/brand-kit-types";
+import type {
+  BrandKitDocument,
+  BrandKitNodeData,
+  GalleryValue,
+  LogoValue,
+  PaletteValue,
+  VisualWorldValue,
+} from "@/lib/brandkit/brand-kit-types";
 
 const STYLE_IMAGE_LIMIT = 2;
 
@@ -22,18 +29,61 @@ function stripGalleryUrlSentences(prompt: string): string {
     .trim();
 }
 
-function imageCreatorStyleImageUrls(gallery: GalleryValue | undefined): string[] {
-  const harvested = galleryStyleReferenceUrls(gallery, STYLE_IMAGE_LIMIT);
-  if (harvested.length >= STYLE_IMAGE_LIMIT) return harvested;
-  const extra: string[] = [];
+function resolvedPalette(doc: BrandKitDocument): PaletteValue | undefined {
+  const slot = doc.slots.palette;
+  if (slot?.status === "resolved" && slot.value) return slot.value as PaletteValue;
+  return undefined;
+}
+
+function resolvedLogoUrl(doc: BrandKitDocument): string | undefined {
+  const slot = doc.slots.logo;
+  if (slot?.status !== "resolved" || !slot.value) return undefined;
+  const logo = slot.value as LogoValue;
+  return (logo.previewUrl ?? logo.assetId)?.trim() || undefined;
+}
+
+function paletteDirective(palette: PaletteValue | undefined): string {
+  const colors = (palette?.colors ?? [])
+    .map((color) => `${color.role} ${color.hex}`)
+    .filter(Boolean)
+    .slice(0, 5);
+  if (!colors.length) return "";
+  return [
+    `BRAND PALETTE (apply unless the user brief names different colors): ${colors.join(", ")}.`,
+    "Use these brand colors on kits, accents, boards, lighting gels, and graphic elements so the image reads on-brand — not only ambient photographic color.",
+  ].join(" ");
+}
+
+function logoDirective(hasLogoRef: boolean): string {
+  if (!hasLogoRef) {
+    return "Do not invent a logo. Typography mood only; no fake lettering unless the user brief asks for text.";
+  }
+  return [
+    "A BrandKit logo reference image is attached.",
+    "Place that exact brand mark once where sports branding naturally appears (jersey badge, corner board, or subtle stadium branding).",
+    "Do not invent a different logo, do not fill the frame with text, and do not invent other trademarks.",
+  ].join(" ");
+}
+
+function imageCreatorStyleImageUrls(
+  gallery: GalleryValue | undefined,
+  logoUrl: string | undefined,
+): string[] {
+  const urls: string[] = [];
+  if (logoUrl) urls.push(logoUrl);
+  const galleryLimit = Math.max(0, STYLE_IMAGE_LIMIT - urls.length);
+  for (const url of galleryStyleReferenceUrls(gallery, galleryLimit)) {
+    if (!urls.includes(url)) urls.push(url);
+  }
+  if (urls.length >= STYLE_IMAGE_LIMIT) return urls.slice(0, STYLE_IMAGE_LIMIT);
   for (const item of gallery?.generated ?? []) {
     if (item.verdict === "down") continue;
     const url = (item.previewUrl ?? item.assetId)?.trim();
-    if (!url || harvested.includes(url) || extra.includes(url)) continue;
-    extra.push(url);
-    if (harvested.length + extra.length >= STYLE_IMAGE_LIMIT) break;
+    if (!url || urls.includes(url)) continue;
+    urls.push(url);
+    if (urls.length >= STYLE_IMAGE_LIMIT) break;
   }
-  return [...harvested, ...extra];
+  return urls.slice(0, STYLE_IMAGE_LIMIT);
 }
 
 export type ImageCreatorBrandPack = {
@@ -49,20 +99,23 @@ export function imageCreatorBrandFromBrandKitData(data: unknown): ImageCreatorBr
   const visual = doc.slots.visualWorld?.status === "resolved" ? (doc.slots.visualWorld.value as VisualWorldValue) : undefined;
   const limits = (visual?.limits ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 6);
   const gallery = doc.slots.gallery?.status === "resolved" ? (doc.slots.gallery.value as GalleryValue) : undefined;
+  const logoUrl = resolvedLogoUrl(doc);
+  const palette = resolvedPalette(doc);
   const styleBlock = [
     style,
+    paletteDirective(palette),
+    logoDirective(Boolean(logoUrl)),
     limits.length ? `Visual limits: ${limits.join("; ")}.` : "",
-    "Palette, visual world, and typography mood come from the connected BrandKit.",
-    "Typography describes graphic character only. Do not draw words, logos, or lettering unless the user brief explicitly asks for text.",
+    "Visual world and gallery references guide atmosphere and materials; brand palette and logo mark must still read as this brand.",
   ]
     .filter(Boolean)
     .join(" ");
 
-  const useful = style.length > 24;
+  const useful = style.length > 24 || Boolean(palette?.colors?.length) || Boolean(logoUrl);
   return {
     connected: useful,
     styleBlock: useful ? styleBlock : "",
-    styleImageUrls: useful ? imageCreatorStyleImageUrls(gallery) : [],
+    styleImageUrls: useful ? imageCreatorStyleImageUrls(gallery, logoUrl) : [],
   };
 }
 
@@ -72,19 +125,15 @@ export function mergeImageCreatorPrompt(userPrompt: string, styleBlock: string):
   const style = styleBlock.trim();
   if (!style) return user;
   if (!user) {
-    return [
-      "BRAND STYLE",
-      style,
-      "Do not render words, logos, or lettering.",
-    ].join("\n");
+    return ["BRAND STYLE", style].join("\n");
   }
   return [
-    "USER BRIEF (authoritative — if this conflicts with brand style, follow this brief):",
+    "USER BRIEF (authoritative for subject, action, and any colors/logo instructions it states):",
     user,
     "",
-    "The user brief wins on subject, medium, palette, mood, composition, and typography. Brand style only fills what the brief does not specify.",
+    "If the brief conflicts with brand style on subject or action, follow the brief. If the brief does not specify colors or logo treatment, apply the BrandKit palette and logo mark from BRAND STYLE.",
     "",
-    "BRAND STYLE (supporting):",
+    "BRAND STYLE:",
     style,
   ].join("\n");
 }
