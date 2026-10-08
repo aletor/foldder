@@ -12625,6 +12625,16 @@ body.nb-studio-open [data-foldder-sidebar-launcher] {
   background-color: #f5b91b;
 }
 
+.foldder-sidebar-tile--image-bg[data-tile-type="siteCreator"],
+.foldder-sidebar-tile--image-bg[data-tile-type="siteCreator"]:hover {
+  background-color: #6b7280;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="writer"],
+.foldder-sidebar-tile--image-bg[data-tile-type="writer"]:hover {
+  background-color: #5b21b6;
+}
+
 .foldder-sidebar-tile--image-bg[data-tile-type="projectBrain"],
 .foldder-sidebar-tile--image-bg[data-tile-type="projectBrain"]:hover {
   background-color: #b8bec8;

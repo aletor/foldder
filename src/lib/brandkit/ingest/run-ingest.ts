@@ -30,9 +30,11 @@ import {
 } from "../brand-kit-brand-board-image";
 import { extractBrandMaterialViaDocumentProbe } from "../studio/document-probe-ingest";
 
+import { BRAND_KIT_INGEST_MAX_FILE_BYTES } from "./brand-kit-ingest-upload-limits";
+
 const NOW = () => new Date().toISOString();
 const MAX_FILES = 12;
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_FILE_BYTES = BRAND_KIT_INGEST_MAX_FILE_BYTES;
 
 export type BrandKitIngestFile = {
   name: string;
@@ -137,7 +139,7 @@ export async function* runBrandKitIngest(
       yield {
         type: "source_error",
         fileName: file.name,
-        message: "Archivo demasiado grande (máx. 25 MB)",
+        message: "Archivo demasiado grande (máx. 32 MB)",
       };
       continue;
     }

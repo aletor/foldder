@@ -116,14 +116,14 @@ function tileBorderClassForType(type: string, fallback: string): string {
 
 const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'brandKit', label: 'BrandKit' },
-  { type: 'writer', label: 'Writer' },
+  { type: 'siteCreator', label: 'Site Creator' },
   { type: 'guionista', label: 'Guionista' },
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },
   { type: 'nanoBanana', label: 'Image Creation' },
   { type: 'geminiVideo', label: 'Video Creation' },
   { type: 'presenter', label: 'Presenter' },
-  { type: 'siteCreator', label: 'Site Creator' },
+  { type: 'writer', label: 'Writer' },
   { type: 'video_editor', label: 'Video Editor' },
 ];
 

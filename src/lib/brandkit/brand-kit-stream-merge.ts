@@ -183,15 +183,20 @@ export function mergeSlotStreamPatch(
   ) {
     const previous = priorCandidateFromSlot(current);
     if (previous) {
+      const mergedCandidates = mergeCandidates([previous], nextPatch.candidates, slotId);
+      // Logo: only open multi-source review when there are ≥2 distinct previews.
+      // Other slots keep the prior “candidates + review” behavior even with one option.
+      const openLogoReview = slotId !== "logo" || mergedCandidates.length >= 2;
       nextPatch = {
         ...nextPatch,
-        status: "candidates",
-        value: undefined,
-        candidates: mergeCandidates([previous], nextPatch.candidates, slotId),
-        needsReviewReason:
-          nextPatch.needsReviewReason ??
-          current.needsReviewReason ??
-          brandKitLocaleEs.logoMultiSourceReview,
+        status: openLogoReview ? "candidates" : current.status,
+        value: openLogoReview ? undefined : current.value,
+        candidates: mergedCandidates,
+        needsReviewReason: openLogoReview
+          ? (nextPatch.needsReviewReason ??
+            current.needsReviewReason ??
+            brandKitLocaleEs.logoMultiSourceReview)
+          : current.needsReviewReason,
       };
     }
   } else if (nextPatch.candidates?.length) {

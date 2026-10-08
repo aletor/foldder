@@ -8,6 +8,10 @@ import type { BrandKitStreamEvent } from "@/lib/brandkit/crawl/types";
 import { compileBrandKit } from "@/lib/brandkit/compile-brand-kit";
 import { confirmBrandKitV2IngestCost } from "@/lib/brandkit/ingest/brand-kit-ingest-preflight";
 import {
+  appendBrandKitIngestUploadsToFormData,
+  prepareBrandKitIngestUploads,
+} from "@/lib/brandkit/ingest/brand-kit-ingest-s3-client";
+import {
   fetchPostWithWalletPreflight,
   FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER,
   notifyWalletFromApiResponse,
@@ -172,7 +176,15 @@ export async function streamBrandKitIngest(
   }
 
   const form = new FormData();
-  for (const file of files) form.append("files", file);
+  try {
+    const prepared = await prepareBrandKitIngestUploads(files);
+    appendBrandKitIngestUploadsToFormData(form, prepared, "files");
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "No se pudo preparar la subida",
+    };
+  }
   if (!enableLlm) form.append("enableLlm", "false");
 
   const res = await fetch("/api/spaces/brandKit/ingest", {

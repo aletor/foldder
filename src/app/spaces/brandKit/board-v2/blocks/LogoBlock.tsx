@@ -235,10 +235,36 @@ export function LogoBlock({
   ) : null;
 
   let body: React.ReactNode;
-  const pickerCandidates = slot.candidates.slice(0, 4) as Candidate<LogoValue>[];
+  const rawCandidates = slot.candidates as Candidate<LogoValue>[];
+  /** Persisted bad state: resolved + review hint but new logos only in candidates. */
+  const pickerCandidates = (
+    slot.status === "resolved" && logo?.previewUrl && slot.needsReviewReason && rawCandidates.length
+      ? [
+          {
+            value: logo,
+            score: slot.confidence ?? 0.55,
+            provenance: slot.provenance ?? ({ type: "user_input", detail: "actual" } as const),
+          } satisfies Candidate<LogoValue>,
+          ...rawCandidates.filter((candidate) => candidate.value.assetId !== logo.assetId),
+        ]
+      : rawCandidates
+  ).slice(0, 4);
   const showDetectionEmpty =
     (slot.status === "needs_user" && !pickerCandidates.length) ||
     (slot.status === "candidates" && !pickerCandidates.length);
+  const showLogoPicker =
+    slot.status === "candidates" ||
+    (slot.status === "needs_user" && slot.candidates.length > 0) ||
+    (slot.status === "resolved" && Boolean(slot.needsReviewReason) && pickerCandidates.length > 1);
+
+  const choosePickerLogo = (candidate: Candidate<LogoValue>) => {
+    const realIndex = rawCandidates.findIndex((row) => row.value.assetId === candidate.value.assetId);
+    if (realIndex >= 0) {
+      onAction(slotId, { action: "choose_candidate", candidateIndex: realIndex, lock: true });
+      return;
+    }
+    onAction(slotId, { action: "set", value: candidate.value });
+  };
 
   if (shouldShowAnalyzingSkeleton(motion)) {
     body = <BrandKitBlockSkeleton variant="logo" />;
@@ -258,7 +284,7 @@ export function LogoBlock({
         }
       />
     );
-  } else if (slot.status === "candidates" || (slot.status === "needs_user" && slot.candidates.length)) {
+  } else if (showLogoPicker) {
     body = (
       <>
         {slot.needsReviewReason ? <p className="brandKit-v2-review-hint">{slot.needsReviewReason}</p> : null}
@@ -269,6 +295,7 @@ export function LogoBlock({
             const meta = logoCandidateMeta(candidate);
             const candidatePlinth = resolvePlinthClass(value, plinthMode, brandReady, brandPolarity);
             const adjustable = canAdjustLogo(value) && !slot.locked;
+            const slotCandidateIndex = rawCandidates.findIndex((row) => row.value.assetId === value.assetId);
             return (
               <div key={`${value.assetId}-${index}`} className="brandKit-v2-logo-candidate">
                 <BrandKitLogoRankMeta candidate={candidate} rank={index + 1} />
@@ -295,7 +322,7 @@ export function LogoBlock({
                     icon={Crop}
                     className="brandKit-v2-logo-candidate__adjust"
                     onClick={() => {
-                      setAdjustCandidateIndex(index);
+                      setAdjustCandidateIndex(slotCandidateIndex >= 0 ? slotCandidateIndex : null);
                       setAdjustOpen(true);
                     }}
                   >
@@ -305,7 +332,7 @@ export function LogoBlock({
                 <BrandKitFoldderButton
                   icon={Check}
                   className="brandKit-v2-logo-candidate__choose"
-                  onClick={() => onAction(slotId, { action: "choose_candidate", candidateIndex: index, lock: true })}
+                  onClick={() => choosePickerLogo(candidate)}
                 >
                   {brandKitLocaleEs.chooseLogo}
                 </BrandKitFoldderButton>

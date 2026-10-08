@@ -22,6 +22,10 @@ import {
   axesSignature,
 } from "@/lib/brandkit/ingest/paid-operations";
 import type { ImageAxes } from "@/lib/brandkit/model/trait-values";
+import {
+  appendBrandKitIngestUploadsToFormData,
+  prepareBrandKitIngestUploads,
+} from "@/lib/brandkit/ingest/brand-kit-ingest-s3-client";
 
 export async function streamBrandKitIngest(input: {
   files?: FileList | File[];
@@ -64,7 +68,8 @@ export async function streamBrandKitIngest(input: {
     formData.append("url", input.url.trim());
   } else {
     const list = Array.from(input.files ?? []);
-    list.forEach((file) => formData.append("file", file));
+    const prepared = await prepareBrandKitIngestUploads(list);
+    appendBrandKitIngestUploadsToFormData(formData, prepared, "file");
   }
   formData.append("genome", JSON.stringify(input.genome));
   if (paidApproved && paidKind) {
@@ -80,7 +85,17 @@ export async function streamBrandKitIngest(input: {
     body: formData,
     headers: { [FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER]: "1" },
   });
-  if (!res.ok || !res.body) throw new Error("No pude leer tus archivos");
+  if (!res.ok || !res.body) {
+    let detail = "No pude leer tus archivos";
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) detail = body.error;
+      else if (res.status === 413) detail = "El archivo es demasiado grande para el servidor.";
+    } catch {
+      if (res.status === 413) detail = "El archivo es demasiado grande para el servidor.";
+    }
+    throw new Error(detail);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -146,7 +161,8 @@ export async function streamCombinedMaterialDrop(input: {
 
   const formData = new FormData();
   formData.append("projectId", input.projectId);
-  Array.from(input.files).forEach((file) => formData.append("file", file));
+  const prepared = await prepareBrandKitIngestUploads(Array.from(input.files));
+  appendBrandKitIngestUploadsToFormData(formData, prepared, "file");
   formData.append("genome", JSON.stringify(input.genome));
   if (paidApproved && paidKind) {
     formData.append(BRAND_KIT_INGEST_ALLOW_PAID_FIELD, "1");
@@ -161,7 +177,17 @@ export async function streamCombinedMaterialDrop(input: {
     body: formData,
     headers: { [FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER]: "1" },
   });
-  if (!res.ok || !res.body) throw new Error("No pude leer tus archivos");
+  if (!res.ok || !res.body) {
+    let detail = "No pude leer tus archivos";
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) detail = body.error;
+      else if (res.status === 413) detail = "El archivo es demasiado grande para el servidor.";
+    } catch {
+      if (res.status === 413) detail = "El archivo es demasiado grande para el servidor.";
+    }
+    throw new Error(detail);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

@@ -248,6 +248,58 @@ describe("mergeSlotStreamPatch", () => {
     expect(merged?.needsReviewReason).toContain("elige el logo");
   });
 
+  it("opens logo picker for a distinct crop on the same PDF page", () => {
+    const current = {
+      ...createEmptyBrandKit().slots.logo,
+      status: "resolved" as const,
+      value: {
+        assetId: "laliga-old.png",
+        previewUrl: "laliga-old.png",
+        format: "png" as const,
+        width: 200,
+        height: 80,
+        background: "transparent" as const,
+        variants: [],
+        sourcePdfSha256: "sha-manual",
+        sourcePageNumber: 4,
+        sourceBbox: { x: 0.05, y: 0.04, width: 0.28, height: 0.1 },
+        detectionMethod: "adjusted" as const,
+      },
+      confidence: 0.95,
+      provenance: { type: "user_input", detail: "tú" },
+    };
+    const merged = mergeSlotStreamPatch(
+      "logo",
+      current,
+      {
+        status: "resolved",
+        value: {
+          assetId: "new-mark.png",
+          previewUrl: "new-mark.png",
+          format: "png",
+          width: 220,
+          height: 90,
+          background: "transparent",
+          variants: [],
+          sourcePdfSha256: "sha-manual",
+          sourcePageNumber: 4,
+          sourceBbox: { x: 0.62, y: 0.72, width: 0.3, height: 0.14 },
+          detectionMethod: "vision_bbox" as const,
+        },
+        confidence: 0.9,
+        provenance: { type: "pdf_xobject", detail: "manual.pdf" },
+      },
+      { respectLocks: true },
+    );
+    expect(merged?.status).toBe("candidates");
+    expect(merged?.value).toBeUndefined();
+    expect(merged?.candidates?.length).toBeGreaterThanOrEqual(2);
+    const previews = (merged?.candidates ?? []).map((c) => (c.value as { previewUrl?: string }).previewUrl);
+    expect(previews).toContain("laliga-old.png");
+    expect(previews).toContain("new-mark.png");
+    expect(merged?.needsReviewReason).toContain("elige el logo");
+  });
+
   it("merges gallery harvested and preserves category briefs from incoming patch", () => {
     const current = {
       ...createEmptyBrandKit().slots.gallery,

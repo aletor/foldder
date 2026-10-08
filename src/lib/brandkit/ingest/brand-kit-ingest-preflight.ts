@@ -14,6 +14,7 @@ import {
   type WalletCostDecisionResult,
   type WalletStatusResponse,
 } from "@/lib/wallet-client-events";
+import { brandKitIngestNeedsDirectUpload } from "./brand-kit-ingest-upload-limits";
 
 async function readWalletStatus(): Promise<WalletStatusResponse | null> {
   try {
@@ -68,6 +69,9 @@ async function fetchServerIngestCostEstimate(
   enableLlm: boolean,
 ): Promise<BrandKitIngestCostEstimate | null> {
   try {
+    // Evita 413 en Vercel: no reenviar PDFs grandes al cost-estimate.
+    if (files.some((file) => brandKitIngestNeedsDirectUpload(file))) return null;
+
     const form = new FormData();
     for (const file of files) form.append("files", file);
     if (!enableLlm) form.append("enableLlm", "false");

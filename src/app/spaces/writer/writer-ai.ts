@@ -534,7 +534,7 @@ function repairJsonText(raw: string): string {
 }
 
 function recoverAskAnswerField(raw: string): string | null {
-  const match = raw.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+  const match = raw.match(/"answer"\s*:\s*"((?:\\.|[^"\\])*)"/);
   if (!match?.[1]) return null;
   try {
     return JSON.parse(`"${match[1]}"`).replace(/\s+/g, " ").trim();

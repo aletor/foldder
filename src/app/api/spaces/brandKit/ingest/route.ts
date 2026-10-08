@@ -26,6 +26,10 @@ import {
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
+import {
+  collectBrandKitIngestS3Refs,
+  loadBrandKitIngestFilesFromS3Refs,
+} from "@/lib/brandkit/ingest/brand-kit-ingest-s3-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -266,9 +270,23 @@ export async function POST(req: NextRequest) {
     }
 
     const files = collectUploadFiles(formData);
-    if (files.length === 0) {
+    const s3Refs = collectBrandKitIngestS3Refs(formData);
+    if (files.length === 0 && s3Refs.length === 0) {
       return new Response(JSON.stringify({ error: "No files or url" }), { status: 400 });
     }
+
+    const s3Buffers = await loadBrandKitIngestFilesFromS3Refs({
+      refs: s3Refs,
+      userEmail: auth.user.email,
+    });
+    const inlineBuffers: BrandKitIngestFile[] = await Promise.all(
+      files.map(async (file) => ({
+        name: file.name,
+        mime: file.type || "application/octet-stream",
+        buffer: Buffer.from(await file.arrayBuffer()),
+      })),
+    );
+    const buffers: BrandKitIngestFile[] = [...s3Buffers, ...inlineBuffers];
 
     if (isLegacyBrandKitIngest(formData)) {
       let genomeSeed: Genome = normalizeGenome(undefined);
@@ -281,9 +299,20 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Legacy path expects File[]; wrap S3 buffers as File-like for processLegacyFiles
+      const legacyFiles: File[] = [
+        ...files,
+        ...s3Buffers.map(
+          (entry) =>
+            new File([new Uint8Array(entry.buffer)], entry.name, {
+              type: entry.mime || "application/octet-stream",
+            }),
+        ),
+      ];
+
       return new Response(
         streamLegacyIngest(
-          processLegacyFiles(files, genomeSeed, {
+          processLegacyFiles(legacyFiles, genomeSeed, {
             userEmail: auth.user.email,
             allowMaterialPrompts: genomeHasPriorMaterial(genomeSeed),
             allowPaidAnalysis: paidOpts.allowPaidAnalysis,
@@ -325,7 +354,7 @@ export async function POST(req: NextRequest) {
           provider: "gemini",
           route: "/api/spaces/brandKit/ingest",
           maxCostMicros: reserveUsdToMicros(estimateBrandKitIngestLlmReserveUsd(), { multiplier: 1.5 }),
-          metadata: { fileCount: files.length, model: BRAND_KIT_LLM_MODEL },
+          metadata: { fileCount: buffers.length, model: BRAND_KIT_LLM_MODEL },
         });
         releaseWalletOnError = false;
       } catch (error) {
@@ -336,14 +365,6 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-
-    const buffers: BrandKitIngestFile[] = await Promise.all(
-      files.map(async (file) => ({
-        name: file.name,
-        mime: file.type || "application/octet-stream",
-        buffer: Buffer.from(await file.arrayBuffer()),
-      })),
-    );
 
     const jobId = randomUUID();
     return new Response(

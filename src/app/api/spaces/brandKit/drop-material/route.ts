@@ -18,6 +18,10 @@ import {
 } from "@/lib/brandkit/logo-intake/genome-bridge";
 import type { LogoIntakePipelineEvent } from "@/lib/brandkit/logo-intake/pipeline";
 import type { IntakeDocInput } from "@/lib/brandkit/logo-intake/render";
+import {
+  collectBrandKitIngestS3Refs,
+  loadBrandKitIngestFilesFromS3Refs,
+} from "@/lib/brandkit/ingest/brand-kit-ingest-s3-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -45,14 +49,26 @@ export async function POST(req: NextRequest) {
   const auth = await requireSpacesAuthUser(req);
   if (!auth.ok) return auth.response;
 
-  const formData = await req.formData();
+  let formData: FormData;
+  try {
+    formData = await req.formData();
+  } catch (error) {
+    const message =
+      error instanceof Error && error.message.includes("FormData")
+        ? "El archivo supera el límite de subida del servidor (máx. ~32MB). Usa la subida directa a almacenamiento."
+        : error instanceof Error
+          ? error.message
+          : "No se pudo leer el formulario de subida";
+    return NextResponse.json({ error: message }, { status: 413 });
+  }
   const projectId = String(formData.get("projectId") ?? "").trim();
   if (!projectId) {
     return NextResponse.json({ error: "missing_project_id" }, { status: 400 });
   }
 
   const files = formData.getAll("file").filter((f): f is File => f instanceof File && f.size > 0);
-  if (files.length === 0) {
+  const s3Refs = collectBrandKitIngestS3Refs(formData);
+  if (files.length === 0 && s3Refs.length === 0) {
     return NextResponse.json({ error: "No files" }, { status: 400 });
   }
 
@@ -67,7 +83,20 @@ export async function POST(req: NextRequest) {
   }
 
   const paidOpts = parseBrandKitIngestPaidOpts(formData);
-  const buffers = await materialBuffersFromFiles(files);
+  const s3Files = await loadBrandKitIngestFilesFromS3Refs({
+    refs: s3Refs,
+    userEmail: auth.user.email,
+  });
+  const mergedFiles: File[] = [
+    ...files,
+    ...s3Files.map(
+      (entry) =>
+        new File([new Uint8Array(entry.buffer)], entry.name, {
+          type: entry.mime || "application/octet-stream",
+        }),
+    ),
+  ];
+  const buffers = await materialBuffersFromFiles(mergedFiles);
 
   const logoDocs: IntakeDocInput[] = [];
   let logoPrepError: string | null = null;

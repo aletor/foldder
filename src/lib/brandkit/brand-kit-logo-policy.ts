@@ -6,6 +6,7 @@ import type {
   SlotState,
   SourceRef,
 } from "./brand-kit-types";
+import { bboxIoU, logoSourceBboxToTuple } from "./brand-kit-bbox-iou";
 import { brandKitLocaleEs } from "./brand-kit-locale.es";
 import { consolidateLogoCandidates, rankLogoCandidatesMultiSource } from "./brand-kit-visual-rank";
 
@@ -13,6 +14,8 @@ const MIN_LOGO_SCORE = 0.26;
 const CLEAR_LEAD_DELTA = 0.12;
 const MAX_LOGO_PICKER = 3;
 const MAX_LOGO_DISPLAY = 4;
+/** Same PDF page alone is not enough — require overlapping crops. */
+const SAME_FAMILY_IOU_THRESHOLD = 0.45;
 
 const LOGO_KIND_SIGNAL_PREFIX = "variante:";
 
@@ -272,6 +275,15 @@ export function buildLogoSlotPatch(candidates: Candidate<LogoValue>[]): Partial<
   return decideFirstSourceLogoPatch(candidates);
 }
 
+function priorResolvedAsCandidate(slot: SlotState<unknown>): Candidate<LogoValue> | null {
+  if (slot.value === undefined) return null;
+  return {
+    value: slot.value as LogoValue,
+    score: slot.confidence ?? 0.55,
+    provenance: slot.provenance ?? ({ type: "llm_synthesis", detail: "versión anterior" } satisfies Provenance),
+  };
+}
+
 export function finalizeLogoCandidateSlot(
   slot: SlotState<unknown>,
   sources: SourceRef[] = [],
@@ -283,13 +295,26 @@ export function finalizeLogoCandidateSlot(
   );
   candidates = groupLogoCandidatesForDisplay(candidates);
 
-  if (slot.status === "candidates" || (multiSource && candidates.length >= 2 && !hasClearLogoLead(candidates))) {
+  const reviewOpen = Boolean(slot.needsReviewReason);
+  const resolvedAsCandidate = priorResolvedAsCandidate(slot);
+  const reviewPool =
+    reviewOpen && resolvedAsCandidate
+      ? groupLogoCandidatesForDisplay(
+          rankLogoCandidatesMultiSource([resolvedAsCandidate, ...candidates], sources),
+        )
+      : candidates;
+
+  if (
+    slot.status === "candidates" ||
+    (multiSource && reviewPool.length >= 2 && !hasClearLogoLead(reviewPool)) ||
+    (reviewOpen && reviewPool.length >= 2)
+  ) {
     return {
       ...slot,
       status: "candidates",
       value: undefined,
-      candidates: candidates.slice(0, MAX_LOGO_DISPLAY),
-      confidence: Math.max(slot.confidence, candidates[0]?.score ?? 0),
+      candidates: reviewPool.slice(0, MAX_LOGO_DISPLAY),
+      confidence: Math.max(slot.confidence, reviewPool[0]?.score ?? 0),
     };
   }
 
@@ -331,13 +356,19 @@ export function logosAreSameFamily(a: LogoValue, b: LogoValue): boolean {
   if (a.assetId === b.assetId) return true;
   if (a.previewUrl && b.previewUrl && a.previewUrl === b.previewUrl) return true;
   if (
-    a.sourcePdfSha256 &&
-    b.sourcePdfSha256 &&
-    a.sourcePdfSha256 === b.sourcePdfSha256 &&
-    a.sourcePageNumber === b.sourcePageNumber
+    !a.sourcePdfSha256 ||
+    !b.sourcePdfSha256 ||
+    a.sourcePdfSha256 !== b.sourcePdfSha256 ||
+    a.sourcePageNumber !== b.sourcePageNumber
   ) {
-    return true;
+    return false;
   }
+  const bboxA = logoSourceBboxToTuple(a.sourceBbox);
+  const bboxB = logoSourceBboxToTuple(b.sourceBbox);
+  if (bboxA && bboxB) {
+    return bboxIoU(bboxA, bboxB) >= SAME_FAMILY_IOU_THRESHOLD;
+  }
+  // Same page without comparable bboxes: do not collapse distinct previews.
   return false;
 }
 

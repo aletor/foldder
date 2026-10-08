@@ -10,10 +10,14 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const AWS_REGION = process.env.AWS_REGION?.trim() || "us-east-1";
+/** Región del bucket S3 (prioridad) o AWS_REGION. El bucket `foldderschool-prod-*` vive en us-east-1. */
+const AWS_REGION =
+  process.env.AWS_S3_REGION?.trim() || process.env.AWS_REGION?.trim() || "us-east-1";
 
 export const s3Client = new S3Client({
   region: AWS_REGION,
+  // Evita PermanentRedirect si AWS_REGION no coincide con la región real del bucket.
+  followRegionRedirects: true,
   requestChecksumCalculation: "WHEN_REQUIRED",
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
