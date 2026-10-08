@@ -1,7 +1,17 @@
 /**
  * Helpers para incrustar imágenes en export (PNG/JPG/PDF) sin canvas tainted
  * ni stubs transparentes por falta de cookies en `/api/spaces/s3-file`.
+ *
+ * Las URLs prefirmadas de S3 caducan: el editor puede seguir mostrando la imagen
+ * en caché del navegador mientras el export re-fetch falla. Preferimos siempre
+ * el gateway autenticado cuando hay clave `knowledge-files/`.
  */
+
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+
+function knowledgeFileGatewayUrl(key: string): string {
+  return `/api/spaces/s3-file?key=${encodeURIComponent(key)}`;
+}
 
 export function isSameOriginSpacesApiHref(href: string, baseUri?: string): boolean {
   const raw = href.trim();
@@ -88,12 +98,29 @@ export async function fetchSameOriginOrBlobHrefAsDataUrl(
       return null;
     }
   }
-  if (!isSameOriginSpacesApiHref(resolved, baseUri)) return null;
-  try {
-    const res = await fetch(resolved, { mode: "cors", credentials: "include" });
-    if (!res.ok) return null;
-    return await blobToDataUrl(await res.blob(), guessMimeFromUrl(resolved));
-  } catch {
-    return null;
+
+  /** Prefirmadas o s3-file: siempre vía gateway con sesión (no dependen de firma caducada). */
+  const key = tryExtractKnowledgeFilesKeyFromUrl(href) || tryExtractKnowledgeFilesKeyFromUrl(resolved);
+  const gateway = key ? knowledgeFileGatewayUrl(key) : null;
+  const candidates = [
+    gateway,
+    isSameOriginSpacesApiHref(href, baseUri) || isSameOriginSpacesApiHref(resolved, baseUri)
+      ? resolved.startsWith("http")
+        ? resolved
+        : resolveExportImageHref(href.startsWith("/") ? href : resolved, baseUri)
+      : null,
+  ].filter((u): u is string => Boolean(u));
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const dataUrl = await blobToDataUrl(blob, guessMimeFromUrl(url));
+      if (dataUrl.startsWith("data:")) return dataUrl;
+    } catch {
+      /* probar siguiente candidato */
+    }
   }
+  return null;
 }

@@ -8226,25 +8226,25 @@ async function rasterHrefToSafeDataUrl(href: string, cache: Map<string, string>)
   const cached = cache.get(resolved);
   if (cached) return cached;
 
-  /** `/api/spaces/s3-file` exige sesión: sin cookies el export sustituía la foto por un píxel transparente. */
-  if (isSameOriginSpacesApiHref(raw) || isSameOriginSpacesApiHref(resolved)) {
+  /**
+   * Preferir gateway autenticado antes que prefirma S3 (caduca) o fetch sin cookies.
+   * Cubre `/api/spaces/s3-file`, blob: y https prefirmado con clave knowledge-files/.
+   */
+  {
     const authed = await fetchSameOriginOrBlobHrefAsDataUrl(raw);
     if (authed) {
       cache.set(resolved, authed);
       return authed;
     }
-    cache.set(resolved, TRANSPARENT_PIXEL_PNG);
-    return TRANSPARENT_PIXEL_PNG;
-  }
-
-  if (raw.startsWith("blob:") || resolved.startsWith("blob:")) {
-    const fromBlob = await fetchSameOriginOrBlobHrefAsDataUrl(raw.startsWith("blob:") ? raw : resolved);
-    if (fromBlob) {
-      cache.set(resolved, fromBlob);
-      return fromBlob;
+    if (
+      isSameOriginSpacesApiHref(raw) ||
+      isSameOriginSpacesApiHref(resolved) ||
+      raw.startsWith("blob:") ||
+      resolved.startsWith("blob:")
+    ) {
+      cache.set(resolved, TRANSPARENT_PIXEL_PNG);
+      return TRANSPARENT_PIXEL_PNG;
     }
-    cache.set(resolved, TRANSPARENT_PIXEL_PNG);
-    return TRANSPARENT_PIXEL_PNG;
   }
 
   const fetchToDataUrl = async (url: string): Promise<string | null> => {
