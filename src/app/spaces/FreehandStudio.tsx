@@ -20,6 +20,10 @@ import { useInputMode } from "./input-mode-context";
 import { useFreehandStudioTouchCanvasHandlers } from "./freehand/freehand-studio-touch";
 import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
 import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
+import {
+  fetchSameOriginOrBlobHrefAsDataUrl,
+  isSameOriginSpacesApiHref,
+} from "@/lib/export-safe-image-href";
 import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
 import {
   X,
@@ -8221,6 +8225,27 @@ async function rasterHrefToSafeDataUrl(href: string, cache: Map<string, string>)
 
   const cached = cache.get(resolved);
   if (cached) return cached;
+
+  /** `/api/spaces/s3-file` exige sesión: sin cookies el export sustituía la foto por un píxel transparente. */
+  if (isSameOriginSpacesApiHref(raw) || isSameOriginSpacesApiHref(resolved)) {
+    const authed = await fetchSameOriginOrBlobHrefAsDataUrl(raw);
+    if (authed) {
+      cache.set(resolved, authed);
+      return authed;
+    }
+    cache.set(resolved, TRANSPARENT_PIXEL_PNG);
+    return TRANSPARENT_PIXEL_PNG;
+  }
+
+  if (raw.startsWith("blob:") || resolved.startsWith("blob:")) {
+    const fromBlob = await fetchSameOriginOrBlobHrefAsDataUrl(raw.startsWith("blob:") ? raw : resolved);
+    if (fromBlob) {
+      cache.set(resolved, fromBlob);
+      return fromBlob;
+    }
+    cache.set(resolved, TRANSPARENT_PIXEL_PNG);
+    return TRANSPARENT_PIXEL_PNG;
+  }
 
   const fetchToDataUrl = async (url: string): Promise<string | null> => {
     try {

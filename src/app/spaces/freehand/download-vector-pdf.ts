@@ -6,6 +6,11 @@ import { sanitizeSvgNamedEntitiesForXml } from "./freehand-export";
 import { normalizeSvgClipsForVectorPdf } from "./normalize-svg-clips-for-pdf";
 import { bakeLayerEffectsForVectorPdf } from "./bake-layer-effects-for-pdf";
 import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
+import {
+  fetchSameOriginOrBlobHrefAsDataUrl,
+  isSameOriginSpacesApiHref,
+  resolveExportImageHref,
+} from "@/lib/export-safe-image-href";
 
 /** 1×1 transparente: último recurso si no podemos incrustar una imagen remota (evita que svg2pdf falle por XHR/CORS). */
 const STUB_IMAGE_DATA_URL =
@@ -67,12 +72,18 @@ export async function inlineRemoteSvgImagesForPdf(svgMarkup: string): Promise<st
     let href = img.getAttribute("href") || img.getAttribute("xlink:href");
     if (!href || href.startsWith("data:") || href.startsWith("#")) continue;
     if (href.startsWith("//")) href = `https:${href}`;
-    if (!href.startsWith("http://") && !href.startsWith("https://")) continue;
 
     const target = href;
+    const needsInline =
+      target.startsWith("blob:") ||
+      isSameOriginSpacesApiHref(target) ||
+      target.startsWith("http://") ||
+      target.startsWith("https://");
+    if (!needsInline) continue;
+
     tasks.push(
       (async () => {
-        const dataUrl = await fetchRemoteImageAsDataUrl(target);
+        const dataUrl = await fetchExportImageHrefAsDataUrl(target);
         if (!dataUrl) return;
         img.setAttribute("href", dataUrl);
         img.removeAttribute("xlink:href");
@@ -93,11 +104,21 @@ function guessMimeFromUrl(url: string): string {
   return "image/png";
 }
 
+/** Carga s3-file autenticado, blob:, o http(s) vía proxy → data URL. */
+async function fetchExportImageHrefAsDataUrl(href: string): Promise<string | null> {
+  const sameOriginOrBlob = await fetchSameOriginOrBlobHrefAsDataUrl(href);
+  if (sameOriginOrBlob) return sameOriginOrBlob;
+  return fetchRemoteImageAsDataUrl(href);
+}
+
 /** Carga una URL absoluta http(s) o // vía proxy y devuelve data URL, o null. */
 async function fetchRemoteImageAsDataUrl(href: string): Promise<string | null> {
-  let url = href.trim();
+  let url = resolveExportImageHref(href);
   if (url.startsWith("//")) url = `https:${url}`;
   if (!url.startsWith("http://") && !url.startsWith("https://")) return null;
+  if (isSameOriginSpacesApiHref(url)) {
+    return fetchSameOriginOrBlobHrefAsDataUrl(url);
+  }
   try {
     const blob = await fetchBlobViaSpacesProxy(url);
     const buf = await blob.arrayBuffer();
@@ -424,8 +445,9 @@ async function finalizeRemoteImagesForSvg2pdf(
     let href = img.getAttribute("href") || img.getAttribute("xlink:href") || "";
     if (!href || href.startsWith("data:") || href.startsWith("blob:") || href.startsWith("#")) continue;
     if (href.startsWith("//")) href = `https:${href}`;
-    if (!href.startsWith("http://") && !href.startsWith("https://")) continue;
-    const dataUrl = await fetchRemoteImageAsDataUrl(href);
+    const isRemoteHttp = href.startsWith("http://") || href.startsWith("https://");
+    if (!isRemoteHttp && !isSameOriginSpacesApiHref(href)) continue;
+    const dataUrl = await fetchExportImageHrefAsDataUrl(href);
     if (dataUrl) {
       img.setAttribute("href", dataUrl);
       img.removeAttribute("xlink:href");
