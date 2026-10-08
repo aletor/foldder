@@ -326,6 +326,8 @@ export type CineImageStudioSession = {
   negativePrompt?: string;
   sourceAssetId?: string;
   sourceS3Key?: string;
+  /** Refs BrandKit (logo/galería) para el Image Studio hospedado desde Cine. */
+  brandStyleImageUrls?: string[];
   returnTab: "reparto" | "fondos" | "storyboard";
   returnSceneId?: string;
   mode: "generate" | "edit";

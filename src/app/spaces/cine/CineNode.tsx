@@ -6,6 +6,7 @@ import { shallow } from "zustand/shallow";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { CineStudio } from "../CineStudio";
+import { useCineBrandKitRuntime } from "./cine-brandkit-client";
 import {
   CINE_MODE_LABELS,
   CINE_STATUS_LABELS,
@@ -238,7 +239,8 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
   });
 
   const sourceScriptText = cineInputSnapshot.sourceScriptText;
-  const brainConnected = cineInputSnapshot.brainConnected;
+  const brandPack = useCineBrandKitRuntime(id);
+  const brainConnected = brandPack.connected || cineInputSnapshot.brainConnected;
   const framesPrepared = useMemo(
     () => nodeData.scenes.reduce((count, scene) => count + [scene.frames.single, scene.frames.start, scene.frames.end].filter(Boolean).length, 0),
     [nodeData.scenes],
@@ -644,6 +646,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
           onChange={patchData}
           onClose={() => closeStudio()}
           brainConnected={brainConnected}
+          brandPack={brandPack}
           sourceScriptText={sourceScriptText}
           sourceScriptNodeId={cineInputSnapshot.sourceScriptNodeId}
           initialTab={studioReturn?.tab}

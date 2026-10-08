@@ -32,6 +32,10 @@ type CineAnalyzeRequest = {
   script?: string;
   mode?: CineMode;
   visualDirection?: CineVisualDirection;
+  brandContext?: {
+    enabled?: boolean;
+    analyzeBlock?: string;
+  };
 };
 
 function safeString(value: unknown, max = 12000): string {
@@ -65,6 +69,9 @@ function systemPrompt(): string {
 function userPrompt(request: CineAnalyzeRequest): string {
   const modeLabel = request.mode ? CINE_MODE_LABELS[request.mode] : "no especificado";
   const visual = request.visualDirection;
+  const brandBlock = request.brandContext?.enabled
+    ? safeString(request.brandContext.analyzeBlock, 6000)
+    : "";
   return [
     "Analiza este guion para crear una estructura de Nodo Cine.",
     "",
@@ -85,6 +92,16 @@ function userPrompt(request: CineAnalyzeRequest): string {
       cameraStyle: visual?.cameraStyle,
     }, null, 2),
     "",
+    brandBlock
+      ? [
+          "BRANDKIT CONECTADO (voz, esencia, mundo visual, paleta, logo)",
+          brandBlock,
+          "Usa BrandKit para condicionar tono de VO, claims, wardrobe/acentos, localizaciones, mood y momentos de marca.",
+          "El guion del usuario y la dirección visual explícita ganan si hay conflicto.",
+          "Incluye el logo de BrandKit solo cuando proceda (spot, product, brand story, end card, packshot o si el guion lo pide); no lo fuerces en cada escena narrativa.",
+          "",
+        ].join("\n")
+      : "",
     "REGLAS DE ANÁLISIS",
     "- Agrupa escenas por unidad audiovisual real, no por cada párrafo si pertenecen al mismo momento.",
     "- Extrae coprotagonistas aunque aparezcan como acompañantes o amigos.",
@@ -102,7 +119,7 @@ function userPrompt(request: CineAnalyzeRequest): string {
     "- sceneKind debe ser present, flashback, memory u other.",
     "- framesMode debe ser single.",
     "- status debe ser draft.",
-    "- Usa la dirección visual del usuario para condicionar tono visual, localizaciones, personajes, sugerencias de cámara, luz, paleta y ritmo.",
+    "- Usa la dirección visual del usuario (y BrandKit si viene arriba) para condicionar tono visual, localizaciones, personajes, sugerencias de cámara, luz, paleta y ritmo.",
     "- Si visualStyle es black_white_noir, sugiere contraste, sombras y cámara sobria; no fuerces color.",
     "- Si visualStyle es animation_cartoon, crea descripciones aptas para animación, personajes icónicos y fondos claros.",
     "- Si colorGrading es golden_hour_warm, orienta paleta y notas visuales hacia calidez cinematográfica.",

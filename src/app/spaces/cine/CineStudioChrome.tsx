@@ -213,18 +213,26 @@ export function DirectionInlineToggle({
   checked,
   onChange,
   label,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
-    <label className="inline-flex h-8 cursor-pointer select-none items-center gap-2 text-[9px] font-black uppercase tracking-[0.08em] text-white/48">
+    <label
+      className={cx(
+        "inline-flex h-8 select-none items-center gap-2 text-[9px] font-black uppercase tracking-[0.08em]",
+        disabled ? "cursor-not-allowed text-white/28" : "cursor-pointer text-white/48",
+      )}
+    >
       <input
         type="checkbox"
         checked={checked}
         onChange={onChange}
-        className="h-3.5 w-3.5 shrink-0 accent-[var(--foldder-studio-accent,#de323f)]"
+        disabled={disabled}
+        className="h-3.5 w-3.5 shrink-0 accent-[var(--foldder-studio-accent,#de323f)] disabled:opacity-40"
       />
       {label}
     </label>
@@ -375,13 +383,24 @@ export function CineStudioMetricsBar({
   characterCount,
   frameCount,
   brainConnected,
+  brandHints = [],
+  brandActive = false,
 }: {
   statusLabel: string;
   sceneCount: number;
   characterCount: number;
   frameCount: number;
   brainConnected: boolean;
+  brandHints?: string[];
+  brandActive?: boolean;
 }) {
+  const brandLabel = !brainConnected
+    ? "Sin BrandKit"
+    : brandActive
+      ? brandHints[0]
+        ? `BrandKit · ${brandHints[0]}`
+        : "BrandKit activo"
+      : "BrandKit (off)";
   return (
     <div className="flex h-10 shrink-0 divide-x divide-white/10 border-b border-white/10 bg-black/30 text-[9px] font-black uppercase tracking-[0.08em] text-white/52">
       <span className="flex min-w-0 flex-1 items-center px-4 text-white/72">{statusLabel}</span>
@@ -390,11 +409,16 @@ export function CineStudioMetricsBar({
       <span className="hidden items-center px-4 lg:flex">{frameCount} fr</span>
       <span
         className={cx(
-          "flex items-center px-4",
-          brainConnected ? "text-[var(--foldder-studio-accent,#de323f)]" : "text-white/38",
+          "flex max-w-[42%] truncate items-center px-4",
+          brandActive
+            ? "text-[var(--foldder-studio-accent,#de323f)]"
+            : brainConnected
+              ? "text-amber-200/70"
+              : "text-white/38",
         )}
+        title={brandHints.length ? brandHints.join(" · ") : undefined}
       >
-        {brainConnected ? "BrandKit" : "Sin BrandKit"}
+        {brandLabel}
       </span>
     </div>
   );

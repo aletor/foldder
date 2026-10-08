@@ -102,6 +102,14 @@ import { StudioNodePortal } from "./studio-node/studio-node-architecture";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { stableKnowledgeFileUrlFromKey, tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import {
+  appendCineBrandStyleImages,
+  cineBrandStyleImageUrls,
+  EMPTY_CINE_BRAND_PACK,
+  mergeCineBrandStylePrompt,
+  shouldIncludeCineBrandLogo,
+  type CineBrandPack,
+} from "./cine/cine-brandkit";
+import {
   CineStudioAssetCard,
   CineStudioBadge,
   CineStudioLockedPanel,
@@ -147,6 +155,7 @@ export type CineStudioProps = {
   onChange: (next: CineNodeData) => void;
   onClose: () => void;
   brainConnected?: boolean;
+  brandPack?: CineBrandPack;
   sourceScriptText?: string;
   sourceScriptNodeId?: string;
   initialTab?: CineStudioTab;
@@ -890,7 +899,19 @@ function useCineMutations(data: CineNodeData, onChange: (next: CineNodeData) => 
   };
 }
 
-export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = false, sourceScriptText = "", sourceScriptNodeId, initialTab, initialSceneId, onOpenImageStudio }: CineStudioProps) {
+export function CineStudio({
+  nodeId,
+  data,
+  onChange,
+  onClose,
+  brainConnected = false,
+  brandPack = EMPTY_CINE_BRAND_PACK,
+  sourceScriptText = "",
+  sourceScriptNodeId,
+  initialTab,
+  initialSceneId,
+  onOpenImageStudio,
+}: CineStudioProps) {
   const [activeTab, setActiveTab] = useState<CineStudioTab>(initialTab ?? "direction");
   const [promptPreview, setPromptPreview] = useState<{ title: string; prompt: string; negativePrompt?: string; details?: Array<[string, string]> } | null>(null);
   const [analyzerMode, setAnalyzerMode] = useState<CineAnalyzerMode>("ai");
@@ -940,7 +961,39 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
   }, [generatingTarget, onChange, safeData]);
   const mutations = useCineMutations(safeData, onChange, nodeId, brainConnected);
   const script = safeData.manualScript || safeData.sourceScript?.text || sourceScriptText || "";
+  const brandActive = Boolean(brainConnected && safeData.visualDirection.useBrain && brandPack.enabled);
   const framesPrepared = safeData.scenes.reduce((count, scene) => count + [scene.frames.single, scene.frames.start, scene.frames.end].filter(Boolean).length, 0);
+
+  const withBrandPrompt = useCallback(
+    (basePrompt: string, opts?: { includeLogo?: boolean; scene?: CineScene }) => {
+      if (!brandActive || !brandPack.styleBlock) return basePrompt;
+      const includeLogo =
+        opts?.includeLogo ??
+        shouldIncludeCineBrandLogo({
+          mode: safeData.visualDirection.mode,
+          sceneText: [
+            opts?.scene?.title,
+            opts?.scene?.visualNotes,
+            opts?.scene?.visualSummary,
+            opts?.scene?.sourceText,
+            opts?.scene?.voiceOver,
+            ...(opts?.scene?.onScreenText ?? []),
+          ]
+            .filter(Boolean)
+            .join(" "),
+        });
+      return mergeCineBrandStylePrompt(basePrompt, brandPack.styleBlock, { includeLogo });
+    },
+    [brandActive, brandPack.styleBlock, safeData.visualDirection.mode],
+  );
+
+  const brandRefsFor = useCallback(
+    (includeLogo: boolean, existing: string[] = []) => {
+      if (!brandActive) return existing;
+      return appendCineBrandStyleImages(existing, cineBrandStyleImageUrls(brandPack, includeLogo), 4);
+    },
+    [brandActive, brandPack],
+  );
   const tabs: Array<{ id: CineStudioTab; label: string; icon: React.ReactNode }> = [
     { id: "direction", label: "Dirección", icon: <Sparkles size={14} /> },
     { id: "script", label: "Guion", icon: <BookOpen size={14} /> },
@@ -1027,14 +1080,16 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     if (!onOpenImageStudio) return;
     const sourceS3Key = mode === "edit" ? getEffectiveCineCharacterS3Key(character) : undefined;
     const sourceAssetId = mode === "edit" ? await resolveCineAssetUrl(getEffectiveCineCharacterAsset(character), sourceS3Key) : undefined;
+    const brandStyleImageUrls = brandRefsFor(false);
     onOpenImageStudio({
       cineNodeId: nodeId,
       kind: "character",
       characterId: character.id,
-      prompt: buildCineCharacterPrompt(safeData, character.id),
+      prompt: withBrandPrompt(buildCineCharacterPrompt(safeData, character.id), { includeLogo: false }),
       negativePrompt: buildCineFrameNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "reparto",
       mode,
       metadata: {
@@ -1045,24 +1100,26 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         sourceScriptNodeId: safeData.metadata?.sourceScriptNodeId,
         brainNodeId: brainConnected && safeData.visualDirection.useBrain ? safeData.metadata?.brainNodeId : undefined,
         visualCapsuleIds: safeData.visualDirection.visualCapsuleIds,
-        referenceAssetIds: sourceAssetId ? [sourceAssetId] : [],
+        referenceAssetIds: brandRefsFor(false, sourceAssetId ? [sourceAssetId] : []),
         referenceAssetS3Keys: sourceS3Key ? [sourceS3Key] : [],
         createdAt: new Date().toISOString(),
       },
     });
-  }, [brainConnected, nodeId, onOpenImageStudio, safeData]);
+  }, [brainConnected, brandRefsFor, nodeId, onOpenImageStudio, safeData, withBrandPrompt]);
 
   const characterSession = useCallback((character: CineCharacter, mode: "generate" | "edit"): Omit<CineImageStudioSession, "nanoNodeId"> => {
     const sourceAssetId = mode === "edit" ? getEffectiveCineCharacterAsset(character) : undefined;
     const sourceS3Key = mode === "edit" ? getEffectiveCineCharacterS3Key(character) : undefined;
+    const brandStyleImageUrls = brandRefsFor(false);
     return {
       cineNodeId: nodeId,
       kind: "character",
       characterId: character.id,
-      prompt: buildCineCharacterPrompt(safeData, character.id),
+      prompt: withBrandPrompt(buildCineCharacterPrompt(safeData, character.id), { includeLogo: false }),
       negativePrompt: buildCineFrameNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "reparto",
       mode,
       metadata: {
@@ -1073,25 +1130,27 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         sourceScriptNodeId: safeData.metadata?.sourceScriptNodeId,
         brainNodeId: brainConnected && safeData.visualDirection.useBrain ? safeData.metadata?.brainNodeId : undefined,
         visualCapsuleIds: safeData.visualDirection.visualCapsuleIds,
-        referenceAssetIds: sourceAssetId ? [sourceAssetId] : [],
+        referenceAssetIds: brandRefsFor(false, sourceAssetId ? [sourceAssetId] : []),
         referenceAssetS3Keys: sourceS3Key ? [sourceS3Key] : [],
         createdAt: new Date().toISOString(),
       },
     };
-  }, [brainConnected, nodeId, safeData]);
+  }, [brainConnected, brandRefsFor, nodeId, safeData, withBrandPrompt]);
 
   const openBackgroundImageStudio = useCallback(async (background: CineBackground, mode: "generate" | "edit") => {
     if (!onOpenImageStudio) return;
     const sourceS3Key = mode === "edit" ? getEffectiveCineBackgroundS3Key(background) : undefined;
     const sourceAssetId = mode === "edit" ? await resolveCineAssetUrl(getEffectiveCineBackgroundAsset(background), sourceS3Key) : undefined;
+    const brandStyleImageUrls = brandRefsFor(false);
     onOpenImageStudio({
       cineNodeId: nodeId,
       kind: "background",
       backgroundId: background.id,
-      prompt: buildCineBackgroundPrompt(safeData, background.id),
+      prompt: withBrandPrompt(buildCineBackgroundPrompt(safeData, background.id), { includeLogo: false }),
       negativePrompt: buildCineFrameNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "fondos",
       mode,
       metadata: {
@@ -1102,24 +1161,26 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         sourceScriptNodeId: safeData.metadata?.sourceScriptNodeId,
         brainNodeId: brainConnected && safeData.visualDirection.useBrain ? safeData.metadata?.brainNodeId : undefined,
         visualCapsuleIds: safeData.visualDirection.visualCapsuleIds,
-        referenceAssetIds: sourceAssetId ? [sourceAssetId] : [],
+        referenceAssetIds: brandRefsFor(false, sourceAssetId ? [sourceAssetId] : []),
         referenceAssetS3Keys: sourceS3Key ? [sourceS3Key] : [],
         createdAt: new Date().toISOString(),
       },
     });
-  }, [brainConnected, nodeId, onOpenImageStudio, safeData]);
+  }, [brainConnected, brandRefsFor, nodeId, onOpenImageStudio, safeData, withBrandPrompt]);
 
   const backgroundSession = useCallback((background: CineBackground, mode: "generate" | "edit"): Omit<CineImageStudioSession, "nanoNodeId"> => {
     const sourceAssetId = mode === "edit" ? getEffectiveCineBackgroundAsset(background) : undefined;
     const sourceS3Key = mode === "edit" ? getEffectiveCineBackgroundS3Key(background) : undefined;
+    const brandStyleImageUrls = brandRefsFor(false);
     return {
       cineNodeId: nodeId,
       kind: "background",
       backgroundId: background.id,
-      prompt: buildCineBackgroundPrompt(safeData, background.id),
+      prompt: withBrandPrompt(buildCineBackgroundPrompt(safeData, background.id), { includeLogo: false }),
       negativePrompt: buildCineFrameNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "fondos",
       mode,
       metadata: {
@@ -1130,27 +1191,38 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         sourceScriptNodeId: safeData.metadata?.sourceScriptNodeId,
         brainNodeId: brainConnected && safeData.visualDirection.useBrain ? safeData.metadata?.brainNodeId : undefined,
         visualCapsuleIds: safeData.visualDirection.visualCapsuleIds,
-        referenceAssetIds: sourceAssetId ? [sourceAssetId] : [],
+        referenceAssetIds: brandRefsFor(false, sourceAssetId ? [sourceAssetId] : []),
         referenceAssetS3Keys: sourceS3Key ? [sourceS3Key] : [],
         createdAt: new Date().toISOString(),
       },
     };
-  }, [brainConnected, nodeId, safeData]);
+  }, [brainConnected, brandRefsFor, nodeId, safeData, withBrandPrompt]);
 
   const openFrameImageStudio = useCallback(async (scene: CineScene, frameRole: CineFrame["role"], mode: "generate" | "edit") => {
     if (!onOpenImageStudio) return;
     const frame = scene.frames[frameRole];
     const sourceS3Key = mode === "edit" ? (frame?.editedImageS3Key || frame?.approvedImageS3Key || frame?.imageS3Key) : undefined;
     const sourceAssetId = mode === "edit" ? await resolveCineAssetUrl(frame?.editedImageAssetId || frame?.approvedImageAssetId || frame?.imageAssetId, sourceS3Key) : undefined;
+    const basePrompt = frame?.prompt || buildCineFramePrompt({ data: safeData, sceneId: scene.id, frameRole, cineNodeId: nodeId, brainConnected });
+    const includeLogo = shouldIncludeCineBrandLogo({
+      mode: safeData.visualDirection.mode,
+      sceneText: [scene.title, scene.visualNotes, scene.visualSummary, scene.sourceText, scene.voiceOver, ...(scene.onScreenText ?? [])].filter(Boolean).join(" "),
+    });
+    const prompt = frame?.prompt?.includes("BRAND STYLE")
+      ? frame.prompt
+      : withBrandPrompt(basePrompt, { includeLogo, scene });
+    const brandStyleImageUrls = brandRefsFor(includeLogo);
+    const baseRefs = mode === "edit" && sourceAssetId ? [sourceAssetId] : getCineFrameReferenceAssetIds(safeData, scene.id);
     onOpenImageStudio({
       cineNodeId: nodeId,
       kind: "frame",
       sceneId: scene.id,
       frameRole,
-      prompt: frame?.prompt || buildCineFramePrompt({ data: safeData, sceneId: scene.id, frameRole, cineNodeId: nodeId, brainConnected }),
+      prompt,
       negativePrompt: frame?.negativePrompt || buildCineFrameNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "storyboard",
       returnSceneId: scene.id,
       mode,
@@ -1165,7 +1237,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         sourceScriptNodeId: safeData.metadata?.sourceScriptNodeId,
         brainNodeId: brainConnected && safeData.visualDirection.useBrain ? safeData.metadata?.brainNodeId : undefined,
         visualCapsuleIds: safeData.visualDirection.visualCapsuleIds,
-        referenceAssetIds: mode === "edit" && sourceAssetId ? [sourceAssetId] : getCineFrameReferenceAssetIds(safeData, scene.id),
+        referenceAssetIds: brandRefsFor(includeLogo, baseRefs),
         referenceAssetS3Keys: mode === "edit" && sourceS3Key ? [sourceS3Key] : getCineFrameReferenceS3Keys(safeData, scene.id),
         characterSheetAssetId: safeData.continuity?.useCharacterSheetForFrames ? characterSheetAsset : undefined,
         characterSheetS3Key: safeData.continuity?.useCharacterSheetForFrames ? characterSheetS3Key : undefined,
@@ -1174,21 +1246,32 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         createdAt: new Date().toISOString(),
       },
     });
-  }, [brainConnected, characterSheetAsset, characterSheetS3Key, locationSheetAsset, locationSheetS3Key, nodeId, onOpenImageStudio, safeData]);
+  }, [brainConnected, brandRefsFor, characterSheetAsset, characterSheetS3Key, locationSheetAsset, locationSheetS3Key, nodeId, onOpenImageStudio, safeData, withBrandPrompt]);
 
   const frameSession = useCallback((scene: CineScene, frameRole: CineFrame["role"], mode: "generate" | "edit"): Omit<CineImageStudioSession, "nanoNodeId"> => {
     const frame = scene.frames[frameRole];
     const sourceAssetId = mode === "edit" ? (frame?.editedImageAssetId || frame?.approvedImageAssetId || frame?.imageAssetId) : undefined;
     const sourceS3Key = mode === "edit" ? (frame?.editedImageS3Key || frame?.approvedImageS3Key || frame?.imageS3Key) : undefined;
+    const basePrompt = frame?.prompt || buildCineFramePrompt({ data: safeData, sceneId: scene.id, frameRole, cineNodeId: nodeId, brainConnected });
+    const includeLogo = shouldIncludeCineBrandLogo({
+      mode: safeData.visualDirection.mode,
+      sceneText: [scene.title, scene.visualNotes, scene.visualSummary, scene.sourceText, scene.voiceOver, ...(scene.onScreenText ?? [])].filter(Boolean).join(" "),
+    });
+    const prompt = frame?.prompt?.includes("BRAND STYLE")
+      ? frame.prompt
+      : withBrandPrompt(basePrompt, { includeLogo, scene });
+    const brandStyleImageUrls = brandRefsFor(includeLogo);
+    const baseRefs = mode === "edit" && sourceAssetId ? [sourceAssetId] : getCineFrameReferenceAssetIds(safeData, scene.id);
     return {
       cineNodeId: nodeId,
       kind: "frame",
       sceneId: scene.id,
       frameRole,
-      prompt: frame?.prompt || buildCineFramePrompt({ data: safeData, sceneId: scene.id, frameRole, cineNodeId: nodeId, brainConnected }),
+      prompt,
       negativePrompt: frame?.negativePrompt || buildCineFrameNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "storyboard",
       returnSceneId: scene.id,
       mode,
@@ -1203,7 +1286,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         sourceScriptNodeId: safeData.metadata?.sourceScriptNodeId,
         brainNodeId: brainConnected && safeData.visualDirection.useBrain ? safeData.metadata?.brainNodeId : undefined,
         visualCapsuleIds: safeData.visualDirection.visualCapsuleIds,
-        referenceAssetIds: mode === "edit" && sourceAssetId ? [sourceAssetId] : getCineFrameReferenceAssetIds(safeData, scene.id),
+        referenceAssetIds: brandRefsFor(includeLogo, baseRefs),
         referenceAssetS3Keys: mode === "edit" && sourceS3Key ? [sourceS3Key] : getCineFrameReferenceS3Keys(safeData, scene.id),
         characterSheetAssetId: safeData.continuity?.useCharacterSheetForFrames ? characterSheetAsset : undefined,
         characterSheetS3Key: safeData.continuity?.useCharacterSheetForFrames ? characterSheetS3Key : undefined,
@@ -1212,7 +1295,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         createdAt: new Date().toISOString(),
       },
     };
-  }, [brainConnected, characterSheetAsset, characterSheetS3Key, locationSheetAsset, locationSheetS3Key, nodeId, safeData]);
+  }, [brainConnected, brandRefsFor, characterSheetAsset, characterSheetS3Key, locationSheetAsset, locationSheetS3Key, nodeId, safeData, withBrandPrompt]);
 
   const characterSheetSession = useCallback((mode: "generate" | "edit"): Omit<CineImageStudioSession, "nanoNodeId"> => {
     const sheet = safeData.continuity?.characterSheet;
@@ -1224,25 +1307,27 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     const referenceAssetS3Keys = mode === "edit" && sourceS3Key
       ? [sourceS3Key]
       : safeData.characters.map(getEffectiveCineCharacterS3Key).filter((item): item is string => Boolean(item));
+    const brandStyleImageUrls = brandRefsFor(false);
     return {
       cineNodeId: nodeId,
       kind: "character_sheet",
-      prompt: buildCineCharacterSheetPrompt(safeData),
+      prompt: withBrandPrompt(buildCineCharacterSheetPrompt(safeData), { includeLogo: false }),
       negativePrompt: buildCineCharacterSheetNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "reparto",
       mode,
       metadata: {
         generatedFrom: "cine-node",
         cineAssetKind: "character-sheet",
         cineNodeId: nodeId,
-        referenceAssetIds,
+        referenceAssetIds: brandRefsFor(false, referenceAssetIds),
         referenceAssetS3Keys,
         createdAt: sheet?.createdAt || new Date().toISOString(),
       },
     };
-  }, [nodeId, safeData]);
+  }, [brandRefsFor, nodeId, safeData, withBrandPrompt]);
 
   const locationSheetSession = useCallback((mode: "generate" | "edit"): Omit<CineImageStudioSession, "nanoNodeId"> => {
     const sheet = safeData.continuity?.locationSheet;
@@ -1254,25 +1339,27 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     const referenceAssetS3Keys = mode === "edit" && sourceS3Key
       ? [sourceS3Key]
       : safeData.backgrounds.map(getEffectiveCineBackgroundS3Key).filter((item): item is string => Boolean(item));
+    const brandStyleImageUrls = brandRefsFor(false);
     return {
       cineNodeId: nodeId,
       kind: "location_sheet",
-      prompt: buildCineLocationSheetPrompt(safeData),
+      prompt: withBrandPrompt(buildCineLocationSheetPrompt(safeData), { includeLogo: false }),
       negativePrompt: buildCineLocationSheetNegativePrompt(),
       sourceAssetId,
       sourceS3Key,
+      brandStyleImageUrls,
       returnTab: "fondos",
       mode,
       metadata: {
         generatedFrom: "cine-node",
         cineAssetKind: "location-sheet",
         cineNodeId: nodeId,
-        referenceAssetIds,
+        referenceAssetIds: brandRefsFor(false, referenceAssetIds),
         referenceAssetS3Keys,
         createdAt: sheet?.createdAt || new Date().toISOString(),
       },
     };
-  }, [nodeId, safeData]);
+  }, [brandRefsFor, nodeId, safeData, withBrandPrompt]);
 
   const openSheetImageStudio = useCallback(async (session: Omit<CineImageStudioSession, "nanoNodeId">) => {
     if (!onOpenImageStudio || !session.sourceAssetId) return;
@@ -1342,7 +1429,11 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     setGenerationMessage("Generando imagen 2K...");
     try {
       const rawReferenceImages = Array.from(
-        new Set([...(session.metadata?.referenceAssetIds ?? []), session.sourceAssetId].filter((item): item is string => Boolean(item))),
+        new Set([
+          ...(session.metadata?.referenceAssetIds ?? []),
+          ...(session.brandStyleImageUrls ?? []),
+          session.sourceAssetId,
+        ].filter((item): item is string => Boolean(item))),
       );
       const referenceKeys = Array.from(
         new Set([
@@ -1600,9 +1691,15 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
       const analysis = await analyzeCineScriptWithAI(source, {
         mode: safeData.visualDirection.mode,
         visualDirection: safeData.visualDirection,
+        brandContext: brandActive
+          ? { enabled: true, analyzeBlock: brandPack.analyzeBlock }
+          : undefined,
       });
       onChange(updated(applyCineAnalysisToData({ ...safeData, mode: safeData.visualDirection.mode, manualScript: source }, analysis)));
-      setAnalysisState({ status: "done", message: "Analizado con IA." });
+      setAnalysisState({
+        status: "done",
+        message: brandActive ? "Analizado con IA + BrandKit." : "Analizado con IA.",
+      });
     } catch (error) {
       console.warn("Cine AI analyzer failed, using local parser:", error);
       const fallback = analyzeCineScript(source, { mode: safeData.visualDirection.mode, visualDirection: safeData.visualDirection });
@@ -1651,6 +1748,8 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
         characterCount={safeData.characters.length}
         frameCount={framesPrepared}
         brainConnected={brainConnected}
+        brandHints={brainConnected ? brandPack.hints : []}
+        brandActive={brandActive}
       />
       <main className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
           {activeTab === "direction" ? (
@@ -1791,9 +1890,35 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       checked={Boolean(safeData.visualDirection.useBrain)}
                       onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, useBrain: event.target.checked } }))}
                       label="Usar BrandKit"
+                      disabled={!brainConnected}
                     />
                   </div>
                 </div>
+                {brainConnected ? (
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3">
+                    {(brandPack.hints.length
+                      ? brandPack.hints
+                      : ["BrandKit conectado — completa voz, esencia, mundo o logo"]
+                    ).map((hint) => (
+                      <span
+                        key={hint}
+                        className="rounded-sm border border-white/12 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-white/55"
+                      >
+                        {hint}
+                      </span>
+                    ))}
+                    {brandPack.hasLogo ? (
+                      <span className="rounded-sm border border-[var(--foldder-studio-accent,#de323f)]/40 bg-[var(--foldder-studio-accent,#de323f)]/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--foldder-studio-accent,#de323f)]">
+                        Logo en spots / end cards
+                      </span>
+                    ) : null}
+                    {!safeData.visualDirection.useBrain ? (
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-200/70">
+                        Activa «Usar BrandKit» para inyectarlo al analizar y generar
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
               </DirectionSection>
             </div>
           ) : null}

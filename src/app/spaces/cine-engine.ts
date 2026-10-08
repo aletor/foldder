@@ -696,6 +696,11 @@ export function applyCineAnalysisToData(data: CineNodeData, analysis: CineAnalys
 type CineAnalyzeOptions = {
   mode?: CineMode;
   visualDirection?: CineVisualDirection;
+  /** Bloque BrandKit (voz, esencia, mundo visual, paleta, logo) — misma llamada de pago. */
+  brandContext?: {
+    enabled?: boolean;
+    analyzeBlock?: string;
+  };
   signal?: AbortSignal;
 };
 
@@ -1184,6 +1189,12 @@ export async function analyzeCineScriptWithAI(script: string, options: CineAnaly
       script,
       mode: options.mode,
       visualDirection: options.visualDirection,
+      brandContext: options.brandContext?.enabled
+        ? {
+            enabled: true,
+            analyzeBlock: options.brandContext.analyzeBlock ?? "",
+          }
+        : undefined,
     }),
     signal: options.signal,
   });
@@ -1322,12 +1333,15 @@ export function buildCineFramePrompt(args: {
   const visualDirection = visualPriority(scene);
   const emotionalContext = emotionalIntent(scene);
   const effectiveDirection = getEffectiveSceneVisualDirection(args.data, scene);
+  const useBrandKit = Boolean(args.brainConnected && args.data.visualDirection.useBrain);
   return [
     `Create a cinematic ${roleLine} for a ${CINE_MODE_LABELS[effectiveDirection.mode]} production.`,
     "GLOBAL AUDIOVISUAL DIRECTION",
     buildCineVisualDirectionPrompt(effectiveDirection),
     scene.visualOverride ? "This scene has its own visual direction override. Use it over the global direction for this frame." : null,
-    args.brainConnected && args.data.visualDirection.useBrain ? "Use Brain only as continuity and project direction context; do not modify Brain." : null,
+    useBrandKit
+      ? "BrandKit is connected: apply brand voice/visual world/palette as continuity context. Script and scene action win on conflicts."
+      : null,
     "",
     `SCENE ${scene.order}: ${scene.title}`,
     line("Scene kind", scene.sceneKind),

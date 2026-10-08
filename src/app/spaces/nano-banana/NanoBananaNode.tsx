@@ -279,6 +279,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const latestStudioS3KeyRef = useRef<string | null>(null);
   const [cineStudioPrompt, setCineStudioPrompt] = useState("");
   const [cineStudioSourceImage, setCineStudioSourceImage] = useState<string | null>(null);
+  const [cineStudioBrandStyleUrls, setCineStudioBrandStyleUrls] = useState<string[]>([]);
   const [cineStudioHistory, setCineStudioHistory] = useState<string[]>([]);
   const [cineStudioBriefs, setCineStudioBriefs] = useState<StudioHistoryBrief[]>([]);
   const [cineStudioDraft, setCineStudioDraft] = useState<StudioDraftState | undefined>();
@@ -404,6 +405,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     latestStudioS3KeyRef.current = null;
     setCineStudioPrompt("");
     setCineStudioSourceImage(null);
+    setCineStudioBrandStyleUrls([]);
     setCineStudioHistory([]);
     setNanoStudioTopBarCloseMode('default');
     setShowStudio(false);
@@ -471,6 +473,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       latestStudioS3KeyRef.current = null;
       setCineStudioPrompt(session.prompt);
       setCineStudioSourceImage(session.sourceAssetId || null);
+      setCineStudioBrandStyleUrls(session.brandStyleImageUrls ?? []);
       setCineStudioHistory(session.sourceAssetId ? [session.sourceAssetId] : []);
       setNanoStudioTopBarCloseMode('returnCine');
       claimNanoStudio();
@@ -494,6 +497,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       latestStudioS3KeyRef.current = null;
       setCineStudioPrompt("");
       setCineStudioSourceImage(session.sourceImageUrl || null);
+      setCineStudioBrandStyleUrls([]);
       setCineStudioHistory(session.sourceImageUrl ? [session.sourceImageUrl] : []);
       setNanoStudioTopBarCloseMode("returnDesigner");
       claimNanoStudio();
@@ -520,6 +524,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       designerReturnSessionRef.current = null;
       setCineStudioPrompt("");
       setCineStudioSourceImage(null);
+      setCineStudioBrandStyleUrls([]);
       setCineStudioHistory([]);
       setNanoStudioTopBarCloseMode('default');
       claimNanoStudio();
@@ -550,6 +555,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       latestStudioS3KeyRef.current = null;
       setCineStudioPrompt("");
       setCineStudioSourceImage(pendingDesigner.sourceImageUrl || null);
+      setCineStudioBrandStyleUrls([]);
       setCineStudioHistory(pendingDesigner.sourceImageUrl ? [pendingDesigner.sourceImageUrl] : []);
       setNanoStudioTopBarCloseMode("returnDesigner");
       claimNanoStudio();
@@ -563,6 +569,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     latestStudioS3KeyRef.current = null;
     setCineStudioPrompt(pending.prompt);
     setCineStudioSourceImage(pending.sourceAssetId || null);
+    setCineStudioBrandStyleUrls(pending.brandStyleImageUrls ?? []);
     setCineStudioHistory(pending.sourceAssetId ? [pending.sourceAssetId] : []);
     setNanoStudioTopBarCloseMode('returnCine');
     claimNanoStudio();
@@ -1340,7 +1347,11 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                     mergeImageCreatorPrompt([theme, body].filter(Boolean).join("\n\n"), brandStyleBlock)
                 : undefined
             }
-            brandStyleImageUrls={isHostStudioSession ? [] : brandStyleImageUrls}
+            brandStyleImageUrls={
+              isHostStudioSession
+                ? cineStudioBrandStyleUrls
+                : brandStyleImageUrls
+            }
             onBrainImageGeneratorDiagnostics={setBrainImageDiagSync}
             topBarCloseMode={nanoStudioTopBarCloseMode}
             generationHistory={isHostStudioSession ? cineStudioHistory : persistedGenerationHistory}
