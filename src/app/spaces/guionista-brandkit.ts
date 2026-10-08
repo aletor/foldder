@@ -27,8 +27,9 @@ function beliefLabels(essence: EssenceValue | undefined): string[] {
 
 function evidenceSnippets(doc: BrandKitDocument, limit: number): string[] {
   const quotes: string[] = [];
-  for (const slotId of ["voice", "essence"] as const) {
-    const evidence = doc.slots[slotId]?.value?.evidence;
+  const voiceEvidence = (doc.slots.voice?.value as VoiceValue | undefined)?.evidence;
+  const essenceEvidence = (doc.slots.essence?.value as EssenceValue | undefined)?.evidence;
+  for (const evidence of [voiceEvidence, essenceEvidence]) {
     if (!Array.isArray(evidence)) continue;
     for (const row of evidence) {
       const quote = typeof row?.quote === "string" ? row.quote.trim() : "";
