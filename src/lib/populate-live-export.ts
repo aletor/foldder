@@ -26,6 +26,10 @@ import {
   upsertSpacesV2Project,
 } from "@/lib/spaces-v2-store";
 import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
+import {
+  isPopulateShareMediaKey,
+  populateShareMediaPath,
+} from "@/lib/populate-share-public-media";
 import type { PopulateExportProvenance, PopulateGalleryItem } from "@/lib/populate-live-export-types";
 import { exportMatchesShare, projectFileToGalleryItem } from "@/lib/populate-gallery-utils";
 
@@ -108,6 +112,12 @@ async function writeProjectRecord(project: ProjectRecord): Promise<void> {
   });
 }
 
+function publicGalleryUrl(share: PopulateShareRecord, s3Key: string | undefined, fallback?: string): string | undefined {
+  const key = s3Key?.trim() ?? "";
+  if (key && isPopulateShareMediaKey(key)) return populateShareMediaPath(share.token, key);
+  return fallback;
+}
+
 async function presignIfNeeded(url: string | undefined, s3Key: string | undefined): Promise<string | undefined> {
   if (!s3Key) return url;
   try {
@@ -115,6 +125,20 @@ async function presignIfNeeded(url: string | undefined, s3Key: string | undefine
   } catch {
     return url;
   }
+}
+
+export async function listPopulateShareExportS3Keys(share: PopulateShareRecord): Promise<string[]> {
+  const normalized = normalizePopulateShareRecord(share);
+  if (!normalized.projectId) return [];
+  const project = await readProjectById(normalized.projectId);
+  if (!project) return [];
+  const keys = new Set<string>();
+  for (const file of getProjectFilesFromMetadata(project.metadata ?? {}).items) {
+    if (!exportMatchesShare(file, normalized)) continue;
+    const s3Key = typeof file.metadata?.s3Key === "string" ? file.metadata.s3Key.trim() : "";
+    if (isPopulateShareMediaKey(s3Key)) keys.add(s3Key);
+  }
+  return [...keys];
 }
 
 export async function listPopulateGalleryItems(share: PopulateShareRecord): Promise<PopulateGalleryItem[]> {
@@ -131,7 +155,7 @@ export async function listPopulateGalleryItems(share: PopulateShareRecord): Prom
   const items: PopulateGalleryItem[] = [];
   for (const file of files) {
     const s3Key = typeof file.metadata?.s3Key === "string" ? file.metadata.s3Key : undefined;
-    const viewUrl = await presignIfNeeded(file.fileUrl, s3Key);
+    const viewUrl = publicGalleryUrl(normalized, s3Key, file.fileUrl) ?? (await presignIfNeeded(file.fileUrl, s3Key));
     const item = projectFileToGalleryItem(file, normalized, viewUrl);
     if (item) items.push(item);
   }
@@ -228,7 +252,7 @@ export async function emitPopulateLiveExport(args: {
 
   await uploadBufferToS3Key(s3Key, parsed.buffer, parsed.contentType);
 
-  const viewUrl = await presignIfNeeded(stableUrl, s3Key);
+  const viewUrl = publicGalleryUrl(share, s3Key, stableUrl) ?? (await presignIfNeeded(stableUrl, s3Key));
   const item = projectFileToGalleryItem(exportFile, share, viewUrl);
   if (!item) {
     throw new Error("No se pudo registrar la exportación.");

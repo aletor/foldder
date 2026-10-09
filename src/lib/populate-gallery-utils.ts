@@ -20,6 +20,9 @@ export function projectFileToGalleryItem(
   const meta = file.metadata ?? {};
   const url = viewUrl ?? file.fileUrl ?? file.thumbnailUrl;
   if (!url) return null;
+  const storedThumb = file.thumbnailUrl ?? url;
+  const thumbIsPrivate =
+    storedThumb.includes("/api/spaces/s3-file") || storedThumb.includes(".amazonaws.com");
   const sourceRaw = meta.source;
   const source =
     sourceRaw && typeof sourceRaw === "object" && !Array.isArray(sourceRaw)
@@ -32,7 +35,7 @@ export function projectFileToGalleryItem(
     matchLabel: String(meta.matchLabel ?? share.matchLabel),
     createdAt: file.createdAt,
     viewUrl: url,
-    thumbUrl: file.thumbnailUrl ?? url,
+    thumbUrl: thumbIsPrivate ? url : storedThumb,
     source,
   };
 }

@@ -1,6 +1,7 @@
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { PopulateFormModel } from "@/app/spaces/populate/populate-designer-form";
 import type { PopulateTemplateBinding } from "@/app/spaces/populate/populate-types";
+import { rewritePopulateSharePayloadForPublic } from "@/lib/populate-share-public-media";
 
 export type PopulateShareOptions = {
   enabled: boolean;
@@ -77,7 +78,11 @@ export type PublicPopulateShareRecord = Omit<PopulateShareRecord, "ownerEmail">;
 
 export function toPublicPopulateShareRecord(row: PopulateShareRecord): PublicPopulateShareRecord {
   const { ownerEmail: _o, ...rest } = row;
-  return normalizePopulateShareRecord(rest as PopulateShareRecord);
+  const normalized = normalizePopulateShareRecord(rest as PopulateShareRecord);
+  return {
+    ...normalized,
+    payload: rewritePopulateSharePayloadForPublic(normalized.payload, normalized.token),
+  };
 }
 
 /** Rellena match/project en enlaces legacy. */
