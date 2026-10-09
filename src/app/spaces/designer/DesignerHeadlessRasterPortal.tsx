@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { ReactFlowProvider } from "@xyflow/react";
 import type { DesignerPageState } from "./DesignerNode";
 
 export type DesignerHeadlessRasterRequest = {
@@ -16,6 +17,9 @@ export type DesignerHeadlessRasterRequest = {
 /**
  * Monta un Designer Studio headless (offscreen) que rasteriza a PNG full-res las páginas pedidas y
  * las reporta por `onPage`/`onDone`. Reutiliza el mismo `headlessImageExport` del export multimedia.
+ *
+ * En `/f/[token]` no hay canvas de Spaces: FreehandStudio aún usa hooks de React Flow
+ * (p. ej. BrandKit), así que envolvemos en `ReactFlowProvider` para no tumbar el formulario.
  */
 export function DesignerHeadlessRasterPortal({
   request,
@@ -38,24 +42,26 @@ export function DesignerHeadlessRasterPortal({
   return createPortal(
     // `key` por petición: DesignerStudio lee `initialPages` solo al montar, así que cada fila debe
     // remontar un studio nuevo con sus páginas congeladas (si no, reusa las de la primera fila).
-    <Studio
-      key={request.instanceKey}
-      initialPages={request.pages}
-      activePageIndex={0}
-      designerCanvasInstanceKey={request.instanceKey}
-      onClose={() => {}}
-      onExport={() => {}}
-      onUpdatePages={() => {}}
-      headlessImageExport={{
-        requestId: request.requestId,
-        targetPageIds: request.targetPageIds,
-        maxSide: request.maxSide,
-        fullResolution: request.fullResolution,
-        onPage,
-        onDone,
-        onError,
-      }}
-    />,
+    <ReactFlowProvider>
+      <Studio
+        key={request.instanceKey}
+        initialPages={request.pages}
+        activePageIndex={0}
+        designerCanvasInstanceKey={request.instanceKey}
+        onClose={() => {}}
+        onExport={() => {}}
+        onUpdatePages={() => {}}
+        headlessImageExport={{
+          requestId: request.requestId,
+          targetPageIds: request.targetPageIds,
+          maxSide: request.maxSide,
+          fullResolution: request.fullResolution,
+          onPage,
+          onDone,
+          onError,
+        }}
+      />
+    </ReactFlowProvider>,
     document.body,
   );
 }
