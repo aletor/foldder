@@ -298,6 +298,41 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
   gap: 0.65rem;
 }
 
+[data-foldder-home-v2] [data-home-v2-hero-cta],
+[data-foldder-home-v2] [data-home-v2-start-cta] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+}
+
+[data-foldder-home-v2] [data-home-v2-start-cta] {
+  align-items: center;
+}
+
+[data-foldder-home-v2] [data-home-v2-access-note] {
+  margin: 0;
+  max-width: 18rem;
+  color: rgba(255, 255, 255, 0.34);
+  font-family: var(--foldder-home-font-body);
+  font-size: calc(9px - 0.5pt);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+[data-foldder-home-v2] [data-home-v2-access-note--center] {
+  text-align: center;
+}
+
+[data-foldder-home-v2] [data-home-v2-access-note-beta] {
+  color: rgba(255, 255, 255, 0.62);
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
 [data-foldder-home-v2] [data-home-v2-hero-actions] :is(a, button),
 [data-foldder-home-v2] [data-home-v2-hero-lang] button {
   font-size: calc(10px - 0.5pt);

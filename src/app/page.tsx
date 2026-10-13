@@ -9,14 +9,11 @@ import { ColorWaveBackground } from "./_home/ColorWaveBackground";
 import { BrainSectionVisual } from "./_home/BrainSectionVisual";
 import { HeroPhotoColumnsBackground } from "./_home/HeroPhotoColumnsBackground";
 import { ManifestoParticleBackground } from "./_home/ManifestoParticleBackground";
-import { FlowsCanvasDemo } from "./_home/FlowsCanvasDemo";
-import { FlowsPresetButtons } from "./_home/FlowsPresetButtons";
-import { FlowsWallpaperBackground } from "./_home/FlowsWallpaperBackground";
 import { LetterImageSwapHeadline } from "./_home/LetterImageSwapHeadline";
 import { NodePerspectiveGallery } from "./_home/NodePerspectiveGallery";
 import { FormattedText } from "./_home/FormattedText";
 import { useHomeV2DeviceProfile } from "./_home/home-v2-device";
-import { scrollHomeToSection, useHomeSectionScroll } from "./_home/useHomeSectionScroll";
+import { useHomeSectionScroll } from "./_home/useHomeSectionScroll";
 import "./_home/home-v2.css";
 
 const BILLING_CARDS = [
@@ -69,10 +66,6 @@ function HeroChrome() {
   );
 }
 
-function scrollToId(id: string) {
-  scrollHomeToSection(id);
-}
-
 export default function HomePage() {
   useHomeV2DeviceProfile();
   useHomeSectionScroll();
@@ -120,18 +113,16 @@ export default function HomePage() {
             text="**FOLDDER** es el lugar donde ocurre tu **proceso creativo**: inspiración, escritura, imagen, vídeo, diseño y presentación trabajando dentro de **un mismo sistema**."
           />
           <div data-home-v2-hero-actions className="flex flex-wrap items-stretch">
-            <GoogleAccessButton
-              label="Empieza a crear"
-              authenticatedLabel="Entrar en Foldder"
-              className="flex h-10 min-w-[10rem] flex-1 items-center justify-center gap-2 bg-blue-600 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none"
-            />
-            <button
-              type="button"
-              onClick={() => scrollToId("flows")}
-              className="flex h-10 min-w-[10rem] flex-1 items-center justify-center border border-white/15 bg-black/40 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-white/10 sm:flex-none"
-            >
-              Ver flujos
-            </button>
+            <div data-home-v2-hero-cta>
+              <GoogleAccessButton
+                label="Empieza a crear"
+                authenticatedLabel="Entrar en Foldder"
+                className="flex h-10 min-w-[10rem] flex-1 items-center justify-center gap-2 bg-blue-600 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none"
+              />
+              <p data-home-v2-access-note>
+                Solo acceso <span data-home-v2-access-note-beta>Beta</span> para miembros
+              </p>
+            </div>
           </div>
         </div>
         <p data-home-v2-hero-caption aria-label="Hecho con Foldder">
@@ -177,46 +168,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section data-home-v2-module id="flows" aria-labelledby="flows-heading">
-        <div data-home-v2-flows-stage>
-          <FlowsWallpaperBackground />
-          <div data-home-v2-flows-stage-content>
-            <div className="flows-stage-header" data-home-v2-flows-copy data-home-v2-section-copy data-home-v2-section-inset>
-              <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300/90">
-                Flujos
-              </p>
-              <h2 id="flows-heading" data-home-v2-headline data-home-v2-headline--on-dark>
-                <span data-home-v2-brain-claim-line>ELIGE TU CAMINO</span>
-                <br />
-                <span data-home-v2-brain-claim-line>PARA UN GRAN RESULTADO.</span>
-              </h2>
-              <FlowsPresetButtons />
-            </div>
-            <FlowsCanvasDemo />
-          </div>
-        </div>
-      </section>
-
-      <section
-        data-home-v2-module
-        data-home-v2-module--nodes
-        data-home-v2-scroll-align="start"
-        id="nodes"
-        aria-labelledby="nodes-heading"
-      >
-        <div data-home-v2-section-copy data-home-v2-section-inset data-home-v2-nodes-copy>
-          <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300">Nodos</p>
-          <h2 id="nodes-heading" data-home-v2-headline>
-            <span data-home-v2-brain-claim-line>HERRAMIENTAS</span>
-            <br />
-            <span data-home-v2-brain-claim-line>QUE SE CONECTAN.</span>
-          </h2>
-        </div>
-        <div data-home-v2-nodes-gallery aria-label="Galería de nodos">
-          <NodePerspectiveGallery />
-        </div>
-      </section>
-
       <section
         data-home-v2-module
         data-home-v2-module--brain
@@ -232,7 +183,7 @@ export default function HomePage() {
             data-home-v2-section-inset
           >
             <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300/90">
-              Brain
+              Brandkit
             </p>
             <h2 id="brain-heading" data-home-v2-headline data-home-v2-headline--on-dark>
               <span data-home-v2-brain-claim-line>EL ADN VIVO</span>
@@ -243,7 +194,7 @@ export default function HomePage() {
               as="p"
               data-home-v2-body
               className="text-white/48"
-              text="Brain convierte tu **marca, referencias y reglas** en **contexto activo** para todo lo que creas."
+              text="Brandkit convierte tu **marca, referencias y reglas** en **contexto activo** para todo lo que creas."
             />
             <ul data-home-v2-brain-features>
               <li data-home-v2-brain-feature>
@@ -267,7 +218,7 @@ export default function HomePage() {
                 <FormattedText
                   as="p"
                   data-home-v2-brain-feature-desc
-                  text="**Acepta, corrige, descarta** y Brain entiende mejor **tu forma de crear**."
+                  text="**Acepta, corrige, descarta** y Brandkit entiende mejor **tu forma de crear**."
                 />
               </li>
             </ul>
@@ -275,6 +226,26 @@ export default function HomePage() {
           <div data-home-v2-brain-visual-col>
             <BrainSectionVisual />
           </div>
+        </div>
+      </section>
+
+      <section
+        data-home-v2-module
+        data-home-v2-module--nodes
+        data-home-v2-scroll-align="start"
+        id="nodes"
+        aria-labelledby="nodes-heading"
+      >
+        <div data-home-v2-section-copy data-home-v2-section-inset data-home-v2-nodes-copy>
+          <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300">Nodos</p>
+          <h2 id="nodes-heading" data-home-v2-headline>
+            <span data-home-v2-brain-claim-line>HERRAMIENTAS</span>
+            <br />
+            <span data-home-v2-brain-claim-line>QUE SE CONECTAN.</span>
+          </h2>
+        </div>
+        <div data-home-v2-nodes-gallery aria-label="Galería de nodos">
+          <NodePerspectiveGallery />
         </div>
       </section>
 
@@ -337,12 +308,17 @@ export default function HomePage() {
             className="mt-5 max-w-xl text-white/48"
             text="Úsalo para **escribir, diseñar, montar y presentar**, vender, explorar, crear campañas o construir tu **propio sistema creativo**."
           />
-          <div className="mt-10 w-full max-w-[380px] border border-white/12">
-            <GoogleAccessButton
-              label="Empieza"
-              authenticatedLabel="Entrar en Foldder"
-              className="flex h-12 w-full items-center justify-center gap-2 bg-blue-600 px-6 text-[11px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-            />
+          <div data-home-v2-start-cta className="mt-10 w-full max-w-[380px]">
+            <div className="w-full border border-white/12">
+              <GoogleAccessButton
+                label="Empieza"
+                authenticatedLabel="Entrar en Foldder"
+                className="flex h-12 w-full items-center justify-center gap-2 bg-blue-600 px-6 text-[11px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </div>
+            <p data-home-v2-access-note data-home-v2-access-note--center>
+              Solo acceso <span data-home-v2-access-note-beta>Beta</span> para miembros
+            </p>
           </div>
           </div>
         </div>

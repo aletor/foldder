@@ -21,37 +21,37 @@ const CAPSULES = [
     label: "WRITE",
     nodeType: "guionista",
     angle: -90,
-    message: "Brain aplica tono, claims y contexto de marca a cada texto que generas.",
+    message: "Brandkit aplica tono, claims y contexto de marca a cada texto que generas.",
   },
   {
     label: "IMAGE",
     nodeType: "nanoBanana",
     angle: -30,
-    message: "Brain guía estilo visual, paleta, referencias y elementos a evitar en cada imagen.",
+    message: "Brandkit guía estilo visual, paleta, referencias y elementos a evitar en cada imagen.",
   },
   {
     label: "DESIGN",
     nodeType: "designer",
     angle: 30,
-    message: "Brain lleva tu identidad a layouts, piezas gráficas, documentos y presentaciones.",
+    message: "Brandkit lleva tu identidad a layouts, piezas gráficas, documentos y presentaciones.",
   },
   {
     label: "VIDEO",
     nodeType: "geminiVideo",
     angle: 90,
-    message: "Brain traduce tu marca en atmósfera, ritmo, estilo visual y dirección de cámara.",
+    message: "Brandkit traduce tu marca en atmósfera, ritmo, estilo visual y dirección de cámara.",
   },
   {
     label: "CINEMA",
     nodeType: "cine",
     angle: 150,
-    message: "Brain mantiene coherencia entre guion, personajes, escenas, fondos y frames.",
+    message: "Brandkit mantiene coherencia entre guion, personajes, escenas, fondos y frames.",
   },
   {
     label: "PRESENT",
     nodeType: "presenter",
     angle: -150,
-    message: "Brain convierte tu contenido y diseño en una presentación alineada con tu marca.",
+    message: "Brandkit convierte tu contenido y diseño en una presentación alineada con tu marca.",
   },
 ] as const;
 

@@ -48,7 +48,7 @@ export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; 
   },
   {
     label: "Guionista",
-    description: "Convierte ideas, notas o **Brain** en **posts, guiones, slides y campañas** versionados.",
+    description: "Convierte ideas, notas o **Brandkit** en **posts, guiones, slides y campañas** versionados.",
     type: "guionista",
   },
   {

@@ -69,7 +69,7 @@ const NODE_DETAIL_CONTENT: Record<string, HomeV2NodeDetailContent> = {
       },
       {
         id: "brain",
-        line: "**Estilo y ADN de marca** con Brain.",
+        line: "**Estilo y ADN de marca** con Brandkit.",
         icon: "brain",
       },
     ],
