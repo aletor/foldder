@@ -9,7 +9,6 @@ import { ColorWaveBackground } from "./_home/ColorWaveBackground";
 import { BrainSectionVisual } from "./_home/BrainSectionVisual";
 import { HeroPhotoColumnsBackground } from "./_home/HeroPhotoColumnsBackground";
 import { ManifestoParticleBackground } from "./_home/ManifestoParticleBackground";
-import { LetterImageSwapHeadline } from "./_home/LetterImageSwapHeadline";
 import { NodePerspectiveGallery } from "./_home/NodePerspectiveGallery";
 import { FormattedText } from "./_home/FormattedText";
 import { useHomeV2DeviceProfile } from "./_home/home-v2-device";
@@ -300,7 +299,7 @@ export default function HomePage() {
             data-home-v2-headline--balance
             className="max-w-4xl"
           >
-            <LetterImageSwapHeadline text="Tu Foldder no será igual que el de nadie." />
+            Tu Foldder no será igual que el de nadie.
           </h2>
           <FormattedText
             as="p"
