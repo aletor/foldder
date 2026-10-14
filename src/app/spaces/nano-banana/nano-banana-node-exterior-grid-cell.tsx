@@ -12,7 +12,7 @@ export function NanoBananaNodeExteriorGridCell({
   label: string;
   mediaVisible: boolean;
 }) {
-  const { displayUrl } = useAuthedMediaPreviewUrl(url, null, { canvasThumbnail: true });
+  const { displayUrl, retryWithBlob } = useAuthedMediaPreviewUrl(url, null, { canvasThumbnail: true });
 
   return (
     <div className="nano-banana-node-frame-grid__cell">
@@ -22,7 +22,16 @@ export function NanoBananaNodeExteriorGridCell({
         </div>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={displayUrl} alt="" className="nano-banana-node-frame-grid__media" decoding="async" draggable={false} />
+        <img
+          src={displayUrl}
+          alt=""
+          className="nano-banana-node-frame-grid__media"
+          decoding="async"
+          draggable={false}
+          onError={() => {
+            void retryWithBlob();
+          }}
+        />
       )}
       <span className="nano-banana-node-frame-grid__label">{label}</span>
     </div>

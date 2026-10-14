@@ -52,12 +52,18 @@ export async function uploadToS3(filename: string, fileBuffer: Buffer, contentTy
 }
 
 /** Subida con clave explícita (p. ej. assets Designer `…/designer/{id}_HR.jpg`). */
-export async function uploadBufferToS3Key(key: string, fileBuffer: Buffer, contentType: string): Promise<string> {
+export async function uploadBufferToS3Key(
+  key: string,
+  fileBuffer: Buffer,
+  contentType: string,
+  options?: { cacheControl?: string },
+): Promise<string> {
   const params = {
     Bucket: BUCKET_NAME,
     Key: key,
     Body: fileBuffer,
     ContentType: contentType,
+    ...(options?.cacheControl ? { CacheControl: options.cacheControl } : {}),
   };
   const command = new PutObjectCommand(params);
   await s3Client.send(command).catch((err: unknown) => {
@@ -102,13 +108,23 @@ export async function getFromS3(key: string): Promise<Buffer> {
   return Buffer.from(byteArray);
 }
 
-export async function getPresignedUrl(key: string) {
+export async function getPresignedUrl(key: string, expiresIn = 3600) {
   const command = new GetObjectCommand({
     Bucket: BUCKET_NAME,
     Key: key,
   });
 
-  return await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+  return await getSignedUrl(s3Client, command, { expiresIn });
+}
+
+export async function getPresignedDownloadUrl(key: string, filename: string, expiresIn = 300) {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${filename}"`,
+  });
+
+  return await getSignedUrl(s3Client, command, { expiresIn });
 }
 
 export async function getPresignedUploadUrl(key: string, contentType: string, expiresIn = 900) {

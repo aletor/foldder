@@ -854,7 +854,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const hasInput = Boolean(promptInput || imageInput || nodeData.manualPrompt);
   const outputUrl = typeof nodeData.value === "string" ? nodeData.value : "";
   const selectedRef = nodeData.selected ?? null;
-  const { displayUrl: inspirationCanvasUrl } = useCanvasNodeMediaPreviewUrl(outputUrl || null);
+  const { displayUrl: inspirationCanvasUrl, retryWithBlob: retryInspirationPreview } = useCanvasNodeMediaPreviewUrl(outputUrl || null);
   const previewUrl = outputUrl || selectedRef?.thumbUrl || selectedRef?.imageUrl || "";
   const previewImageSize = useMemo(() => {
     if (!previewUrl) return null;
@@ -1158,6 +1158,9 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
                   className="inspiration-node-preview-img"
                   draggable={false}
                   decoding="async"
+                  onError={() => {
+                    void retryInspirationPreview();
+                  }}
                 />
               ) : selectedRef ? (
                 <img

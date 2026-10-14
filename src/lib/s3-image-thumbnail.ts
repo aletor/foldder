@@ -6,6 +6,7 @@ export async function buildS3ImageThumbnailBuffer(
   maxSide: number,
   contentType: string,
   key: string,
+  quality = 82,
 ): Promise<{ buffer: Buffer; contentType: string } | null> {
   const side = clampCanvasThumbMaxSide(maxSide);
   if (!isRasterImagePathOrMime(contentType) && !isRasterImagePathOrMime(key)) {
@@ -21,7 +22,7 @@ export async function buildS3ImageThumbnailBuffer(
         fit: "inside",
         withoutEnlargement: true,
       })
-      .webp({ quality: 82 })
+      .webp({ quality: Math.max(40, Math.min(95, Math.round(quality))) })
       .toBuffer();
 
     if (!resized.length) return null;

@@ -279,7 +279,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
   const designerPreviewValue = typeof nodeData.value === "string" && nodeData.value.length > 0 ? nodeData.value : null;
-  const { displayUrl: designerCanvasUrl } = useCanvasNodeMediaPreviewUrl(designerPreviewValue);
+  const { displayUrl: designerCanvasUrl, retryWithBlob: retryDesignerPreview } = useCanvasNodeMediaPreviewUrl(designerPreviewValue);
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
     useCallback((active: boolean) => {
       if (!active) requestAnimationFrame(() => updateNodeInternals(id));
@@ -951,7 +951,10 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
               decoding="async"
               draggable={false}
               onLoad={refreshHandleGeometry}
-              onError={refreshHandleGeometry}
+              onError={() => {
+                void retryDesignerPreview();
+                refreshHandleGeometry();
+              }}
             />
           ) : hasCanvasPreview && pages[0] && firstPageDims ? (
             <div className="designer-node-page-preview absolute inset-0 overflow-hidden bg-[#fafafa]">

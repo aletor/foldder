@@ -2585,7 +2585,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
   const session = nodeData.advancedSession;
   const outputUrl = nodeData.value || session?.workingImage?.imageUrl || "";
   const previewUrl = outputUrl || session?.master.imageUrl || imageInput;
-  const { displayUrl: canvasPreviewUrl } = useCanvasNodeMediaPreviewUrl(previewUrl || null);
+  const { displayUrl: canvasPreviewUrl, retryWithBlob: retryCanvasPreview } = useCanvasNodeMediaPreviewUrl(previewUrl || null);
   const status = nodeData.status ?? (outputUrl ? "output" : imageInput ? "ready" : "empty");
   const currentNode = nodes.find((node) => node.id === id);
 
@@ -2709,7 +2709,15 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
       <div className="node-content foldder-frameless-main space-y-3">
         <div ref={previewFrameRef} className="relative aspect-video overflow-hidden rounded-none bg-slate-950/70">
           {previewUrl ? (
-            <img src={canvasPreviewUrl ?? previewUrl} alt="" className="h-full w-full object-cover" decoding="async" />
+            <img
+              src={canvasPreviewUrl ?? previewUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              decoding="async"
+              onError={() => {
+                void retryCanvasPreview();
+              }}
+            />
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500">
               <Sparkles size={28} strokeWidth={1.5} />

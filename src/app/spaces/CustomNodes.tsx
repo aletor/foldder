@@ -140,6 +140,7 @@ import {
   DESCRIBER_ANALYSIS_CATEGORY_ORDER,
   parseDescriberAnalysisStatus,
 } from "@/lib/parse-describer-sections";
+import { requestGeneratedVideo } from "@/lib/video-generation-client";
 import {
   loadImageDimensions,
   nodeFrameNeedsSync,
@@ -1575,7 +1576,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const directImageSrc = exportMode === "image" ? (imageUrl || null) : exportMode === "designer-pdf" ? (designerPreviewUrl || null) : null;
   const exportPreviewS3Key =
     typeof sourceNode?.data?.s3Key === "string" ? sourceNode.data.s3Key : undefined;
-  const { displayUrl: exportCanvasPreviewUrl } = useCanvasNodeMediaPreviewUrl(directImageSrc, exportPreviewS3Key);
+  const { displayUrl: exportCanvasPreviewUrl, retryWithBlob: retryExportPreview } = useCanvasNodeMediaPreviewUrl(directImageSrc, exportPreviewS3Key);
   const designerPreviewW = designerPageDims?.width ?? 1920;
   const designerPreviewH = designerPageDims?.height ?? 1080;
   const previewFrameW = exportMode === "designer-pdf"
@@ -1952,6 +1953,9 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
                   className="block h-full w-full object-contain"
                   alt="Export preview"
                   decoding="async"
+                  onError={() => {
+                    void retryExportPreview();
+                  }}
                 />
               ) : null}
             </div>
@@ -5888,11 +5892,11 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     return { url: url.trim(), s3Key };
   }, [edges, id, nodes]);
 
-  const { displayUrl: firstFramePreviewUrl } = useCanvasNodeMediaPreviewUrl(
+  const { displayUrl: firstFramePreviewUrl, retryWithBlob: retryFirstFramePreview } = useCanvasNodeMediaPreviewUrl(
     connectedFirstFrameSource?.url,
     connectedFirstFrameSource?.s3Key,
   );
-  const { displayUrl: lastFramePreviewUrl } = useCanvasNodeMediaPreviewUrl(
+  const { displayUrl: lastFramePreviewUrl, retryWithBlob: retryLastFramePreview } = useCanvasNodeMediaPreviewUrl(
     connectedLastFrameSource?.url,
     connectedLastFrameSource?.s3Key,
   );
@@ -6122,10 +6126,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
       const ok = await runAiJobWithNotification(
         { nodeId: id, label: `Video Generator (${modelLabel})` },
         async () => {
-        const res = await fetch(apiPath, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const json = await requestGeneratedVideo(apiPath, {
             prompt,
             firstFrame,
             lastFrame,
@@ -6138,15 +6139,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
             negativePrompt: negativePrompt,
             animationPrompt: nodeData.animationPrompt,
             cameraPreset: nodeData.cameraPreset,
-          }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Generation failed");
-        }
-
-        const json = await res.json();
+          });
         if (!json.output) throw new Error("No video output");
         setResult(json.output);
         setNodes((nds) =>
@@ -6273,6 +6266,9 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
                   className="gemini-video-node-preview-img"
                   decoding="async"
                   draggable={false}
+                  onError={() => {
+                    void retryFirstFramePreview();
+                  }}
                 />
                 <span className="gemini-video-node-frame-grid__label">First</span>
               </div>
@@ -6283,6 +6279,9 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
                   className="gemini-video-node-preview-img"
                   decoding="async"
                   draggable={false}
+                  onError={() => {
+                    void retryLastFramePreview();
+                  }}
                 />
                 <span className="gemini-video-node-frame-grid__label">Last</span>
               </div>

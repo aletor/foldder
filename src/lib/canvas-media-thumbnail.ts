@@ -1,7 +1,15 @@
 import { stableKnowledgeFileUrlFromKey, tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
-/** Máx. lado del thumb en nodos del lienzo (coincide con maxWidth 960 del nodo). */
-export const FOLDDER_CANVAS_THUMB_MAX_SIDE = 960;
+/** Lado máximo del preview en el nodo. El original se reserva para export y herramientas. */
+export const FOLDDER_CANVAS_THUMB_MAX_SIDE = 480;
+
+/** Preview al abrir el nodo o el zoom. Suficiente para ver; el master sigue en S3. */
+export const FOLDDER_STUDIO_PREVIEW_MAX_SIDE = 1600;
+
+export const FOLDDER_MEDIA_DERIVATIVE_SIDES = [
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  FOLDDER_STUDIO_PREVIEW_MAX_SIDE,
+] as const;
 
 const THUMB_MIN_SIDE = 64;
 const THUMB_MAX_SIDE = 2048;
@@ -55,6 +63,14 @@ export function resolveCanvasThumbnailMediaUrl(
     return trimmed;
   }
   return trimmed;
+}
+
+/** Preview nítido al inspeccionar, sin pedir el original. */
+export function resolveStudioPreviewMediaUrl(
+  src?: string | null,
+  s3Key?: string | null,
+): string | undefined {
+  return resolveCanvasThumbnailMediaUrl(src, s3Key, FOLDDER_STUDIO_PREVIEW_MAX_SIDE);
 }
 
 /** URL completa sin thumb (studio, export, descarga). */

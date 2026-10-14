@@ -1,7 +1,7 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { NextResponse } from "next/server";
 
-import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
+import { BUCKET_NAME, getPresignedDownloadUrl, s3Client } from "@/lib/s3-utils";
 import {
   canUserAccessKnowledgeFileKey,
   isSafeKnowledgeFilesKey,
@@ -34,6 +34,21 @@ export async function GET(req: Request) {
     }
     const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, key);
     if (!allowed) return NextResponse.json({ error: "forbidden_key" }, { status: 403 });
+
+    if (url.searchParams.get("stream") !== "1" && process.env.FOLDDER_S3_FILE_STREAM !== "1") {
+      try {
+        const signed = await getPresignedDownloadUrl(key, filename);
+        return new NextResponse(null, {
+          status: 302,
+          headers: {
+            Location: signed,
+            "Cache-Control": "private, no-store",
+          },
+        });
+      } catch (error) {
+        console.warn("[s3-download] redirect failed; streaming object.", error);
+      }
+    }
 
     const object = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
     if (!object.Body) {

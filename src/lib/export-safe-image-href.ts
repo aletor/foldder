@@ -7,6 +7,7 @@
  * el gateway autenticado cuando hay clave `knowledge-files/`.
  */
 
+import { fetchAuthedMedia } from "@/lib/fetch-authed-media";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 function knowledgeFileGatewayUrl(key: string): string {
@@ -113,7 +114,7 @@ export async function fetchSameOriginOrBlobHrefAsDataUrl(
 
   for (const url of candidates) {
     try {
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetchAuthedMedia(url);
       if (!res.ok) continue;
       const blob = await res.blob();
       const dataUrl = await blobToDataUrl(blob, guessMimeFromUrl(url));

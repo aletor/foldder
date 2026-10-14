@@ -4,8 +4,10 @@ import {
   cacheControlForPublishedPath,
   isSafePublishedRelativePath,
   isValidPublishedSiteId,
+  publishedSitePrefix,
   readPublishedSiteFile,
 } from "@/lib/site-creator-publish-store";
+import { getPresignedUrl, s3ObjectExists } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +31,23 @@ export async function GET(
     return new NextResponse("Not found", { status: 404 });
   }
   try {
+    if (relativePath !== "index.html") {
+      const key = `${publishedSitePrefix(siteId)}${relativePath}`;
+      try {
+        if (await s3ObjectExists(key)) {
+          const signed = await getPresignedUrl(key, 3600);
+          return new NextResponse(null, {
+            status: 302,
+            headers: {
+              "Cache-Control": "public, max-age=600",
+              Location: signed,
+            },
+          });
+        }
+      } catch (error) {
+        console.warn("[published-site] redirect failed; reading object.", error);
+      }
+    }
     const file = await readPublishedSiteFile(siteId, relativePath);
     if (!file) return new NextResponse("Not found", { status: 404 });
     const body =

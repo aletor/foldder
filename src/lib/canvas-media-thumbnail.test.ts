@@ -11,6 +11,10 @@ import {
 describe("canvas-media-thumbnail", () => {
   const key = "knowledge-files/user-assets/abc/out.png";
 
+  it("keeps the canvas preview small enough to paint many nodes", () => {
+    expect(FOLDDER_CANVAS_THUMB_MAX_SIDE).toBe(480);
+  });
+
   it("builds thumbnail URL with thumb query param", () => {
     const url = stableKnowledgeFileThumbnailUrlFromKey(key);
     expect(url).toBe(`/api/spaces/s3-file?key=${encodeURIComponent(key)}&thumb=${FOLDDER_CANVAS_THUMB_MAX_SIDE}`);

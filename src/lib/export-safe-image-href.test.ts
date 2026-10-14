@@ -49,7 +49,7 @@ describe("export-safe-image-href", () => {
       await fetchSameOriginOrBlobHrefAsDataUrl(presigned);
       expect(globalThis.fetch).toHaveBeenCalledWith(
         `/api/spaces/s3-file?key=${encodeURIComponent(key)}`,
-        expect.objectContaining({ credentials: "include" }),
+        expect.objectContaining({ credentials: "same-origin" }),
       );
     });
   });

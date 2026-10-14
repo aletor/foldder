@@ -5,6 +5,7 @@
 import JSZip from "jszip";
 import type { DesignerPageState } from "./DesignerNode";
 import type { FreehandObject } from "../FreehandStudio";
+import { fetchAuthedMedia } from "@/lib/fetch-authed-media";
 import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
 
 export const FOLDDER_DE_FORMAT = "foldder-design" as const;
@@ -96,14 +97,14 @@ async function urlToBlob(url: string): Promise<Blob> {
     return fetchBlobViaSpacesProxy(u);
   }
   if (u.startsWith("/api/spaces/s3-file") || u.startsWith("/api/spaces/s3-download")) {
-    const res = await fetch(u);
+    const res = await fetchAuthedMedia(u);
     if (!res.ok) {
       throw new Error(`No se pudo descargar ${u.slice(0, 80)} (HTTP ${res.status})`);
     }
     return res.blob();
   }
   if (u.startsWith("knowledge-files/")) {
-    const res = await fetch(`/api/spaces/s3-file?key=${encodeURIComponent(u)}`);
+    const res = await fetchAuthedMedia(`/api/spaces/s3-file?key=${encodeURIComponent(u)}`);
     if (!res.ok) {
       throw new Error(`No se pudo descargar ${u.slice(0, 80)} (HTTP ${res.status})`);
     }

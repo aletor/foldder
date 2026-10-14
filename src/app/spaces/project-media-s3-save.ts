@@ -193,6 +193,12 @@ async function uploadProjectMediaDirectToS3(
     throw new Error(`Direct project media upload failed (${uploadRes.status}).`);
   }
 
+  void fetch("/api/spaces/media-derivatives", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: ticket.s3Key }),
+  }).catch(() => undefined);
+
   return {
     contentType: file.type || "application/octet-stream",
     s3Key: ticket.s3Key,

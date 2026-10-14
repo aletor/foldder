@@ -65,6 +65,7 @@ import {
 import { type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
 import { resolveMediaUrlFromEdgeSource } from "../resolve-connected-media-url";
+import { resolveStudioPreviewMediaUrl } from "@/lib/canvas-media-thumbnail";
 import { useAuthedMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
 import { nodeFrameNeedsSync, parseAspectRatioValue, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
@@ -1429,7 +1430,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             <X size={36} strokeWidth={2} />
           </div>
           <img
-            src={outputFullUrl ?? outputImage}
+            src={resolveStudioPreviewMediaUrl(outputImage, outputS3Key) ?? outputFullUrl ?? outputImage}
             className="max-h-full max-w-full w-auto h-auto rounded-none object-contain shadow-2xl"
             alt="Full size"
           />

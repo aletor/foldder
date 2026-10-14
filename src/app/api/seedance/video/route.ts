@@ -22,16 +22,19 @@ import {
   parseVideoRefSlots,
 } from "@/lib/video-generator-studio";
 import {
+  linkApiWalletChargeToProviderJob,
   reserveApiWalletCharge,
   reserveUsdToMicros,
   releaseApiWalletChargeOnError,
+  settleProviderJobWalletCharge,
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
+import { readVideoProviderJob, saveVideoProviderJob } from "@/lib/video-provider-job";
 import crypto from "crypto";
 
-/** Misma ventana que Veo (generación larga). */
-export const maxDuration = 300;
+/** El arranque y la descarga final caben en un request corto. El render lo pregunta el cliente. */
+export const maxDuration = 120;
 
 const DEFAULT_ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 /** ID del modelo en consola 方舟 (Seedance 2.x); configurable por entorno. */
@@ -245,98 +248,40 @@ export async function POST(req: NextRequest) {
     }
     releaseWalletOnError = false;
 
-    const pollUrl = `${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`;
-    let videoUrl = "";
-    const maxAttempts = 40;
-    const pollMs = 7000;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      await new Promise((r) => setTimeout(r, pollMs));
-      const pollRes = await fetch(pollUrl, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      const pollData = (await pollRes.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!pollRes.ok) {
-        console.warn("[Seedance] poll HTTP", pollRes.status, pollData);
-        continue;
-      }
-
-      const status = String(
-        pollData.status ?? (pollData as { task_status?: string }).task_status ?? "",
-      ).toLowerCase();
-
-      if (status === "failed" || status === "error" || status === "cancelled") {
-        const errMsg =
-          (pollData.error as { message?: string } | undefined)?.message ||
-          JSON.stringify(pollData.error || pollData).slice(0, 500);
-        throw new Error(`Seedance: ${errMsg}`);
-      }
-
-      if (
-        status === "succeeded" ||
-        status === "success" ||
-        status === "completed" ||
-        status === "done"
-      ) {
-        videoUrl = extractVideoUrlFromTask(pollData);
-        if (videoUrl) break;
-        console.error("[Seedance] éxito sin URL de vídeo:", JSON.stringify(pollData).slice(0, 800));
-        throw new Error("La tarea terminó pero no se encontró URL de vídeo en la respuesta.");
-      }
-    }
-
-    if (!videoUrl) {
-      throw new Error(
-        "Tiempo de espera agotado esperando el vídeo (Seedance). Reintenta o sube maxDuration en hosting.",
-      );
-    }
-
-    console.log("[Seedance] downloading…");
-    let videoRes = await fetch(videoUrl);
-    if (!videoRes.ok && apiKey) {
-      videoRes = await fetch(videoUrl, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-    }
-    if (!videoRes.ok) throw new Error(`Descarga del vídeo falló: HTTP ${videoRes.status}`);
-
-    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-    const filename = `seedance_${crypto.randomUUID()}.mp4`;
-    const key = buildUserAssetObjectKey({
-      userEmail: authState.user.email,
-      folder: "generated/video/seedance",
-      filename,
-    });
-    await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
-    const url = stableKnowledgeFileUrlFromKey(key);
     const actualCostUsd = estimateSeedanceVideoUsd(dur);
-    await walletCharge?.capture({
-      actualCostUsd,
-      metadata: {
-        model,
-        durationSeconds: dur,
-        taskId,
-      },
-    });
+    const jobId = crypto.randomUUID();
+    try {
+      await saveVideoProviderJob({
+        id: jobId,
+        provider: "seedance",
+        userEmail: authState.user.email,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        seedance: {
+          taskId,
+          base,
+          model,
+          durationSeconds: dur,
+          costUsd: actualCostUsd,
+          usageUserEmail,
+          providerJobId: taskId,
+        },
+      });
+      await linkApiWalletChargeToProviderJob(walletCharge, {
+        userEmail: authState.user.email,
+        provider: "volcengine",
+        providerJobId: taskId,
+        serviceId: "seedance-video",
+        route: "/api/seedance/video",
+        metadata: { jobId, estimatedCostMicros: Math.round(actualCostUsd * 1_000_000) },
+      });
+    } catch (error) {
+      await walletCharge?.release({ reason: "video_job_persist_failed" });
+      throw error;
+    }
 
-    await recordApiUsage({
-      provider: "volcengine",
-      userEmail: usageUserEmail,
-      serviceId: "seedance-video",
-      route: "/api/seedance/video",
-      model,
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      costUsd: actualCostUsd,
-      note: "Seedance / Ark vídeo (coste orientativo por segundo)",
-    });
-
-    return NextResponse.json({
-      output: url,
-      key,
-      status: "success",
-    });
+    return NextResponse.json({ status: "pending", jobId });
   } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json(
@@ -349,6 +294,127 @@ export async function POST(req: NextRequest) {
     if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Seedance] Exception:", message);
+    return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });
+  }
+}
+
+const SEEDANCE_SUCCESS = new Set(["succeeded", "success", "completed", "done"]);
+const SEEDANCE_FAILURE = new Set(["failed", "error", "cancelled"]);
+
+export async function GET(req: NextRequest) {
+  try {
+    await assertApiServiceEnabled("seedance-video");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const jobId = new URL(req.url).searchParams.get("jobId")?.trim() ?? "";
+    const job = await readVideoProviderJob(authState.user.email, jobId);
+    if (!job?.seedance) {
+      return NextResponse.json({ error: "Trabajo de vídeo no encontrado." }, { status: 404 });
+    }
+    if (job.status === "success" && job.outputUrl) {
+      return NextResponse.json({ status: "success", output: job.outputUrl, key: job.outputKey });
+    }
+    if (job.status === "failed") {
+      return NextResponse.json({ error: job.error || "La generación de vídeo falló." }, { status: 500 });
+    }
+    if (job.status === "finalizing" && Date.now() - Date.parse(job.updatedAt) < 90_000) {
+      return NextResponse.json({ status: "pending", jobId });
+    }
+
+    const apiKey =
+      process.env.VOLCENGINE_ARK_API_KEY?.trim() ||
+      process.env.SEEDANCE_API_KEY?.trim() ||
+      process.env.ARK_API_KEY?.trim() ||
+      "";
+    const pollUrl = `${job.seedance.base}/contents/generations/tasks/${encodeURIComponent(job.seedance.taskId)}`;
+    const pollRes = await fetch(pollUrl, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    });
+    const pollData = (await pollRes.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!pollRes.ok) {
+      return NextResponse.json({ status: "pending", jobId });
+    }
+    const status = String(pollData.status ?? pollData.task_status ?? "").toLowerCase();
+    if (SEEDANCE_FAILURE.has(status)) {
+      const errMsg =
+        (pollData.error as { message?: string } | undefined)?.message ||
+        JSON.stringify(pollData.error || pollData).slice(0, 500);
+      await settleProviderJobWalletCharge({
+        provider: "volcengine",
+        providerJobId: job.seedance.providerJobId,
+        status: "failed",
+        successStatuses: ["succeeded"],
+        failureStatuses: ["failed"],
+        metadata: { message: errMsg.slice(0, 240) },
+      });
+      await saveVideoProviderJob({ ...job, status: "failed", error: errMsg });
+      return NextResponse.json({ error: `Seedance: ${errMsg}` }, { status: 500 });
+    }
+    if (!SEEDANCE_SUCCESS.has(status)) {
+      return NextResponse.json({ status: "pending", jobId });
+    }
+
+    const videoUrl = extractVideoUrlFromTask(pollData);
+    if (!videoUrl) {
+      const errMsg = "La tarea terminó pero no se encontró URL de vídeo en la respuesta.";
+      await settleProviderJobWalletCharge({
+        provider: "volcengine",
+        providerJobId: job.seedance.providerJobId,
+        status: "failed",
+        successStatuses: ["succeeded"],
+        failureStatuses: ["failed"],
+      });
+      await saveVideoProviderJob({ ...job, status: "failed", error: errMsg });
+      return NextResponse.json({ error: errMsg }, { status: 500 });
+    }
+
+    await saveVideoProviderJob({ ...job, status: "finalizing" });
+    let videoRes = await fetch(videoUrl);
+    if (!videoRes.ok && apiKey) {
+      videoRes = await fetch(videoUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
+    }
+    if (!videoRes.ok) {
+      throw new Error(`Descarga del vídeo falló: HTTP ${videoRes.status}`);
+    }
+    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
+    const key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "generated/video/seedance",
+      filename: `seedance_${crypto.randomUUID()}.mp4`,
+    });
+    await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
+    const url = stableKnowledgeFileUrlFromKey(key);
+    await settleProviderJobWalletCharge({
+      provider: "volcengine",
+      providerJobId: job.seedance.providerJobId,
+      status: "succeeded",
+      successStatuses: ["succeeded"],
+      failureStatuses: ["failed"],
+      actualCostUsd: job.seedance.costUsd,
+      metadata: { model: job.seedance.model, durationSeconds: job.seedance.durationSeconds, taskId: job.seedance.taskId },
+    });
+    await recordApiUsage({
+      provider: "volcengine",
+      userEmail: job.seedance.usageUserEmail,
+      serviceId: "seedance-video",
+      route: "/api/seedance/video",
+      model: job.seedance.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: job.seedance.costUsd,
+      note: "Seedance / Ark vídeo (coste orientativo por segundo)",
+    });
+    await saveVideoProviderJob({ ...job, status: "success", outputUrl: url, outputKey: key });
+    return NextResponse.json({ output: url, key, status: "success" });
+  } catch (error: unknown) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json({ error: `API bloqueada en admin: ${error.label}` }, { status: 423 });
+    }
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Seedance] Poll exception:", message);
     return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });
   }
 }

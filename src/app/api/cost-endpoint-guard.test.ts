@@ -61,10 +61,8 @@ const WALLET_GATED_SYNC_ENDPOINTS = [
   "src/app/api/gemini/describe-region/route.ts",
   "src/app/api/gemini/generate/route.ts",
   "src/app/api/gemini/generate-stream/route.ts",
-  "src/app/api/gemini/video/route.ts",
   "src/app/api/openai/enhance/route.ts",
   "src/app/api/openai/generate-stream/route.ts",
-  "src/app/api/seedance/video/route.ts",
   "src/app/api/spaces/cine/analyze/route.ts",
   "src/app/api/spaces/describe/route.ts",
   "src/app/api/spaces/pdf-scan/ocr/route.ts",
@@ -83,14 +81,18 @@ const WALLET_GATED_SYNC_ENDPOINTS = [
 ] as const;
 
 const WALLET_GATED_ASYNC_START_ENDPOINTS = [
+  "src/app/api/gemini/video/route.ts",
   "src/app/api/grok/generate/route.ts",
   "src/app/api/runway/generate/route.ts",
+  "src/app/api/seedance/video/route.ts",
   "src/app/api/video-editor/render/route.ts",
 ] as const;
 
 const WALLET_GATED_ASYNC_STATUS_ENDPOINTS = [
+  "src/app/api/gemini/video/route.ts",
   "src/app/api/grok/status/[id]/route.ts",
   "src/app/api/runway/status/[id]/route.ts",
+  "src/app/api/seedance/video/route.ts",
   "src/app/api/video-editor/render-status/route.ts",
 ] as const;
 

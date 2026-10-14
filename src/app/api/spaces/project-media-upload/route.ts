@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 import {
@@ -12,6 +12,8 @@ import {
   requireSpacesAuthUser,
   stableKnowledgeFileUrlFromKey,
 } from "@/lib/spaces-access-control";
+import { isRasterImagePathOrMime } from "@/lib/canvas-media-thumbnail";
+import { ensureCanvasAndStudioDerivatives } from "@/lib/s3-media-delivery";
 import { uploadBufferToS3Key } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
@@ -99,6 +101,10 @@ export async function POST(req: Request) {
     }).catch((error) => {
       console.warn("[project-media-upload] usage recording failed; upload kept.", error);
     });
+
+    if (isRasterImagePathOrMime(key)) {
+      after(() => ensureCanvasAndStudioDerivatives(key));
+    }
 
     const stableUrl = stableKnowledgeFileUrlFromKey(key);
     return NextResponse.json({ key, s3Key: key, url: stableUrl });

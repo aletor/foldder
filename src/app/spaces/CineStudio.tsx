@@ -35,6 +35,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { fetchAuthedMedia } from "@/lib/fetch-authed-media";
+import { requestGeneratedVideo } from "@/lib/video-generation-client";
 import { FoldderStudioHeader } from "./FoldderStudioHeader";
 import {
   CINE_CAMERA_MOVEMENT_LABELS,
@@ -390,7 +392,7 @@ function useCineVideoPlaybackSource(src?: string, s3Key?: string) {
     if (!stableUrl || blobAttemptRef.current) return;
     blobAttemptRef.current = true;
     try {
-      const response = await fetch(stableUrl, { credentials: "include" });
+      const response = await fetchAuthedMedia(stableUrl);
       if (!response.ok) return;
       const blob = await response.blob();
       if (!blob.size) return;
@@ -1597,10 +1599,9 @@ export function CineStudio({
         : [];
       const extraReferences = Array.from(new Set([...signedReferenceUrls, ...directReferenceUrls])).slice(0, extraReferenceLimit);
       const videoRefSlots = Object.fromEntries(extraReferences.map((url, index) => [`Image${index + 1}`, url]));
-      const res = await fetch("/api/gemini/video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      let json: { output?: string; key?: string; error?: string };
+      try {
+        json = await requestGeneratedVideo("/api/gemini/video", {
           prompt: preparedPlan.prompt,
           firstFrame,
           lastFrame,
@@ -1611,10 +1612,11 @@ export function CineStudio({
           audio: false,
           negativePrompt: preparedPlan.negativePrompt,
           cameraPreset: preparedPlan.cameraPrompt || preparedPlan.cameraDescription,
-        }),
-      });
-      const json = (await res.json().catch(() => ({}))) as { output?: string; key?: string; error?: string };
-      if (!res.ok || !json.output) {
+        });
+      } catch (error) {
+        json = { error: error instanceof Error ? error.message : "No se pudo generar el vídeo." };
+      }
+      if (!json.output) {
         const message = json.error || "No se pudo generar el vídeo.";
         workingData = commitVideoPlan(workingData, scene.id, {
           ...inFlightPlan,

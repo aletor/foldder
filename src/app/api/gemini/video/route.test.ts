@@ -65,7 +65,7 @@ vi.mock("@/lib/spaces-access-control", () => ({
   stableKnowledgeFileUrlFromKey: vi.fn((key: string) => `/api/spaces/s3-file?key=${encodeURIComponent(key)}`),
 }));
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 describe("/api/gemini/video", () => {
   beforeEach(() => {
@@ -89,9 +89,15 @@ describe("/api/gemini/video", () => {
       }),
     });
 
-    const pending = POST(request as never);
-    await vi.advanceTimersByTimeAsync(8000);
-    const response = await pending;
+    const startedResponse = await POST(request as never);
+    const started = await startedResponse.json();
+    expect(startedResponse.status).toBe(200);
+    expect(started.status).toBe("pending");
+    expect(typeof started.jobId).toBe("string");
+
+    const response = await GET(
+      new Request(`http://localhost/api/gemini/video?jobId=${started.jobId}`) as never,
+    );
     const json = await response.json();
 
     expect(response.status).toBe(200);

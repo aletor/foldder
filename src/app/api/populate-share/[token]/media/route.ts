@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
+import { BUCKET_NAME, getPresignedUrl, s3Client } from "@/lib/s3-utils";
 import { inferMimeTypeFromPath } from "@/lib/api-media-access";
 import { findPopulateShareByToken } from "@/lib/populate-share-db";
 import { populateShareAccessError } from "@/lib/populate-share-access";
@@ -33,6 +33,21 @@ export async function GET(req: NextRequest, context: { params: Promise<{ token: 
       const exportKeys = await listPopulateShareExportS3Keys(share);
       if (!exportKeys.includes(key)) {
         return NextResponse.json({ error: "Forbidden media key." }, { status: 403 });
+      }
+    }
+
+    if (new URL(req.url).searchParams.get("stream") !== "1" && process.env.FOLDDER_S3_FILE_STREAM !== "1") {
+      try {
+        const signed = await getPresignedUrl(key, 3600);
+        return new NextResponse(null, {
+          status: 302,
+          headers: {
+            "Cache-Control": "private, max-age=600",
+            Location: signed,
+          },
+        });
+      } catch (error) {
+        console.warn("[populate-share/media] redirect failed; streaming object.", error);
       }
     }
 

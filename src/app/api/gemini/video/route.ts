@@ -24,20 +24,23 @@ import {
   parseVideoRefSlots,
 } from "@/lib/video-generator-studio";
 import {
+  linkApiWalletChargeToProviderJob,
   reserveApiWalletCharge,
   reserveUsdToMicros,
   releaseApiWalletChargeOnError,
+  settleProviderJobWalletCharge,
   walletGateErrorResponse,
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
+import { readVideoProviderJob, saveVideoProviderJob } from "@/lib/video-provider-job";
 import { geminiProviderErrorResponse } from "@/lib/gemini-provider-error";
 import crypto from "crypto";
 import { mkdtemp, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 
-/** Vercel / hosting: permite polling largo (Veo suele tardar minutos). Ajusta según tu plan. */
-export const maxDuration = 300;
+/** El arranque y la descarga final caben en un request corto. El render lo pregunta el cliente. */
+export const maxDuration = 120;
 
 type ExtractedVeoVideo = {
   uri?: string;
@@ -411,83 +414,45 @@ export async function POST(req: NextRequest) {
     releaseWalletOnError = false;
     console.log(`[Gemini Video] Operation started: ${operation.name || "(unnamed)"}`);
 
-    let generatedVideo: ExtractedVeoVideo | null = null;
-    const maxAttempts = 36; // 36 × 8s ≈ 288s + trabajo previo < maxDuration 300s
-    const pollIntervalMs = 8000;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      console.log(`[Gemini Video] Polling attempt ${attempt}/${maxAttempts}...`);
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
-      operation = await ai.operations.getVideosOperation({ operation });
-
-      if (operation.done === true) {
-        if (operation.error) {
-          const msg = String(operation.error.message || JSON.stringify(operation.error));
-          console.error("[Gemini Video] Operation error:", operation.error);
-          await walletCharge?.release({ reason: "provider_operation_error", metadata: { message: msg.slice(0, 240) } });
-          throw new Error(`Veo: ${msg}`);
-        }
-        generatedVideo = pickVeoVideoFromOperation(operation);
-        console.log(`[Gemini Video] Operation complete. Video: ${generatedVideo?.uri ? "uri" : generatedVideo?.base64 ? "base64" : "(empty)"}`);
-        if (generatedVideo?.uri || generatedVideo?.base64) break;
-        console.error("[Gemini Video] done=true but no URI. Snapshot:", JSON.stringify(operation).slice(0, 1200));
-        throw new Error(
-          "Veo terminó pero no devolvió un vídeo descargable. Revisa prompt, cuota o políticas de contenido (RAI)."
-        );
-      }
-    }
-
-    if (!generatedVideo?.uri && !generatedVideo?.base64) {
-      throw new Error(
-        "Tiempo de espera agotado: el vídeo no estuvo listo antes del límite del servidor. Prueba de nuevo o usa un plan con más tiempo de ejecución."
-      );
-    }
-
-    const videoBuffer = await downloadVeoVideoBuffer(ai, operation, generatedVideo, apiKey);
-    const filename = `veo_${crypto.randomUUID()}.mp4`;
-    const key = buildUserAssetObjectKey({
-      userEmail: authState.user.email,
-      folder: "generated/video/veo",
-      filename,
-    });
-    await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
-    const url = stableKnowledgeFileUrlFromKey(key);
-
     const costDur = effectiveDur > 0 ? effectiveDur : 8;
     const actualCostUsd =
       Math.round(
-        estimateGeminiVeoVideoUsd(costDur) *
-          veoResolutionMultiplier(resStr) *
-          1_000_000,
+        estimateGeminiVeoVideoUsd(costDur) * veoResolutionMultiplier(resStr) * 1_000_000,
       ) / 1_000_000;
-    await walletCharge?.capture({
-      actualCostUsd,
-      metadata: {
-        model: modelId,
-        durationSeconds: costDur,
-        resolution: resStr,
-        operationName: operation.name,
-      },
-    });
+    const jobId = crypto.randomUUID();
+    const providerJobId = operation.name || jobId;
+    try {
+      await saveVideoProviderJob({
+        id: jobId,
+        provider: "gemini",
+        userEmail: authState.user.email,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        gemini: {
+          operation,
+          modelId,
+          durationSeconds: costDur,
+          resolution: resStr,
+          costUsd: actualCostUsd,
+          usageUserEmail,
+          providerJobId,
+        },
+      });
+      await linkApiWalletChargeToProviderJob(walletCharge, {
+        userEmail: authState.user.email,
+        provider: "gemini",
+        providerJobId,
+        serviceId: "gemini-veo",
+        route: "/api/gemini/video",
+        metadata: { jobId, estimatedCostMicros: Math.round(actualCostUsd * 1_000_000) },
+      });
+    } catch (error) {
+      await walletCharge?.release({ reason: "video_job_persist_failed" });
+      throw error;
+    }
 
-    await recordApiUsage({
-      provider: "gemini",
-      userEmail: usageUserEmail,
-      serviceId: "gemini-veo",
-      route: "/api/gemini/video",
-      model: "veo-3.1-generate-preview",
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-      costUsd: actualCostUsd,
-      note: "Veo vídeo (coste orientativo por segundo)",
-    });
-
-    return NextResponse.json({ 
-      output: url,
-      key: key,
-      status: "success"
-    });
+    return NextResponse.json({ status: "pending", jobId });
 
   } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
@@ -503,6 +468,131 @@ export async function POST(req: NextRequest) {
     if (providerResponse) return providerResponse;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Gemini Video] Global Exception:", message);
+    return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    await assertApiServiceEnabled("gemini-veo");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const jobId = new URL(req.url).searchParams.get("jobId")?.trim() ?? "";
+    const job = await readVideoProviderJob(authState.user.email, jobId);
+    if (!job?.gemini) {
+      return NextResponse.json({ error: "Trabajo de vídeo no encontrado." }, { status: 404 });
+    }
+    if (job.status === "success" && job.outputUrl) {
+      return NextResponse.json({ status: "success", output: job.outputUrl, key: job.outputKey });
+    }
+    if (job.status === "failed") {
+      return NextResponse.json({ error: job.error || "La generación de vídeo falló." }, { status: 500 });
+    }
+    if (job.status === "finalizing" && Date.now() - Date.parse(job.updatedAt) < 90_000) {
+      return NextResponse.json({ status: "pending", jobId });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!apiKey) return NextResponse.json({ error: "API Key not configured" }, { status: 500 });
+    const ai = new GoogleGenAI({ apiKey });
+    const operation = await ai.operations.getVideosOperation({
+      operation: job.gemini.operation as never,
+    });
+    const snapshot = operation as VeoOperationSnapshot;
+
+    if (snapshot.done !== true) {
+      await saveVideoProviderJob({
+        ...job,
+        status: "pending",
+        gemini: { ...job.gemini, operation },
+      });
+      return NextResponse.json({ status: "pending", jobId });
+    }
+
+    if (snapshot.error) {
+      const msg = String(snapshot.error.message || JSON.stringify(snapshot.error));
+      await settleProviderJobWalletCharge({
+        provider: "gemini",
+        providerJobId: job.gemini.providerJobId,
+        status: "failed",
+        successStatuses: ["succeeded"],
+        failureStatuses: ["failed"],
+        metadata: { message: msg.slice(0, 240) },
+      });
+      await saveVideoProviderJob({ ...job, status: "failed", error: msg });
+      return NextResponse.json({ error: `Veo: ${msg}` }, { status: 500 });
+    }
+
+    const generatedVideo = pickVeoVideoFromOperation(snapshot);
+    if (!generatedVideo?.uri && !generatedVideo?.base64) {
+      const msg = "Veo terminó pero no devolvió un vídeo descargable. Revisa prompt, cuota o políticas de contenido (RAI).";
+      await settleProviderJobWalletCharge({
+        provider: "gemini",
+        providerJobId: job.gemini.providerJobId,
+        status: "failed",
+        successStatuses: ["succeeded"],
+        failureStatuses: ["failed"],
+      });
+      await saveVideoProviderJob({ ...job, status: "failed", error: msg });
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+
+    await saveVideoProviderJob({
+      ...job,
+      status: "finalizing",
+      gemini: { ...job.gemini, operation },
+    });
+    const videoBuffer = await downloadVeoVideoBuffer(ai, snapshot, generatedVideo, apiKey);
+    const key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "generated/video/veo",
+      filename: `veo_${crypto.randomUUID()}.mp4`,
+    });
+    await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
+    const url = stableKnowledgeFileUrlFromKey(key);
+    await settleProviderJobWalletCharge({
+      provider: "gemini",
+      providerJobId: job.gemini.providerJobId,
+      status: "succeeded",
+      successStatuses: ["succeeded"],
+      failureStatuses: ["failed"],
+      actualCostUsd: job.gemini.costUsd,
+      metadata: {
+        model: job.gemini.modelId,
+        durationSeconds: job.gemini.durationSeconds,
+        resolution: job.gemini.resolution,
+      },
+    });
+    await recordApiUsage({
+      provider: "gemini",
+      userEmail: job.gemini.usageUserEmail,
+      serviceId: "gemini-veo",
+      route: "/api/gemini/video",
+      model: "veo-3.1-generate-preview",
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: job.gemini.costUsd,
+      note: "Veo vídeo (coste orientativo por segundo)",
+    });
+    await saveVideoProviderJob({
+      ...job,
+      status: "success",
+      outputUrl: url,
+      outputKey: key,
+      gemini: { ...job.gemini, operation },
+    });
+    return NextResponse.json({ output: url, key, status: "success" });
+  } catch (error: unknown) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json({ error: `API bloqueada en admin: ${error.label}` }, { status: 423 });
+    }
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
+    const providerResponse = geminiProviderErrorResponse(error);
+    if (providerResponse) return providerResponse;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Gemini Video] Poll exception:", message);
     return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });
   }
 }
