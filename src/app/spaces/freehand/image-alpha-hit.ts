@@ -8,6 +8,11 @@
  * el llamante debe caer al bounding box para no romper la selección.
  */
 
+import {
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  resolveCanvasThumbnailMediaUrl,
+} from "@/lib/canvas-media-thumbnail";
+
 /** Borde máximo del mapa de alfa cacheado (px). Suficiente para acertar el clic; acota memoria. */
 export const ALPHA_MAP_MAX_EDGE = 800;
 /** Umbral de opacidad (0..255). Por debajo se considera transparente (clic atraviesa). */
@@ -30,10 +35,19 @@ export type ImageAlphaEntry =
 
 const cache = new Map<string, ImageAlphaEntry>();
 const listeners = new Set<() => void>();
+let notifyRaf = 0;
 
-/** Notifica a los suscriptores que una entrada cambió (p. ej. para refrescar el hover). */
+/** Notifica a los suscriptores una vez por frame (evita N re-renders al abrir el studio). */
 function notify(): void {
-  for (const cb of listeners) cb();
+  if (typeof window === "undefined") {
+    for (const cb of listeners) cb();
+    return;
+  }
+  if (notifyRaf) return;
+  notifyRaf = window.requestAnimationFrame(() => {
+    notifyRaf = 0;
+    for (const cb of listeners) cb();
+  });
 }
 
 export function subscribeImageAlpha(cb: () => void): () => void {
@@ -63,13 +77,48 @@ export function prewarmImageAlpha(src: string | null | undefined): void {
   void decodeAlpha(key);
 }
 
+function alphaDecodeSrc(src: string): string {
+  // Mapa de 480 px ya cacheado en S3. Nunca el original ni stream=1 (eso vacía Vercel).
+  return resolveCanvasThumbnailMediaUrl(src, null, FOLDDER_CANVAS_THUMB_MAX_SIDE) || src;
+}
+
+function scheduleIdle(work: () => void, attempt = 0): void {
+  if (typeof window === "undefined") {
+    work();
+    return;
+  }
+  const run = () => {
+    const inputPending = (
+      navigator as Navigator & { scheduling?: { isInputPending?: () => boolean } }
+    ).scheduling?.isInputPending?.();
+    if (inputPending && attempt < 8) {
+      scheduleIdle(work, attempt + 1);
+      return;
+    }
+    work();
+  };
+  const ric = (
+    window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }
+  ).requestIdleCallback;
+  if (typeof ric === "function") {
+    ric(run, { timeout: 1600 });
+    return;
+  }
+  window.setTimeout(run, 32);
+}
+
 async function decodeAlpha(src: string): Promise<void> {
   if (typeof document === "undefined") {
     cache.set(src, { status: "failed" });
     return;
   }
   const img = new Image();
-  img.crossOrigin = "anonymous";
+  const loadSrc = alphaDecodeSrc(src);
+  const embedded = loadSrc.startsWith("blob:") || loadSrc.startsWith("data:");
+  // El thumb same-origin redirige a S3. anonymous permite leer el alfa si el bucket tiene CORS.
+  if (!embedded) img.crossOrigin = "anonymous";
   img.decoding = "async";
   img.onload = () => {
     const natW = img.naturalWidth || 0;
@@ -79,31 +128,35 @@ async function decodeAlpha(src: string): Promise<void> {
       notify();
       return;
     }
-    const scale = Math.min(1, ALPHA_MAP_MAX_EDGE / Math.max(natW, natH));
-    const aw = Math.max(1, Math.round(natW * scale));
-    const ah = Math.max(1, Math.round(natH * scale));
-    try {
-      const c = document.createElement("canvas");
-      c.width = aw;
-      c.height = ah;
-      const ctx = c.getContext("2d", { willReadFrequently: true });
-      if (!ctx) throw new Error("no 2d ctx");
-      ctx.drawImage(img, 0, 0, aw, ah);
-      const data = ctx.getImageData(0, 0, aw, ah).data;
-      const alpha = new Uint8Array(aw * ah);
-      for (let i = 3, p = 0; p < alpha.length; i += 4, p++) alpha[p] = data[i]!;
-      cache.set(src, { status: "ready", natW, natH, aw, ah, alpha });
-    } catch {
-      // Canvas contaminado (CORS sin cabeceras) u otro fallo de lectura → bounding box.
-      cache.set(src, { status: "failed" });
-    }
-    notify();
+    // getImageData es caro: no bloquear el hilo de selección/arrastre del studio.
+    scheduleIdle(() => {
+      if (cache.get(src)?.status !== "pending") return;
+      const scale = Math.min(1, ALPHA_MAP_MAX_EDGE / Math.max(natW, natH));
+      const aw = Math.max(1, Math.round(natW * scale));
+      const ah = Math.max(1, Math.round(natH * scale));
+      try {
+        const c = document.createElement("canvas");
+        c.width = aw;
+        c.height = ah;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        if (!ctx) throw new Error("no 2d ctx");
+        ctx.drawImage(img, 0, 0, aw, ah);
+        const data = ctx.getImageData(0, 0, aw, ah).data;
+        const alpha = new Uint8Array(aw * ah);
+        for (let i = 3, p = 0; p < alpha.length; i += 4, p++) alpha[p] = data[i]!;
+        cache.set(src, { status: "ready", natW, natH, aw, ah, alpha });
+      } catch {
+        // Canvas contaminado (CORS sin cabeceras) u otro fallo de lectura → bounding box.
+        cache.set(src, { status: "failed" });
+      }
+      notify();
+    });
   };
   img.onerror = () => {
     cache.set(src, { status: "failed" });
     notify();
   };
-  img.src = src;
+  img.src = loadSrc;
 }
 
 /** Alfa (0..255) en coordenadas de píxel NATURAL del bitmap; 0 si cae fuera del bitmap. */
@@ -122,6 +175,10 @@ export function sampleAlphaAtNaturalPixel(
 export function __clearImageAlphaCacheForTests(): void {
   cache.clear();
   listeners.clear();
+  if (typeof window !== "undefined" && notifyRaf) {
+    window.cancelAnimationFrame(notifyRaf);
+    notifyRaf = 0;
+  }
 }
 
 /** Recorta un canvas raster dejando solo el bounding box del contenido opaco (+ padding). */

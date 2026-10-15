@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNodeId, useStore, type ReactFlowState } from "@xyflow/react";
 import { acquireCanvasMediaSlot } from "@/lib/canvas-media-slot";
 import {
@@ -11,6 +11,10 @@ import {
   resolveFullQualityMediaUrl,
 } from "@/lib/canvas-media-thumbnail";
 import { appendMediaStreamParam, fetchAuthedMedia } from "@/lib/fetch-authed-media";
+import {
+  isFoldderStudioBodyOpen,
+  subscribeFoldderStudioBodyOpen,
+} from "../studio-node/studio-node-architecture";
 
 export type AuthedMediaPreviewOptions = {
   /** Preview ligero en nodos del lienzo; studio/export/descarga usan `fullUrl`. */
@@ -62,7 +66,16 @@ export function useAuthedMediaPreviewUrl(
   const canvasThumbnail = Boolean(options?.canvasThumbnail);
   const maxSide = options?.maxSide ?? FOLDDER_CANVAS_THUMB_MAX_SIDE;
   const nodeId = useNodeId();
-  const inView = useStore((state) => mediaNodeIntersectsViewport(state, nodeId));
+  const studioOpen = useSyncExternalStore(
+    subscribeFoldderStudioBodyOpen,
+    isFoldderStudioBodyOpen,
+    () => false,
+  );
+  const inView = useStore((state) => {
+    // Con studio abierto el lienzo queda detrás: no gastes red/CPU en thumbs.
+    if (studioOpen) return false;
+    return mediaNodeIntersectsViewport(state, nodeId);
+  });
 
   const fullUrl = useMemo(() => resolveFullQualityMediaUrl(src, s3Key), [s3Key, src]);
   const serverCanvasUrl = useMemo(
@@ -93,7 +106,7 @@ export function useAuthedMediaPreviewUrl(
       setDisplayUrl(undefined);
       return;
     }
-    if (gateRemoteCanvas && !inView) {
+    if (gateRemoteCanvas && (!inView || studioOpen)) {
       setDisplayUrl(FOLDDER_MEDIA_PLACEHOLDER);
       return;
     }
@@ -165,7 +178,7 @@ export function useAuthedMediaPreviewUrl(
       cancelled = true;
       releaseSlot?.();
     };
-  }, [canvasThumbnail, fullUrl, gateRemoteCanvas, inView, maxSide, serverCanvasUrl]);
+  }, [canvasThumbnail, fullUrl, gateRemoteCanvas, inView, maxSide, serverCanvasUrl, studioOpen]);
 
   useEffect(
     () => () => {

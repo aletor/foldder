@@ -40,7 +40,20 @@ export type ExportDomOptions = {
   bounds: Rect;
   scale: number;
   background: "transparent" | string;
+  /** Node-card preview. Export, PDF and full-resolution restore the master href. */
+  keepScreenRaster?: boolean;
 };
+
+/** The on-screen studio paints a derivative. Export reads the original URL from this attribute. */
+function restoreMasterRasterHrefs(root: ParentNode): void {
+  root.querySelectorAll("image[data-foldder-full-src]").forEach((node) => {
+    const full = node.getAttribute("data-foldder-full-src");
+    if (!full) return;
+    node.setAttribute("href", full);
+    node.setAttributeNS("http://www.w3.org/1999/xlink", "href", full);
+    node.removeAttribute("data-foldder-full-src");
+  });
+}
 
 /**
  * HTML y el DOM serializan a veces espacios duros como `&nbsp;`. En XML/SVG solo existen
@@ -63,6 +76,7 @@ export function buildStandaloneSvgFromCanvasDom(
 ): string {
   const clone = svgEl.cloneNode(true) as SVGSVGElement;
   clone.querySelectorAll("[data-ui]").forEach((el) => el.remove());
+  if (!opts.keepScreenRaster) restoreMasterRasterHrefs(clone);
 
   const exportIds = opts.exportIds;
 

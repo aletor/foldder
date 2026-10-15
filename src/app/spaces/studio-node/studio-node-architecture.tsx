@@ -18,6 +18,23 @@ const BODY_LOCK_KEY = "__foldderStudioBodyLocks";
 /** Nodos con studio abierto — sobrevive a remounts por `onlyRenderVisibleElements`. */
 const studioOpenNodeIds = new Set<string>();
 
+const studioOpenListeners = new Set<() => void>();
+
+/** True si hay al menos un studio a pantalla completa (clase en body). */
+export function isFoldderStudioBodyOpen(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.body.classList.contains(FOLDDER_STUDIO_BODY_CLASS);
+}
+
+export function subscribeFoldderStudioBodyOpen(cb: () => void): () => void {
+  studioOpenListeners.add(cb);
+  return () => studioOpenListeners.delete(cb);
+}
+
+function notifyFoldderStudioBodyOpen(): void {
+  for (const cb of studioOpenListeners) cb();
+}
+
 export function isFoldderStudioNodeOpen(nodeId: string): boolean {
   return studioOpenNodeIds.has(nodeId);
 }
@@ -38,6 +55,7 @@ function acquireStudioBodyLock(): () => void {
   if (!studioWindow || typeof document === "undefined") return () => undefined;
   studioWindow[BODY_LOCK_KEY] = (studioWindow[BODY_LOCK_KEY] ?? 0) + 1;
   document.body.classList.add(FOLDDER_STUDIO_BODY_CLASS);
+  notifyFoldderStudioBodyOpen();
   let released = false;
   return () => {
     if (released) return;
@@ -45,6 +63,7 @@ function acquireStudioBodyLock(): () => void {
     studioWindow[BODY_LOCK_KEY] = Math.max(0, (studioWindow[BODY_LOCK_KEY] ?? 1) - 1);
     if (studioWindow[BODY_LOCK_KEY] === 0) {
       document.body.classList.remove(FOLDDER_STUDIO_BODY_CLASS);
+      notifyFoldderStudioBodyOpen();
     }
   };
 }

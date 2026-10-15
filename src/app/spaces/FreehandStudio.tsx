@@ -20,6 +20,7 @@ import { useInputMode } from "./input-mode-context";
 import { useFreehandStudioTouchCanvasHandlers } from "./freehand/freehand-studio-touch";
 import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
 import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
+import { resolveStudioPreviewMediaUrl } from "@/lib/canvas-media-thumbnail";
 import {
   fetchSameOriginOrBlobHrefAsDataUrl,
   isSameOriginSpacesApiHref,
@@ -255,7 +256,6 @@ import {
   prewarmImageAlpha,
   sampleAlphaAtNaturalPixel,
   setImageAlphaFromCanvas,
-  subscribeImageAlpha,
   trimCanvasToOpaqueBounds,
 } from "./freehand/image-alpha-hit";
 import {
@@ -3057,8 +3057,8 @@ function imageAlphaHitTest(pos: Point, img: ImageObject): boolean {
   if (!pointInRotatedRect(pos.x, pos.y, img)) return false;
   const entry = getImageAlphaEntry(img.src);
   if (!entry) return false;
-  if (entry.status === "pending") return false;
-  if (entry.status === "failed") return true;
+  // Mientras descarga/decodifica (o si CORS falla): bounding box, no “agujero” de clic.
+  if (entry.status === "pending" || entry.status === "failed") return true;
   const par = img.imagePreserveAspectRatio ?? "xMidYMid meet";
   let px: { ix: number; iy: number } | null;
   if (par === "none") {
@@ -3389,7 +3389,7 @@ function syntheticShiftMouseEvent(tail: {
 }
 
 /** Máximo lado del bitmap para preview durante mover / rotar / escalar (el original se restaura al soltar). */
-const RASTER_SELECTION_GESTURE_PROXY_MAX_EDGE_PX = 2560;
+const RASTER_SELECTION_GESTURE_PROXY_MAX_EDGE_PX = 1280;
 
 function rasterSelectionGestureNeedsProxy(iw: number, ih: number): boolean {
   if (!iw || !ih) return false;
@@ -3428,7 +3428,7 @@ function buildRasterSelectionGestureProxyDataUrl(src: string): Promise<string | 
       }
       ctx.drawImage(im, 0, 0, tw, th);
       try {
-        resolve(c.toDataURL("image/jpeg", 0.92));
+        resolve(c.toDataURL("image/jpeg", 0.72));
       } catch {
         resolve(null);
       }
@@ -5301,13 +5301,29 @@ export function renderPresenterVideoClipShapeWorld(o: FreehandObject): React.Rea
   return null;
 }
 
+/** En pantalla se pinta el derivado de 1600 px. `masterSrc` conserva el original para exportar. */
+function screenRasterPair(src: string): { href: string; masterSrc?: string } {
+  const href = resolveStudioPreviewMediaUrl(src) ?? src;
+  if (!href || href === src) return { href: src };
+  return { href, masterSrc: src };
+}
+
+function rasterHrefAttrs(
+  href: string,
+  masterSrc?: string,
+): { href: string; "data-foldder-full-src"?: string } {
+  if (masterSrc && masterSrc !== href) return { href, "data-foldder-full-src": masterSrc };
+  return { href };
+}
+
 function renderMaskShapeClipInner(m: ClipMaskShape): React.ReactNode {
   if (m.type === "image") {
     const im = m as ImageObject;
     const transform = buildObjTransform(im);
+    const raster = screenRasterPair(im.src);
     return (
       <image
-        href={im.src}
+        {...rasterHrefAttrs(raster.href, raster.masterSrc)}
         x={im.x}
         y={im.y}
         width={im.width}
@@ -5336,9 +5352,10 @@ function renderMaskShapeEffectAlpha(m: ClipMaskShape): React.ReactNode {
   if (m.type === "image") {
     const im = m as ImageObject;
     const transform = buildObjTransform(im);
+    const raster = screenRasterPair(im.src);
     return (
       <image
-        href={im.src}
+        {...rasterHrefAttrs(raster.href, raster.masterSrc)}
         x={im.x}
         y={im.y}
         width={im.width}
@@ -6359,10 +6376,11 @@ function RasterBitmapWithLayerEffects(props: {
   w: number;
   h: number;
   href: string;
+  masterSrc?: string;
   preserveAspectRatio: string;
   effects: LayerEffects | undefined;
 }): React.ReactNode {
-  const { objId, x, y, w, h, href, preserveAspectRatio, effects } = props;
+  const { objId, x, y, w, h, href, masterSrc, preserveAspectRatio, effects } = props;
   const og = effects?.outerGlow;
   const ogOn = !!og?.enabled;
   const pf = effects?.photoFilter;
@@ -6371,7 +6389,7 @@ function RasterBitmapWithLayerEffects(props: {
 
   const imageEl = (
     <image
-      href={href}
+      {...rasterHrefAttrs(href, masterSrc)}
       x={x}
       y={y}
       width={w}
@@ -6391,6 +6409,7 @@ function RasterBitmapWithLayerEffects(props: {
         w={w}
         h={h}
         href={href}
+        masterSrc={masterSrc}
         preserveAspectRatio={preserveAspectRatio}
         effects={effects}
       />
@@ -6403,6 +6422,7 @@ function RasterBitmapWithLayerEffects(props: {
           h={h}
           pf={pf!}
           href={href}
+          masterSrc={masterSrc}
           preserveAspectRatio={preserveAspectRatio}
         />
       ) : null}
@@ -6445,7 +6465,7 @@ function RasterBitmapWithLayerEffects(props: {
             </filter>
           </defs>
           <g filter={`url(#${fid})`} style={layerStyleEffectRectStyle(og.blendMode as LayerBlendMode, 1)}>
-            <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
+            <image {...rasterHrefAttrs(href, masterSrc)} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
           </g>
           {imageEl}
           {overlays}
@@ -6527,6 +6547,7 @@ function wrapRasterChildrenWithLayerMask(
 ): React.ReactNode {
   if (!isLayerMaskVisible({ layerMask: lm ?? undefined })) return children;
   const m = lm!;
+  const maskRaster = screenRasterPair(m.src);
   const mid = `fh-lym-${fhFxSanitizeId(objId)}`;
   const finv = `${mid}-finv`;
   return wrapPdfFxBakeGroup(
@@ -6554,7 +6575,7 @@ function wrapRasterChildrenWithLayerMask(
           maskContentUnits="userSpaceOnUse"
         >
           <image
-            href={m.src}
+            {...rasterHrefAttrs(maskRaster.href, maskRaster.masterSrc)}
             x={x}
             y={y}
             width={w}
@@ -6587,10 +6608,11 @@ function PhotoFilterOverlays(props: {
   h: number;
   pf: PhotoFilterEffect;
   href?: string;
+  masterSrc?: string;
   preserveAspectRatio?: string;
   maskShape?: React.ReactNode;
 }): React.ReactNode {
-  const { objId, x, y, w, h, pf, href, preserveAspectRatio, maskShape } = props;
+  const { objId, x, y, w, h, pf, href, masterSrc, preserveAspectRatio, maskShape } = props;
   const grain = clamp(pf.grain ?? 0, 0, 1);
   const vignette = clamp(pf.vignette ?? 0, 0, 1);
   if (grain <= 0.001 && vignette <= 0.001) return null;
@@ -6599,7 +6621,7 @@ function PhotoFilterOverlays(props: {
   const grainId = `fh-pf-grain-${sid}`;
   const vigId = `fh-pf-vig-${sid}`;
   const maskContent = href ? (
-    <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
+    <image {...rasterHrefAttrs(href, masterSrc)} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
   ) : (
     maskShape
   );
@@ -6676,10 +6698,11 @@ function RasterLayerEffectOverlays(props: {
   w: number;
   h: number;
   href: string;
+  masterSrc?: string;
   preserveAspectRatio: string;
   effects: LayerEffects | undefined;
 }): React.ReactNode {
-  const { objId, x, y, w, h, href, preserveAspectRatio, effects } = props;
+  const { objId, x, y, w, h, href, masterSrc, preserveAspectRatio, effects } = props;
   if (!effects) return null;
   const co = effects.colorOverlay;
   const go = effects.gradientOverlay;
@@ -6696,7 +6719,7 @@ function RasterLayerEffectOverlays(props: {
     <>
       <defs>
         <mask id={maskId} maskUnits="userSpaceOnUse" x={x} y={y} width={w} height={h}>
-          <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
+          <image {...rasterHrefAttrs(href, masterSrc)} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
         </mask>
         {gradientDef}
       </defs>
@@ -6754,6 +6777,7 @@ export function renderObj(
           opts.imageFrameOptimizeShowFrameId === rObj.id;
         const suppressPresenterBitmap = opts?.presenterSuppressBitmapObjectIds?.has(rObj.id) ?? false;
         const leFrame = resolveLayerEffectsForRender(rObj, opts);
+        const frameRaster = ifc?.src ? screenRasterPair(ifc.src) : null;
         const frameInner = (
           <>
             <defs>
@@ -6773,7 +6797,7 @@ export function renderObj(
             !(opts?.presenterSuppressBitmapObjectIds?.has(rObj.id) ?? false) ? (
               <image
                 clipPath={`url(#${cid})`}
-                href={ifc.src}
+                {...rasterHrefAttrs(frameRaster!.href, frameRaster!.masterSrc)}
                 x={rObj.x + ifc.offsetX}
                 y={rObj.y + ifc.offsetY}
                 width={ifc.originalWidth * ifc.scaleX}
@@ -7370,6 +7394,7 @@ export function renderObj(
       const fxActive = hasActiveLayerEffects(le);
       const par = im.imagePreserveAspectRatio ?? "xMidYMid meet";
       const lmask = (obj as FreehandObjectBase).layerMask;
+      const raster = screenRasterPair(im.src);
       const inner = fxActive ? (
         <g style={{ isolation: "isolate" }}>
           <RasterBitmapWithLayerEffects
@@ -7378,14 +7403,15 @@ export function renderObj(
             y={obj.y}
             w={obj.width}
             h={obj.height}
-            href={im.src}
+            href={raster.href}
+            masterSrc={raster.masterSrc}
             preserveAspectRatio={par}
             effects={le}
           />
         </g>
       ) : (
         <image
-          href={im.src}
+          {...rasterHrefAttrs(raster.href, raster.masterSrc)}
           x={obj.x}
           y={obj.y}
           width={obj.width}
@@ -11128,16 +11154,21 @@ export function FreehandStudioCanvas({
   selectedPointsRef.current = selectedPoints;
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
-  // Pre-decodifica el alfa de las imágenes para que el hit-test por opacidad sea preciso ya en el
-  // primer clic; sin esto, el primer clic caería al bounding box mientras decodifica.
-  useEffect(() => {
+  // Solo cuando cambian los `src` (no en cada frame de arrastre).
+  const imageAlphaSrcKey = useMemo(() => {
+    const srcs: string[] = [];
     for (const o of objects) {
-      if (o.type === "image" && (o as ImageObject).src) prewarmImageAlpha((o as ImageObject).src);
+      if (o.type === "image") {
+        const src = (o as ImageObject).src?.trim();
+        if (src) srcs.push(src);
+      }
     }
+    return srcs.join("\0");
   }, [objects]);
-  // Al completar un decodificado asíncrono, refresca el resaltado de hover aunque el ratón no se mueva.
-  const [, setImageAlphaTick] = useState(0);
-  useEffect(() => subscribeImageAlpha(() => setImageAlphaTick((t) => t + 1)), []);
+  useEffect(() => {
+    if (!imageAlphaSrcKey) return;
+    for (const src of imageAlphaSrcKey.split("\0")) prewarmImageAlpha(src);
+  }, [imageAlphaSrcKey]);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
   const brushSizeRef = useRef(brushSize);
@@ -11595,6 +11626,7 @@ export function FreehandStudioCanvas({
             bounds,
             scale,
             background: bg,
+            keepScreenRaster: !opts?.fullResolution,
           });
           const str = await substituteTextForRasterExport(strRaw, objs, svg);
           const cw = Math.max(1, Math.round(bounds.w * scale));
@@ -11645,6 +11677,8 @@ export function FreehandStudioCanvas({
   const syncRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     clearTimeout(syncRef.current);
+    // Durante el arrastre el padre (SpacesContent) no se repinta. Al soltar, el debounce habitual.
+    if (dragState) return;
     syncRef.current = setTimeout(() => {
       const prox = selectionGestureProxyByIdRef.current;
       let fullObjects =
@@ -11684,7 +11718,7 @@ export function FreehandStudioCanvas({
       onUpdateObjects(fullObjects);
     }, 500);
     return () => clearTimeout(syncRef.current);
-  }, [objects, onUpdateObjects]);
+  }, [objects, onUpdateObjects, dragState]);
 
   /** Sincronizar guías al documento padre sin debounce (pocas actualizaciones; evita perder guías al cambiar de página). */
   useEffect(() => {
@@ -22353,6 +22387,7 @@ export function FreehandStudioCanvas({
       if (targets.length === 0) return;
       selectionGestureProxySessionRef.current += 1;
       const session = selectionGestureProxySessionRef.current;
+      const start = () => {
       void (async () => {
         const map = selectionGestureProxyByIdRef.current;
         let added = 0;
@@ -22362,11 +22397,7 @@ export function FreehandStudioCanvas({
           if (obj.type === "image") src = (obj as ImageObject).src;
           else if (obj.type === "rect" && (obj as RectObject).isImageFrame)
             src = (obj as RectObject).imageFrameContent?.src ?? null;
-          if (
-            !src ||
-            (!src.startsWith("http") && !src.startsWith("data:") && !src.startsWith("blob:"))
-          )
-            continue;
+          if (!src || (!src.startsWith("data:") && !src.startsWith("blob:"))) continue;
 
           const dims = await new Promise<{ iw: number; ih: number }>((res) => {
             const im = new Image();
@@ -22387,6 +22418,14 @@ export function FreehandStudioCanvas({
         if (added === 0) return;
         setObjects((prev) => prev.map((o) => applyRasterGestureProxiesToObject(o, map)));
       })();
+      };
+      const ric = (
+        window as Window & {
+          requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        }
+      ).requestIdleCallback;
+      if (typeof ric === "function") ric(() => start(), { timeout: 800 });
+      else window.setTimeout(start, 0);
     },
     [setObjects],
   );
@@ -22545,7 +22584,7 @@ export function FreehandStudioCanvas({
           const obj = objects[i];
           if (!obj.visible || obj.locked) continue;
           if (obj.isClipMask || obj.clipMaskId) continue;
-          if (hitTestObject(pos, obj, threshold, objects, { imageAlpha: true })) {
+          if (hitTestObject(pos, obj, threshold, objects)) {
             found = obj.id;
             break;
           }

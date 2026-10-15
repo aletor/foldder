@@ -77,7 +77,8 @@ export async function ensureCanvasAndStudioDerivatives(sourceKey: string): Promi
 }
 
 export async function mediaReadRedirectUrl(key: string): Promise<string> {
-  await ensureBrowserUploadCorsForS3().catch((error) => {
+  // No bloquear el redirect en PutBucketCors; <img> suele seguir el 302 igual.
+  void ensureBrowserUploadCorsForS3().catch((error) => {
     console.warn("[media-delivery] CORS ensure failed; image tags can still follow the redirect.", error);
   });
   return getPresignedUrl(key, 3600);
