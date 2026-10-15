@@ -19,7 +19,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     cleanupLegacyUnscopedBrainSuggestionStorageOnce();
   }, []);
 
-  const isHome = pathname === "/";
+  const isHome = pathname === "/" || pathname === "/en";
 
   return (
     <LanguageProvider>
@@ -32,8 +32,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </div>
       )}
-      {!isFullViewport && pathname !== "/" && !isPublicForm ? <LanguageSwitcher /> : null}
-      {pathname !== "/" && !isLab && !isPublicForm ? <BackgroundRadioPlayer /> : null}
+      {!isFullViewport && !isHome && !isPublicForm ? <LanguageSwitcher /> : null}
+      {!isHome && !isLab && !isPublicForm ? <BackgroundRadioPlayer /> : null}
     </LanguageProvider>
   );
 }

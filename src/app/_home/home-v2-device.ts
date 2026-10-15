@@ -43,9 +43,7 @@ export function applyHomeV2DeviceAttributes(root?: HTMLElement | null): HomeV2De
 }
 
 export function useHomeV2DeviceProfile(): HomeV2DeviceProfile {
-  const [profile, setProfile] = useState<HomeV2DeviceProfile>(() =>
-    typeof window !== "undefined" ? readHomeV2DeviceProfile() : SSR_PROFILE,
-  );
+  const [profile, setProfile] = useState<HomeV2DeviceProfile>(SSR_PROFILE);
 
   useEffect(() => {
     const root = document.querySelector<HTMLElement>(HOME_V2_ROOT_SELECTOR);

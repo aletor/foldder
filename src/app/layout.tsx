@@ -1,9 +1,12 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 import { AuthSessionProvider } from "@/components/AuthSessionProvider";
+import { FOLDDER_SITE_ORIGIN } from "@/lib/home-seo";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(FOLDDER_SITE_ORIGIN),
   title: "Foldder",
   description: "Todo lo creativo. En un solo flujo.",
   // Dedicated apple-touch path helps bust stale device caches of older icons.
@@ -29,13 +32,15 @@ export const viewport: Viewport = {
   themeColor: "#000000",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const lang = (await headers()).get("x-foldder-lang") === "en" ? "en" : "es";
+
   return (
-    <html lang="en" translate="no" className="notranslate" suppressHydrationWarning>
+    <html lang={lang} translate="no" className="notranslate" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

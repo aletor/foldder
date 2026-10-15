@@ -24,6 +24,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { FormattedText } from "./FormattedText";
+import { HOME_COPY } from "./home-copy";
+import { useHomeLocale } from "./home-locale";
 import type { HomeV2NodeDetailFeatureIcon } from "./home-v2-node-details";
 import type { HomeV2NodeCard } from "./home-v2-nodes";
 
@@ -156,6 +158,7 @@ function DetailCopy({
 }
 
 export function NodeCoverflowDetail({ card, activeIndex, totalCount, onNavigate }: NodeCoverflowDetailProps) {
+  const copy = HOME_COPY[useHomeLocale()];
   const reducedMotion = useReducedMotion();
   const isMobile = useMobileDetailLayout();
   const animateCopy = !reducedMotion && !isMobile;
@@ -173,7 +176,7 @@ export function NodeCoverflowDetail({ card, activeIndex, totalCount, onNavigate 
       data-home-v2-coverflow-detail
       aria-live="polite"
       aria-roledescription="carousel"
-      aria-label={`Detalle del nodo ${activeIndex + 1} de ${totalCount}`}
+      aria-label={copy.nodeDetailLabel(activeIndex + 1, totalCount)}
     >
       <div data-home-v2-coverflow-detail-slot>
         <AnimatePresence mode="wait" initial={false}>

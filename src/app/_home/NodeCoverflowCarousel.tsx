@@ -21,6 +21,8 @@ import {
   useTransform,
   type MotionValue,
 } from "motion/react";
+import { HOME_COPY } from "./home-copy";
+import { useHomeLocale } from "./home-locale";
 import { buildHomeV2NodeCards, type HomeV2NodeCard } from "./home-v2-nodes";
 
 const DESKTOP_ITEM_WIDTH = 504;
@@ -136,6 +138,7 @@ function CoverflowItem({
   metrics,
   selectedIndex,
 }: CoverflowItemProps) {
+  const locale = useHomeLocale();
   const { itemWidth, itemHeight, step } = metrics;
   const overlaySize = Math.round(itemWidth * OVERLAY_SIZE_RATIO);
   const isMobile = viewportWidth > 0 && viewportWidth < 640;
@@ -187,7 +190,7 @@ function CoverflowItem({
         type="button"
         data-home-v2-coverflow-item-inner
         data-coverflow-index={index}
-        aria-label={`Seleccionar ${card.label}`}
+        aria-label={HOME_COPY[locale].selectNode(card.label)}
         aria-current={selectedIndex === index ? "true" : undefined}
         style={{
           x: parallaxX,
@@ -238,7 +241,8 @@ const MemoCoverflowItem = memo(CoverflowItem);
 
 export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, NodeCoverflowCarouselProps>(
   function NodeCoverflowCarousel({ onActiveIndexChange }, ref) {
-  const cards = useMemo(() => buildHomeV2NodeCards(), []);
+  const locale = useHomeLocale();
+  const cards = useMemo(() => buildHomeV2NodeCards(locale), [locale]);
   const scrollX = useMotionValue(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   const pauseAutoplayRef = useRef(false);
@@ -374,7 +378,7 @@ export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, Nod
         data-home-v2-coverflow-viewport
         role="group"
         aria-roledescription="carousel"
-        aria-label="Galería de nodos"
+        aria-label={HOME_COPY[locale].nodesGalleryLabel}
         tabIndex={0}
         onKeyDown={handleViewportKeyDown}
         onClickCapture={handleViewportClickCapture}

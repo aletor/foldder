@@ -139,6 +139,54 @@ const NODE_DETAIL_CONTENT: Record<string, HomeV2NodeDetailContent> = {
   },
 };
 
-export function resolveNodeDetailContent(nodeType: string): HomeV2NodeDetailContent | null {
+const NODE_DETAIL_CONTENT_EN: Record<string, HomeV2NodeDetailContent> = {
+  designer: {
+    intro: "Multi-page **editorial design**: layouts, type and images ready to **export or present**.",
+    features: [
+      { id: "multipage", line: "**Documents and slides** with editorial layout.", icon: "layout" },
+      { id: "control", line: "**Type, shapes and guides** under full control.", icon: "pen" },
+      { id: "presenter", line: "Move to an interactive **Presenter** instantly.", icon: "presentation" },
+    ],
+  },
+  nanoBanana: {
+    intro:
+      "**Generate or edit** images from text, references or a base image, with **brand style and consistency**.",
+    features: [
+      { id: "generate", line: "**Generate or transform** images on the fly.", icon: "wand" },
+      { id: "references", line: "Prompts, **references** and a base image.", icon: "images" },
+      { id: "brain", line: "**Brand style and DNA** with Brandkit.", icon: "brain" },
+    ],
+  },
+  mediaDescriber: {
+    intro: "**Analyze an image** and turn it into a reusable description as a **prompt or creative reference**.",
+    features: [
+      { id: "prompt", line: "Turn the image into a **reusable prompt**.", icon: "scanText" },
+      { id: "style", line: "Reads **composition, light and atmosphere**.", icon: "eye" },
+      { id: "flow", line: "**Connect the workflow** to regenerate or adapt.", icon: "workflow" },
+    ],
+  },
+  geminiVideo: {
+    intro: "Create **clips** from text, an image or frames: control **camera, motion, style** and duration.",
+    features: [
+      { id: "source", line: "**Text or image** to a clip in seconds.", icon: "clapperboard" },
+      { id: "direction", line: "**Camera, motion and style** under control.", icon: "camera" },
+      { id: "edit", line: "Ready to **edit and export**.", icon: "scissors" },
+    ],
+  },
+  videoEditor: {
+    intro: "**Editing** on a timeline: arrange clips, audio and subtitles into a **final exportable video**.",
+    features: [
+      { id: "timeline", line: "**Timeline** with video, audio and subtitles.", icon: "timeline" },
+      { id: "edit", line: "Trim and adjust **volume and fades**.", icon: "sliders" },
+      { id: "export", line: "Export an **MP4** ready to publish.", icon: "download" },
+    ],
+  },
+};
+
+export function resolveNodeDetailContent(
+  nodeType: string,
+  language: "es" | "en" = "es",
+): HomeV2NodeDetailContent | null {
+  if (language === "en") return NODE_DETAIL_CONTENT_EN[nodeType] ?? NODE_DETAIL_CONTENT[nodeType] ?? null;
   return NODE_DETAIL_CONTENT[nodeType] ?? null;
 }

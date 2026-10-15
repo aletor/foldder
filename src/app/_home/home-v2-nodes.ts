@@ -114,17 +114,58 @@ function resolveNodeImageSrc(nodeType: string): string {
   );
 }
 
-export function buildHomeV2NodeCards(): HomeV2NodeCard[] {
+const HOME_V2_NODE_COPY_EN: Record<string, { label?: string; description: string }> = {
+  inspiration: {
+    description: "Find **visual references** from a prompt or image and return a **curated selection**.",
+  },
+  guionista: {
+    label: "Scriptwriter",
+    description: "Turn ideas, notes or **Brandkit** into versioned **posts, scripts, slides and campaigns**.",
+  },
+  nanoBanana: {
+    description: "**Generate images** from a **prompt and connected visual references**.",
+  },
+  layerizer: {
+    description: "Split an image into **layers** with a **clean background**.",
+  },
+  backgroundRemover: {
+    description: "Remove the image **background** with **precision**.",
+  },
+  mediaDescriber: {
+    description: "**Analyze an image** and turn it into a **reusable description** you can use as a prompt.",
+  },
+  cine: {
+    description: "Audiovisual **preproduction**: script, cast, **storyboard** and frame prompts.",
+  },
+  geminiVideo: {
+    description: "**Generate video** from a prompt and optional **frames**.",
+  },
+  vfxGenerator: {
+    description: "**VFX** on video from a prompt and a **reference image**.",
+  },
+  videoEditor: {
+    description: "Editable **timeline** with video, images and **prompt-generated audio**.",
+  },
+  designer: {
+    description: "**Full design**: vectors, pages, type and image frames.",
+  },
+  presenter: {
+    description: "Turn **Designer** into **slides** ready to present.",
+  },
+};
+
+export function buildHomeV2NodeCards(language: "es" | "en" = "es"): HomeV2NodeCard[] {
   return HOME_V2_NODE_CARDS.map(({ label, description, type }) => {
     const imageSrc = resolveNodeImageSrc(type);
+    const english = language === "en" ? HOME_V2_NODE_COPY_EN[type] : undefined;
     return {
-      label,
-      description,
+      label: english?.label ?? label,
+      description: english?.description ?? description,
       type,
       tabColor: getNodeCardBackgroundColor(type),
       imageSrc,
       detailImageSrc: NODE_DETAIL_IMAGE_SRC[type] ?? imageSrc,
-      detailContent: resolveNodeDetailContent(type),
+      detailContent: resolveNodeDetailContent(type, language),
       heroVideoSrc: NODE_HERO_VIDEO_SRC[type] ?? null,
     };
   });

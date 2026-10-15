@@ -4,10 +4,14 @@ import { useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { NodeCoverflowCarousel, type NodeCoverflowCarouselHandle } from "./NodeCoverflowCarousel";
 import { NodeCoverflowDetail } from "./NodeCoverflowDetail";
+import { HOME_COPY } from "./home-copy";
+import { useHomeLocale } from "./home-locale";
 import { buildHomeV2NodeCards } from "./home-v2-nodes";
 
 export function NodePerspectiveGallery() {
-  const cards = useMemo(() => buildHomeV2NodeCards(), []);
+  const locale = useHomeLocale();
+  const copy = HOME_COPY[locale];
+  const cards = useMemo(() => buildHomeV2NodeCards(locale), [locale]);
   const carouselRef = useRef<NodeCoverflowCarouselHandle>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const activeCard = cards[activeIndex] ?? cards[0];
@@ -27,7 +31,7 @@ export function NodePerspectiveGallery() {
               type="button"
               data-home-v2-node-gallery-nav
               data-direction="prev"
-              aria-label="Nodo anterior"
+              aria-label={copy.previousNode}
               onClick={() => handleNavigate(-1)}
             >
               <ChevronLeft strokeWidth={1.5} aria-hidden="true" />
@@ -42,7 +46,7 @@ export function NodePerspectiveGallery() {
               type="button"
               data-home-v2-node-gallery-nav
               data-direction="next"
-              aria-label="Nodo siguiente"
+              aria-label={copy.nextNode}
               onClick={() => handleNavigate(1)}
             >
               <ChevronRight strokeWidth={1.5} aria-hidden="true" />

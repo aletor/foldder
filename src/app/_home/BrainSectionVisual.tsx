@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useHomeLocale } from "./home-locale";
 import { buildHomeV2NodeCards } from "./home-v2-nodes";
 import { BrainLightningOverlay } from "./BrainLightningOverlay";
 import { BrainSphereWebGLBackground } from "./BrainSphereWebGLBackground";
@@ -55,6 +56,15 @@ const CAPSULES = [
   },
 ] as const;
 
+const CAPSULE_MESSAGES_EN: Record<(typeof CAPSULES)[number]["label"], string> = {
+  WRITE: "Brandkit applies tone, claims and brand context to every text you generate.",
+  IMAGE: "Brandkit guides visual style, palette, references and what to avoid in every image.",
+  DESIGN: "Brandkit carries your identity into layouts, graphic pieces, documents and presentations.",
+  VIDEO: "Brandkit turns your brand into atmosphere, rhythm, visual style and camera direction.",
+  CINEMA: "Brandkit keeps script, characters, scenes, backgrounds and frames consistent.",
+  PRESENT: "Brandkit turns your content and design into a presentation aligned with your brand.",
+};
+
 type CapsuleLabel = (typeof CAPSULES)[number]["label"];
 
 function polar(angleDeg: number, radius: number) {
@@ -66,6 +76,7 @@ function polar(angleDeg: number, radius: number) {
 }
 
 export function BrainSectionVisual() {
+  const locale = useHomeLocale();
   const stageRef = useRef<HTMLDivElement>(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [hoveredCapsule, setHoveredCapsule] = useState<CapsuleLabel | null>(null);
@@ -88,12 +99,13 @@ export function BrainSectionVisual() {
 
         return {
           ...capsule,
+          message: locale === "en" ? CAPSULE_MESSAGES_EN[capsule.label] : capsule.message,
           anchor,
           floatDelay: index * 0.55,
           backgroundSrc: nodeBackgrounds.get(capsule.nodeType) ?? "/assets/nodes/brain-empty.jpg",
         };
       }),
-    [nodeBackgrounds],
+    [locale, nodeBackgrounds],
   );
 
   const focusedCapsule = hoveredCapsule ?? CAPSULES[carouselIndex].label;

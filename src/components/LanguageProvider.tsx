@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import {
   createContext,
   ReactNode,
@@ -33,21 +34,36 @@ const skippedElementSelector =
   "script, style, textarea, pre, code, [contenteditable], [data-foldder-i18n-ignore]";
 const originalTextByNode = new WeakMap<Text, string>();
 
+function marketingLanguage(pathname: string | null): AppLanguage | null {
+  if (pathname === "/en" || pathname?.startsWith("/en/")) return "en";
+  if (pathname === "/") return "es";
+  return null;
+}
+
 export function LanguageProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const routeLanguage = marketingLanguage(pathname);
   const [language, setLanguageState] = useState<AppLanguage>(DEFAULT_LANGUAGE);
   const loadedStoredLanguageRef = useRef(false);
   const userChangedLanguageRef = useRef(false);
 
+  const activeLanguage = routeLanguage ?? language;
+
   useEffect(() => {
+    if (routeLanguage) return;
+
     let cancelled = false;
     const frame = window.requestAnimationFrame(() => {
-      if (cancelled) return;
+      if (cancelled || userChangedLanguageRef.current) {
+        loadedStoredLanguageRef.current = true;
+        return;
+      }
       const storedLanguage = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
       loadedStoredLanguageRef.current = true;
-      if (userChangedLanguageRef.current) return;
       if (isAppLanguage(storedLanguage)) {
         setLanguageState(storedLanguage);
       } else {
+        setLanguageState(DEFAULT_LANGUAGE);
         window.localStorage.setItem(LANGUAGE_STORAGE_KEY, DEFAULT_LANGUAGE);
       }
     });
@@ -56,15 +72,15 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [routeLanguage]);
 
   useEffect(() => {
-    if (loadedStoredLanguageRef.current || userChangedLanguageRef.current) {
+    if (!routeLanguage && (loadedStoredLanguageRef.current || userChangedLanguageRef.current)) {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
     }
-    document.documentElement.lang = language;
-    document.documentElement.dataset.foldderLanguage = language;
-    applyLanguageToDocument(language);
+    document.documentElement.lang = activeLanguage;
+    document.documentElement.dataset.foldderLanguage = activeLanguage;
+    applyLanguageToDocument(activeLanguage);
 
     let frame = 0;
     let applying = false;
@@ -73,7 +89,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       frame = window.requestAnimationFrame(() => {
         frame = 0;
         applying = true;
-        applyLanguageToDocument(language);
+        applyLanguageToDocument(activeLanguage);
         applying = false;
       });
     };
@@ -91,7 +107,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       observer.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [language]);
+  }, [activeLanguage, language, routeLanguage]);
 
   const setLanguage = useCallback((nextLanguage: AppLanguage) => {
     userChangedLanguageRef.current = true;
@@ -100,11 +116,11 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<LanguageContextValue>(
     () => ({
-      language,
+      language: activeLanguage,
       setLanguage,
-      t: (text) => translateText(text, language),
+      t: (text) => translateText(text, activeLanguage),
     }),
-    [language, setLanguage],
+    [activeLanguage, setLanguage],
   );
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
