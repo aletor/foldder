@@ -3388,6 +3388,28 @@ function syntheticShiftMouseEvent(tail: {
   } as unknown as ReactMouseEvent;
 }
 
+/** Dibuja el marco de selección sin esperar a un render de React. */
+function paintSelectionMarquee(
+  el: SVGRectElement | null,
+  origin: { x: number; y: number },
+  current: { x: number; y: number },
+  zoom: number,
+) {
+  if (!el) return;
+  const x = Math.min(origin.x, current.x);
+  const y = Math.min(origin.y, current.y);
+  const w = Math.abs(current.x - origin.x);
+  const h = Math.abs(current.y - origin.y);
+  const z = zoom > 0 ? zoom : 1;
+  el.setAttribute("x", String(x));
+  el.setAttribute("y", String(y));
+  el.setAttribute("width", String(w));
+  el.setAttribute("height", String(h));
+  el.setAttribute("stroke-width", String(1 / z));
+  el.setAttribute("stroke-dasharray", `${3 / z}`);
+  el.setAttribute("visibility", w > 2 && h > 2 ? "visible" : "hidden");
+}
+
 /** Máximo lado del bitmap para preview durante mover / rotar / escalar (el original se restaura al soltar). */
 const RASTER_SELECTION_GESTURE_PROXY_MAX_EDGE_PX = 1280;
 
@@ -9924,6 +9946,7 @@ export function FreehandStudioCanvas({
 
   const dragStateRef = useRef(dragState);
   dragStateRef.current = dragState;
+  const marqueeOverlayRef = useRef<SVGRectElement | null>(null);
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
   /** Designer: mutex pan (drag) ↔ zoom (rueda). */
@@ -21170,14 +21193,18 @@ export function FreehandStudioCanvas({
       }
 
       // Click fuera: salir de edición. Arrastre desde fuera: selección por área de puntos.
-      setDragState({
-        type: "marquee",
-        startX: e.clientX,
-        startY: e.clientY,
-        marqueeOrigin: pos,
-        currentCanvas: pos,
-        shiftKey: isShiftHeld(e) || e.metaKey || e.ctrlKey,
-      });
+      {
+        const marquee = {
+          type: "marquee" as const,
+          startX: e.clientX,
+          startY: e.clientY,
+          marqueeOrigin: pos,
+          currentCanvas: pos,
+          shiftKey: isShiftHeld(e) || e.metaKey || e.ctrlKey,
+        };
+        dragStateRef.current = marquee;
+        setDragState(marquee);
+      }
       return;
     }
 
@@ -21700,16 +21727,20 @@ export function FreehandStudioCanvas({
               ) pathSvgMatrixStart.set(c.id, { e: 0, f: 0 });
             }
           }
-          setDragState({
-            type: "move",
-            startX: e.clientX,
-            startY: e.clientY,
-            positions,
-            pathPointsMap,
-            moveSnapshot,
-            pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
-            duplicateMove: true,
-          });
+          {
+            const moveDrag = {
+              type: "move" as const,
+              startX: e.clientX,
+              startY: e.clientY,
+              positions,
+              pathPointsMap,
+              moveSnapshot,
+              pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
+              duplicateMove: true as const,
+            };
+            dragStateRef.current = moveDrag;
+            setDragState(moveDrag);
+          }
           pushHistory(next, cloneSel);
           return;
         }
@@ -21745,15 +21776,19 @@ export function FreehandStudioCanvas({
           }
         }
       }
-      setDragState({
-        type: "move",
-        startX: e.clientX,
-        startY: e.clientY,
-        positions,
-        pathPointsMap,
-        moveSnapshot,
-        pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
-      });
+      {
+        const moveDrag = {
+          type: "move" as const,
+          startX: e.clientX,
+          startY: e.clientY,
+          positions,
+          pathPointsMap,
+          moveSnapshot,
+          pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
+        };
+        dragStateRef.current = moveDrag;
+        setDragState(moveDrag);
+      }
       return;
     }
 
@@ -21769,7 +21804,18 @@ export function FreehandStudioCanvas({
       setFolderDrillFolderId(null);
       folderDrillChildIdRef.current = null;
     }
-    setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: extendSel });
+    {
+      const marquee = {
+        type: "marquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        shiftKey: extendSel,
+      };
+      dragStateRef.current = marquee;
+      setDragState(marquee);
+    }
   }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedIdsKey, selectedObjects, groupBounds, selectionFrame,
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, cutPathOnSegment, closeOpenPathWithPen, pushHistory,
       layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners,
@@ -23154,7 +23200,9 @@ export function FreehandStudioCanvas({
 
     if (dragState.type === "marquee" && dragState.marqueeOrigin) {
       const pos = screenToCanvas(e.clientX, e.clientY);
-      setDragState((prev) => prev ? { ...prev, currentCanvas: pos } : null);
+      dragState.currentCanvas = pos;
+      dragStateRef.current = dragState;
+      paintSelectionMarquee(marqueeOverlayRef.current, dragState.marqueeOrigin, pos, viewportRef.current.zoom);
       return;
     }
 
@@ -23859,13 +23907,16 @@ export function FreehandStudioCanvas({
       return;
     }
 
-    if (ds.type === "marquee" && ds.marqueeOrigin && ds.currentCanvas) {
-      const o = ds.marqueeOrigin, c = ds.currentCanvas;
+    if (ds.type === "marquee" && ds.marqueeOrigin) {
+      const pointerEnd = screenToCanvas(e.clientX, e.clientY);
+      ds.currentCanvas = pointerEnd;
+      const o = ds.marqueeOrigin, c = pointerEnd;
       const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
       const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
       if (activeTool === "directSelect" && mw <= 2 && mh <= 2) {
         setSelectedPoints(new Map());
         setActiveTool("select");
+        dragStateRef.current = null;
         setDragState(null);
         return;
       }
@@ -23980,6 +24031,7 @@ export function FreehandStudioCanvas({
           }
         }
       }
+      dragStateRef.current = null;
       setDragState(null);
       return;
     }
@@ -26284,12 +26336,22 @@ export function FreehandStudioCanvas({
               </>
             )}
 
-            {/* Marquee */}
-            {marqueeRect && marqueeRect.w > 2 && marqueeRect.h > 2 && (
-              <rect x={marqueeRect.x} y={marqueeRect.y} width={marqueeRect.w} height={marqueeRect.h}
-                fill="rgba(99,102,241,0.08)" stroke="#6366f1" strokeWidth={1 / viewport.zoom}
-                strokeDasharray={`${3 / viewport.zoom}`} data-ui="marquee" />
-            )}
+            {/* Marquee: el rectángulo se mueve por DOM; React solo lo monta al pulsar. */}
+            {dragState?.type === "marquee" && dragState.marqueeOrigin ? (
+              <rect
+                ref={marqueeOverlayRef}
+                x={marqueeRect?.x ?? dragState.marqueeOrigin.x}
+                y={marqueeRect?.y ?? dragState.marqueeOrigin.y}
+                width={marqueeRect?.w ?? 0}
+                height={marqueeRect?.h ?? 0}
+                visibility={marqueeRect && marqueeRect.w > 2 && marqueeRect.h > 2 ? "visible" : "hidden"}
+                fill="rgba(99,102,241,0.08)"
+                stroke="#6366f1"
+                strokeWidth={1 / viewport.zoom}
+                strokeDasharray={`${3 / viewport.zoom}`}
+                data-ui="marquee"
+              />
+            ) : null}
 
             {/* Marco raster: arrastre (preview) */}
             {studioCaps.toolPhotoMarquee &&

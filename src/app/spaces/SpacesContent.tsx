@@ -701,6 +701,7 @@ export function SpacesContent() {
   const [canvasPerformanceMode, setCanvasPerformanceMode] = useState(false);
   const canvasPerformanceModeRef = useRef(false);
   const canvasPerformanceReleaseTimerRef = useRef<number | null>(null);
+  const scheduleProjectUiSaveRef = useRef<() => void>(() => {});
   const canvasInteractionStartedAtRef = useRef<number | null>(null);
   const pendingProjectSaveAfterInteractionRef = useRef(false);
   const pendingProjectSaveAfterInFlightRef = useRef(false);
@@ -1866,7 +1867,15 @@ export function SpacesContent() {
     const releaseMs = isTouchUI ? 450 : 180;
     canvasPerformanceReleaseTimerRef.current = window.setTimeout(() => {
       canvasPerformanceReleaseTimerRef.current = null;
+      const z = viewportRef.current.zoom;
+      if (typeof z === "number" && Number.isFinite(z)) {
+        document.documentElement.style.setProperty(
+          "--foldder-viewport-zoom",
+          String(Math.max(0.05, Math.min(4, z))),
+        );
+      }
       canvasPerformanceModeRef.current = false;
+      scheduleProjectUiSaveRef.current();
       const startedAt = canvasInteractionStartedAtRef.current;
       canvasInteractionStartedAtRef.current = null;
       setCanvasPerformanceMode(false);
@@ -2856,6 +2865,8 @@ export function SpacesContent() {
       const flowDom = document.querySelector('.react-flow');
       if (!flowDom || !(e.target instanceof Element) || !flowDom.contains(e.target)) return;
 
+      beginCanvasPerformanceInteraction();
+
       const prevTs = lastFlowWheelTsRef.current;
       const dtFromPreviousMs = prevTs > 0 ? e.timeStamp - prevTs : Number.POSITIVE_INFINITY;
       lastFlowWheelTsRef.current = e.timeStamp;
@@ -2884,7 +2895,7 @@ export function SpacesContent() {
 
     window.addEventListener('wheel', onWheelCapture, { capture: true, passive: false });
     return () => window.removeEventListener('wheel', onWheelCapture, { capture: true });
-  }, [getViewport, setViewport, setViewportZoomCssVar]);
+  }, [beginCanvasPerformanceInteraction, getViewport, setViewport, setViewportZoomCssVar]);
 
   // Ref + CSS var + HUD de zoom: cualquier cambio de viewport (rueda, pinch, fitView, setViewport…)
   const buildProjectUiSnapshot = useCallback(
@@ -2941,11 +2952,12 @@ export function SpacesContent() {
       void saveProjectUiSnapshot();
     }, PROJECT_UI_SAVE_DEBOUNCE_MS);
   }, [activeProjectId, isAuthenticated, saveProjectUiSnapshot]);
+  scheduleProjectUiSaveRef.current = scheduleProjectUiSave;
 
   const onViewportChangeFromFlow = useCallback(
     (vp: { x: number; y: number; zoom: number }) => {
       viewportRef.current = vp;
-      const gesturing = isTouchUI && canvasPerformanceModeRef.current;
+      const gesturing = canvasPerformanceModeRef.current;
       if (typeof vp.zoom === "number" && Number.isFinite(vp.zoom) && !gesturing) {
         setViewportZoomCssVar(vp.zoom);
       }
@@ -2953,7 +2965,7 @@ export function SpacesContent() {
         scheduleProjectUiSave();
       }
     },
-    [isTouchUI, scheduleProjectUiSave, setViewportZoomCssVar],
+    [scheduleProjectUiSave, setViewportZoomCssVar],
   );
 
   useOnViewportChange({ onChange: onViewportChangeFromFlow });
