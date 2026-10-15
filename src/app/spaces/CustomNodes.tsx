@@ -169,6 +169,11 @@ import { getPageDimensions } from './indesign/page-formats';
 import { downloadS3Object, forceDownloadUrl, sanitizeDownloadFilename } from '@/lib/browser-download';
 import { useAuthedMediaPreviewUrl, useCanvasNodeMediaPreviewUrl } from './hooks/use-authed-media-preview-url';
 import {
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  FOLDDER_STUDIO_PREVIEW_MAX_SIDE,
+  resolveCanvasThumbnailMediaUrl,
+} from '@/lib/canvas-media-thumbnail';
+import {
   buildVideoPromptAssembly,
   buildPhysicsFlagsFromNodeData,
   DIRECTOR_PROMPT_TEMPLATE_EN,
@@ -4953,7 +4958,11 @@ function VideoStudioFrameSlot({
       </div>
       <div className="relative aspect-[4/3] w-full overflow-hidden rounded-none border border-white/[0.1] bg-zinc-950/90 ring-1 ring-inset ring-white/[0.04]">
         {url ? (
-          <img src={url} alt="" className="h-full w-full object-cover" />
+          <img
+            src={resolveCanvasThumbnailMediaUrl(url, null, FOLDDER_STUDIO_PREVIEW_MAX_SIDE) || url}
+            alt=""
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="flex h-full min-h-[3.25rem] flex-col items-center justify-center gap-0.5 px-1 text-center">
             <ImageIcon className="h-4 w-4 text-zinc-700" strokeWidth={1.25} aria-hidden />
@@ -5524,7 +5533,11 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                     <div key={key} className="min-w-0">
                       <div className="relative aspect-square overflow-hidden border border-white/10 bg-black/30">
                         {url ? (
-                          <img src={url} alt="" className="h-full w-full object-cover" />
+                          <img
+                            src={resolveCanvasThumbnailMediaUrl(url, null, FOLDDER_CANVAS_THUMB_MAX_SIDE) || url}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
                         ) : (
                           <div className="flex h-full min-h-[3.5rem] flex-col items-center justify-center gap-0.5">
                             <Upload className="h-3.5 w-3.5 text-white/25" strokeWidth={1.5} />

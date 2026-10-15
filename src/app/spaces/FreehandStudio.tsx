@@ -9086,88 +9086,6 @@ function computeStudioInitialObjects(
   return mergePhotoRoomInputLayers(migrated, photoRoomConnectedInputs, nodeId, aw, ah);
 }
 
-/** URLs que deben decodificarse antes de mostrar el lienzo (data:/blob: se consideran instantáneos). */
-function designerRasterUrlNeedsPreload(href: string): boolean {
-  const s = href.trim();
-  if (!s) return false;
-  if (s.startsWith("data:") || s.startsWith("blob:")) return false;
-  if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("//")) return true;
-  if (s.startsWith("/")) return true;
-  return false;
-}
-
-function collectDesignerRasterPreloadHrefsFromObject(o: FreehandObject, out: Set<string>): void {
-  if (!o.visible) return;
-  const lm = (o as FreehandObjectBase).layerMask;
-  if (lm?.src) {
-    const ms = lm.src.trim();
-    if (designerRasterUrlNeedsPreload(ms)) out.add(ms);
-  }
-  switch (o.type) {
-    case "rect": {
-      const r = o as RectObject;
-      if (r.isImageFrame && r.imageFrameContent?.src) {
-        const s = r.imageFrameContent.src.trim();
-        if (designerRasterUrlNeedsPreload(s)) out.add(s);
-      }
-      break;
-    }
-    case "image": {
-      const s = (o as ImageObject).src?.trim() ?? "";
-      if (designerRasterUrlNeedsPreload(s)) out.add(s);
-      break;
-    }
-    case "booleanGroup": {
-      const bg = o as BooleanGroupObject;
-      if (bg.cachedResult) {
-        const s = bg.cachedResult.trim();
-        if (designerRasterUrlNeedsPreload(s)) out.add(s);
-      }
-      for (const c of bg.children) collectDesignerRasterPreloadHrefsFromObject(c, out);
-      break;
-    }
-    case "clippingContainer": {
-      const cc = o as ClippingContainerObject;
-      collectDesignerRasterPreloadHrefsFromObject(cc.mask as FreehandObject, out);
-      for (const c of cc.content) collectDesignerRasterPreloadHrefsFromObject(c, out);
-      break;
-    }
-    case "groupContainer": {
-      const gc = o as GroupContainerObject;
-      for (const c of gc.children) collectDesignerRasterPreloadHrefsFromObject(c, out);
-      break;
-    }
-    default:
-      break;
-  }
-}
-
-function collectDesignerRasterPreloadHrefs(objs: FreehandObject[]): string[] {
-  const out = new Set<string>();
-  for (const o of objs) collectDesignerRasterPreloadHrefsFromObject(o, out);
-  return [...out].sort();
-}
-
-const DESIGNER_RASTER_PRELOAD_TIMEOUT_MS = 15000;
-
-function preloadDesignerRasterUrl(url: string): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof window === "undefined") {
-      resolve();
-      return;
-    }
-    const done = () => {
-      window.clearTimeout(tid);
-      resolve();
-    };
-    const tid = window.setTimeout(done, DESIGNER_RASTER_PRELOAD_TIMEOUT_MS);
-    const img = new Image();
-    img.decoding = "async";
-    img.onload = done;
-    img.onerror = done;
-    img.src = url;
-  });
-}
 
 function mimeTypeToImageFormatLabel(mime: string): string {
   const m = mime.toLowerCase().split(";")[0]!.trim();
@@ -11474,7 +11392,6 @@ export function FreehandStudioCanvas({
       setDesignerCanvasRasterLoad({ phase: "idle", done: 0, total: 0 });
       return;
     }
-    let cancelled = false;
     const { objects: raw, layoutGuides: lg } = designerPagePropsRef.current;
     const mapped = migrateDesignerPageObjects(raw);
     setObjects(mapped);
@@ -11531,33 +11448,8 @@ export function FreehandStudioCanvas({
       }
     }
 
-    /** Solo al cambiar de página (hidratar): bloquear el lienzo hasta precargar rasters. No al añadir imágenes en la misma página (p. ej. arrastrar a un marco). */
-    const hrefs = collectDesignerRasterPreloadHrefs(mapped);
-    if (hrefs.length === 0) {
-      setDesignerCanvasRasterLoad({ phase: "idle", done: 0, total: 0 });
-    } else {
-      setDesignerCanvasRasterLoad({ phase: "loading", done: 0, total: hrefs.length });
-      void (async () => {
-        await Promise.all(
-          hrefs.map(async (url) => {
-            await preloadDesignerRasterUrl(url);
-            if (cancelled) return;
-            setDesignerCanvasRasterLoad((p) => {
-              const nextDone = Math.min(p.total, p.done + 1);
-              return {
-                phase: nextDone < p.total ? "loading" : "idle",
-                done: nextDone,
-                total: p.total,
-              };
-            });
-          }),
-        );
-      })();
-    }
-
-    return () => {
-      cancelled = true;
-    };
+    /** La página se muestra al momento. El SVG pide el WebP de 1600 px; el original queda para exportar. */
+    setDesignerCanvasRasterLoad({ phase: "idle", done: 0, total: 0 });
   }, [designerMode, designerActivePageId, designerPageHydrateNonce, designerHistoryBridge]);
 
   useEffect(() => {

@@ -104,6 +104,11 @@ import { StudioNodePortal } from "./studio-node/studio-node-architecture";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { stableKnowledgeFileUrlFromKey, tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import {
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  FOLDDER_STUDIO_PREVIEW_MAX_SIDE,
+  resolveCanvasThumbnailMediaUrl,
+} from "@/lib/canvas-media-thumbnail";
+import {
   appendCineBrandStyleImages,
   cineBrandStyleImageUrls,
   EMPTY_CINE_BRAND_PACK,
@@ -427,6 +432,7 @@ function CineVideoPreview({
   const { url: posterUrl } = useCineResolvedImageUrl(
     getEffectiveCineFrameAsset(posterFrame),
     getEffectiveCineFrameS3Key(posterFrame),
+    FOLDDER_CANVAS_THUMB_MAX_SIDE,
   );
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -467,30 +473,25 @@ function CineVideoPreview({
   );
 }
 
-function useCineResolvedImageUrl(src?: string, s3Key?: string): { url?: string; refresh: () => void } {
-  const [resolved, setResolved] = useState<{ cacheKey: string; url: string } | null>(null);
-  const [refreshNonce, setRefreshNonce] = useState(0);
+function useCineResolvedImageUrl(
+  src?: string,
+  s3Key?: string,
+  maxSide: number = FOLDDER_STUDIO_PREVIEW_MAX_SIDE,
+): { url?: string; refresh: () => void } {
+  const preview = resolveCanvasThumbnailMediaUrl(src, s3Key, maxSide) || src;
   const key = resolveCineS3Key(src, s3Key);
-  const cacheKey = `${src || ""}\u0001${key || ""}`;
-  useEffect(() => {
-    let cancelled = false;
-    if (!key) return () => {
-      cancelled = true;
-    };
-    void (async () => {
-      const fresh = await presignCineS3Key(key);
-      if (!cancelled && fresh) setResolved({ cacheKey, url: fresh });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [cacheKey, key, refreshNonce]);
+  const cacheKey = `${src || ""}\0${key || ""}\0${maxSide}`;
+  const [fallback, setFallback] = useState<{ cacheKey: string; url: string } | null>(null);
+  const refresh = useCallback(() => {
+    if (!key) return;
+    cinePresignedUrlCache.delete(key);
+    void presignCineS3Key(key).then((url) => {
+      if (url) setFallback({ cacheKey, url });
+    });
+  }, [cacheKey, key]);
   return {
-    url: resolved?.cacheKey === cacheKey ? resolved.url : src,
-    refresh: () => {
-      if (key) cinePresignedUrlCache.delete(key);
-      setRefreshNonce((value) => value + 1);
-    },
+    url: fallback?.cacheKey === cacheKey ? fallback.url : preview,
+    refresh,
   };
 }
 
@@ -690,7 +691,11 @@ function CineMediaListVideoThumb({ src, s3Key }: { src?: string; s3Key?: string 
 }
 
 function CineMediaListPreviewThumb({ item }: { item: MediaListItem }) {
-  const { url: imageUrl } = useCineResolvedImageUrl(item.url || item.assetId, item.s3Key);
+  const { url: imageUrl } = useCineResolvedImageUrl(
+    item.url || item.assetId,
+    item.s3Key,
+    FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  );
   if (item.mediaType === "video") {
     return <CineMediaListVideoThumb src={item.url || item.assetId} s3Key={item.s3Key} />;
   }

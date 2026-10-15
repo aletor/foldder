@@ -2,7 +2,12 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  FOLDDER_STUDIO_PREVIEW_MAX_SIDE,
+  resolveCanvasThumbnailMediaUrl,
+} from "@/lib/canvas-media-thumbnail";
 import { createPortal, flushSync } from "react-dom";
 import {
   Check,
@@ -328,6 +333,16 @@ const FRAME_HANDLE_HITS: Array<{ id: StudioFrameHandle; style: React.CSSProperti
 
 function studioChangeLabel(card: StudioCard, index: number): string {
   return card.description.trim() || (card.lassoPoints.length > 2 || card.paintData ? `Zona ${index + 1}` : `Cambio ${index + 1}`);
+}
+
+/** Vista del studio: derivado cacheado. data:/blob: y URLs externas se dejan igual. */
+function studioViewSrc(
+  src: string | null | undefined,
+  maxSide: number = FOLDDER_STUDIO_PREVIEW_MAX_SIDE,
+): string | undefined {
+  const trimmed = src?.trim();
+  if (!trimmed) return undefined;
+  return resolveCanvasThumbnailMediaUrl(trimmed, null, maxSide) ?? trimmed;
 }
 
 export const ImageCreationStudio = memo(function ImageCreationStudio({
@@ -693,38 +708,6 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
       return changed ? next : prev;
     });
   }, [imgNat.h, imgNat.w]);
-
-  useLayoutEffect(() => {
-    const list = generationHistory;
-    if (!Array.isArray(list) || list.length === 0) return;
-    const keysList = list.map((u) => (typeof u === "string" ? tryExtractKnowledgeFilesKeyFromUrl(u) : null));
-    if (!keysList.some(Boolean)) return;
-    let cancelled = false;
-    void (async () => {
-      const keys = [...new Set(keysList.filter((k): k is string => Boolean(k)))];
-      try {
-        const res = await fetch("/api/spaces/s3-presign", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ keys }),
-        });
-        if (!res.ok || cancelled) return;
-        const payload = (await res.json()) as { urls?: Record<string, string> };
-        const urls = payload.urls;
-        if (!urls || cancelled) return;
-        const next = list.map((item) => {
-          const kk = tryExtractKnowledgeFilesKeyFromUrl(item);
-          return kk && urls[kk] ? urls[kk] : item;
-        });
-        if (next.some((u, i) => u !== list[i])) onGenerationHistoryChange(next);
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [generationHistory, onGenerationHistoryChange]);
 
   const toImagePoint = useCallback((clientX: number, clientY: number): StudioPoint | null => {
     const overlay = overlayRef.current;
@@ -1925,7 +1908,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
           effectiveStudioResolution,
           studioAspect,
           isOpenAi,
-          currentImage ? imgNat : null,
+          null,
           isOpenAi ? effectiveOpenAiQuality : undefined,
         )}
         onClose={topBarCloseMode === "default" ? handleClose : undefined}
@@ -2354,7 +2337,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                       selected || current ? "border-violet-400/70 bg-violet-500/10" : "border-white/10 hover:bg-white/[0.04]"
                     }`}
                   >
-                    <img src={url} alt="" className="h-16 w-20 shrink-0 object-cover" />
+                    <img src={studioViewSrc(url, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt="" className="h-16 w-20 shrink-0 object-cover" />
                     <span className="min-w-0 flex-1 py-0.5">
                       <span className="flex items-center justify-between gap-2">
                         <span className="text-[13px] font-semibold text-white">Versión {versionNumber}</span>
@@ -2476,7 +2459,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   ) : null}
                   <img
                     ref={imgRef}
-                    src={displayImage}
+                    src={studioViewSrc(displayImage)}
                     alt=""
                     draggable={false}
                     onLoad={() => {
@@ -2727,7 +2710,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                               className="group relative h-12 w-12 overflow-hidden border border-white/20 bg-black/30"
                               title="Quitar referencia"
                             >
-                              <img src={src} alt={`Referencia ${refIndex + 1}`} className="h-full w-full object-cover" />
+                              <img src={studioViewSrc(src, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt={`Referencia ${refIndex + 1}`} className="h-full w-full object-cover" />
                               <span className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center bg-black/75 text-white/70 opacity-0 transition group-hover:opacity-100">
                                 <X size={10} />
                               </span>
@@ -3067,7 +3050,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                         className="relative h-10 w-10 overflow-hidden border border-white/15"
                         title={readOnly ? "Referencia" : "Quitar referencia"}
                       >
-                        <img src={src} alt="" className="h-full w-full object-cover" />
+                        <img src={studioViewSrc(src, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt="" className="h-full w-full object-cover" />
                       </button>
                     ))}
                     {!readOnly && card.references.length < STUDIO_MAX_REFS_PER_CARD ? (
@@ -3190,7 +3173,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                       className={`h-11 w-11 overflow-hidden border ${src === currentImage ? "border-violet-300" : "border-white/15"}`}
                       title={selectedCardId ? "Añadir como referencia al cambio seleccionado" : "Usar imagen"}
                     >
-                      <img src={src} alt="" className="h-full w-full object-cover" />
+                      <img src={studioViewSrc(src, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt="" className="h-full w-full object-cover" />
                     </button>
                   ))}
                 </div>
@@ -3429,7 +3412,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                   className="group overflow-hidden border border-white/15 bg-white/[0.025] text-left transition hover:border-violet-300"
                 >
                   <div className="relative">
-                    <img src={row.output} alt="" className="aspect-[3/4] w-full object-cover" />
+                    <img src={studioViewSrc(row.output)} alt="" className="aspect-[3/4] w-full object-cover" />
                     <span className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-[12px] font-bold text-white">
                       {index + 1}
                     </span>
@@ -3510,7 +3493,7 @@ export const ImageCreationStudio = memo(function ImageCreationStudio({
                     <figcaption className="border-b border-white/10 px-2 py-1.5 text-[11px] font-semibold text-white/50">
                       {CALL_SLOT_LABEL[image.kind]}
                     </figcaption>
-                    <img src={image.src} alt={CALL_SLOT_LABEL[image.kind]} className="max-h-64 w-full object-contain" />
+                    <img src={studioViewSrc(image.src)} alt={CALL_SLOT_LABEL[image.kind]} className="max-h-64 w-full object-contain" />
                   </figure>
                 ))}
               </div>

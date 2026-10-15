@@ -22,6 +22,11 @@ import {
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import {
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  resolveCanvasThumbnailMediaUrl,
+  resolveStudioPreviewMediaUrl,
+} from "@/lib/canvas-media-thumbnail";
+import {
   addCorrection,
   clearAdvancedImageGlobalAdjustment,
   createAdvancedImageSession,
@@ -257,6 +262,13 @@ function truncateForLog(value: string, max = 50): string {
 
 function globalAdjustmentPendingLabel(session: AdvancedImageSession | undefined): boolean {
   return session ? isAdvancedImageGlobalAdjustmentPending(session) : false;
+}
+
+function studioDisplaySrc(src: string | null | undefined, maxSide?: number): string {
+  const trimmed = src?.trim() ?? "";
+  if (!trimmed) return "";
+  if (maxSide != null) return resolveCanvasThumbnailMediaUrl(trimmed, null, maxSide) || trimmed;
+  return resolveStudioPreviewMediaUrl(trimmed) || trimmed;
 }
 
 function createImageElement(src: string): Promise<HTMLImageElement> {
@@ -860,6 +872,7 @@ function ImageCreationAdvancedStudio({
 
   useEffect(() => {
     if (!imageInput) return undefined;
+    if (session?.master?.width && session.master.height) return undefined;
     let cancelled = false;
     const image = new Image();
     image.onload = () => {
@@ -874,7 +887,7 @@ function ImageCreationAdvancedStudio({
     return () => {
       cancelled = true;
     };
-  }, [imageInput]);
+  }, [imageInput, session?.master?.height, session?.master?.width]);
 
   useEffect(() => {
     const element = canvasRef.current;
@@ -1795,7 +1808,7 @@ function ImageCreationAdvancedStudio({
           <div className="flex gap-3">
             <div className="h-[74px] w-[92px] shrink-0 overflow-hidden rounded-none bg-zinc-800/70">
               {thumbnailUrl ? (
-                <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                <img src={studioDisplaySrc(thumbnailUrl, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt="" className="h-full w-full object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-zinc-600">
                   <ImageIcon size={18} />
@@ -1861,7 +1874,7 @@ function ImageCreationAdvancedStudio({
           <span className="rounded-none bg-white/[0.05] px-2 py-1 text-[9px] font-bold text-zinc-500">#{batch}</span>
           {hoveredPreviousCorrectionId === correction.id && cropUrl ? (
             <span className="pointer-events-none absolute right-full top-0 z-40 mr-3 h-28 w-36 overflow-hidden rounded-none bg-zinc-950 shadow-2xl ring-1 ring-white/10">
-              <img src={cropUrl} alt="" className="h-full w-full object-cover" />
+              <img src={studioDisplaySrc(cropUrl, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt="" className="h-full w-full object-cover" />
             </span>
           ) : null}
         </button>
@@ -1892,7 +1905,7 @@ function ImageCreationAdvancedStudio({
               className="h-[58px] w-[76px] shrink-0 overflow-hidden rounded-none bg-zinc-900 disabled:opacity-50"
               aria-label={`Preview batch ${snapshot.batchNumber}`}
             >
-              <img src={snapshot.workingImage.imageUrl} alt="" className="h-full w-full object-cover" />
+              <img src={studioDisplaySrc(snapshot.workingImage.imageUrl, FOLDDER_CANVAS_THUMB_MAX_SIDE)} alt="" className="h-full w-full object-cover" />
             </button>
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">
@@ -1979,7 +1992,7 @@ function ImageCreationAdvancedStudio({
               {previewUrl ? (
                 <>
                   <img
-                    src={previewUrl}
+                    src={studioDisplaySrc(previewUrl)}
                     alt=""
                     className="absolute rounded-none object-fill shadow-2xl"
                     style={{
