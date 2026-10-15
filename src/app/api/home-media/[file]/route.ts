@@ -17,7 +17,7 @@ function isHeroFile(value: string): value is HeroFile {
   return (HERO_FILES as readonly string[]).includes(value);
 }
 
-export function marketingHeroObjectKey(file: HeroFile): string {
+function marketingHeroObjectKey(file: HeroFile): string {
   return `marketing/home-v2/hero/${file}`;
 }
 
